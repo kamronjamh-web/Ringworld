@@ -30,8 +30,8 @@ public sealed class RiverCarveOperator
     /// <summary>A channel caps how fast another reach's levee may rise away from its bank (T2R-7 fix 2), so a tight bend beside a higher reach has no cliff at the core edge. 2 m per m keeps 0.25 m steps under 0.6 m.</summary>
     private const double BankCapSlope = 2.0;
     private const double TerraceStepMeters = 40d, TerraceRiser = 0.14;
-    /// <summary>A piece whose control hull is further than this from the point cannot reach |t| < 300 (the meander is at most 100 m).</summary>
-    private const double CullMeters = FadeEndMeters + RiverHydraulics.MeanderAmplitudeCapMeters + 10d;
+    /// <summary>Slack added to the stem's true lateral reach (<see cref="RiverNetwork.StemLateralReach"/>) for the cull by the control hull.</summary>
+    private const double CullSlackMeters = 10d;
     private const double ValleyOnlyAboveFootprint = 256d, ValleyOnlyNarrowAboveFootprint = 64d;
     private const int MaxHits = 8;
 
@@ -61,6 +61,7 @@ public sealed class RiverCarveOperator
         _net = graph.Network;
         _index = graph.Index;
         _halfCircumference = 0.5 * _net.CircumferenceM;
+        if (_net.Stems.Length > 0) _net.StemLateralReach(0, FadeEndMeters); // measure the stems' reach now, not on the first sample
     }
 
     public RiverGraph Graph => _graph;
@@ -83,7 +84,7 @@ public sealed class RiverCarveOperator
 
     /// <summary>
     /// Closest point of the point to the base curve piece, the lateral coordinate against the meandered centreline and the channel values there. False when the piece
-    /// cannot affect the point: outside the control hull expanded by <see cref="CullMeters"/>, owned by the neighbouring piece, or further than |t| = lateralLimit.
+    /// cannot affect the point: outside the control hull expanded by the stem's reach, owned by the neighbouring piece, or further than |t| = lateralLimit.
     /// </summary>
     private bool LocatePiece(int piece, double around, double across, double lateralLimit, out Hit hit)
     {
@@ -98,8 +99,10 @@ public sealed class RiverCarveOperator
         if (qx > _halfCircumference || qx < -_halfCircumference) qx = _net.WrapDelta(qx);
         // Local frame: the piece's own node P at the origin.
         ax -= px; ay -= py; cx -= px; cy -= py;
-        if (qx < Math.Min(Math.Min(ax, cx), 0d) - CullMeters || qx > Math.Max(Math.Max(ax, cx), 0d) + CullMeters
-            || qy < Math.Min(Math.Min(ay, cy), 0d) - CullMeters || qy > Math.Max(Math.Max(ay, cy), 0d) + CullMeters) return false;
+        // A piece whose control hull is further than the stem's true reach (the meander shifts and stretches t; measured per stem, never above the 650 m index radius) cannot reach |t| < lateralLimit.
+        double cull = _net.StemLateralReach(stem, lateralLimit) + CullSlackMeters;
+        if (qx < Math.Min(Math.Min(ax, cx), 0d) - cull || qx > Math.Max(Math.Max(ax, cx), 0d) + cull
+            || qy < Math.Min(Math.Min(ay, cy), 0d) - cull || qy > Math.Max(Math.Max(ay, cy), 0d) + cull) return false;
         // B(u) = A + 2u E + u^2 F with E = P - A, F = A - 2P + C; stationary points of |B - q|^2 solve a cubic.
         double ex = -ax, ey = -ay, fx = ax + cx, fy = ay + cy;
         double mx = ax - qx, my = ay - qy;
@@ -129,9 +132,8 @@ public sealed class RiverCarveOperator
         // Too far for any |t| below the limit, whatever the meander does: skip before the meander work.
         if (dist > _net.LateralReach(channel.Reach, lateralLimit)) return false;
         double signed = (qx - bx) * -ty + (qy - by) * tx >= 0 ? dist : -dist;
-        // Lateral coordinate against the displaced centreline: (n - D) / sqrt(1 + D'^2), D' by a 1 m one-sided difference.
-        double sOther = s + 1d <= curve.Length ? s + 1d : s - 1d;
-        double d0 = _net.Meander(stem, s, in channel), slope = (_net.Meander(stem, sOther) - d0) / (sOther - s);
+        // Lateral coordinate against the displaced centreline: (n - D) / sqrt(1 + D'^2), D and D' analytic from one evaluation.
+        double d0 = _net.MeanderWithSlope(stem, s, in channel, out double slope);
         double stretch = Math.Sqrt(1 + slope * slope);
         hit.Piece = piece; hit.Stem = stem; hit.Reach = channel.Reach; hit.S = s;
         hit.T = (signed - d0) / stretch;

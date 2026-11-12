@@ -125,6 +125,31 @@ public sealed class RiverKnotTable
         return list;
     }
 
+    /// <summary>
+    /// The knot segment of the stem that holds s, in one block search and one scan that carries S and W together (T2R-7b): the last knot with S at most s (the first knot when s lies
+    /// before it) and the next one; at the last knot both are that knot. Values as <see cref="S"/> and <see cref="W"/> return them.
+    /// </summary>
+    public void Segment(int stem, double s, out double s0, out double w0, out double s1, out double w1)
+    {
+        int count = _count[stem], first = _start[stem], bb = _blockBase[stem];
+        int blocks = (count + BlockSize - 1) / BlockSize, lo = 0, hi = blocks - 1;
+        while (lo < hi)
+        {
+            int mid = (lo + hi + 1) >> 1;
+            if (_anchorS[bb + mid] * 0.01 <= s) lo = mid; else hi = mid - 1;
+        }
+        int j = lo * BlockSize, end = Math.Min(count, j + BlockSize) - 1, vs = _anchorS[bb + lo], vw = _anchorW[bb + lo];
+        while (j < end)
+        {
+            int next = vs + _dS[first + j + 1];
+            if (next * 0.01 > s) break;
+            vs = next; vw += _dW[first + j + 1]; j++;
+        }
+        s0 = vs * 0.01; w0 = vw * 0.01;
+        if (j + 1 < count) { s1 = (vs + _dS[first + j + 1]) * 0.01; w1 = (vw + _dW[first + j + 1]) * 0.01; }
+        else { s1 = s0; w1 = w0; }
+    }
+
     /// <summary>Largest knot index j of the stem with S(j) at most <paramref name="s"/>; the first knot must satisfy it.</summary>
     public int LastIndexSAtMost(int stem, double s)
     {

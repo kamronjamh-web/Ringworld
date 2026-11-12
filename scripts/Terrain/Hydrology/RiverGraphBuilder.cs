@@ -136,13 +136,20 @@ public sealed class RiverNetwork
 
     // Per-reach channel and valley values (S6), derived once from Sections. ChannelAt is the only reader (T2R-7 review, for T3R-3: spans replace reaches behind it).
     private double[] _chA = Array.Empty<double>(), _chB = Array.Empty<double>(), _chDepth = Array.Empty<double>(), _chEdge = Array.Empty<double>(), _chFlood = Array.Empty<double>(),
-        _chSlope = Array.Empty<double>(), _chAmp = Array.Empty<double>(), _chLambda = Array.Empty<double>(), _chAmpMax = Array.Empty<double>(), _chStretch = Array.Empty<double>();
+        _chSlope = Array.Empty<double>(), _chAmp = Array.Empty<double>(), _chLambda = Array.Empty<double>(), _chAmpMax = Array.Empty<double>(), _chStretch = Array.Empty<double>(),
+        _chK = Array.Empty<double>();
+
+    /// <summary>The lateral limit <see cref="StemLateralReach"/> is measured for (the operator's fade end); larger limits extend it by the stem's largest stretch.</summary>
+    private const double StemReachLimitMeters = 300d;
+    private const double StemReachStepMeters = 5d;
+    private volatile double[]? _stemReach, _stemStretch;
+    private readonly object _stemReachLock = new();
 
     private void BuildChannels()
     {
         int n = Reaches.Length;
         _chA = new double[n]; _chB = new double[n]; _chDepth = new double[n]; _chEdge = new double[n]; _chFlood = new double[n];
-        _chSlope = new double[n]; _chAmp = new double[n]; _chLambda = new double[n]; _chAmpMax = new double[n]; _chStretch = new double[n];
+        _chSlope = new double[n]; _chAmp = new double[n]; _chLambda = new double[n]; _chAmpMax = new double[n]; _chStretch = new double[n]; _chK = new double[n];
         for (int r = 0; r < n; r++)
         {
             RiverSection sec = Sections[r];
@@ -154,15 +161,23 @@ public sealed class RiverNetwork
             _chSlope[r] = RiverHydraulics.ValleySlope(sec.Gradient, ValleyWidth);
             _chAmp[r] = RiverHydraulics.MeanderAmplitude(sec.Width, MeanderStrength, sec.Gradient);
             _chLambda[r] = RiverHydraulics.MeanderWavelength(sec.Width);
+            _chK[r] = 2d * Math.PI / _chLambda[r];
         }
         for (int r = 0; r < n; r++)
         {
-            // Bounds of the meander within the reach, blend included: |D| <= ampMax, and |D'| <= 11.2 ampMax / lambda + 0.0075 |A_up - A| (the envelope, the phase and
-            // both tapers of Meander, plus the 200 m amplitude blend).
+            // Bounds of the meander within the reach, blend included: |D| <= ampMax, and |D'| <= 11.2 max(A k) / (2 pi) + 0.0075 |A_up - A| (the envelope, the phase and
+            // both tapers of Meander, plus the 200 m blend of amplitude and wavenumber; A k is a product of two blends, so its largest value may lie inside the blend).
             bool blended = r > Stems[Reaches[r].Stem].ReachStart;
-            double up = blended ? _chAmp[r - 1] : _chAmp[r];
+            double up = blended ? _chAmp[r - 1] : _chAmp[r], kUp = blended ? _chK[r - 1] : _chK[r];
             _chAmpMax[r] = Math.Max(_chAmp[r], up);
-            double slope = 11.2 * _chAmpMax[r] / _chLambda[r] + 1.5 / RiverHydraulics.BlendMeters * Math.Abs(up - _chAmp[r]);
+            double da = up - _chAmp[r], dk = kUp - _chK[r];
+            double ak = Math.Max(_chAmp[r] * _chK[r], up * kUp);
+            if (da * dk < 0d)
+            {
+                double u = -(_chAmp[r] * dk + _chK[r] * da) / (2d * da * dk);
+                if (u > 0d && u < 1d) ak = Math.Max(ak, (_chAmp[r] + da * u) * (_chK[r] + dk * u));
+            }
+            double slope = 11.2 * ak / (2d * Math.PI) + 1.5 / RiverHydraulics.BlendMeters * Math.Abs(da);
             _chStretch[r] = Math.Sqrt(1d + slope * slope);
         }
     }
@@ -174,7 +189,7 @@ public sealed class RiverNetwork
     public void ChannelAt(int stem, double s, out RiverChannel channel)
     {
         int reach = ReachAt(stem, s);
-        double a = _chA[reach], b = _chB[reach], depth = _chDepth[reach], edge = _chEdge[reach], flood = _chFlood[reach], slope = _chSlope[reach], amplitude = _chAmp[reach];
+        double a = _chA[reach], b = _chB[reach], depth = _chDepth[reach], edge = _chEdge[reach], flood = _chFlood[reach], slope = _chSlope[reach], amplitude = _chAmp[reach], k = _chK[reach];
         if (reach > Stems[stem].ReachStart)
         {
             double t = RiverHydraulics.Smoothstep(Reaches[reach].SStart, Reaches[reach].SStart + RiverHydraulics.BlendMeters, s);
@@ -186,8 +201,9 @@ public sealed class RiverNetwork
             flood += (_chFlood[up] - flood) * (1 - t);
             slope += (_chSlope[up] - slope) * (1 - t);
             amplitude += (_chAmp[up] - amplitude) * (1 - t);
+            k += (_chK[up] - k) * (1 - t);
         }
-        channel = new RiverChannel(reach, a, b, depth, edge, flood, slope, amplitude, _chLambda[reach]);
+        channel = new RiverChannel(reach, a, b, depth, edge, flood, slope, amplitude, 2d * Math.PI / k);
     }
 
     /// <summary>
@@ -196,7 +212,45 @@ public sealed class RiverNetwork
     /// </summary>
     public double LateralReach(int reach, double lateralLimit) => _chAmpMax[reach] + lateralLimit * _chStretch[reach] + 2d;
 
-    /// <summary>Half width a, bank width b, meander amplitude and wavelength at s, blended from the upstream reach over the first 200 m of a reach (S6).</summary>
+    /// <summary>
+    /// The true lateral reach of the stem (T2R-7b): the largest distance from the base curve at which a point can have |t| below <paramref name="lateralLimit"/>, which is
+    /// <c>|D| + limit sqrt(1 + D'^2)</c> at its worst along the stem, measured every 5 m through <see cref="ChannelAt"/> and <see cref="MeanderWithSlope"/> (the per-reach
+    /// <see cref="LateralReach"/> bound is a loose envelope, up to 940 m). Measured for 300 m and an upper bound above it (the stem's largest stretch for the extra distance).
+    /// Needs the meander phases, so it is built on first use, once, and the operator asks for it in its constructor.
+    /// </summary>
+    public double StemLateralReach(int stem, double lateralLimit)
+    {
+        if (_stemReach == null) BuildStemReach();
+        return _stemReach![stem] + Math.Max(0d, lateralLimit - StemReachLimitMeters) * _stemStretch![stem];
+    }
+
+    private void BuildStemReach()
+    {
+        lock (_stemReachLock)
+        {
+            if (_stemReach != null) return;
+            var reach = new double[Stems.Length];
+            var stretch = new double[Stems.Length];
+            for (int i = 0; i < Stems.Length; i++)
+            {
+                double length = Curves[i].Length, best = 0, bestStretch = 1;
+                for (double s = 0; ; s += StemReachStepMeters)
+                {
+                    if (s > length) s = length;
+                    ChannelAt(i, s, out RiverChannel c);
+                    double d = MeanderWithSlope(i, s, in c, out double slope), st = Math.Sqrt(1d + slope * slope);
+                    best = Math.Max(best, Math.Abs(d) + StemReachLimitMeters * st);
+                    bestStretch = Math.Max(bestStretch, st);
+                    if (s >= length) break;
+                }
+                reach[i] = best; stretch[i] = bestStretch;
+            }
+            _stemStretch = stretch;
+            _stemReach = reach;
+        }
+    }
+
+    /// <summary>Half width a, bank width b, meander amplitude and wavelength at s, blended from the upstream reach over the first 200 m of a reach (S6, T2R-7b: the wavelength too).</summary>
     public void Geometry(int stem, double s, out int reach, out double a, out double b, out double amplitude, out double wavelength)
     {
         ChannelAt(stem, s, out RiverChannel c);
@@ -204,8 +258,9 @@ public sealed class RiverNetwork
     }
 
     /// <summary>
-    /// Lateral meander displacement D(s) (S7), left positive. Tuned in T2R-5b: the chained phase theta = MeanderPhase_r + 2 pi (s - SStart_r) / lambda_r
-    /// is continuous along the stem, and both the wavelength and the amplitude are modulated by slow functions of theta with hashed phases, so the
+    /// Lateral meander displacement D(s) (S7), left positive. Tuned in T2R-5b and T2R-7b: the chained phase theta is continuous along the stem, its wavenumber
+    /// k = 2 pi / lambda blends from the upstream reach over the same 200 m as the amplitude (theta = MeanderPhase_r + k_r (s - SStart_r) + (k_up - k_r) 200 (x - x^3 + x^4 / 2),
+    /// x the blend coordinate), and both the wavelength and the amplitude are modulated by slow functions of theta with hashed phases, so the
     /// meander is not a constant sine: <c>D = A_m * E(theta) * sin(theta + 0.6 sin(theta / 2.7 + psi1) + 0.3 sin(theta / 4.6 + psi2)) * tau</c> with the
     /// envelope <c>E = smoothstep(-0.7, 0.7, 0.6 sin(theta / 3.3 + psi3) + 0.4 sin(theta / 7.7 + psi4))</c> in [0, 1]. The local wavelength stays between
     /// about 0.78 and 1.4 lambda (d phase / d theta in [0.71, 1.29]), and |D| &lt;= A_m, so the cap holds.
@@ -221,15 +276,79 @@ public sealed class RiverNetwork
     {
         int reach = channel.Reach;
         double amplitude = channel.MeanderAmplitude, wavelength = channel.MeanderWavelength;
-        RiverReach r = Reaches[reach];
         double tau = RiverHydraulics.Smoothstep(0, 2 * wavelength, s);
         if (Stems[stem].Terminal == RiverTerminal.Confluence) tau *= RiverHydraulics.Smoothstep(0, 2 * wavelength, Curves[stem].Length - s);
         if (amplitude == 0 || tau == 0) return 0;
-        double theta = r.MeanderPhase + 2 * Math.PI * (s - r.SStart) / wavelength;
+        double theta = Phase(reach, s, Reaches[reach].MeanderPhase, out _, out _);
         int o = stem * 4;
         double phase = theta + 0.6 * Math.Sin(theta / 2.7 + _meanderNoise[o]) + 0.3 * Math.Sin(theta / 4.6 + _meanderNoise[o + 1]);
         double envelope = RiverHydraulics.Smoothstep(-0.7, 0.7, 0.6 * Math.Sin(theta / 3.3 + _meanderNoise[o + 2]) + 0.4 * Math.Sin(theta / 7.7 + _meanderNoise[o + 3]));
         return amplitude * envelope * Math.Sin(phase) * tau;
+    }
+
+    /// <summary>
+    /// D and dD/ds from one evaluation (T2R-7b): the same value as <see cref="Meander(int, double, in RiverChannel)"/> (to rounding), and the exact derivative of it, including the
+    /// blends of amplitude and wavenumber and both tapers (whose wavelength is the blended one). The operator uses it for the stretch and the tangent of the displaced centreline.
+    /// </summary>
+    public double MeanderWithSlope(int stem, double s, in RiverChannel channel, out double slope)
+    {
+        slope = 0;
+        int reach = channel.Reach;
+        double amplitude = channel.MeanderAmplitude, lambda = channel.MeanderWavelength;
+        double theta = Phase(reach, s, Reaches[reach].MeanderPhase, out double k, out double dk);
+        double dLambda = -lambda * dk / k, twoLambda = 2 * lambda;
+        // Tapers: x = a / (2 lambda(s)) with a = s (start) and a = length - s (confluence end).
+        double x1 = Math.Clamp(s / twoLambda, 0d, 1d);
+        double tau = x1 * x1 * (3d - 2d * x1), dTau = 0d;
+        if (x1 > 0d && x1 < 1d) dTau = 6d * x1 * (1d - x1) * (1d - s * dLambda / lambda) / twoLambda;
+        if (Stems[stem].Terminal == RiverTerminal.Confluence)
+        {
+            double a = Curves[stem].Length - s, x2 = Math.Clamp(a / twoLambda, 0d, 1d), f2 = x2 * x2 * (3d - 2d * x2), df2 = 0d;
+            if (x2 > 0d && x2 < 1d) df2 = 6d * x2 * (1d - x2) * (-1d - a * dLambda / lambda) / twoLambda;
+            dTau = dTau * f2 + tau * df2;
+            tau *= f2;
+        }
+        if (amplitude == 0 || tau == 0) return 0;
+        // Amplitude blend derivative.
+        double dAmp = 0d;
+        if (reach > Stems[stem].ReachStart)
+        {
+            double x = (s - Reaches[reach].SStart) / RiverHydraulics.BlendMeters;
+            if (x > 0d && x < 1d) dAmp = -(_chAmp[reach - 1] - _chAmp[reach]) * 6d * x * (1d - x) / RiverHydraulics.BlendMeters;
+        }
+        int o = stem * 4;
+        (double s1, double c1) = Math.SinCos(theta / 2.7 + _meanderNoise[o]);
+        (double s2, double c2) = Math.SinCos(theta / 4.6 + _meanderNoise[o + 1]);
+        (double s3, double c3) = Math.SinCos(theta / 3.3 + _meanderNoise[o + 2]);
+        (double s4, double c4) = Math.SinCos(theta / 7.7 + _meanderNoise[o + 3]);
+        double phase = theta + 0.6 * s1 + 0.3 * s2;
+        (double sp, double cp) = Math.SinCos(phase);
+        double y = (0.6 * s3 + 0.4 * s4 + 0.7) / 1.4;
+        double envelope = RiverHydraulics.Smoothstep(0d, 1d, y), dEnvelope = 0d;
+        if (y > 0d && y < 1d) dEnvelope = 6d * y * (1d - y) / 1.4 * (0.6 / 3.3 * c3 + 0.4 / 7.7 * c4);
+        double dPhase = 1d + 0.6 / 2.7 * c1 + 0.3 / 4.6 * c2;
+        // dtheta/ds = k.
+        slope = dAmp * envelope * sp * tau + amplitude * dEnvelope * k * sp * tau + amplitude * envelope * cp * dPhase * k * tau + amplitude * envelope * sp * dTau;
+        return amplitude * envelope * sp * tau;
+    }
+
+    /// <summary>
+    /// The chained meander phase of a reach at s (T2R-7b) and the wavenumber k and its derivative there: k blends from the upstream reach over the first 200 m with the amplitude's
+    /// smoothstep, so the phase is <c>base + k_r (s - SStart) + (k_up - k_r) 200 (x - x^3 + x^4 / 2)</c>. The builder chains the next reach's base from the end value.
+    /// </summary>
+    internal double Phase(int reach, double s, double basePhase, out double k, out double dk)
+    {
+        double kr = _chK[reach], ds = s - Reaches[reach].SStart;
+        k = kr; dk = 0d;
+        double theta = basePhase + kr * ds;
+        if (reach > Stems[Reaches[reach].Stem].ReachStart)
+        {
+            double x = Math.Clamp(ds / RiverHydraulics.BlendMeters, 0d, 1d), dKUp = _chK[reach - 1] - kr;
+            k = kr + dKUp * (1d - x * x * (3d - 2d * x));
+            if (x > 0d && x < 1d) dk = -dKUp * 6d * x * (1d - x) / RiverHydraulics.BlendMeters;
+            theta += dKUp * RiverHydraulics.BlendMeters * (x - x * x * x + 0.5 * x * x * x * x);
+        }
+        return theta;
     }
 
     private readonly double[] _meanderNoise;
@@ -673,8 +792,7 @@ public static class RiverGraphBuilder
             {
                 int ri = reachBase[i] + r;
                 net.Reaches[ri].MeanderPhase = (float)phase;
-                double lambda = RiverHydraulics.MeanderWavelength(net.Sections[ri].Width);
-                phase += 2 * Math.PI * (net.Reaches[ri].SEnd - net.Reaches[ri].SStart) / lambda;
+                phase = net.Phase(ri, net.Reaches[ri].SEnd, phase, out _, out _);
             }
         }
         double lengthKm = net.Curves.Sum(c => c.Length) / 1000d;

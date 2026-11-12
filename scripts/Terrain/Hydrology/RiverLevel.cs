@@ -42,10 +42,13 @@ public static class RiverLevel
         RiverKnotTable k = net.Knots;
         int count = k.KnotCount(stem);
         if (count == 0) return double.NaN;
-        if (s <= k.S(stem, 0)) return k.W(stem, 0);
-        if (s >= k.S(stem, count - 1)) return k.W(stem, count - 1);
-        int lo = k.LastIndexSAtMost(stem, s), hi = lo + 1;
-        double s0 = k.S(stem, lo), s1 = k.S(stem, hi), w0 = k.W(stem, lo), w1 = k.W(stem, hi);
+        k.Segment(stem, s, out double s0, out double w0, out double s1, out double w1);
+        return Interpolate(s, s0, w0, s1, w1);
+    }
+
+    private static double Interpolate(double s, double s0, double w0, double s1, double w1)
+    {
+        if (s <= s0 || s1 == s0) return w0; // before the first knot, on a knot, or at the last one
         double t = (s - s0) / Math.Max(1e-9, s1 - s0);
         return w0 + (w1 - w0) * t;
     }
@@ -91,10 +94,19 @@ public static class RiverLevel
 
     private static double BeforeTail(RiverNetwork net, int stem, double s, out double stored)
     {
-        double w = Stored(net, stem, s);
+        RiverKnotTable knots = net.Knots;
+        double w, ahead;
+        if (knots.KnotCount(stem) == 0) { w = double.NaN; ahead = double.NaN; }
+        else
+        {
+            // One segment lookup serves s and s + 10 m when both lie in it (the same arithmetic as Stored).
+            knots.Segment(stem, s, out double s0, out double w0, out double s1, out double w1);
+            w = Interpolate(s, s0, w0, s1, w1);
+            double sAhead = s + ChuteMeters;
+            ahead = s1 == s0 || (sAhead >= s0 && sAhead < s1) ? Interpolate(sAhead, s0, w0, s1, w1) : Stored(net, stem, sAhead);
+        }
         stored = w;
         double level = Math.Floor(w);
-        double ahead = Stored(net, stem, s + ChuteMeters);
         for (int k = (int)Math.Floor(w), n = 0; k > ahead && n < 64; k--, n++)
         {
             double x = LastAtOrAbove(net, stem, k);

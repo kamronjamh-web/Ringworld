@@ -79,6 +79,7 @@ public partial class RiverCarveInvariantsTest : RefCounted
             StandIns();
             Sections();
             Paths();
+            MeanderSlope();
             Footprints();
             FarPoints();
             Cost();
@@ -334,13 +335,13 @@ public partial class RiverCarveInvariantsTest : RefCounted
     /// <summary>Cut along the path, the level never rising downstream, and the carved height along the centreline.</summary>
     private void Paths()
     {
-        long samples = 0, over40 = 0, pairs = 0, rising = 0;
+        long samples = 0, over40 = 0, pairs = 0, rising = 0, drawn = 0;
         double cutMax = 0;
         var locker = new object();
         Parallel.For(0, _workers, new ParallelOptions { MaxDegreeOfParallelism = _workers }, w =>
         {
             using TerrainGenerationHeightModel model = NewModel();
-            long s0 = 0, o0 = 0, p0 = 0, r0 = 0;
+            long s0 = 0, o0 = 0, p0 = 0, r0 = 0, dr0 = 0;
             double m0 = 0;
             for (int i = w; i < _reaches.Count; i += _workers)
             {
@@ -360,17 +361,54 @@ public partial class RiverCarveInvariantsTest : RefCounted
                     {
                         if (!double.IsNaN(previous)) { p0++; if (d.WaterLevel > previous + 1e-6) r0++; }
                         previous = d.WaterLevel;
+                        if (d.WaterLevel < RiverLevel.AtStem(_net, reach.Stem, s) - 1e-6) dr0++;
                     }
                     else previous = double.NaN;
                 }
             }
-            lock (locker) { samples += s0; over40 += o0; pairs += p0; rising += r0; cutMax = Math.Max(cutMax, m0); }
+            lock (locker) { samples += s0; over40 += o0; pairs += p0; rising += r0; drawn += dr0; cutMax = Math.Max(cutMax, m0); }
         });
-        Detail($"path: cut over 40 m on {over40}/{samples} centreline samples every 5 m ({(double)over40 / Math.Max(1, samples):P2}), largest cut {cutMax:F1} m; level rises downstream on {rising}/{pairs} owner pairs");
+        Detail($"path: cut over 40 m on {over40}/{samples} centreline samples every 5 m ({(double)over40 / Math.Max(1, samples):P2}), largest cut {cutMax:F1} m; level rises downstream on {rising}/{pairs} owner pairs; drawn-down level (below the stem's own) on {drawn}/{samples} samples"
+            + $" ({(double)drawn / Math.Max(1, samples):P2})");
         Check(samples > 10000, "too few path samples");
         // Tuned in the T2R-7 review: 5.5 % is the state the T2R-5 review accepted until the M2 visual review of carved ground (was 3 %).
         Check(over40 <= samples * 0.055, $"cut over 40 m on {(double)over40 / Math.Max(1, samples):P2} of path length (limit 5.5 %)");
         Check(rising <= pairs * 0.005, $"the level rises downstream on {rising}/{pairs} owner pairs");
+    }
+
+    /// <summary>
+    /// T2R-7b: the analytic slope of <see cref="RiverNetwork.MeanderWithSlope"/> against a central difference of <see cref="RiverNetwork.Meander(int, double)"/> at hashed points
+    /// (away from the reach joints, where a reach shorter than the 200 m blend leaves a kink), the two values of D equal, and the stems' true reach inside the index radius.
+    /// </summary>
+    private void MeanderSlope()
+    {
+        const int points = 2000;
+        double worst = 0, worstD = 0, worstReach = 0;
+        int tested = 0, worstStem = -1;
+        double worstS = 0;
+        for (int i = 0; i < points; i++)
+        {
+            int stem = (int)(RiverHash.Unit(Seed, i, 21, 5) * _net.Stems.Length) % _net.Stems.Length;
+            double length = _net.Curves[stem].Length;
+            double s = 2d + RiverHash.Unit(Seed, i, 22, 5) * (length - 4d);
+            bool nearJoint = false;
+            for (int r = _net.Stems[stem].ReachStart, end = r + _net.Stems[stem].ReachCount; r < end; r++)
+                if (Math.Abs(_net.Reaches[r].SStart - s) < 2d || Math.Abs(_net.Reaches[r].SEnd - s) < 2d) nearJoint = true;
+            if (nearJoint) continue;
+            _net.ChannelAt(stem, s, out RiverChannel c);
+            double d = _net.MeanderWithSlope(stem, s, in c, out double slope);
+            const double h = 0.5;
+            double central = (_net.Meander(stem, s + h) - _net.Meander(stem, s - h)) / (2d * h);
+            tested++;
+            worstD = Math.Max(worstD, Math.Abs(d - _net.Meander(stem, s, in c)));
+            if (Math.Abs(slope - central) > worst) { worst = Math.Abs(slope - central); worstStem = stem; worstS = s; }
+        }
+        for (int stem = 0; stem < _net.Stems.Length; stem++) worstReach = Math.Max(worstReach, _net.StemLateralReach(stem, RiverCarveOperator.FadeEndMeters));
+        Detail($"meander slope: {tested} hashed points, largest difference between the analytic slope and a central difference {worst:F5} (stem {worstStem}, s {worstS:F0}), largest difference of D {worstD:E1}; largest stem reach {worstReach:F0} m against the index radius {RiverSpatialIndex.ReachRadiusMeters:F0} m");
+        Check(tested > points / 2, "meander slope check: too few points tested");
+        Check(worst < 0.01, $"meander slope: analytic and central difference differ by {worst:F5} (stem {worstStem}, s {worstS:F0})");
+        Check(worstD < 1e-9, $"meander slope: D differs from Meander by {worstD:E1}");
+        Check(worstReach <= RiverSpatialIndex.ReachRadiusMeters, $"a stem's lateral reach {worstReach:F0} m exceeds the index radius {RiverSpatialIndex.ReachRadiusMeters:F0} m");
     }
 
     // ------------------------------------------------------------------ footprint
