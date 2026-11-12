@@ -4804,6 +4804,19 @@
       "timeout_s": 240,
       "parallel_safe": false
     },
+    "floating_body_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "water",
+        "hydrology"
+      ],
+      "marker": "FLOATING_BODY",
+      "expected_s": 10,
+      "timeout_s": 60,
+      "parallel_safe": false
+    },
     "drainage_bake_report": {
       "kind": "tool",
       "mode": "gpu-local",
