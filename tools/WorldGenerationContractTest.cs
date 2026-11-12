@@ -95,7 +95,7 @@ public partial class WorldGenerationContractTest : RefCounted
                     $"synthetic generation {generation} publication failed");
             else
             {
-                using RingTerrainSampler sampler = EmitterSiteTestWorlds.CreateGen17World(Seed, generation);
+                using RingTerrainSampler sampler = CreateWorld(generation, null);
                 CheckSampler(sampler, generation, expected);
                 Require(WorldGeneration.Publish(parsed, "contract-test"), $"generation {generation} publication failed");
             }
@@ -143,12 +143,21 @@ public partial class WorldGenerationContractTest : RefCounted
             }
             if (!synthetic)
             {
-                using RingTerrainSampler sampler = EmitterSiteTestWorlds.CreateGen17World(Seed, latest, review);
+                using RingTerrainSampler sampler = CreateWorld(latest, review);
                 CheckSampler(sampler, latest, expected);
                 Require(WorldGeneration.Current.ReviewFeatures.SequenceEqual(review), $"publication lost review feature {feature.Id}");
             }
         }
         Require(!ledger.Validate(latest, new[] { "unknown.contract_test" }, out _), "unknown review ID accepted");
+    }
+
+    /// <summary>A runtime sampler of the world recipe; a water.rivers recipe needs its graph resident first (T2R-9), so a strip graph is installed.</summary>
+    private static RingTerrainSampler CreateWorld(int generation, IReadOnlyList<string>? review)
+    {
+        TerrainGenerationParameters recipe = EmitterSiteTestWorlds.Gen17WorldRecipe(Seed, generation, review);
+        using VoxelTerrainSettings settings = EmitterSiteTestWorlds.CreateProductionSettings(Seed, recipe);
+        if (recipe.HasRivers) RiverTestGraphs.Install(recipe, settings);
+        return new RingTerrainSampler(settings, true, EmitterSiteTestWorlds.Circumference, EmitterSiteTestWorlds.Circumference / Math.Tau, EmitterSiteTestWorlds.Width, 8400);
     }
 
     private static bool IsFrozenAt(WorldGenerationLedger.FeatureInfo feature, int generation)

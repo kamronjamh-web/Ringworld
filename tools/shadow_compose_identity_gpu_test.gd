@@ -21,13 +21,13 @@ const PLANET_DIR := Vector3(-0.5, 0.6, -0.6)
 const OVERLAPS := [0.0, 0.5]
 const HUBS := [0.0, 0.6]
 
-# name, shader, receiver (wall | sphere | grass), extra uniforms
+# name, shader, receiver (wall | sphere | grass), extra uniforms; optional vertex_alpha overrides the wall's vertex alpha (ring_ocean_proxy reads the water kind from it: 1/3 is ocean, as RingWaterModel.EncodeWaterKind writes; the default 1.0 would be kind 3)
 const MATERIALS := [
 	{"name": "proxy", "shader": "res://materials/ring_terrain_proxy.gdshader", "receiver": "wall", "params": {"geomorph_enabled": false}},
 	{"name": "global_world", "shader": "res://materials/ring_terrain_global.gdshader", "receiver": "wall", "params": {"regional_band_distance_clip": false, "terrain_macro_shadow_use_uv": false}},
 	{"name": "global_uv", "shader": "res://materials/ring_terrain_global.gdshader", "receiver": "wall", "params": {"regional_band_distance_clip": false, "terrain_macro_shadow_use_uv": true}},
 	{"name": "voxel", "shader": "res://materials/voxel_ring_terrain.gdshader", "receiver": "wall", "params": {}},
-	{"name": "ocean_proxy", "shader": "res://materials/ring_ocean_proxy.gdshader", "receiver": "wall", "params": {"geomorph_enabled": false, "water_wind_clock_enabled": true}},
+	{"name": "ocean_proxy", "shader": "res://materials/ring_ocean_proxy.gdshader", "receiver": "wall", "params": {"geomorph_enabled": false, "water_wind_clock_enabled": true}, "vertex_alpha": 1.0 / 3.0},
 	{"name": "ocean_global", "shader": "res://materials/ring_ocean_global.gdshader", "receiver": "wall", "params": {"water_wind_clock_enabled": true, "fade_start_meters": 0.0, "fade_end_meters": 0.01}},
 	{"name": "ring_tree", "shader": "res://materials/ring_tree.gdshader", "receiver": "sphere", "params": {"vegetation_wind_enabled": false}},
 	{"name": "imported_tree", "shader": "res://materials/imported_tree.gdshader", "receiver": "sphere", "params": {"vegetation_wind_enabled": false}},
@@ -199,7 +199,7 @@ func _build_scene() -> void:
 	box.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	_viewport.add_child(box)
 	_wall = MeshInstance3D.new()
-	_wall.mesh = _wall_mesh()
+	_wall.mesh = _wall_mesh(1.0)
 	_wall.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_viewport.add_child(_wall)
 	_sphere = MeshInstance3D.new()
@@ -238,14 +238,14 @@ func _orient(light: DirectionalLight3D, to_light: Vector3) -> void:
 	light.transform = Transform3D(Basis.looking_at(-direction, up_hint), Vector3.ZERO)
 
 
-func _wall_mesh() -> ArrayMesh:
+func _wall_mesh(alpha: float) -> ArrayMesh:
 	var half_y := 40.0
 	var half_z := 70.0
 	var vertices := PackedVector3Array([
 		Vector3(WALL_X, -half_y, -half_z), Vector3(WALL_X, half_y, -half_z),
 		Vector3(WALL_X, half_y, half_z), Vector3(WALL_X, -half_y, half_z)])
 	var normals := PackedVector3Array([Vector3(-1, 0, 0), Vector3(-1, 0, 0), Vector3(-1, 0, 0), Vector3(-1, 0, 0)])
-	var colors := PackedColorArray([Color(0.35, 0.55, 0.25), Color(0.45, 0.4, 0.3), Color(0.3, 0.5, 0.35), Color(0.5, 0.45, 0.25)])
+	var colors := PackedColorArray([Color(0.35, 0.55, 0.25, alpha), Color(0.45, 0.4, 0.3, alpha), Color(0.3, 0.5, 0.35, alpha), Color(0.5, 0.45, 0.25, alpha)])
 	var uvs := PackedVector2Array([Vector2(0, 0), Vector2(0, 1), Vector2(1, 1), Vector2(1, 0)])
 	# Clockwise as seen from the camera (-X side) so the front face is visible to cull_back receivers.
 	var indices := PackedInt32Array([0, 1, 2, 0, 2, 3])
@@ -374,6 +374,8 @@ func _make_material(entry: Dictionary) -> ShaderMaterial:
 func _show_receiver(entry: Dictionary, material: ShaderMaterial) -> void:
 	var kind: String = entry.receiver
 	_wall.visible = kind == "wall"
+	if kind == "wall":
+		_wall.mesh = _wall_mesh(float(entry.get("vertex_alpha", 1.0)))
 	_sphere.visible = kind == "sphere"
 	_grass.visible = kind == "grass"
 	_wall.material_override = material if kind == "wall" else null
