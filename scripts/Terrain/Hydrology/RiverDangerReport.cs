@@ -216,7 +216,13 @@ public static class RiverDangerReport
         RiverSpanTable t = RiverSpanTable.Create(net, raw, excluded, true, c);
         var share = new double[4];
         var len = new double[t.Count];
-        for (int i = 0; i < t.Count; i++) { len[i] = t.Spans[i].SEnd - t.Spans[i].SStart; share[(int)t.Class[i]] += len[i]; }
+        // T2R-8b: the in-lake parts of the stems (drowned channels, flat and so calm) are not rivers to classify.
+        for (int i = 0; i < t.Count; i++)
+        {
+            int stem = net.Reaches[t.Spans[i].Reach].Stem;
+            bool inLake = stem < net.InLakeEnd.Length && net.InLakeEnd[stem] > 0d && t.Spans[i].SEnd <= net.InLakeEnd[stem] + 1e-3;
+            len[i] = inLake ? 0d : t.Spans[i].SEnd - t.Spans[i].SStart; share[(int)t.Class[i]] += len[i];
+        }
         double total = Math.Max(1d, len.Sum());
         for (int k = 0; k < 4; k++) share[k] /= total;
         int[] order = Enumerable.Range(0, t.Count).OrderBy(i => t.HalfWidth[i]).ToArray();

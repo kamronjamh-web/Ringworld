@@ -225,7 +225,16 @@ public partial class RiverDangerTest : RefCounted
         // Shares by length after landings and exclusions.
         var share = new double[4];
         double total = 0d;
-        for (int i = 0; i < t.Count; i++) { double len = t.Spans[i].SEnd - t.Spans[i].SStart; share[(int)t.Class[i]] += len; total += len; }
+        // T2R-8b: the drowned channels through the lakes (flat, so calm) are not rivers to classify: spans inside the in-lake part of a stem are counted apart, so the bars measure the same rivers as before.
+        double lakeMeters = 0d;
+        for (int i = 0; i < t.Count; i++)
+        {
+            double len = t.Spans[i].SEnd - t.Spans[i].SStart;
+            int spanStem = net.Reaches[t.Spans[i].Reach].Stem;
+            if (net.InLakeEnd[spanStem] > 0d && t.Spans[i].SEnd <= net.InLakeEnd[spanStem] + 1e-3) { lakeMeters += len; continue; }
+            share[(int)t.Class[i]] += len; total += len;
+        }
+        Detail($"seed {seed}: in-lake spans left out of the shares: {lakeMeters / 1000d:F0} km");
         for (int k = 0; k < 4; k++) share[k] /= total;
         int shareBad = ShareViolations(share, baseline);
         Check(shareBad == 0, $"seed {seed}: class shares {Mix(share)} are more than 3 points from the strip's production row {Mix(baseline)}, or under 70 % calm or swift, or over 3 % torrent");

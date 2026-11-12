@@ -89,6 +89,12 @@ public static class RiverPathMetrics
         return segments;
     }
 
+    /// <summary>T2R-8b: the metrics leave the in-lake part of a stem out (a drowned channel is not a river path); the polyline starts where the stem leaves the lake, and a stem inside a lake is a point.</summary>
+    private static double InLakeStart(RiverNetwork net, int stem) => stem < net.InLakeEnd.Length ? Math.Min(net.InLakeEnd[stem], net.MetricsEnd[stem]) : 0d;
+
+    /// <summary>A confluence stem is joined to its receiver in the metrics unless it ends in the receiver's in-lake part (it then ends in water, like a Lake stem).</summary>
+    private static bool Attached(RiverNetwork net, int stem) => net.Stems[stem].Terminal == RiverTerminal.Confluence && net.Stems[stem].JunctionS >= InLakeStart(net, net.Stems[stem].TerminalId) - 1e-6;
+
     /// <summary>
     /// The production centrelines as polylines sampled every 25 m of stem arc parameter (plus a vertex at each tributary junction), in the strip's local
     /// metres: around from <paramref name="aroundOrigin"/> (ring metres), across as is. Stems that end in water stop at the half segment into it, like the
@@ -99,7 +105,7 @@ public static class RiverPathMetrics
         int n = net.Stems.Length;
         var joins = new List<(double S, int Child)>[n];
         for (int i = 0; i < n; i++)
-            if (net.Stems[i].Terminal == RiverTerminal.Confluence)
+            if (Attached(net, i))
             {
                 int r = net.Stems[i].TerminalId;
                 (joins[r] ??= new()).Add((Math.Min(net.Stems[i].JunctionS, net.MetricsEnd[r]), i));
@@ -110,7 +116,7 @@ public static class RiverPathMetrics
         {
             double end = net.MetricsEnd[i];
             var list = new List<double>();
-            for (double v = 0; v < end - 1e-3; v += SampleMeters) list.Add(v);
+            for (double v = InLakeStart(net, i); v < end - 1e-3; v += SampleMeters) list.Add(v);
             list.Add(end);
             if (joins[i] != null)
             {
@@ -145,7 +151,7 @@ public static class RiverPathMetrics
         var order = new List<int>(n);
         var kids = new List<int>[n];
         for (int i = 0; i < n; i++)
-            if (net.Stems[i].Terminal != RiverTerminal.Confluence) order.Add(i);
+            if (!Attached(net, i)) order.Add(i);
             else (kids[net.Stems[i].TerminalId] ??= new()).Add(i);
         for (int h = 0; h < order.Count; h++) if (kids[order[h]] != null) order.AddRange(kids[order[h]]);
         double circumference = net.CircumferenceM;
@@ -161,7 +167,7 @@ public static class RiverPathMetrics
             }
             RiverStem st = net.Stems[i];
             int recv = -1, recvVertex = 0;
-            if (st.Terminal == RiverTerminal.Confluence)
+            if (Attached(net, i))
             {
                 recv = st.TerminalId; recvVertex = childVertex[i];
                 p[^1] = points[recv][recvVertex];

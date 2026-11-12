@@ -200,23 +200,31 @@ public sealed class RiverGraph
         // Outlets and inlets.
         var inletLists = new List<RiverInlet>[lakeCount];
         var lakeIndicator = new RiverLevel.LakeIndicator(f, grid);
+        // T2R-8b item 6: the outlet of lake l is the first stem that starts in or at it, is not Dead and whose last cell is not a flooded cell of l (a stem that ends inside the lake is an in-lake channel, not its outlet).
         for (int i = 0; i < net.Stems.Length; i++)
         {
             RiverStem st = net.Stems[i];
             int upstream = net.Reaches[st.ReachStart].UpstreamLake;
-            if (upstream >= 0 && st.Terminal != RiverTerminal.Dead && lakes[upstream].OutletStem < 0)
+            if (upstream >= 0 && st.Terminal != RiverTerminal.Dead && lakes[upstream].OutletStem < 0 && !(st.LastCell >= 0 && lakeId[st.LastCell] == upstream))
             {
-                double length = net.Curves[i].Length, s = 0;
-                for (; s < length; s += 10)
-                {
-                    net.Centre(i, s, out double around, out double across, out _, out _);
-                    if (lakeIndicator.P(net.WrapAround(around), across, upstream) <= 0) break;
-                }
                 lakes[upstream].OutletStem = i;
-                lakes[upstream].OutletS = (float)Math.Min(s, length);
+                lakes[upstream].OutletS = (float)RiverLevel.HeldEnd(net, lakeIndicator, i, upstream, false);
             }
-            if (st.Terminal == RiverTerminal.Lake)
-                (inletLists[st.TerminalId] ??= new List<RiverInlet>()).Add(new RiverInlet
+        }
+        // Inlets: stems that end Terminal Lake in l and do not start in it, or end as a confluence in the held part of a stem that starts in l (the outlet is held up to the lake's outlet point, any other in-lake stem to its end).
+        for (int i = 0; i < net.Stems.Length; i++)
+        {
+            RiverStem st = net.Stems[i];
+            int upstream = net.Reaches[st.ReachStart].UpstreamLake, into = -1;
+            if (st.Terminal == RiverTerminal.Lake) { if (upstream != st.TerminalId) into = st.TerminalId; }
+            else if (st.Terminal == RiverTerminal.Confluence)
+            {
+                int recv = st.TerminalId, recvLake = net.Reaches[net.Stems[recv].ReachStart].UpstreamLake;
+                if (recvLake >= 0 && recvLake != upstream && net.Stems[recv].Terminal != RiverTerminal.Dead
+                    && st.JunctionS <= (lakes[recvLake].OutletStem == recv ? lakes[recvLake].OutletS : net.Curves[recv].Length) + 1e-6) into = recvLake;
+            }
+            if (into >= 0)
+                (inletLists[into] ??= new List<RiverInlet>()).Add(new RiverInlet
                 {
                     Stem = i, S = (float)net.Curves[i].Length, AroundDm = net.NodeAroundDm[st.NodeStart + st.NodeCount - 1], AcrossDm = net.NodeAcrossDm[st.NodeStart + st.NodeCount - 1],
                 });

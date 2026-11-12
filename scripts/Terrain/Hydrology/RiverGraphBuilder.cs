@@ -75,6 +75,8 @@ public sealed class RiverNetwork
     public double[] MetricsEnd { get; }
     /// <summary>Level stations per stem, only when the build asked for them.</summary>
     public RiverStemStations[]? Stations { get; internal set; }
+    /// <summary>T2R-8b: arc length up to which a stem that starts inside a lake runs through its water (0 for the others). Set by the bake only (not stored in the graph file); the metrics and the cut statistics leave these parts out.</summary>
+    public double[] InLakeEnd { get; internal set; } = Array.Empty<double>();
 
     public RiverNetwork(long circumference, double widthM, long seed, double meander, double valleyWidth, double channelDepth, double ferocity,
         int[] aroundDm, int[] acrossDm, RiverStem[] stems, RiverReach[] reaches)
@@ -441,6 +443,10 @@ public sealed class RiverBuildOptions
     public bool BarrierGuard { get; init; } = true;
     /// <summary>T2R-5c: snap nodes to the valley floor within their cell's 16 samples (needs <see cref="Source"/>; tools switch it off for comparison).</summary>
     public bool Snap { get; init; } = false; // T2R-5c primary review: off by default. It did not reduce cut depth (17.5 % over 15 m either way) and it raised coastal sharp bends.
+    /// <summary>T2R-8b: drowned channels through the lakes (lake channel cells, outlet leads, unjittered lake nodes, stems that break at the lake entry). False is the T2R-8 state, for the negative control of river_carve_invariants_test and drainage_graph_test.</summary>
+    public bool LakeChannels { get; init; } = true;
+    /// <summary>T2R-8b: the in-lake stem of a chain of marked cells starts at its first deep cell (lowest sample 2 m under the lake level); the shallower cells before it are plain channel cells of the river that enters. False starts it at the entry cell (the work order's literal item 3: 12 % of the ends then stand on ground above the lake level, and inlet counts equal the T2R-8 graph's).</summary>
+    public bool DeepEntries { get; init; } = true;
     public int Workers { get; init; } = 4;
     /// <summary>Keep the level stations on the network (tests and reports).</summary>
     public bool KeepStations { get; init; }
@@ -484,6 +490,13 @@ public sealed record RiverBuildReport
     public long GuardMovedNodes { get; init; }
     public double GuardMaxMeters { get; init; }
     public double CutOver15Share { get; init; }
+    /// <summary>T2R-8b: lake channel cells (flow chains and outlet leads), outlet leads, stems that start inside a lake, the length of their in-lake parts and how much of it is cut over 40 m (the cut statistics above leave these parts out).</summary>
+    public int LakeChannelCells { get; init; }
+    public int LakeLeads { get; init; }
+    public int InLakeStems { get; init; }
+    public double InLakeKm { get; init; }
+    public double InLakeCutOver40Share { get; init; }
+    public double InLakeCutMax { get; init; }
     /// <summary>T3R-3: spans, landings (spans and km), spans inside an exclusion zone, the zone count and the seconds the span step took (cut, gradients, exclusions, sections, landings).</summary>
     public int Spans { get; init; }
     public int SpanLandings { get; init; }
@@ -504,6 +517,7 @@ public sealed record RiverBuildReport
             $"terminals: sea {TerminalSea}, lake {TerminalLake}, confluence {TerminalConfluence}, lung {TerminalLung}, strip end {TerminalStripEnd}, dead {TerminalDead}",
             "hydraulics p10/p50/p90 over reach length: Q " + P(Q) + " m3/s, S " + P(Gradient) + ", d " + P(Depth) + " m, w " + P(Width) + " m, U " + P(Speed) + " m/s",
             FormattableString.Invariant($"class share by length: calm {ClassShare.ElementAtOrDefault(0):P1}, swift {ClassShare.ElementAtOrDefault(1):P1}, fierce {ClassShare.ElementAtOrDefault(2):P1}, torrent {ClassShare.ElementAtOrDefault(3):P1}"),
+            FormattableString.Invariant($"lake channels: {LakeChannelCells} marked cells ({LakeLeads} outlet leads), {InLakeStems} stems start inside a lake, in-lake length {InLakeKm:F1} km, cut over 40 m on {InLakeCutOver40Share:P2} of it (largest {InLakeCutMax:F1} m)"),
             FormattableString.Invariant($"spans {Spans}, landings {SpanLandings} ({SpanLandingKm:F0} km), spans inside an exclusion zone {SpanExcluded} ({ExclusionZones} zones), span step {SpanSeconds:F2} s"),
             FormattableString.Invariant($"cut depth along paths (ground minus bed): p50 {CutP50:F1} m, p90 {CutP90:F1} m, max {CutMax:F1} m, share of length over 40 m {CutOver40Share:P2}, over 15 m {CutOver15Share:P2}; level filled up to a hold or the receiving level on {FillShareOfLevel:P1} of stations"),
             FormattableString.Invariant($"largest wander shift {MaxWanderMeters:F0} m, meander amplitude cap used {MaxMeanderMeters:F0} m, largest node shift from the eased chain {MaxNodeShiftMeters:F0} m (smoothing {MaxSmoothMeters:F0} m), snapped nodes {SnappedNodes}, barrier guard moved {GuardMovedNodes} nodes (largest {GuardMaxMeters:F0} m); seconds: centrelines {CentrelineSeconds:F2}, ground sampling {SampleSeconds:F2}, levels {LevelSeconds:F2}"),
@@ -566,6 +580,142 @@ public static class RiverGraphBuilder
             channel[c] = kind[c] == DrainageCellKind.Land && visited[c] && lakeId[c] < 0 && down[c] >= 0 && area[c] * cellArea >= threshold - 1e-9 && terminalKind[c] != DrainageCellKind.Barrier;
             if (channel[c]) channelCells++;
         }
+        // T2R-8b items 1 and 2: lake channel cells, the flooded cells on the flow path from each inlet to the lake's exit or pit (and an outlet lead where no inlet reaches the exit).
+        var lakeChannel = new bool[n]; // the cells of the in-lake stems
+        var lakeMarked = new bool[n]; // every marked cell: the in-lake stems and the approach cells before their first deep cell
+        var deepCell = new bool[n]; // marked cells whose lowest sample stands 2 m under the lake level
+        int lakeChannelCells = 0, lakeLeads = 0;
+        if (options.LakeChannels)
+        {
+            float[] lowestSample = f.Lowest.ToArray();
+            DrainageLake[] lakeRecords = f.Lakes.ToArray();
+            var provisionalUp = new int[n];
+            Array.Fill(provisionalUp, -1);
+            for (int c = 0; c < n; c++)
+            {
+                if (!channel[c]) continue;
+                int next = down[c];
+                if (!channel[next]) continue;
+                int m = provisionalUp[next];
+                if (m < 0 || area[c] > area[m] || (area[c] == area[m] && c < m)) provisionalUp[next] = c;
+            }
+            // A flooded cell is marked while its flow stays in the lake; the exit cell is marked only when the flow goes on into a stem head (a channel cell with no river upstream of it), the sea, a Weather Lung or the strip end (a lake that spills
+            // into a cell under the channel threshold ends its drowned channel one cell short, like a pit, so the stem stays a Lake stem and is never Dead).
+            bool Continues(int cell)
+            {
+                int next = down[cell];
+                return (channel[next] && provisionalUp[next] < 0) || kind[next] is DrainageCellKind.Ocean or DrainageCellKind.Lung or DrainageCellKind.StripOutlet;
+            }
+            void MarkFrom(int entry)
+            {
+                int lake = lakeId[entry], cur = entry;
+                while (cur >= 0 && lakeId[cur] == lake && down[cur] >= 0 && !lakeMarked[cur])
+                {
+                    int next = down[cur];
+                    if (lakeId[next] != lake && !Continues(cur)) break;
+                    lakeMarked[cur] = true;
+                    cur = next;
+                }
+            }
+            for (int c = 0; c < n; c++)
+                if (channel[c] && down[c] >= 0 && lakeId[down[c]] >= 0) MarkFrom(down[c]);
+            // Leads: a channel cell h with a flooded neighbour flowing into it and no marked one. Walk up the flooded cells (largest area first) to the first whose lowest sample stands 2 m under the level.
+            Span<int> nbr = stackalloc int[8];
+            var lead = new List<int>();
+            for (int h = 0; h < n; h++)
+            {
+                if (!channel[h]) continue;
+                d.GetNeighbors(h, nbr);
+                int first = -1;
+                bool marked = false;
+                for (int dir = 0; dir < 8; dir++)
+                {
+                    int m = nbr[dir];
+                    if (m < 0 || down[m] != h || lakeId[m] < 0) continue;
+                    if (lakeMarked[m]) { marked = true; break; }
+                    if (first < 0 || area[m] > area[first] || (area[m] == area[first] && m < first)) first = m;
+                }
+                if (marked || first < 0 || provisionalUp[h] >= 0) continue; // only where the channel cell is a stem head: a lake whose outlet cell has a river of its own upstream keeps it (the inlet and outlet counts stay those of the T2R-8 graph)
+                // No lead for a stem that ends Dead: follow h's chain along the main-channel links to its last cell first.
+                int tail = h;
+                while (true)
+                {
+                    int next = down[tail];
+                    if (next >= 0 && channel[next] && provisionalUp[next] == tail) tail = next; else break;
+                }
+                int after = down[tail];
+                if (!channel[after] && lakeId[after] < 0 && kind[after] is not (DrainageCellKind.Ocean or DrainageCellKind.Lung or DrainageCellKind.StripOutlet)) continue;
+                lead.Clear();
+                int cur = first;
+                bool found = false;
+                while (lead.Count < 64)
+                {
+                    lead.Add(cur);
+                    int lake = lakeId[cur];
+                    if (lowestSample[cur] <= Math.Floor(lakeRecords[lake].Level) - 2d) { found = true; break; }
+                    d.GetNeighbors(cur, nbr);
+                    int up = -1;
+                    for (int dir = 0; dir < 8; dir++)
+                    {
+                        int m = nbr[dir];
+                        if (m < 0 || down[m] != cur || lakeId[m] != lake) continue;
+                        if (up < 0 || area[m] > area[up] || (area[m] == area[up] && m < up)) up = m;
+                    }
+                    if (up < 0) break;
+                    cur = up;
+                }
+                if (!found) continue;
+                foreach (int cell in lead) lakeMarked[cell] = true;
+                lakeLeads++;
+            }
+            // A flooded cell is deep when its lowest sample stands 2 m under the lake level (the routing noise floods shallow rim cells whose ground is dry). The in-lake stem starts at the first deep cell of a
+            // chain (items 1 and 3), so every inlet ends and every outlet starts in water the terrain shows; the shallow cells before it are approach cells, plain channel cells of the river that enters.
+            // A chain with no deep cell at all is taken whole.
+            bool Deep(int cell) => lowestSample[cell] <= Math.Floor(lakeRecords[lakeId[cell]].Level) - 2d;
+            for (int c = 0; c < n; c++) deepCell[c] = lakeMarked[c] && Deep(c);
+            if (!options.DeepEntries) Array.Copy(lakeMarked, lakeChannel, n);
+            for (int c = 0; c < n && options.DeepEntries; c++)
+            {
+                if (!lakeMarked[c]) continue;
+                bool anyDeep = false;
+                for (int cur = c; cur >= 0 && lakeMarked[cur] && !anyDeep; cur = down[cur]) anyDeep = Deep(cur);
+                if (!anyDeep) lakeChannel[c] = true;
+            }
+            for (int c = 0; c < n && options.DeepEntries; c++)
+            {
+                if (!lakeMarked[c] || !Deep(c)) continue;
+                for (int cur = c; cur >= 0 && lakeMarked[cur] && !lakeChannel[cur]; cur = down[cur]) lakeChannel[cur] = true;
+            }
+            // Where two chains meet in the shallow zone (a shared approach cell: two marked cells, or a marked cell and a river, flow into it) the shallow cells stay part of the in-lake stems, so the
+            // inlets that meet there stay inlets of the lake (the inlet counts equal the T2R-8 graph's); a run that reaches its deep cell alone is trimmed.
+            if (options.DeepEntries)
+            {
+                Span<int> nbs = stackalloc int[8];
+                var stack = new Stack<int>();
+                for (int c = 0; c < n; c++)
+                {
+                    if (!lakeMarked[c] || lakeChannel[c]) continue;
+                    d.GetNeighbors(c, nbs);
+                    int inflow = 0;
+                    for (int dir = 0; dir < 8; dir++) if (nbs[dir] >= 0 && down[nbs[dir]] == c && (lakeMarked[nbs[dir]] || channel[nbs[dir]])) inflow++;
+                    if (inflow < 2) continue;
+                    for (int cur = c; cur >= 0 && lakeMarked[cur] && !lakeChannel[cur]; cur = down[cur]) lakeChannel[cur] = true;
+                    stack.Push(c);
+                    while (stack.Count > 0)
+                    {
+                        int top = stack.Pop();
+                        d.GetNeighbors(top, nbs);
+                        for (int dir = 0; dir < 8; dir++)
+                        {
+                            int m = nbs[dir];
+                            if (m >= 0 && down[m] == top && lakeMarked[m] && !lakeChannel[m]) { lakeChannel[m] = true; stack.Push(m); }
+                        }
+                    }
+                }
+            }
+            for (int c = 0; c < n; c++)
+                if (lakeMarked[c]) { channel[c] = true; if (lakeChannel[c]) lakeChannelCells++; }
+        }
         var mainUp = new int[n];
         Array.Fill(mainUp, -1);
         for (int c = 0; c < n; c++)
@@ -573,6 +723,7 @@ public static class RiverGraphBuilder
             if (!channel[c]) continue;
             int next = down[c];
             if (!channel[next]) continue;
+            if (lakeChannel[next] && !lakeChannel[c]) continue; // item 3: a river that enters a lake ends on the in-lake stem
             int m = mainUp[next];
             if (m < 0 || area[c] > area[m] || (area[c] == area[m] && c < m)) mainUp[next] = c;
         }
@@ -609,7 +760,16 @@ public static class RiverGraphBuilder
         {
             StemTmp s = tmp[i];
             int last = s.Cells[^1], next = down[last];
-            if (channel[next]) { s.Terminal = RiverTerminal.Confluence; s.ReceiverStem = cellStem[next]; s.TerminalId = s.ReceiverStem; s.ReceiverNodeIndex = cellIndex[next]; }
+            if (channel[next])
+            {
+                s.Terminal = RiverTerminal.Confluence; s.ReceiverStem = cellStem[next]; s.TerminalId = s.ReceiverStem; s.ReceiverNodeIndex = cellIndex[next];
+                // A river that enters an in-lake stem whose entry cell is shallow (the chain was kept whole where chains meet) joins it at the first deep cell, so its end stands in water the terrain shows.
+                if (options.DeepEntries && cellIndex[next] == 0 && lakeChannel[next])
+                {
+                    int[] rc0 = tmp[s.ReceiverStem].Cells;
+                    for (int k = 0; k < rc0.Length; k++) if (deepCell[rc0[k]]) { s.ReceiverNodeIndex = k; break; }
+                }
+            }
             else if (lakeId[next] >= 0) { s.Terminal = RiverTerminal.Lake; s.TerminalId = lakeId[next]; }
             else if (kind[next] == DrainageCellKind.Ocean) s.Terminal = RiverTerminal.Sea;
             else if (kind[next] == DrainageCellKind.Lung) s.Terminal = RiverTerminal.Lung;
@@ -628,7 +788,8 @@ public static class RiverGraphBuilder
         {
             StemTmp s = tmp[i];
             var starts = new List<int> { 0 };
-            for (int k = 1; k < s.Cells.Length; k++) if (reachStartCell[s.Cells[k]]) starts.Add(k);
+            // T2R-8b item 3: a reach starts at the first cell outside the lake of a stem that starts inside one, so the in-lake part has its own hydraulics.
+            for (int k = 1; k < s.Cells.Length; k++) if (reachStartCell[s.Cells[k]] || (lakeChannel[s.Cells[k - 1]] && !lakeChannel[s.Cells[k]])) starts.Add(k);
             reachFirst.Add(starts);
             reachBase[i] = reachList.Count;
             s.ReachOfCell = new int[s.Cells.Length];
@@ -643,6 +804,7 @@ public static class RiverGraphBuilder
                     Span<int> nb = stackalloc int[8];
                     d.GetNeighbors(s.Cells[0], nb);
                     for (int dir = 0; dir < 8; dir++) if (nb[dir] >= 0 && down[nb[dir]] == s.Cells[0] && lakeId[nb[dir]] >= 0) { upstreamLake = lakeId[nb[dir]]; break; }
+                    if (lakeChannel[s.Cells[0]]) upstreamLake = lakeId[s.Cells[0]]; // a stem whose first cell is flooded
                 }
                 reachList.Add(new RiverReach
                 {
@@ -669,7 +831,7 @@ public static class RiverGraphBuilder
         for (int r = 0; r < reaches.Length; r++) wanderAmplitude[r] = RiverHydraulics.WanderAmplitude(meander, reaches[r].S, options.WanderScale);
         double[] jx = new double[n], jy = new double[n];
         for (int c = 0; c < n; c++)
-            if (channel[c])
+            if (channel[c] && lakeId[c] < 0) // item 4: no jitter on a flooded cell's node
             {
                 jx[c] = JitterMeters * RiverHash.Signed(seed, c, 0, 1);
                 jy[c] = JitterMeters * RiverHash.Signed(seed, c, 0, 2);
@@ -731,7 +893,8 @@ public static class RiverGraphBuilder
                 {
                     (double ba, double bc) = baseNode(endCell);
                     unwrapped += netShell.WrapDelta(ba - previousBase);
-                    double ex = hashJitter(seed, endCell, 1), ey = hashJitter(seed, endCell, 2);
+                    bool lakeEnd = options.LakeChannels && lakeId[endCell] >= 0; // item 4: the end node of a stem that ends Terminal Lake is not jittered either
+                    double ex = lakeEnd ? 0d : hashJitter(seed, endCell, 1), ey = lakeEnd ? 0d : hashJitter(seed, endCell, 2);
                     x[cellsN] = unwrapped + ex - jx[s.Cells[0]];
                     y[cellsN] = bc + ey - originAcross;
                 }
@@ -822,7 +985,9 @@ public static class RiverGraphBuilder
             double previous = 0;
             for (int r = 0; r < starts.Count; r++)
             {
-                double start = r == 0 ? 0 : Math.Clamp(cellJunction.TryGetValue(s.Cells[starts[r]], out double j) ? j : previous + 1, previous + 1e-3, length);
+                // A reach that starts where the stem leaves a lake (no tributary there) starts at that cell's node.
+                bool lakeExit = r > 0 && lakeChannel[s.Cells[starts[r] - 1]] && !lakeChannel[s.Cells[starts[r]]];
+                double start = r == 0 ? 0 : Math.Clamp(cellJunction.TryGetValue(s.Cells[starts[r]], out double j) ? j : lakeExit ? s.Curve.S0[starts[r]] : previous + 1, previous + 1e-3, length);
                 reaches[reachBase[i] + r].SStart = (float)start;
                 if (r > 0) reaches[reachBase[i] + r - 1].SEnd = (float)start;
                 previous = start;
@@ -830,6 +995,21 @@ public static class RiverGraphBuilder
             reaches[reachBase[i] + starts.Count - 1].SEnd = (float)length;
         }
         var net = new RiverNetwork(spec.CircumferenceMeters, widthMeters, seed, meander * options.MeanderScale, valley, depthScale, ferocity, aroundDm, acrossDm, stems, reaches);
+        var inLakeEnd = new double[stemCount];
+        double inLakeKm = 0;
+        int inLakeStems = 0;
+        for (int i = 0; i < stemCount; i++)
+        {
+            StemTmp s = tmp[i];
+            if (!lakeChannel[s.Cells[0]]) continue;
+            inLakeStems++;
+            double end = s.Curve.Length;
+            for (int r = 1; r < reachFirst[i].Count; r++)
+                if (!lakeChannel[s.Cells[reachFirst[i][r]]]) { end = net.Reaches[reachBase[i] + r].SStart; break; }
+            inLakeEnd[i] = end;
+            inLakeKm += end / 1000d;
+        }
+        net.InLakeEnd = inLakeEnd;
         // Phases chain through the reaches of a stem so the meander is continuous: needs wavelengths, which need the sections.
         for (int i = 0; i < stemCount; i++)
         {
@@ -849,6 +1029,7 @@ public static class RiverGraphBuilder
             ThresholdKm2 = threshold, ChannelCells = channelCells, Stems = stemCount, Reaches = reaches.Length, Nodes = totalNodes, LengthKm = lengthKm,
             TerminalSea = report0[(int)RiverTerminal.Sea], TerminalLake = report0[(int)RiverTerminal.Lake], TerminalConfluence = report0[(int)RiverTerminal.Confluence],
             TerminalLung = report0[(int)RiverTerminal.Lung], TerminalStripEnd = report0[(int)RiverTerminal.StripEnd], TerminalDead = report0[(int)RiverTerminal.Dead],
+            LakeChannelCells = lakeChannelCells, LakeLeads = lakeLeads, InLakeStems = inLakeStems, InLakeKm = inLakeKm,
             CentrelineSeconds = centrelineSeconds, MaxWanderMeters = maxWander, MaxMeanderMeters = maxMeander, MaxNodeShiftMeters = maxNodeShift, MaxSmoothMeters = maxSmooth, SnappedNodes = snapped, GuardMovedNodes = guardMoved, GuardMaxMeters = guardMax,
         };
         if (options.Levels && options.Source != null)

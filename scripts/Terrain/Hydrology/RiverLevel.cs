@@ -181,6 +181,23 @@ public static class RiverLevel
         }
     }
 
+    /// <summary>
+    /// T2R-8b: the arc length up to which a stem leaving (or running through) lake <paramref name="lake"/> holds its level. A stem that ends inside its lake (its last cell is a flooded cell of it) is
+    /// held to its end; an outlet is held until its centreline, stepped every 10 m, leaves the lake's membership (the outlet point of the lake record). The bake, the graph records and the operator agree on it.
+    /// </summary>
+    internal static double HeldEnd(RiverNetwork net, LakeIndicator indicator, int stem, int lake, bool endsInLake)
+    {
+        double length = net.Curves[stem].Length, s = 0;
+        if (endsInLake) return length;
+        double inLakeEnd = stem < net.InLakeEnd.Length ? net.InLakeEnd[stem] : 0d; // the drowned channel is held along its whole in-lake part: the wander can carry it over a pinch of the membership indicator
+        for (; s < length; s += 10)
+        {
+            net.Centre(stem, s, out double around, out double across, out _, out _);
+            if (s >= inLakeEnd && indicator.P(net.WrapAround(around), across, lake) <= 0) break;
+        }
+        return Math.Min(s, length);
+    }
+
     // ------------------------------------------------------------------ build
 
     private static void MakePoints(RiverNetwork net, int stem, ReadOnlySpan<float> s, Span<DrainagePoint> dst)
@@ -304,6 +321,17 @@ public static class RiverLevel
 
         var lakes = new LakeIndicator(f, grid);
         var lakeLevels = f.Lakes.ToArray().Select(l => Math.Floor(l.Level)).ToArray();
+        // T2R-8b item 5: where each stem's hold ends, from the stems and the indicator alone (the junctions of incoming stems are classified against it before the upstream-first pass).
+        int[] fieldLake = f.LakeId.ToArray();
+        var heldEnd = new double[stemCount];
+        Array.Fill(heldEnd, -1d);
+        for (int i = 0; i < stemCount; i++)
+        {
+            RiverStem st = net.Stems[i];
+            int upLake = net.Reaches[st.ReachStart].UpstreamLake;
+            if (upLake < 0 || st.Terminal == RiverTerminal.Dead) continue;
+            heldEnd[i] = HeldEnd(net, lakes, i, upLake, st.LastCell >= 0 && fieldLake[st.LastCell] == upLake);
+        }
         var profile = new float[stemCount][];
         var running = new float[stemCount][];
         var filled = new bool[stemCount][];
@@ -325,15 +353,23 @@ public static class RiverLevel
             List<(double S, int Stem)>? inc = incoming[i];
             inc?.Sort((x, y) => x.S.CompareTo(y.S));
             int ptr = 0;
+            bool extraHeld = false;
             double plain = double.PositiveInfinity;
             for (int j = 0; j < n; j++)
             {
-                while (inc != null && ptr < inc.Count && inc[ptr].S <= s[i][j]) { m = Math.Min(m, endValue[inc[ptr].Stem]); plain = Math.Min(plain, endValue[inc[ptr].Stem]); ptr++; }
+                while (inc != null && ptr < inc.Count && inc[ptr].S <= s[i][j])
+                {
+                    // T2R-8b: while the stem holds, an incoming stem's end value is raised to the hold, or the outlet would drop by the depth of the inlet's last station as soon as the hold ends.
+                    double v = holding ? Math.Max(endValue[inc[ptr].Stem], hold) : endValue[inc[ptr].Stem];
+                    m = Math.Min(m, v); plain = Math.Min(plain, v); ptr++;
+                }
                 if (holding)
                 {
-                    net.Centre(i, s[i][j], out double around, out double across, out _, out _);
-                    // T2R-8: the knots sit BandUpper under the profile, so a held level of whole metres would display one metre low; stand BandUpper above it and the knot lands on the lake level.
-                    if (lakes.P(net.WrapAround(around), across, upLake) > 0) { w[j] = (float)(hold + BandUpper); rm[j] = float.NaN; fill[j] = true; heldStations[i] = j + 1; continue; }
+                    // T2R-8b: held at the stations up to the stem's held end (HeldEnd: the same 10 m stepping as the lake records, so the level, the records and the operator agree). T2R-8: the knots sit BandUpper under the profile, so a held level of whole metres would display one metre low; stand BandUpper above it and the knot lands on the lake level.
+                    bool inHeld = s[i][j] < heldEnd[i] + ChuteMeters || heldEnd[i] >= net.Curves[i].Length - 1e-6;
+                    // The stations up to a chute length past the held end, and the first one after, are held too: the knots after the last held station slope away from the lake level, which would display a metre low under the 10 m chute before the held end.
+                    if (!inHeld && j > 0 && heldStations[i] == j && !extraHeld) { inHeld = true; extraHeld = true; }
+                    if (inHeld) { w[j] = (float)(hold + BandUpper); rm[j] = float.NaN; fill[j] = true; heldStations[i] = j + 1; continue; }
                     holding = false;
                 }
                 double ground = g[i][j] - RiverHydraulics.LevelIncision;
@@ -343,6 +379,12 @@ public static class RiverLevel
                 w[j] = (float)m;
             }
             double recvLevel = st.Terminal switch { RiverTerminal.Sea => 0d, RiverTerminal.Lake => lakeLevels[st.TerminalId], _ => double.NaN };
+            if (st.Terminal == RiverTerminal.Confluence)
+            {
+                // A confluence in the receiver's held part joins the lake's water: its level is the lake level there, like a Terminal Lake stem.
+                int recv = st.TerminalId, recvLake = net.Reaches[net.Stems[recv].ReachStart].UpstreamLake;
+                if (recvLake >= 0 && heldEnd[recv] >= 0 && st.JunctionS <= heldEnd[recv] + 1e-6) recvLevel = lakeLevels[recvLake];
+            }
             if (!double.IsNaN(recvLevel))
                 for (int j = 0; j < n; j++) if (w[j] < recvLevel) { w[j] = (float)recvLevel; fill[j] = true; }
             profile[i] = w; running[i] = rm; filled[i] = fill;
@@ -370,14 +412,15 @@ public static class RiverLevel
         // Cut depth along paths: centreline ground minus the bed (displayed level minus depth), weighted by station spacing; histogram of 0.1 m bins.
         const int bins = 4000;
         var hist = new double[bins + 1];
-        double total = 0, over40 = 0, over15 = 0, maxCut = 0, fillStations = 0;
+        double total = 0, over40 = 0, over15 = 0, maxCut = 0, fillStations = 0, lakeTotal = 0, lakeOver40 = 0, lakeMax = 0;
         int stations = 0;
         object gate = new();
         Parallel.For(0, stemCount, new ParallelOptions { MaxDegreeOfParallelism = workers }, i =>
         {
             var local = new double[bins + 1];
-            double lt = 0, lo = 0, l15 = 0, lm = double.NegativeInfinity, lf = 0;
+            double lt = 0, lo = 0, l15 = 0, lm = double.NegativeInfinity, lf = 0, kt = 0, ko = 0, km = 0;
             int ln = s[i].Length;
+            double inLake = i < net.InLakeEnd.Length ? net.InLakeEnd[i] : 0d;
             for (int j = 0; j < ln; j++)
             {
                 double span = 0.5 * ((j + 1 < ln ? s[i][j + 1] : s[i][j]) - (j > 0 ? s[i][j - 1] : s[i][j]));
@@ -385,6 +428,8 @@ public static class RiverLevel
                 int reach = net.ReachAt(i, s[i][j]);
                 double bed = AtStem(net, i, s[i][j]) - net.Sections[reach].Depth;
                 double cut = gc[i][j] - bed;
+                // T2R-8b item 8: the in-lake parts of stems are counted apart.
+                if (inLake > 0d && s[i][j] <= inLake) { if (filled[i][j]) lf++; kt += span; if (cut > 40) ko += span; km = Math.Max(km, cut); continue; }
                 local[(int)Math.Clamp(Math.Round(cut * 10), 0, bins)] += span;
                 lt += span; if (cut > 40) lo += span; if (cut > 15) l15 += span; lm = Math.Max(lm, cut);
                 if (filled[i][j]) lf++;
@@ -393,6 +438,7 @@ public static class RiverLevel
             {
                 for (int k = 0; k <= bins; k++) hist[k] += local[k];
                 total += lt; over40 += lo; over15 += l15; maxCut = Math.Max(maxCut, lm); fillStations += lf; stations += ln;
+                lakeTotal += kt; lakeOver40 += ko; lakeMax = Math.Max(lakeMax, km);
             }
         });
         double Pct(double q)
@@ -408,6 +454,7 @@ public static class RiverLevel
         {
             Knots = net.Knots.Count, Stations = stations, CutP50 = Pct(0.5), CutP90 = Pct(0.9), CutMax = maxCut,
             CutOver40Share = total > 0 ? over40 / total : 0, CutOver15Share = total > 0 ? over15 / total : 0, FillShareOfLevel = stations > 0 ? fillStations / stations : 0,
+            InLakeCutOver40Share = lakeTotal > 0 ? lakeOver40 / lakeTotal : 0, InLakeCutMax = lakeMax,
             SampleSeconds = sampleSeconds, LevelSeconds = levelSeconds,
         };
     }

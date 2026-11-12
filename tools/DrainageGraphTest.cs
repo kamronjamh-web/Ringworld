@@ -634,7 +634,7 @@ public partial class DrainageGraphTest : RefCounted
         return violations;
     }
 
-    private void GraphChecks(string label, RiverNetwork net, RiverNetwork again, DrainageField field, DrainageGrid grid, DrainageGridSpec spec, double thresholdKm2)
+    private void GraphChecks(string label, RiverNetwork net, RiverNetwork again, DrainageField field, DrainageGrid grid, DrainageGridSpec spec, double thresholdKm2, RiverBuildOptions options)
     {
         RiverGraph graph = RiverGraph.Build(net, field, grid, 0x1234UL, 0);
         RiverGraph graph2 = RiverGraph.Build(again, field, grid, 0x1234UL, 1);
@@ -729,7 +729,7 @@ public partial class DrainageGraphTest : RefCounted
         for (int i = 0; i < net.Stems.Length; i++)
         {
             int up = net.Reaches[net.Stems[i].ReachStart].UpstreamLake;
-            if (up >= 0 && net.Stems[i].Terminal != RiverTerminal.Dead) outletCount[up]++;
+            if (up >= 0 && net.Stems[i].Terminal != RiverTerminal.Dead && field.LakeId[net.Stems[i].LastCell] != up) outletCount[up]++; // T2R-8b item 6: a stem that ends inside its lake is an in-lake channel, not the outlet
         }
         int noOutlet = 0, multiOutlet = 0, outletMismatch = 0, inletBad = 0, inlets = 0, cellBad = 0;
         long lakeCells = 0;
@@ -750,7 +750,10 @@ public partial class DrainageGraphTest : RefCounted
                 for (int dy = -1; dy <= 1 && !onOrNext; dy++)
                     for (int dx = -1; dx <= 1 && !onOrNext; dx++)
                         onOrNext = graph.LakeAt((col + dx + graph.RingColumns) % graph.RingColumns, row + dy) == l;
-                if (!onOrNext || net.Stems[inlet.Stem].Terminal != RiverTerminal.Lake || net.Stems[inlet.Stem].TerminalId != l) inletBad++;
+                // T2R-8b: a Terminal Lake stem of this lake, or a confluence stem that joins the held part of a stem that starts in it.
+                RiverStem ist = net.Stems[inlet.Stem];
+                bool ends = ist.Terminal == RiverTerminal.Lake ? ist.TerminalId == l : ist.Terminal == RiverTerminal.Confluence && net.Reaches[net.Stems[ist.TerminalId].ReachStart].UpstreamLake == l;
+                if (!onOrNext || !ends) inletBad++;
             }
         }
         // A lake without an outlet river spills into another lake, an outlet (sea, Weather Lung, strip end), a cell below the channel threshold, or (reported, not asserted) the middle of an existing channel.
@@ -777,6 +780,7 @@ public partial class DrainageGraphTest : RefCounted
         Check(multiOutlet == 0 && outletMismatch == 0, $"{label}: {multiOutlet} lakes have several outlets, {outletMismatch} outlet records differ from the reaches");
         Check(inletBad == 0, $"{label}: {inletBad} of {inlets} inlets are not on or next to their lake's cells");
         Check(cellBad == 0, $"{label}: {cellBad} lake records differ from the conditioned field (cell count or level)");
+        LakeChannelChecks(label, net, graph, graph.Lakes, field, grid, options);
         int laBad = 0;
         var rng2 = new Random(99);
         for (int i = 0; i < 20_000; i++)
@@ -820,6 +824,89 @@ public partial class DrainageGraphTest : RefCounted
         Console.WriteLine($"DRAINAGE_GRAPH_DETAIL {label}: file {bytes.Length} bytes, resident {graph.ResidentBytes} bytes, hash {graph.IdentityHash:X16}");
     }
 
+    /// <summary>
+    /// T2R-8b: a stem that starts in a lake is a contiguous flow chain that ends at the lake's exit cell, its pit, or (a branch) joins another in-lake stem or leaves through the exit cell; the
+    /// head cell and the last cell are the stem's own. A stem that ends inside the lake ends on its pit or on an exit cell that does not continue into a channel (never mid-lake).
+    /// </summary>
+    private static bool LakeChainOk(RiverStem st, ReadOnlySpan<int> down, ReadOnlySpan<int> lakeId, int lastCell)
+    {
+        int lake = lakeId[st.HeadCell], cur = st.HeadCell;
+        for (int k = 0; k < st.NodeCount - 2; k++) { cur = down[cur]; if (cur < 0) return false; }
+        if (cur != lastCell) return false;
+        if (lakeId[lastCell] != lake) return true; // left the lake: the chain from the head ran through the exit cell
+        int next = down[lastCell];
+        if (st.Terminal == RiverTerminal.Lake) return next >= 0 && lakeId[next] >= 0 && (down[next] < 0 || lakeId[down[next]] != lake);
+        if (st.Terminal is RiverTerminal.Sea or RiverTerminal.Lung or RiverTerminal.StripEnd) return next >= 0 && lakeId[next] != lake; // the exit cell flows straight into the sea, a Weather Lung or the strip end
+        return st.Terminal == RiverTerminal.Confluence && next >= 0 && (lakeId[next] == lake || lakeId[next] < 0);
+    }
+
+    private void LakeChannelChecks(string label, RiverNetwork net, RiverGraph graph, RiverLake[] lakes, DrainageField field, DrainageGrid grid, RiverBuildOptions options)
+    {
+        ReadOnlySpan<int> down = field.Down, lakeId = field.LakeId;
+        int inLake = 0, chainBad = 0, control = -1;
+        for (int i = 0; i < net.Stems.Length; i++)
+        {
+            RiverStem st = net.Stems[i];
+            if (st.HeadCell < 0 || lakeId[st.HeadCell] < 0) continue;
+            inLake++;
+            if (!LakeChainOk(st, down, lakeId, st.LastCell)) { chainBad++; if (chainBad <= 3) Console.WriteLine($"DRAINAGE_GRAPH_DETAIL {label}: bad chain: stem {i} {st.Terminal} {st.TerminalId}, nodes {st.NodeCount}, head lake {lakeId[st.HeadCell]}, last cell lake {lakeId[st.LastCell]}, down of last {down[st.LastCell]} lake {(down[st.LastCell] >= 0 ? lakeId[down[st.LastCell]] : -9)}, upstream lake {net.Reaches[st.ReachStart].UpstreamLake}"); }
+            if (control < 0 && st.Terminal == RiverTerminal.Lake) control = i;
+        }
+        Check(chainBad == 0, $"{label}: {chainBad} of {inLake} in-lake stems do not run from their entry to the lake's exit cell or pit");
+        if (control >= 0) Check(!LakeChainOk(net.Stems[control], down, lakeId, down[net.Stems[control].LastCell] >= 0 ? down[net.Stems[control].LastCell] : net.Stems[control].LastCell + 1), $"{label}: negative control: a chain with a wrong last cell was accepted");
+        // The outlet and inlet rules of item 6, written out again from the stems and the field.
+        int outletBad = 0, inletBad = 0;
+        var expectedInlets = new List<int>[lakes.Length];
+        var expectedOutlet = new int[lakes.Length];
+        Array.Fill(expectedOutlet, -1);
+        for (int i = 0; i < net.Stems.Length; i++)
+        {
+            RiverStem st = net.Stems[i];
+            int up = net.Reaches[st.ReachStart].UpstreamLake;
+            if (up >= 0 && st.Terminal != RiverTerminal.Dead && expectedOutlet[up] < 0 && lakeId[st.LastCell] != up) expectedOutlet[up] = i;
+        }
+        for (int i = 0; i < net.Stems.Length; i++)
+        {
+            RiverStem st = net.Stems[i];
+            int up = net.Reaches[st.ReachStart].UpstreamLake, into = -1;
+            if (st.Terminal == RiverTerminal.Lake && up != st.TerminalId) into = st.TerminalId;
+            else if (st.Terminal == RiverTerminal.Confluence)
+            {
+                int r = st.TerminalId, rl = net.Reaches[net.Stems[r].ReachStart].UpstreamLake;
+                if (rl >= 0 && rl != up && net.Stems[r].Terminal != RiverTerminal.Dead && st.JunctionS <= (expectedOutlet[rl] == r ? lakes[rl].OutletS : net.Curves[r].Length) + 1e-6) into = rl;
+            }
+            if (into >= 0) (expectedInlets[into] ??= new List<int>()).Add(i);
+        }
+        for (int l = 0; l < lakes.Length; l++)
+        {
+            if (lakes[l].OutletStem != expectedOutlet[l]) outletBad++;
+            List<int> expected = expectedInlets[l] ?? new List<int>();
+            bool same = expected.Count == lakes[l].InletCount;
+            for (int k = 0; same && k < expected.Count; k++) same = graph.Inlets[lakes[l].InletStart + k].Stem == expected[k];
+            if (!same) inletBad++;
+        }
+        Check(outletBad == 0 && inletBad == 0, $"{label}: {outletBad} lakes with another outlet and {inletBad} lakes with other inlets than the item 6 rules give");
+        {
+            // Negative control: an outlet record that names another stem must differ from the rule.
+            int victimLake = Array.FindIndex(lakes, x => x.OutletStem >= 0);
+            if (victimLake >= 0) Check(lakes[victimLake].OutletStem == expectedOutlet[victimLake] && lakes[victimLake].OutletStem + 1 != expectedOutlet[victimLake], $"{label}: negative control: a wrong outlet record was not flagged");
+        }
+        // The inlet and outlet counts per lake equal those of the graph built without lake channels.
+        RiverNetwork netOff = RiverGraphBuilder.Build(field, grid, DrainageGridTest.Recipe(), new RiverBuildOptions { Source = options.Source, Workers = options.Workers, LakeChannels = false }, CancellationToken.None, out _);
+        RiverGraph graphOff = RiverGraph.Build(netOff, field, grid, 0x1234UL, 0);
+        int inletDiff = 0, outletDiff = 0;
+        for (int l = 0; l < lakes.Length; l++)
+        {
+            if (lakes[l].InletCount != graphOff.Lakes[l].InletCount) { inletDiff++; Console.WriteLine($"DRAINAGE_GRAPH_DETAIL {label}: lake {l} (cells {lakes[l].CellCount}, level {lakes[l].Level}): inlets {lakes[l].InletCount} vs {graphOff.Lakes[l].InletCount}, outlet {lakes[l].OutletStem} vs {graphOff.Lakes[l].OutletStem}"); }
+            if ((lakes[l].OutletStem >= 0) != (graphOff.Lakes[l].OutletStem >= 0)) { outletDiff++; Console.WriteLine($"DRAINAGE_GRAPH_DETAIL {label}: lake {l} outlet {lakes[l].OutletStem} vs {graphOff.Lakes[l].OutletStem}"); }
+        }
+        Console.WriteLine($"DRAINAGE_GRAPH_DETAIL {label}: in-lake stems {inLake}; lakes with another inlet count than without lake channels {inletDiff}, with another outlet presence {outletDiff}; inlets {graph.Inlets.Length} vs {graphOff.Inlets.Length}");
+        Check(inletDiff == 0 && outletDiff == 0, $"{label}: the inlet and outlet counts differ from the graph without lake channels on {inletDiff} and {outletDiff} lakes");
+        // Negative control: a count changed by one must be flagged.
+        int victim = Array.FindIndex(graphOff.Lakes, x => x.InletCount > 0);
+        if (victim >= 0) Check(lakes[victim].InletCount - 1 != graphOff.Lakes[victim].InletCount, $"{label}: negative control: a changed inlet count was not flagged");
+    }
+
     private static string DrainageFixturePath =>ProjectSettings.GlobalizePath("res://tools/fixtures/hydrology/d4_baseline/graph.json.gz");
 
     private void Rivers()
@@ -837,7 +924,7 @@ public partial class DrainageGraphTest : RefCounted
             RiverNetwork net = RiverGraphBuilder.Build(field, grid, recipe, options, CancellationToken.None, out RiverBuildReport report);
             RiverNetwork again = RiverGraphBuilder.Build(field, grid, recipe, options, CancellationToken.None, out _);
             Check(net.NodeAroundDm.AsSpan().SequenceEqual(again.NodeAroundDm) && net.Knots.Count == again.Knots.Count, $"{label}: two river builds differ");
-            GraphChecks(label, net, again, field, grid, spec, report.ThresholdKm2);
+            GraphChecks(label, net, again, field, grid, spec, report.ThresholdKm2, options);
             // Workers: a bake and a river build with one worker give the same graph identity hash as the default worker count.
             {
                 DrainageField fieldOne = DrainageBake.Bake(grid, recipe, 1, null, CancellationToken.None);
