@@ -276,10 +276,19 @@ public sealed class RingLodSurfaceEditSnapshot
     public void GetPresentationTerrainSampleAndHeight(
         RingTerrainSampler sampler, long globalAroundVoxel, int globalAcrossVoxel,
         out TerrainSample sample, out float presentationHeight)
+        => GetPresentationTerrainSampleAndHeight(sampler, globalAroundVoxel, globalAcrossVoxel, 0d, out sample, out presentationHeight);
+
+    /// <summary>
+    /// Footprint overload (S9): <paramref name="footprintMeters"/> is the sample spacing the caller stands for, 0 for a point. An edited column falls back to the point calls,
+    /// since an edit is exact at the vertex.
+    /// </summary>
+    public void GetPresentationTerrainSampleAndHeight(
+        RingTerrainSampler sampler, long globalAroundVoxel, int globalAcrossVoxel, double footprintMeters,
+        out TerrainSample sample, out float presentationHeight)
     {
         if (sampler.UsesRuntimeSurfaceGeneration && !PresentationFootprintTouchesEdit(sampler, globalAroundVoxel, globalAcrossVoxel))
         {
-            sampler.GetRuntimeTerrainSampleAndPresentationHeight(globalAroundVoxel, globalAcrossVoxel, out sample, out presentationHeight);
+            sampler.GetRuntimeTerrainSampleAndPresentationHeight(globalAroundVoxel, globalAcrossVoxel, footprintMeters, out sample, out presentationHeight);
             return;
         }
         sample = GetPresentationTerrainSample(sampler, globalAroundVoxel, globalAcrossVoxel);
@@ -293,13 +302,19 @@ public sealed class RingLodSurfaceEditSnapshot
     public void GetPresentationHeightOnlyTerrainSampleAndHeight(
         RingTerrainSampler sampler, long globalAroundVoxel, int globalAcrossVoxel,
         out TerrainSample sample, out float presentationHeight)
+        => GetPresentationHeightOnlyTerrainSampleAndHeight(sampler, globalAroundVoxel, globalAcrossVoxel, 0d, out sample, out presentationHeight);
+
+    /// <summary>Footprint twin of the height-only variant (S9).</summary>
+    public void GetPresentationHeightOnlyTerrainSampleAndHeight(
+        RingTerrainSampler sampler, long globalAroundVoxel, int globalAcrossVoxel, double footprintMeters,
+        out TerrainSample sample, out float presentationHeight)
     {
         if (sampler.UsesRuntimeSurfaceGeneration && !PresentationFootprintTouchesEdit(sampler, globalAroundVoxel, globalAcrossVoxel))
         {
-            sampler.GetRuntimeHeightOnlyTerrainSampleAndPresentationHeight(globalAroundVoxel, globalAcrossVoxel, out sample, out presentationHeight);
+            sampler.GetRuntimeHeightOnlyTerrainSampleAndPresentationHeight(globalAroundVoxel, globalAcrossVoxel, footprintMeters, out sample, out presentationHeight);
             return;
         }
-        GetPresentationTerrainSampleAndHeight(sampler, globalAroundVoxel, globalAcrossVoxel, out sample, out presentationHeight);
+        GetPresentationTerrainSampleAndHeight(sampler, globalAroundVoxel, globalAcrossVoxel, footprintMeters, out sample, out presentationHeight);
     }
 
     private bool HasEditAt(long around, int across) =>

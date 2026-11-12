@@ -102,7 +102,7 @@ public partial class ProxyGpuSectorParityTest : Node
             var coordinate = new RingTerrainSectorCoordinate(around, across);
             long around0 = around * size;
             bool site = sampler.IntersectsSiteInfluence(around0 - 4L * spacing, around0 + size + 4L * spacing, (double)across * size - 4.0 * spacing, (double)across * size + size + 4.0 * spacing);
-            if (!RingTerrainProxySector.GpuSectorRoutable(coordinate, size, spacing, ringWidth, false, site, false)) continue;
+            if (!RingTerrainProxySector.GpuSectorRoutable(coordinate, size, spacing, ringWidth, false, site, false, false)) continue;
             var geometry = new RingLodGeometrySnapshot(new Transform3D(gridBasis, new Vector3(3, 4, 5)), new Vector3(1, 2, 3), new Vector3(11, 12, 13),
                 CertifiedRingScale.EffectiveRadiusMeters, 17.0, 120.5, sampler.AroundRingVoxelLength,
                 CertifiedRingScale.TerrainFloorMeters, CertifiedRingScale.StructuralWallTopMeters,

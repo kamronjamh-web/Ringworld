@@ -204,10 +204,22 @@ public sealed partial class RingTerrainSampler
         int globalAcrossVoxel,
         out TerrainSample sample,
         out float presentationHeight)
+        => GetRuntimeTerrainSampleAndPresentationHeight(globalAroundVoxel, globalAcrossVoxel, 0d, out sample, out presentationHeight);
+
+    /// <summary>
+    /// S9 footprint overload: <paramref name="footprintMeters"/> is the sample spacing the caller stands for (0 = a point, the old signature; +infinity = the far views). For
+    /// footprint above 0 the four lattice corners of the presentation height call the model with that footprint and the per-worker lattice memo is not used.
+    /// </summary>
+    internal void GetRuntimeTerrainSampleAndPresentationHeight(
+        long globalAroundVoxel,
+        int globalAcrossVoxel,
+        double footprintMeters,
+        out TerrainSample sample,
+        out float presentationHeight)
     {
         lock (_noiseLock)
         {
-            sample = GetRuntimeTerrainSampleLocked(globalAroundVoxel, globalAcrossVoxel, out presentationHeight);
+            sample = GetRuntimeTerrainSampleLocked(globalAroundVoxel, globalAcrossVoxel, footprintMeters, out presentationHeight);
         }
     }
 
@@ -221,12 +233,21 @@ public sealed partial class RingTerrainSampler
         int globalAcrossVoxel,
         out TerrainSample sample,
         out float presentationHeight)
+        => GetRuntimeHeightOnlyTerrainSampleAndPresentationHeight(globalAroundVoxel, globalAcrossVoxel, 0d, out sample, out presentationHeight);
+
+    /// <summary>Footprint twin of the height-only sample (S9); the old signature means footprint 0.</summary>
+    internal void GetRuntimeHeightOnlyTerrainSampleAndPresentationHeight(
+        long globalAroundVoxel,
+        int globalAcrossVoxel,
+        double footprintMeters,
+        out TerrainSample sample,
+        out float presentationHeight)
     {
         lock (_noiseLock)
         {
-            TerrainGenerationHeightModel.Diagnostics diagnostics = _runtimeSurfaceModel!.SampleDiagnostics(globalAroundVoxel, globalAcrossVoxel);
+            TerrainGenerationHeightModel.Diagnostics diagnostics = _runtimeSurfaceModel!.SampleDiagnostics(globalAroundVoxel, globalAcrossVoxel, footprintMeters);
             RingProxyBuildCounters.AddModelEvaluations(1);
-            presentationHeight = ResolveRuntimePresentationHeightLocked(globalAroundVoxel, globalAcrossVoxel, diagnostics);
+            presentationHeight = ResolveRuntimePresentationHeightLocked(globalAroundVoxel, globalAcrossVoxel, footprintMeters, diagnostics);
             int terrainHeight = Mathf.FloorToInt(presentationHeight);
             (SurfaceWaterKind water, int waterSurface, float exactLevel, bool hasExactLevel) = ClassifyRuntimeWater(diagnostics, presentationHeight, terrainHeight);
             sample = new TerrainSample(
@@ -247,11 +268,12 @@ public sealed partial class RingTerrainSampler
     }
 
     private TerrainSample GetRuntimeTerrainSampleLocked(long globalAroundVoxel, int globalAcrossVoxel)
-        => GetRuntimeTerrainSampleLocked(globalAroundVoxel, globalAcrossVoxel, out _);
+        => GetRuntimeTerrainSampleLocked(globalAroundVoxel, globalAcrossVoxel, 0d, out _);
 
     private float ResolveRuntimePresentationHeightLocked(
         long globalAroundVoxel,
         int globalAcrossVoxel,
+        double footprintMeters,
         in TerrainGenerationHeightModel.Diagnostics diagnostics)
     {
         // Presentation sampling wraps before calling the model. Reuse is exact
@@ -263,15 +285,15 @@ public sealed partial class RingTerrainSampler
             && globalAcrossVoxel >= 0
             && globalAcrossVoxel <= _ringAcrossWidthMeters - 2
             ? (float)diagnostics.Height
-            : GetRuntimePresentationSurfaceHeightLocked(globalAroundVoxel, globalAcrossVoxel);
+            : GetRuntimePresentationSurfaceHeightLocked((double)globalAroundVoxel, globalAcrossVoxel, footprintMeters);
     }
 
-    private TerrainSample GetRuntimeTerrainSampleLocked(long globalAroundVoxel, int globalAcrossVoxel, out float presentationHeight)
+    private TerrainSample GetRuntimeTerrainSampleLocked(long globalAroundVoxel, int globalAcrossVoxel, double footprintMeters, out float presentationHeight)
     {
         TerrainGenerationHeightModel model = _runtimeSurfaceModel!;
-        TerrainGenerationHeightModel.Diagnostics diagnostics = model.SampleDiagnostics(globalAroundVoxel, globalAcrossVoxel);
+        TerrainGenerationHeightModel.Diagnostics diagnostics = model.SampleDiagnostics(globalAroundVoxel, globalAcrossVoxel, footprintMeters);
         RingProxyBuildCounters.AddModelEvaluations(1);
-        presentationHeight = ResolveRuntimePresentationHeightLocked(globalAroundVoxel, globalAcrossVoxel, diagnostics);
+        presentationHeight = ResolveRuntimePresentationHeightLocked(globalAroundVoxel, globalAcrossVoxel, footprintMeters, diagnostics);
         return CreateRuntimeTerrainSampleLocked(globalAroundVoxel, globalAcrossVoxel, diagnostics, presentationHeight);
     }
 
@@ -280,7 +302,7 @@ public sealed partial class RingTerrainSampler
         return GetRuntimePresentationSurfaceHeightLocked((double)globalAroundVoxel, globalAcrossVoxel);
     }
 
-    private float GetRuntimePresentationSurfaceHeightLocked(double globalAroundVoxel, double globalAcrossVoxel)
+    private float GetRuntimePresentationSurfaceHeightLocked(double globalAroundVoxel, double globalAcrossVoxel, double footprintMeters = 0d)
     {
         const int spacing = 2;
         double wrappedAround = globalAroundVoxel % _aroundRingVoxelLength;
@@ -301,7 +323,7 @@ public sealed partial class RingTerrainSampler
         long around1 = RingCoordMath.WrapAround((aroundIndex + 1L) * spacing, _aroundRingVoxelLength);
         int across0 = acrossIndex * spacing;
         int across1 = Math.Min(across0 + spacing, _ringAcrossWidthMeters - spacing);
-        if (_presentationLatticeCacheEnabled)
+        if (_presentationLatticeCacheEnabled && !(footprintMeters > 0d))
         {
             // Opt-in worker copies: same vertices, same (float) cast, memoised per 2 m lattice vertex.
             float c00 = GetLatticeVertexLocked(around0, across0);
@@ -312,14 +334,15 @@ public sealed partial class RingTerrainSampler
             return RingSurfaceLattice.TriangleInterpolate(c00, c10, c01, c11, tx, tz);
         }
         TerrainGenerationHeightModel model = _runtimeSurfaceModel!;
-        float h00 = (float)model.CalculateHeight(around0, across0);
+        // S9: footprint 0 takes the two-argument form (the old path, bit for bit); above 0 the four corners are evaluated at that footprint.
+        float h00 = (float)(footprintMeters > 0d ? model.CalculateHeight(around0, across0, footprintMeters) : model.CalculateHeight(around0, across0));
         RingProxyBuildCounters.AddModelEvaluations(tx == 0.0 && tz == 0.0 ? 1 : 4);
         // Region generation and heightfield baselines query exact vertices.
         // Avoid three redundant noise evaluations for that common path.
         if (tx == 0.0 && tz == 0.0) return h00;
-        float h10 = (float)model.CalculateHeight(around1, across0);
-        float h01 = (float)model.CalculateHeight(around0, across1);
-        float h11 = (float)model.CalculateHeight(around1, across1);
+        float h10 = (float)(footprintMeters > 0d ? model.CalculateHeight(around1, across0, footprintMeters) : model.CalculateHeight(around1, across0));
+        float h01 = (float)(footprintMeters > 0d ? model.CalculateHeight(around0, across1, footprintMeters) : model.CalculateHeight(around0, across1));
+        float h11 = (float)(footprintMeters > 0d ? model.CalculateHeight(around1, across1, footprintMeters) : model.CalculateHeight(around1, across1));
         return RingSurfaceLattice.TriangleInterpolate(h00, h10, h01, h11, tx, tz);
     }
 

@@ -191,6 +191,24 @@ public sealed class RiverSpatialIndex
     }
     public bool IsNear(double around, double across) => Get(_near, CellIndex(ColumnOf(around), RowOf(across)));
 
+    /// <summary>
+    /// True when any 1 km cell overlapping the rectangle [aroundMin, aroundMax] x [acrossMin, acrossMax] has Near set (S10): the conservative test behind the proxy CPU routing.
+    /// Around wraps the ring (a range of a full circumference or more covers every column); across clamps to the first and last row.
+    /// </summary>
+    public bool AnyNear(long aroundMin, long aroundMax, double acrossMin, double acrossMax)
+    {
+        double start = aroundMin % _circumference;
+        if (start < 0) start += _circumference;
+        long c0 = (long)(start / _aroundStep);
+        long c1 = (long)((start + Math.Max(0L, aroundMax - aroundMin)) / _aroundStep);
+        c1 = Math.Min(c1, c0 + _ringColumns - 1);
+        int r0 = RowOf(acrossMin), r1 = RowOf(acrossMax);
+        for (int row = r0; row <= r1; row++)
+            for (long c = c0; c <= c1; c++)
+                if (Get(_near, CellIndex((int)(c % _ringColumns), row))) return true;
+        return false;
+    }
+
     /// <summary>Piece ids (global node indices) listed in the bucket of the point: a superset of every piece within <see cref="ReachRadiusMeters"/> of it.</summary>
     public ReadOnlySpan<int> PiecesNear(double around, double across)
     {

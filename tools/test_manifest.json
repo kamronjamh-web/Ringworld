@@ -4884,6 +4884,20 @@
       "timeout_s": 600,
       "user_args": "--generation=1 --review-features=water.rivers"
     },
+    "inland_water_render_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "water",
+        "hydrology",
+        "atmosphere-haze"
+      ],
+      "marker": "INLAND_WATER_RENDER",
+      "expected_s": 90,
+      "timeout_s": 600,
+      "user_args": "--generation=1 --review-features=water.rivers"
+    },
     "river_graph_cache_test": {
       "kind": "test",
       "mode": "headless",

@@ -61,6 +61,13 @@ public sealed partial class RingTerrainSampler
     }
 
     /// <summary>
+    /// T2R-11 (S10): true when the (wrapped) rectangle may touch a river, lake or their reach: any 1 km cell overlapping it has Near set in the river index, which already holds the
+    /// 650 m reach radius and the lake ring, so no segment work is needed. False without a graph. Such sectors build on the CPU model, which owns the river operator.
+    /// </summary>
+    internal bool IntersectsRiverInfluence(long aroundMin, long aroundMax, double acrossMin, double acrossMax)
+        => RuntimeRiverGraph?.Index.AnyNear(aroundMin, aroundMax, acrossMin, acrossMax) ?? false;
+
+    /// <summary>
     /// True when the (wrapped) rectangle [aroundMin, aroundMax] x [acrossMin, acrossMax] may touch an emitter site, Wall Engine or the
     /// Weather Lung influence region. Conservative: discs and the Weather Lung bound are tested as their bounding boxes.
     /// Such sectors stay on the CPU model, which owns the site operators (docs/gpu-offload-plan.md 4.1).

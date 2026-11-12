@@ -73,13 +73,25 @@ public partial class RingTerrainProxySector
     /// (structural walls, clamped rows) and sectors the GPU already declined as coastal stay on the CPU (docs/gpu-offload-plan.md 4.1).
     /// </summary>
     internal static bool GpuSectorRoutable(RingTerrainSectorCoordinate coordinate, int size, int spacing, int ringWidth,
-        bool touchesEdits, bool touchesSite, bool declinedByGpu)
+        bool touchesEdits, bool touchesSite, bool touchesRiver, bool declinedByGpu)
     {
-        if (touchesEdits || touchesSite || declinedByGpu) return false;
+        if (touchesEdits || touchesSite || touchesRiver || declinedByGpu) return false;
         long acrossStart = (long)coordinate.AcrossSector * size;
         long acrossEnd = acrossStart + size;
         // Window halo, parent samples and the 16 m biome centres all stay two lattice steps inside the last presentation row.
         return acrossStart - 2L * spacing >= 0 && acrossEnd + 2L * spacing <= ringWidth - 2L - 8L;
+    }
+
+    /// <summary>
+    /// S10: whether a river or lake may reach the sector's build: its rectangle grown by the union of the consumer envelopes (lattice plus normal and shoreline halo, 4 spacings; the
+    /// parent stencil, 2 parent spacings), tested against the river index's Near cells. False without a graph, so generation 1 never routes here.
+    /// </summary>
+    internal static bool SectorTouchesRiver(RingTerrainSampler sampler, RingTerrainSectorCoordinate coordinate, int size, int spacing, int parentSpacing)
+    {
+        long halo = Math.Max(4L * spacing, 2L * parentSpacing);
+        long around0 = coordinate.AroundSector * (long)size;
+        double across0 = (double)coordinate.AcrossSector * size;
+        return sampler.IntersectsRiverInfluence(around0 - halo, around0 + size + halo, across0 - halo, across0 + size + halo);
     }
 
     /// <summary>Resolves the backend for this level. Called from <see cref="RefreshVertexTableInstall"/> once the slot pool exists.</summary>
@@ -185,7 +197,9 @@ public partial class RingTerrainProxySector
             long across0 = (long)coordinate.AcrossSector * size;
             bool touchesSite = sampler.IntersectsSiteInfluence(around0 - 4L * spacing, around0 + size + 4L * spacing, across0 - 4.0 * spacing, across0 + size + 4.0 * spacing);
             if (touchesEdits || touchesSite) RingProxyBuildCounters.AddGpuEditedToCpu(SampleSpacingMeters);
-            if (room <= 0 || !GpuSectorRoutable(coordinate, size, spacing, ringWidth, touchesEdits, touchesSite, _gpuCpuRoute.Contains(coordinate))
+            bool touchesRiver = SectorTouchesRiver(sampler, coordinate, size, spacing, parentSpacing);
+            if (touchesRiver) RingProxyBuildCounters.AddGpuRiverToCpu(SampleSpacingMeters);
+            if (room <= 0 || !GpuSectorRoutable(coordinate, size, spacing, ringWidth, touchesEdits, touchesSite, touchesRiver, _gpuCpuRoute.Contains(coordinate))
                 || !pool.TryAcquire(out int slot))
             {
                 cpu.Add(coordinate);

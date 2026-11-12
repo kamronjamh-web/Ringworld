@@ -13,6 +13,7 @@ using System.Runtime.InteropServices;
 using Godot;
 using RingworldTechDemo.ContainmentField;
 using RingworldTechDemo.Terrain.Generation;
+using RingworldTechDemo.Terrain.Hydrology;
 using RingworldTechDemo.Diagnostics;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Integration;
@@ -707,6 +708,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
         private HashSet<TerrainColumnKey> _capturedKeys;
         private Dictionary<TerrainColumnKey, CachedTerrainPoint> _heightOnlyPoints;
         private bool _captureAccesses;
+        // S9/S10: the footprint code of the level being built (0 without inland water), set by ConfigureLevel; part of every cache key.
+        private int _footprint;
 
         public TerrainBuildSampleCache(
             RingLodSurfaceEditSnapshot edits,
@@ -745,10 +748,18 @@ public partial class RingTerrainProxySector : MeshInstance3D
         /// <summary>True for a water.rivers world: its disk records are the v12 layout (S9).</summary>
         public bool UsesInlandWaterRecords => _sampler.HasInlandWater;
 
-        public CachedTerrainPoint Get(long around, int across)
+        /// <summary>The footprint code samples of the given proxy spacing carry: 0 in worlds without inland water (their keys and records are unchanged), else S10's rule.</summary>
+        public int FootprintFor(int spacing) => _sampler.HasInlandWater ? RiverFootprint.ForProxySpacing(spacing) : 0;
+
+        /// <summary>Sets the level (sample spacing) whose footprint <see cref="Get"/> and <see cref="GetHeightOnly"/> use. Keys carry the footprint, so changing it never mixes values.</summary>
+        public void ConfigureLevel(int spacing) => _footprint = FootprintFor(spacing);
+
+        public CachedTerrainPoint Get(long around, int across) => GetAt(around, across, _footprint);
+
+        public CachedTerrainPoint GetAt(long around, int across, int footprint)
         {
             int clampedAcross = Mathf.Clamp(across, 0, _ringWidth);
-            var key = new TerrainColumnKey(around, clampedAcross);
+            var key = new TerrainColumnKey(around, clampedAcross, footprint);
             if (_captureAccesses) _capturedKeys.Add(key);
             if (_points.TryGetValue(key, out CachedTerrainPoint cached)) return cached;
             RingProxyBuildCounters.AddPoint(heightOnly: false);
@@ -759,7 +770,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             if (_sampler.UsesRuntimeSurfaceGeneration)
             {
                 // One model and one climate evaluation; bit-identical to the former three-call path (WO-C1).
-                _edits.GetPresentationTerrainSampleAndHeight(_sampler, around, clampedAcross, out sample, out presentationTerrainHeight);
+                _edits.GetPresentationTerrainSampleAndHeight(_sampler, around, clampedAcross, RiverFootprint.ToMeters(footprint), out sample, out presentationTerrainHeight);
             }
             else
             {
@@ -800,12 +811,12 @@ public partial class RingTerrainProxySector : MeshInstance3D
         {
             if (!_sampler.UsesRuntimeSurfaceGeneration) return Get(around, across);
             int clampedAcross = Mathf.Clamp(across, 0, _ringWidth);
-            var key = new TerrainColumnKey(around, clampedAcross);
+            var key = new TerrainColumnKey(around, clampedAcross, _footprint);
             if (_points.TryGetValue(key, out CachedTerrainPoint cached)) return cached;
             if (_heightOnlyPoints.TryGetValue(key, out cached)) return cached;
             RingProxyBuildCounters.AddPoint(heightOnly: true);
 
-            _edits.GetPresentationHeightOnlyTerrainSampleAndHeight(_sampler, around, clampedAcross, out TerrainSample sample, out float presentationTerrainHeight);
+            _edits.GetPresentationHeightOnlyTerrainSampleAndHeight(_sampler, around, clampedAcross, RiverFootprint.ToMeters(_footprint), out TerrainSample sample, out float presentationTerrainHeight);
             int terrainHeight = _edits.TryGetEditedSurfaceHeight(around, clampedAcross, out int editedHeight)
                 ? editedHeight
                 : sample.SurfaceHeight;
@@ -3853,6 +3864,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
     private static SectorData BuildRawSector(ulong requestVersion, RingTerrainSectorCoordinate coordinate, RingLodSurfaceEditSnapshot editSnapshot, RingTerrainSampler sampler, TerrainBuildSampleCache sampleCache, RingLodGeometrySnapshot geometry, Transform3D ownerInverse, int size, int spacing, int parentSpacing, RingTerrainGlobalMorphSnapshot? globalMorphTarget, int cells, float underlay, float parentUnderlay, bool parentRestoresWaterUnderlay, int ringWidth, bool buildWalls, bool buildSkirts, float skirtDepth, bool blocky, bool alignSurfaceToTerrainSdf, int heightQuantum, Color low, Color high, SurfaceCoverageMask? coverageMask)
     {
         using var counterScope = RingProxyBuildCounters.Enter(spacing);
+        sampleCache.ConfigureLevel(spacing);
         long allocationsBefore = GC.GetAllocatedBytesForCurrentThread();
         (double centerAround, double centerAcross) = ResolveSectorCanonicalCenter(coordinate, size, ringWidth);
         // Build vertex positions relative to the sector center.  This keeps
@@ -4650,10 +4662,11 @@ public partial class RingTerrainProxySector : MeshInstance3D
         int z1 = Mathf.Clamp(z0 + spacing, 0, ringWidth);
         float tx = (float)((around - a0) / (double)spacing);
         float tz = z1 == z0 ? 0.0f : (across - z0) / (float)(z1 - z0);
-        CachedTerrainPoint p00 = sampleCache.Get(a0, z0);
-        CachedTerrainPoint p10 = sampleCache.Get(a1, z0);
-        CachedTerrainPoint p01 = sampleCache.Get(a0, z1);
-        CachedTerrainPoint p11 = sampleCache.Get(a1, z1);
+        int footprint = sampleCache.FootprintFor(spacing);
+        CachedTerrainPoint p00 = sampleCache.GetAt(a0, z0, footprint);
+        CachedTerrainPoint p10 = sampleCache.GetAt(a1, z0, footprint);
+        CachedTerrainPoint p01 = sampleCache.GetAt(a0, z1, footprint);
+        CachedTerrainPoint p11 = sampleCache.GetAt(a1, z1, footprint);
         float h00 = GetTerrainMorphHeight(p00, useSmoothTerrainHeight);
         float h10 = GetTerrainMorphHeight(p10, useSmoothTerrainHeight);
         float h01 = GetTerrainMorphHeight(p01, useSmoothTerrainHeight);
@@ -4670,10 +4683,11 @@ public partial class RingTerrainProxySector : MeshInstance3D
         int z1 = Mathf.Clamp(z0 + spacing, 0, ringWidth);
         float tx = (float)((around - a0) / (double)spacing);
         float tz = z1 == z0 ? 0.0f : (across - z0) / (float)(z1 - z0);
-        float h00 = GetWaterMorphHeight(sampleCache.Get(a0, z0));
-        float h10 = GetWaterMorphHeight(sampleCache.Get(a1, z0));
-        float h01 = GetWaterMorphHeight(sampleCache.Get(a0, z1));
-        float h11 = GetWaterMorphHeight(sampleCache.Get(a1, z1));
+        int footprint = sampleCache.FootprintFor(spacing);
+        float h00 = GetWaterMorphHeight(sampleCache.GetAt(a0, z0, footprint));
+        float h10 = GetWaterMorphHeight(sampleCache.GetAt(a1, z0, footprint));
+        float h01 = GetWaterMorphHeight(sampleCache.GetAt(a0, z1, footprint));
+        float h11 = GetWaterMorphHeight(sampleCache.GetAt(a1, z1, footprint));
         return SampleParentTriangleHeight(h00, h10, h01, h11, tx, tz);
     }
 
@@ -4697,10 +4711,11 @@ public partial class RingTerrainProxySector : MeshInstance3D
         long a0 = (long)Math.Floor(around / (double)spacing) * spacing; long a1 = a0 + spacing;
         int z0 = Mathf.Clamp(Mathf.FloorToInt(across / (float)spacing) * spacing, 0, width), z1 = Mathf.Clamp(z0 + spacing, 0, width);
         float tx = (float)((around - a0) / (double)spacing), tz = z1 == z0 ? 0f : (across - z0) / (float)(z1 - z0);
-        Vector3 p00 = inverse * geometry.CanonicalToWorld(a0, GetTerrainRenderHeight(cache.Get(a0, z0), smooth) - parentUnderlay, z0);
-        Vector3 p10 = inverse * geometry.CanonicalToWorld(a1, GetTerrainRenderHeight(cache.Get(a1, z0), smooth) - parentUnderlay, z0);
-        Vector3 p01 = inverse * geometry.CanonicalToWorld(a0, GetTerrainRenderHeight(cache.Get(a0, z1), smooth) - parentUnderlay, z1);
-        Vector3 p11 = inverse * geometry.CanonicalToWorld(a1, GetTerrainRenderHeight(cache.Get(a1, z1), smooth) - parentUnderlay, z1);
+        int footprint = cache.FootprintFor(spacing);
+        Vector3 p00 = inverse * geometry.CanonicalToWorld(a0, GetTerrainRenderHeight(cache.GetAt(a0, z0, footprint), smooth) - parentUnderlay, z0);
+        Vector3 p10 = inverse * geometry.CanonicalToWorld(a1, GetTerrainRenderHeight(cache.GetAt(a1, z0, footprint), smooth) - parentUnderlay, z0);
+        Vector3 p01 = inverse * geometry.CanonicalToWorld(a0, GetTerrainRenderHeight(cache.GetAt(a0, z1, footprint), smooth) - parentUnderlay, z1);
+        Vector3 p11 = inverse * geometry.CanonicalToWorld(a1, GetTerrainRenderHeight(cache.GetAt(a1, z1, footprint), smooth) - parentUnderlay, z1);
         Vector3 parent = tx >= tz
             ? p00 * (1f - tx) + p10 * (tx - tz) + p11 * tz
             : p00 * (1f - tz) + p01 * (tz - tx) + p11 * tx;
@@ -4788,10 +4803,11 @@ public partial class RingTerrainProxySector : MeshInstance3D
         int z1 = Mathf.Clamp(z0 + spacing, 0, width);
         float tx = (float)((around - a0) / (double)spacing);
         float tz = z1 == z0 ? 0.0f : (across - z0) / (float)(z1 - z0);
-        Vector3 lowerLeft = inverse * geometry.CanonicalToWorld(a0, GetTerrainRenderHeight(cache.Get(a0, z0), false) - underlay, z0);
-        Vector3 lowerRight = inverse * geometry.CanonicalToWorld(a1, GetTerrainRenderHeight(cache.Get(a1, z0), false) - underlay, z0);
-        Vector3 upperLeft = inverse * geometry.CanonicalToWorld(a0, GetTerrainRenderHeight(cache.Get(a0, z1), false) - underlay, z1);
-        Vector3 upperRight = inverse * geometry.CanonicalToWorld(a1, GetTerrainRenderHeight(cache.Get(a1, z1), false) - underlay, z1);
+        int footprint = cache.FootprintFor(spacing);
+        Vector3 lowerLeft = inverse * geometry.CanonicalToWorld(a0, GetTerrainRenderHeight(cache.GetAt(a0, z0, footprint), false) - underlay, z0);
+        Vector3 lowerRight = inverse * geometry.CanonicalToWorld(a1, GetTerrainRenderHeight(cache.GetAt(a1, z0, footprint), false) - underlay, z0);
+        Vector3 upperLeft = inverse * geometry.CanonicalToWorld(a0, GetTerrainRenderHeight(cache.GetAt(a0, z1, footprint), false) - underlay, z1);
+        Vector3 upperRight = inverse * geometry.CanonicalToWorld(a1, GetTerrainRenderHeight(cache.GetAt(a1, z1, footprint), false) - underlay, z1);
         return tx >= tz
             ? lowerLeft * (1.0f - tx) + lowerRight * (tx - tz) + upperRight * tz
             : lowerLeft * (1.0f - tz) + upperLeft * (tz - tx) + upperRight * tx;
