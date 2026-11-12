@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Godot;
 using RingworldTechDemo.ContainmentField;
 using RingworldTechDemo.Diagnostics;
+using RingworldTechDemo.Loading;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Phase2;
 using RingworldTechDemo.Voxel.Phase3;
@@ -575,6 +576,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
             }
         }, cancellation);
         string cacheMode = !readDiskCache ? "disabled" : forceCacheRebuild ? "forced-rebuild" : "normal";
+        RingLoadTimeline.Mark("minmax_queued", cacheMode);
         GD.Print($"Global min/max summary queued: baseCell={resolvedCellSize}m, circumference={sampler.AroundRingVoxelLength}m, width={RingWidthMeters}m, cache={cacheMode}");
     }
 
@@ -649,6 +651,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         }
 
         SummaryBuildResult result = completed.Result;
+        RingLoadTimeline.Mark("minmax_ready", $"source={(result.LoadedFromCache ? "cache" : "generated")} buildMs={result.BuildMilliseconds:0}");
         _heightPyramid = result.Pyramid;
         RingLodSurfaceEditSnapshot initialEdits = _grid!.CaptureLodSurfaceEditSnapshot();
         _heightPyramid.ApplyEdits(initialEdits);
@@ -774,6 +777,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         for (int segmentIndex = 0; segmentIndex < _initialSegmentCount; segmentIndex++)
             _initialSegmentQueue.Enqueue(segmentIndex);
         Mesh = null;
+        RingLoadTimeline.Mark("global_terrain_queued", $"segments={_initialSegmentCount} across={AcrossSegments}");
         GD.Print($"Segmented global terrain HLOD queued: segments={_initialSegmentCount}, around={AroundSegments}, across={AcrossSegments}, minmaxLevels={_heightPyramid?.LevelCount ?? 0}, seed={sampler.Seed}, terrainHash={sampler.TerrainDefinitionHash:X16}");
     }
 
@@ -801,6 +805,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         _initialSegmentEdits = null;
         TryPublishStagedMorphSnapshot();
         RetireRetainedTerrainSegments();
+        RingLoadTimeline.Mark("global_terrain_ready", $"segments={_terrainSegments.Count}");
         GD.Print($"Segmented global terrain HLOD ready: segments={_terrainSegments.Count}, around={AroundSegments}, across={AcrossSegments}");
     }
 

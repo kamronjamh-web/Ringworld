@@ -457,6 +457,20 @@
       "expected_s": null,
       "timeout_s": 120
     },
+    "load_time_benchmark": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "loading",
+        "perf-telemetry"
+      ],
+      "marker": "LOAD_BENCHMARK",
+      "expected_s": null,
+      "timeout_s": 1800,
+      "profile": "own-runner",
+      "runner": "tools/load_time_benchmark.ps1"
+    },
     "prepare_tree_assets_editor": {
       "kind": "tool",
       "mode": "headless",
@@ -4843,20 +4857,6 @@
       "timeout_s": 400,
       "parallel_safe": false
     },
-    "river_graph_cache_test": {
-      "kind": "test",
-      "mode": "headless",
-      "tier": "gate",
-      "tags": [
-        "terrain",
-        "hydrology",
-        "loading"
-      ],
-      "marker": "RIVER_GRAPH_CACHE",
-      "expected_s": 40,
-      "timeout_s": 180,
-      "parallel_safe": false
-    },
     "inland_water_sampler_test": {
       "kind": "test",
       "mode": "headless",
@@ -4883,6 +4883,20 @@
       "expected_s": 90,
       "timeout_s": 600,
       "user_args": "--generation=1 --review-features=water.rivers"
+    },
+    "river_graph_cache_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain",
+        "hydrology",
+        "loading"
+      ],
+      "marker": "RIVER_GRAPH_CACHE",
+      "expected_s": 40,
+      "timeout_s": 180,
+      "parallel_safe": false
     },
     "drainage_bake_benchmark": {
       "kind": "tool",

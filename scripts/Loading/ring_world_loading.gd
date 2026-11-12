@@ -39,6 +39,11 @@ var _frame_times: Array[float] = []
 var _slow_frames: Array[Dictionary] = []
 var _last_pipeline_counts: Dictionary = {}
 var _operations: Dictionary = {}
+## L0 (docs/load-time-plan.md): {key: {start_ms, end_ms}} offsets from the start of the load, the pipeline compilations of the running stage, and the river bake flag.
+var _operation_spans: Dictionary = {}
+var _stage_pipeline_start := 0
+var _hydrology_required := false
+var _cache_state: Dictionary = {}
 var _initializers: Dictionary = {}
 var _attach_last_usec := 0
 var _info: Dictionary = {}
@@ -120,6 +125,10 @@ func begin(info: Dictionary) -> bool:
 	_slow_frames.clear()
 	_last_pipeline_counts = _pipeline_counts()
 	_operations.clear()
+	_operation_spans.clear()
+	_hydrology_required = false
+	_cache_state = _capture_cache_state()
+	_stage_pipeline_start = _pipeline_total(_last_pipeline_counts)
 	_initializers.clear()
 	_resource_status.clear()
 	_overall_progress = 0
@@ -153,15 +162,57 @@ func set_stage(key: String, detail: String, fraction: float) -> void:
 		return
 	if key != _stage:
 		if not _stage.is_empty():
-			_stage_times.append({"stage": _stage, "milliseconds": float(Time.get_ticks_usec() - _stage_started_usec) / 1000.0})
+			_stage_times.append(_stage_entry())
 		_stage = key
 		_stage_started_usec = Time.get_ticks_usec()
+		_stage_pipeline_start = _pipeline_total(_last_pipeline_counts)
 	_overall_progress = maxf(_overall_progress, clampf(fraction, 0, 1))
 	if _screen != null:
 		_screen.set_progress(key, detail, _overall_progress)
 
 func record_operation(key: String, started_usec: int) -> void:
-	_operations[key] = float(Time.get_ticks_usec() - started_usec) / 1000.0
+	var now := Time.get_ticks_usec()
+	_operations[key] = float(now - started_usec) / 1000.0
+	_operation_spans[key] = {"start_ms": float(started_usec - _started_usec) / 1000.0, "end_ms": float(now - _started_usec) / 1000.0}
+
+func _pipeline_total(counts: Dictionary) -> int:
+	var total := 0
+	for key: String in counts:
+		total += int(counts[key])
+	return total
+
+## One entry of the stage table: duration plus start/end offsets from the start of the load and the pipeline compilations seen while it ran.
+func _stage_entry() -> Dictionary:
+	var now := Time.get_ticks_usec()
+	return {"stage": _stage, "milliseconds": float(now - _stage_started_usec) / 1000.0,
+		"start_ms": float(_stage_started_usec - _started_usec) / 1000.0, "end_ms": float(now - _started_usec) / 1000.0,
+		"pipeline_compilations": _pipeline_total(_last_pipeline_counts) - _stage_pipeline_start}
+
+## Which per-machine caches existed (non-empty) when the load began.
+func _capture_cache_state() -> Dictionary:
+	var state := {}
+	for dir_name: String in ["shader_cache", "vulkan", "ring_cache", "generated"]:
+		var path := "user://" + dir_name
+		var dir := DirAccess.open(path)
+		state[dir_name] = dir != null and (not dir.get_files().is_empty() or not dir.get_directories().is_empty())
+	return state
+
+## Settings of this run for comparing reports (L0).
+func _run_settings() -> Dictionary:
+	var vsync := DisplayServer.window_get_vsync_mode()
+	return {"machine": OS.get_environment("COMPUTERNAME"), "gpu": RenderingServer.get_video_adapter_name(),
+		"vsync_mode": vsync, "vsync_name": ["disabled", "enabled", "adaptive", "mailbox"][clampi(vsync, 0, 3)],
+		"max_fps": Engine.max_fps, "background": is_background, "existing_world": bool(_info.get("is_existing", false)),
+		"rivers": _hydrology_required, "debug_build": OS.is_debug_build(), "processor_count": OS.get_processor_count(),
+		"caches_present": _cache_state.duplicate(), "headless": DisplayServer.get_name() == "headless"}
+
+## Bridge marks (RingLoadTimeline) as [{name, detail, at_ms}] offsets from the start of the load.
+func _timeline_marks() -> Array:
+	var marks: Array = []
+	if is_instance_valid(_bridge) and _bridge.has_method("GetLoadTimelineMarks"):
+		for mark: Dictionary in _bridge.call("GetLoadTimelineMarks"):
+			marks.append({"name": mark.name, "detail": mark.detail, "at_ms": float(int(mark.usec) - _started_usec) / 1000.0})
+	return marks
 
 func begin_attachment_metrics(world: Node) -> void:
 	_attach_last_usec = Time.get_ticks_usec()
@@ -277,7 +328,8 @@ func prepare_hydrology() -> bool:
 	var generation := _generation
 	var started := Time.get_ticks_usec()
 	var begin: Dictionary = _bridge.call("BeginHydrology")
-	if not bool(begin.get("required", false)):
+	_hydrology_required = bool(begin.get("required", false))
+	if not _hydrology_required:
 		return true
 	while active and not cancelled and not failed and generation == _generation:
 		var status: Dictionary = _bridge.call("CaptureHydrologyStatus")
@@ -483,11 +535,12 @@ func _finish_report(outcome: String) -> void:
 	var p95: float = float(sorted[mini(sorted.size() - 1, int(sorted.size() * .95))]) if not sorted.is_empty() else 0.0
 	var maximum: float = float(sorted[-1]) if not sorted.is_empty() else 0.0
 	var stages := _stage_times.duplicate(true)
-	stages.append({"stage": _stage, "milliseconds": float(Time.get_ticks_usec() - _stage_started_usec) / 1000.0})
+	stages.append(_stage_entry())
 	_last_report = {"outcome": outcome, "elapsed_ms": float(Time.get_ticks_usec() - _started_usec) / 1000.0,
 		"frames": _frame_times.size(), "frame_p95_ms": p95, "frame_max_ms": maximum,
 		"slowest_frames": _slow_frames.duplicate(true),
-		"operations_ms": _operations.duplicate(), "initializers_ms": _initializers.duplicate(), "stages": stages,
+		"operations_ms": _operations.duplicate(), "operation_spans_ms": _operation_spans.duplicate(true),
+		"initializers_ms": _initializers.duplicate(), "stages": stages, "settings": _run_settings(), "marks": _timeline_marks(),
 		"resource_warmup": _resource_status.duplicate(),
 		"note": "Loading frame wall times include scheduling and rendering; these are not gameplay FPS measurements."}
 	if is_instance_valid(_bridge):

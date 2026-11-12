@@ -532,6 +532,7 @@ public partial class RingGraphicsQualityController : Node
             ApplyGrassTuningOverrides();
         }
 
+        RingworldTechDemo.Loading.RingLoadTimeline.Mark("graphics_preset_applied", CurrentPresetName);
         GD.Print(
             $"Graphics preset applied: {CurrentPresetName}, shadowAtlas={EffectiveDirectionalShadowAtlasSize}, "
             + $"terrainLod={_coordinator?.CurrentPresetName ?? "unavailable"}, "

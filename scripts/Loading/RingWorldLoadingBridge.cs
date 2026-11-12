@@ -86,6 +86,7 @@ public partial class RingWorldLoadingBridge : Node
     public void PrepareWorld(Node world)
     {
         ProcessPriority = 10000;
+        RingLoadTimeline.Reset();
         _world = world;
         _explorer = world.GetNodeOrNull<RingVoxelExplorerController>("Explorer");
         _saves = world.GetNodeOrNull<RingWorldSaveManager>("WorldSaveManager");
@@ -287,6 +288,7 @@ public partial class RingWorldLoadingBridge : Node
 
         if (!ActivationComplete)
             return new() { ["ready"] = false, ["stage"] = "terrain", ["detail"] = "Assembling world systems.", ["progress"] = .33f };
+        NoteFirst("activation_complete");
 
         bool structureReady = true;
         int structuresReady = 0;
@@ -309,7 +311,7 @@ public partial class RingWorldLoadingBridge : Node
                 _ => true
             };
             structureReady &= ready;
-            if (ready) structuresReady++;
+            if (ready) { structuresReady++; NoteFirst("owner_ready:" + child.Name); }
             if (child.HasMethod("GetLoadingStatus"))
             {
                 Godot.Collections.Dictionary status = child.Call("GetLoadingStatus").AsGodotDictionary();
@@ -324,6 +326,8 @@ public partial class RingWorldLoadingBridge : Node
 
         bool saveReady = _saves == null || _saves.IsWorldLoadComplete;
         bool surfaceReady = _surface == null || _surface.IsReady;
+        if (saveReady) NoteFirst("save_ready");
+        if (surfaceReady) NoteFirst("surface_ready");
         if (!saveReady || !surfaceReady)
         {
             Godot.Collections.Dictionary status = _surface?.InitializationPending == true
@@ -335,6 +339,8 @@ public partial class RingWorldLoadingBridge : Node
         // A complete coarse far surface is enough to enter. Texture residency
         // and later adaptive refinements continue towards the user's settings.
         bool farReady = _far == null || !_far.Enabled || _far.ActiveGlobalTerrainSectorCount > 0;
+        if (farReady) NoteFirst("far_ready");
+        if (structureReady) NoteFirst("structure_owners_ready");
         if (!farReady || !structureReady)
             return new() { ["ready"] = false, ["stage"] = "surroundings", ["detail"] = surroundingsDetail,
                 ["progress"] = .72f + .16f * structuresReady / System.Math.Max(1, structuresCounted), ["spawn"] = _spawn };
@@ -342,6 +348,7 @@ public partial class RingWorldLoadingBridge : Node
             return new() { ["ready"] = _placed, ["stage"] = _placed ? "ready" : "position", ["detail"] = "Your world is ready.",
                 ["progress"] = _placed ? 1f : .9f, ["save_ready"] = saveReady, ["surface_ready"] = surfaceReady, ["far_ready"] = farReady };
         bool spawnReady = _spawn.TryGetValue("ready", out Variant spawn) && spawn.AsBool();
+        if (spawnReady) NoteFirst("spawn_ready");
         return new()
         {
             ["ready"] = spawnReady, ["stage"] = spawnReady ? "ready" : "position",
@@ -646,6 +653,17 @@ public partial class RingWorldLoadingBridge : Node
         _held.Clear();
     }
 
+    // ---- Load timeline (L0, docs/load-time-plan.md): logging only. Marks are read back into WORLD_LOADING_REPORT by ring_world_loading.gd.
+    private readonly HashSet<string> _firstMarks = new();
+
+    private void NoteFirst(string name)
+    {
+        if (_firstMarks.Add(name)) RingLoadTimeline.Mark(name);
+    }
+
+    /// <summary>The marks of this load: [{name, detail, usec}] (usec is Time.get_ticks_usec).</summary>
+    public Godot.Collections.Array GetLoadTimelineMarks() => RingLoadTimeline.Snapshot();
+
     public Godot.Collections.Dictionary GetStartupDiagnostics()
     {
         var diagnostics = new Godot.Collections.Dictionary();
@@ -691,7 +709,13 @@ public partial class RingWorldLoadingBridge : Node
         _hydrologyCancel = new CancellationTokenSource();
         CancellationToken token = _hydrologyCancel.Token;
         System.IProgress<double> progress = _hydrologyProgress;
-        _hydrologyTask = Task.Run(() => RiverGraphStore.GetOrBuildAsync(inputs, token, progress), CancellationToken.None);
+        RingLoadTimeline.Mark("river_graph_begin");
+        _hydrologyTask = Task.Run(async () =>
+        {
+            RiverGraph graph = await RiverGraphStore.GetOrBuildAsync(inputs, token, progress);
+            RingLoadTimeline.Mark("river_graph_ready");
+            return graph;
+        }, CancellationToken.None);
         return new Godot.Collections.Dictionary { ["required"] = true };
     }
 
