@@ -271,7 +271,8 @@ public sealed class RiverNetwork
             if (_stemReach != null) return;
             var reach = new double[Stems.Length];
             var stretch = new double[Stems.Length];
-            for (int i = 0; i < Stems.Length; i++)
+            // Stems are independent and every read is immutable, so the stems are measured in parallel (the result is the same values; this was a 5 s main-thread stall on the first sample).
+            Parallel.For(0, Stems.Length, i =>
             {
                 double length = Curves[i].Length, best = 0, bestStretch = 1;
                 for (double s = 0; ; s += StemReachStepMeters)
@@ -284,7 +285,7 @@ public sealed class RiverNetwork
                     if (s >= length) break;
                 }
                 reach[i] = best; stretch[i] = bestStretch;
-            }
+            });
             _stemStretch = stretch;
             _stemReach = reach;
         }

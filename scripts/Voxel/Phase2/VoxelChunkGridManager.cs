@@ -183,7 +183,11 @@ public partial class VoxelChunkGridManager : Node3D
 		get
 		{
 			if (_terrainSampler == null && _pendingRiverGraphIdentity is ulong identity && RingworldTechDemo.Terrain.Hydrology.RiverGraphStore.TryGet(identity, out _))
+			{
+				RingworldTechDemo.Loading.RingLoadTimeline.Mark("terrain_sampler_build_begin", "main thread");
 				RebuildTerrainNoises();
+				RingworldTechDemo.Loading.RingLoadTimeline.Mark("terrain_sampler_build_end");
+			}
 			return _terrainSampler;
 		}
 	}

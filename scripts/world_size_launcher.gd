@@ -645,6 +645,29 @@ func _get_selected_slot_settings() -> Dictionary:
 	return settings if settings is Dictionary else {}
 
 
+## The graphics preset the world's saved state will apply (RingWorldSaveManager), so the world can start on it. A save from another hardware tier gets that tier's baseline, which is the default here.
+func _saved_world_graphics_preset(fallback: int) -> int:
+	var session := get_node_or_null("/root/WorldSession")
+	if session == null:
+		return fallback
+	var directory := ProjectSettings.globalize_path(str(session.get_active_world_directory()))
+	if directory.is_empty():
+		return fallback
+	for file_name in ["world_state_surface_runtime_v1.json", "world_state_terrain3d_v1.json", "world_state.json"]:
+		var path := directory.path_join(file_name)
+		if not FileAccess.file_exists(path):
+			continue
+		var document: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+		if not document is Dictionary or not (document as Dictionary).get("Runtime") is Dictionary:
+			return fallback
+		var runtime := (document as Dictionary)["Runtime"] as Dictionary
+		var active_tier := str(ProjectSettings.get_setting("ringworld/runtime/hardware_tier", "laptop_140v_baseline"))
+		if str(runtime.get("HardwareTier", "")) != active_tier or not runtime.has("TerrainQuality"):
+			return fallback
+		return clampi(int(runtime["TerrainQuality"]), 0, 4)
+	return fallback
+
+
 func _consume_new_world_request() -> Dictionary:
 	var session := get_node_or_null("/root/WorldSession")
 	if session == null or not session.has_method("consume_new_world_request"):
@@ -1956,6 +1979,9 @@ func _configure_game(game: Node, requested_radius_m: float) -> void:
 	# proxy rings and an 8K shadow atlas. Medium is the sustainable default;
 	# High remains available from the graphics menu.
 	var selected_graphics_preset := 4 if capture_max_quality else (3 if desktop_mid_high else 1)
+	if selected_slot_has_saved_settings:
+		# Load time L1: the save manager applies the world's saved preset during the staged load; starting on it avoids building the global terrain twice.
+		selected_graphics_preset = _saved_world_graphics_preset(selected_graphics_preset)
 	lod_coordinator.set("MaximumStagedMeshMemoryMiB", 320 if capture_max_quality else (160 if desktop_mid_high else 96))
 	lod_coordinator.set("MemoryPressureWorkerLimit", 3 if capture_max_quality else (2 if desktop_mid_high else 1))
 	lod_coordinator.set("TerrainShadowCoverageMeters", cascade_shadow_distance)

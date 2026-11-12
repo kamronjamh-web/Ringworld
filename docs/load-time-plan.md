@@ -299,3 +299,10 @@ Each phase reports before and after from the L0 runner. `claude-lead` designs wh
 - New rivers world (1 run, backend 2): 62.6 s. Terrain stage 25.3 s, of which the river bake is 14.6 s. Surroundings 31.7 s.
 - **New finding: a single frozen frame of 5.5 s at attach in rivers worlds** (0.49 s without rivers). This is probably the T2R-10 lazy sampler being built on the main thread at first read; it is unconfirmed. This goes first in L1: the user sees it as a hang.
 - Output: `.godot/audit_baseline/DESKTOP-RAVA9C1/load/20261112_l0/` and `20261112_l0_rivers_fix/`.
+
+## L1 results (2026-11-12, part 1)
+
+- **Attach freeze fixed.** In rivers worlds, attach went from 5.5 s to 0.46 s. The cause was a serial stem lateral-reach measurement on the first sampler read (`RiverCarveOperator` constructor). It is now parallel and warmed on the hydrology worker, behind the loading screen.
+- **Reload double build removed.** The saved preset is applied before the global terrain is queued. The reload total did not change (23.0 s → 22.9 s) because the single build now runs under contention. Global terrain is still the bottleneck, so L2 is the real win.
+- Medians: reload 22.98 → 22.92 s; new 39.15 → 39.31 s; new-rivers 62.46 → 57.88 s.
+- Not done yet: the 30 fps loading cap and the other L1 items.
