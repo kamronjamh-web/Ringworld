@@ -39,7 +39,7 @@ public partial class RiverCarveInvariantsTest : RefCounted
 
     private readonly record struct Sample(double Height, InlandWaterKind Kind, double Level, double Weight, double Delta)
     {
-        public bool Wet => Kind == InlandWaterKind.River && Height < Level;
+        public bool Wet => (Kind == InlandWaterKind.River || Kind == InlandWaterKind.Lake) && Height < Level;
     }
 
     private static RiverNetwork? _netStatic;
@@ -50,14 +50,18 @@ public partial class RiverCarveInvariantsTest : RefCounted
     {
         public int Stem;
         public double S, Around, Across, Nx, Ny, Tx, Ty, A, B, Extent;
-        /// <summary>The stem ends in a lake: its tail is held at the lake level, over lake-basin ground the lake operator (T2R-8) takes over, so its bank fill is reported apart.</summary>
+        /// <summary>A lake, its ring or the cell next to the ring lies within a cell of the section (a stem ending in or leaving a lake, a river beside one): the channel there meets the lake operator (T2R-8), so its bank fill is counted apart.</summary>
         public bool LakeTerminal;
         /// <summary>Taken at a confluence (on the receiving stem around the junction, or on the tributary's last 150 m): two channels closer than a coarse lattice can resolve.</summary>
         public bool Confluence;
+        /// <summary>Added by the lake-end picks (T2R-8); the fabricated-dip control leaves them out.</summary>
+        public bool LakeEnd;
     }
 
     private sealed class Stats
     {
+        public long LakeBankSamples, LakeFillOver3;
+        public double LakeFillMax;
         public long Sections, ContPairs, ContOver, WetSamples, ContainPairs, ContainBad, LevelPairs, LevelBad, BankSamples, FillOver3, WeightSamples, WeightBad;
         public double ContMax, ContainMax, LevelStepMax, FillMax;
         /// <summary>
@@ -70,8 +74,12 @@ public partial class RiverCarveInvariantsTest : RefCounted
         /// <summary>The first few failing samples of each kind, printed so a failure can be read without a rerun.</summary>
         public readonly List<string> Examples = new();
         public void Example(string text) { if (Examples.Count < 40) Examples.Add(text); }
+        /// <summary>Bank samples over 3 m of fill by section (held or main, stem, s), for reading where the fill is.</summary>
+        public readonly Dictionary<string, long> FillTally = new();
         public void Merge(Stats o)
         {
+            foreach (KeyValuePair<string, long> kv in o.FillTally) FillTally[kv.Key] = FillTally.GetValueOrDefault(kv.Key) + kv.Value;
+            LakeBankSamples += o.LakeBankSamples; LakeFillOver3 += o.LakeFillOver3; LakeFillMax = Math.Max(LakeFillMax, o.LakeFillMax);
             Sections += o.Sections; ContPairs += o.ContPairs; ContOver += o.ContOver; WetSamples += o.WetSamples; ContainPairs += o.ContainPairs; ContainBad += o.ContainBad;
             LevelPairs += o.LevelPairs; LevelBad += o.LevelBad; BankSamples += o.BankSamples; FillOver3 += o.FillOver3; WeightSamples += o.WeightSamples; WeightBad += o.WeightBad;
             LeakPairs += o.LeakPairs; LeakBad += o.LeakBad; WaterlinePairs += o.WaterlinePairs; WaterlineBad += o.WaterlineBad;
@@ -89,6 +97,8 @@ public partial class RiverCarveInvariantsTest : RefCounted
             Sites();
             StandIns();
             Sections();
+            Lakes();
+            LakeWater();
             Paths();
             MeanderSlope();
             Footprints();
@@ -168,18 +178,42 @@ public partial class RiverCarveInvariantsTest : RefCounted
             for (double s = st.JunctionS - 100; s <= st.JunctionS + 100; s += 25) TryAddSection(natural, st.TerminalId, s, true);
             for (double s = _net.Curves[i].Length - 150; s <= _net.Curves[i].Length; s += 25) TryAddSection(natural, i, s, true);
         }
+        // Lake ends (T2R-8): the last 250 m of up to 60 stems that end in a lake and the first 250 m of stems that leave one, where the channel is held at the lake level.
+        int lakeEnds = 0;
+        foreach (int i in Enumerable.Range(0, _net.Stems.Length).Where(i => _net.Stems[i].Terminal == RiverTerminal.Lake || _net.Reaches[_net.Stems[i].ReachStart].UpstreamLake >= 0).OrderBy(i => RiverHash.Mix(Seed, i, 73)))
+        {
+            double length = _net.Curves[i].Length;
+            bool inlet = _net.Stems[i].Terminal == RiverTerminal.Lake;
+            if (length < 400 || !Usable(i, inlet ? length - 100 : 100)) continue;
+            for (double s = inlet ? length - 250 : 0; s <= (inlet ? length : 250); s += 25) TryAddSection(natural, i, s, false, true);
+            if (++lakeEnds == 60) break;
+        }
+        Detail($"lake-end stems added: {lakeEnds}");
         Detail($"confluence stems on the strip: {_net.Stems.Count(x => x.Terminal == RiverTerminal.Confluence)} (the 400 km strip has fewer than 50 usable ones)");
         Detail($"picks: {_reaches.Count} reaches, {_confluences.Count} confluences, {_sections.Count} cross-sections");
     }
 
-    private void TryAddSection(TerrainGenerationHeightModel natural, int stem, double s, bool confluence)
+    /// <summary>A lake, its ring or a cell next to the ring lies within a cell of the point: the section meets the lake operator.</summary>
+    private bool LakeNear(double around, double across)
+    {
+        int col = _graph.Index.ColumnOf(around), row = _graph.Index.RowOf(across);
+        for (int dy = -1; dy <= 1; dy++)
+            for (int dx = -1; dx <= 1; dx++)
+            {
+                int c = (col + dx + _graph.RingColumns) % _graph.RingColumns, r = row + dy;
+                if ((uint)r < (uint)_graph.Rows && (_graph.Index.IsFlooded(c, r) || _graph.Index.IsRing(c, r))) return true;
+            }
+        return false;
+    }
+
+    private void TryAddSection(TerrainGenerationHeightModel natural, int stem, double s, bool confluence, bool lakeEnd = false)
     {
         s = Math.Clamp(s, 0d, _net.Curves[stem].Length);
         _net.CentreFrame(stem, s, out double around, out double across, out double nx, out double ny);
         if (natural.CalculateHeight(around, across) < 2d) return;
         _net.ChannelAt(stem, s, out RiverChannel channel);
         double a = channel.HalfWidth, b = channel.BankWidth, f = channel.Floodplain;
-        _sections.Add(new Section { Confluence = confluence, LakeTerminal = _net.Stems[stem].Terminal == RiverTerminal.Lake, Stem = stem, S = s, Around = around, Across = across, Nx = nx, Ny = ny, Tx = ny, Ty = -nx, A = a, B = b, Extent = Math.Min(300d, a + b + f + 120d) });
+        _sections.Add(new Section { Confluence = confluence, LakeEnd = lakeEnd, LakeTerminal = LakeNear(around, across), Stem = stem, S = s, Around = around, Across = across, Nx = nx, Ny = ny, Tx = ny, Ty = -nx, A = a, B = b, Extent = Math.Min(300d, a + b + f + 120d) });
     }
 
     // ------------------------------------------------------------------ the checker
@@ -218,11 +252,17 @@ public partial class RiverCarveInvariantsTest : RefCounted
         {
             double x = -sec.Extent + j * StepMeters, ax = Math.Abs(x);
             Sample p = buffer[j];
+            if (ax > sec.A && ax <= sec.A + sec.B + 20 && sec.LakeTerminal)
+            {
+                st.LakeBankSamples++;
+                if (p.Delta > 3) { st.LakeFillOver3++; { string key = $"held stem {sec.Stem} ({_netStatic?.Stems[sec.Stem].Terminal}, length {_netStatic?.Curves[sec.Stem].Length:F0}) s {sec.S:F0}"; st.FillTally[key] = st.FillTally.GetValueOrDefault(key) + 1; } if (p.Delta > 15 && ax < sec.A + 1d) st.Example(FormattableString.Invariant($"lake-held fill {p.Delta:F1} m: stem {sec.Stem} s {sec.S:F0} of {_netStatic?.Curves[sec.Stem].Length:F0} x {x:F2} height {p.Height:F2} kind {p.Kind} level {p.Level:F2} weight {p.Weight:F2}")); }
+                if (p.Delta > st.LakeFillMax) st.LakeFillMax = p.Delta;
+            }
             if (ax > sec.A && ax <= sec.A + sec.B + 20 && !sec.LakeTerminal)
             {
                 st.BankSamples++;
-                if (p.Delta > 3) st.FillOver3++;
-                if (p.Delta > 15) st.Example(FormattableString.Invariant($"fill {p.Delta:F1} m: stem {sec.Stem} ({_netStatic?.Stems[sec.Stem].Terminal}) s {sec.S:F0} of {_netStatic?.Curves[sec.Stem].Length:F0} x {x:F2} height {p.Height:F2} kind {p.Kind} level {p.Level:F2}"));
+                if (p.Delta > 3) { st.FillOver3++; string key = $"main stem {sec.Stem} ({_netStatic?.Stems[sec.Stem].Terminal}, length {_netStatic?.Curves[sec.Stem].Length:F0}) s {sec.S:F0}"; st.FillTally[key] = st.FillTally.GetValueOrDefault(key) + 1; }
+                if (p.Delta > 15 && ax < sec.A + 1d) st.Example(FormattableString.Invariant($"fill {p.Delta:F1} m: stem {sec.Stem} ({_netStatic?.Stems[sec.Stem].Terminal}) s {sec.S:F0} of {_netStatic?.Curves[sec.Stem].Length:F0} x {x:F2} height {p.Height:F2} kind {p.Kind} level {p.Level:F2}"));
                 if (p.Delta > st.FillMax) st.FillMax = p.Delta;
             }
             if (j + 2 < n && p.Wet && buffer[j + 2].Wet)
@@ -278,6 +318,24 @@ public partial class RiverCarveInvariantsTest : RefCounted
         return total;
     }
 
+    /// <summary>The section checks with a bare operator on the natural ground (no sites), for comparing operator variants on the same sections.</summary>
+    private Stats RunSectionsOp(RiverCarveOperator op, IReadOnlyList<Section> sections)
+    {
+        var total = new Stats();
+        var locker = new object();
+        int bufferLength = (int)Math.Round(2 * 300d / StepMeters) + 2;
+        Parallel.For(0, _workers, new ParallelOptions { MaxDegreeOfParallelism = _workers }, w =>
+        {
+            using TerrainGenerationHeightModel natural = new(_recipe, false);
+            var local = new Stats();
+            var buffer = new Sample[bufferLength];
+            Eval eval = (a, c, fp) => { RiverOperatorResult r = op.Evaluate(a, c, natural.CalculateHeight(a, c), fp); return new Sample(r.Height, r.Kind, r.WaterLevel, r.CorridorWeight, r.GroundDelta); };
+            for (int i = w; i < sections.Count; i += _workers) CheckSection(sections[i], eval, local, buffer);
+            lock (locker) total.Merge(local);
+        });
+        return total;
+    }
+
     private static string Text(string label, Stats s)
         => FormattableString.Invariant($"{label}: {s.Sections} sections, continuity {s.ContOver}/{s.ContPairs} over 0.6 m (max {s.ContMax:F2} m), containment {s.LeakBad}/{s.LeakPairs} wet-dry pairs with ground outside every channel below the level (largest {s.LeakMax:F2} m), waterline levels {s.WaterlineBad}/{s.WaterlinePairs} wet-bank pairs over 0.6 m (largest {s.WaterlineMax:F2} m), all wet-dry pairs against the wet level {s.ContainBad}/{s.ContainPairs} over 0.05 m (largest {s.ContainMax:F2} m; for the trend, not a check), wet samples {s.WetSamples}, adjacent wet levels {s.LevelBad}/{s.LevelPairs} over 0.6 m (max {s.LevelStepMax:F2} m), fill over 3 m on {s.FillOver3}/{s.BankSamples} bank samples (max {s.FillMax:F1} m), corridor weight {s.WeightBad}/{s.WeightSamples} bad");
 
@@ -302,7 +360,7 @@ public partial class RiverCarveInvariantsTest : RefCounted
         var noCore = new RiverCarveOperator(_graph) { CoreLowerBound = false };
         // Reach sections only (T2R-7 review): the dip is cut relative to the level at the section's centre, which is not the level field around a confluence, where the
         // operator draws a higher channel down to a lower one.
-        var dipSections = _sections.Where(x => !x.Confluence).Where((_, i) => i % 5 == 0).ToList();
+        var dipSections = _sections.Where(x => !x.Confluence && !x.LakeEnd).Where((_, i) => i % 5 == 0).ToList();
         Stats Dip(RiverCarveOperator op)
         {
             var total = new Stats();
@@ -343,16 +401,414 @@ public partial class RiverCarveInvariantsTest : RefCounted
     private void Sections()
     {
         var clock = System.Diagnostics.Stopwatch.StartNew();
-        Stats real = RunSections((m, sec) => (a, c, fp) => Real(m, a, c, fp), _sections);
+        // The lake-end picks (T2R-8) are judged apart below: they sit where the channel meets a lake and exposed steps that are present with the lake operator off as well.
+        Stats real = RunSections((m, sec) => (a, c, fp) => Real(m, a, c, fp), _sections.Where(x => !x.LakeEnd).ToList());
         Detail(Text("real operator", real) + FormattableString.Invariant($"; {clock.Elapsed.TotalSeconds:F1} s"));
         foreach (string e in real.Examples) Detail("example " + e);
+        foreach (KeyValuePair<string, long> kv in real.FillTally.OrderByDescending(k => k.Value).Take(14)) Detail($"fill over 3 m: {kv.Key}: {kv.Value} samples");
         Check(real.Sections > 1000 && real.WetSamples > 10000, $"too little wet ground sampled ({real.Sections} sections, {real.WetSamples} wet samples)");
         Check(real.ContOver <= real.ContPairs * 0.005 && real.ContMax <= 2d, $"continuity: {real.ContOver}/{real.ContPairs} steps over 0.6 m, largest {real.ContMax:F2} m");
         Check(real.LeakBad <= real.LeakPairs * 0.005 && real.LeakMax <= 0.5, $"containment: {real.LeakBad}/{real.LeakPairs} pairs, largest violation {real.LeakMax:F2} m");
         Check(real.WaterlineBad <= real.WaterlinePairs * 0.005 && real.WaterlineMax <= 1d, $"waterline levels: {real.WaterlineBad}/{real.WaterlinePairs} wet-bank pairs differ by more than 0.6 m, largest {real.WaterlineMax:F2} m");
         Check(real.LevelBad <= real.LevelPairs * 0.005, $"adjacent wet levels: {real.LevelBad}/{real.LevelPairs} differ by more than 0.6 m (largest {real.LevelStepMax:F2} m)");
+        // Sections that meet a lake (within a cell of a lake or its ring, plus the lake-end picks), natural ground, lake operator on and off. On: containment and fill under the general bars,
+        // and no step or waterline difference worse than without lakes. Off (the T2R-7 state): must fail the containment and fill bars, which proves they can.
+        List<Section> near = _sections.Where(x => x.LakeTerminal || x.LakeEnd).ToList();
+        Stats lakesOff = RunSectionsOp(new RiverCarveOperator(_graph) { LakeOperator = false }, near);
+        Stats lakesOn = RunSectionsOp(new RiverCarveOperator(_graph), near);
+        Detail(Text("lake-near sections, lake operator off", lakesOff));
+        Detail(Text("lake-near sections, lake operator on", lakesOn));
+        foreach (string e in lakesOn.Examples.Where(e => e.StartsWith("continuity") || e.StartsWith("containment") || e.StartsWith("waterline"))) Detail("example (on) " + e);
+        foreach (string e in lakesOff.Examples.Where(e => e.StartsWith("continuity"))) Detail("example (off) " + e);
+        foreach (KeyValuePair<string, long> kv in lakesOn.FillTally.OrderByDescending(k => k.Value).Take(8)) Detail($"lake-near fill over 3 m (on): {kv.Key}: {kv.Value} samples");
+        Detail(FormattableString.Invariant($"lake-near bank fill over 3 m: lake operator off {lakesOff.LakeFillOver3}/{lakesOff.LakeBankSamples} (largest {lakesOff.LakeFillMax:F1} m), on {lakesOn.LakeFillOver3}/{lakesOn.LakeBankSamples} ({(double)lakesOn.LakeFillOver3 / Math.Max(1, lakesOn.LakeBankSamples):P2}, largest {lakesOn.LakeFillMax:F1} m); before T2R-8 the lake-terminal stems showed up to 31.9 m and were excluded"));
+        Check(lakesOn.LakeBankSamples > 20000 && lakesOn.WetSamples > 10000, $"too little lake-near ground sampled ({lakesOn.LakeBankSamples} bank samples, {lakesOn.WetSamples} wet)");
+        Check(lakesOn.LeakBad <= lakesOn.LeakPairs * 0.005 && lakesOn.LeakMax <= 0.5, $"lake-near containment: {lakesOn.LeakBad}/{lakesOn.LeakPairs} pairs, largest violation {lakesOn.LeakMax:F2} m");
+        Check(lakesOn.LakeFillOver3 <= lakesOn.LakeBankSamples * 0.02 && lakesOn.LakeFillMax <= 15d, $"lake-near fill: {lakesOn.LakeFillOver3}/{lakesOn.LakeBankSamples} bank samples over 3 m, largest {lakesOn.LakeFillMax:F1} m");
+        Check(lakesOn.ContMax <= lakesOff.ContMax && lakesOn.ContOver <= lakesOff.ContOver && lakesOn.WaterlineBad <= lakesOff.WaterlineBad && lakesOn.WaterlineMax <= lakesOff.WaterlineMax + 1e-9, "the lake operator makes a step or a waterline difference worse than the river-only state");
+        Check(lakesOff.ContMax > lakesOn.ContMax && lakesOff.ContOver > lakesOn.ContOver, "negative control: the lake-near step comparison could not tell the lake operator from the river-only state");
+        Check(lakesOff.LeakBad > lakesOff.LeakPairs * 0.005 && lakesOff.LeakMax > 0.5, $"negative control: the lake-near containment bar did not fail with the lake operator off ({lakesOff.LeakBad}/{lakesOff.LeakPairs}, largest {lakesOff.LeakMax:F2} m)");
+        Check(lakesOff.LakeFillOver3 > lakesOff.LakeBankSamples * 0.02 && lakesOff.LakeFillMax > 15d, $"negative control: the lake-near fill bar did not fail with the lake operator off ({lakesOff.LakeFillOver3}/{lakesOff.LakeBankSamples}, largest {lakesOff.LakeFillMax:F1} m)");
         Check(real.FillOver3 <= real.BankSamples * 0.02 && real.FillMax <= 15d, $"fill: {real.FillOver3}/{real.BankSamples} bank samples over 3 m, largest {real.FillMax:F1} m");
         Check(real.WeightBad <= real.WeightSamples * 0.0005, $"corridor weight: {real.WeightBad}/{real.WeightSamples} outside [0, 1], discontinuous, or below 1 on the water");
+    }
+
+    // ------------------------------------------------------------------ lakes (T2R-8, S8)
+
+    private sealed class LakeCase
+    {
+        public int Lake;
+        public List<(int Col, int Row)> Ring = new();
+        public List<(int Col, int Row, int Dx, int Dy)> Shore = new();
+    }
+
+    private sealed class LakeStats
+    {
+        public long Samples, WetSamples, WetNoWeight, RingSamples, RingOver5, Plugs, LakeKind, Pairs, LeakPairs, LeakBad, WaterlinePairs, WaterlineBad;
+        public double LeakMax, WaterlineMax, PlugMax;
+        public readonly List<float> PlugHeights = new();
+        public readonly List<string> Examples = new();
+        public void Example(string text) { if (Examples.Count < 30) Examples.Add(text); }
+        public void Merge(LakeStats o)
+        {
+            Samples += o.Samples; WetSamples += o.WetSamples; WetNoWeight += o.WetNoWeight; RingSamples += o.RingSamples; RingOver5 += o.RingOver5; Plugs += o.Plugs; LakeKind += o.LakeKind;
+            Pairs += o.Pairs; LeakPairs += o.LeakPairs; LeakBad += o.LeakBad; WaterlinePairs += o.WaterlinePairs; WaterlineBad += o.WaterlineBad;
+            LeakMax = Math.Max(LeakMax, o.LeakMax); WaterlineMax = Math.Max(WaterlineMax, o.WaterlineMax); PlugMax = Math.Max(PlugMax, o.PlugMax);
+            PlugHeights.AddRange(o.PlugHeights);
+            foreach (string e in o.Examples) Example(e);
+        }
+    }
+
+    private List<LakeCase>? _lakeCases;
+
+    /// <summary>The 50 largest lakes of the strip and 50 seeded others, away from the strip ends, with their ring cells and the shore cells (a ring cell and the direction to a flooded neighbour).</summary>
+    private List<LakeCase> LakeCases()
+    {
+        if (_lakeCases != null) return _lakeCases;
+        RiverLake[] lakes = _graph.Lakes;
+        double step = _graph.AroundStepMeters;
+        bool Inside(int lake)
+        {
+            RiverLake l = lakes[lake];
+            double lo = l.MinCol * step, hi = (l.MaxCol + 1) * step;
+            return l.CellCount > 0 && lo > _stripAroundMin + 20_000 && hi < _stripAroundMax - 20_000 && l.MinRow > 4 && l.MaxRow < _graph.Rows - 5;
+        }
+        List<int> usable = Enumerable.Range(0, lakes.Length).Where(Inside).ToList();
+        var picked = new List<int>(usable.OrderByDescending(i => lakes[i].CellCount).Take(50));
+        picked.AddRange(usable.Except(picked).OrderBy(i => RiverHash.Mix(Seed, i, 81)).Take(50));
+        var byLake = picked.ToDictionary(i => i, _ => new List<LakeRun>());
+        foreach (LakeRun run in _graph.Runs) if (byLake.TryGetValue(run.LakeId, out List<LakeRun>? list)) list.Add(run);
+        var cases = new List<LakeCase>();
+        foreach (int id in picked)
+        {
+            var lc = new LakeCase { Lake = id };
+            var seen = new HashSet<long>();
+            foreach (LakeRun run in byLake[id])
+                for (int c = 0; c < run.Length; c++)
+                    for (int dy = -1; dy <= 1; dy++)
+                        for (int dx = -1; dx <= 1; dx++)
+                        {
+                            int row = run.Row + dy, col = (run.Col + c + dx + _graph.RingColumns) % _graph.RingColumns;
+                            if ((dx == 0 && dy == 0) || (uint)row >= (uint)_graph.Rows || !_graph.Index.IsRing(col, row) || !seen.Add((long)row * _graph.RingColumns + col)) continue;
+                            lc.Ring.Add((col, row));
+                            lc.Shore.Add((col, row, -dx, -dy));
+                        }
+            if (lc.Ring.Count > 0) cases.Add(lc);
+        }
+        Check(cases.Count >= 60, $"too few usable lakes on the strip ({cases.Count} of {usable.Count})");
+        Detail($"lake cases: {cases.Count} lakes of {usable.Count} usable ({lakes.Length} on the strip), {cases.Sum(c => c.Ring.Count)} ring cells, largest {cases.Max(c => lakes[c.Lake].CellCount)} cells, smallest {cases.Min(c => lakes[c.Lake].CellCount)}");
+        return _lakeCases = cases;
+    }
+
+    /// <summary>
+    /// The lake checks on one evaluator: 100 hashed points on the ring and shore of each lake (weight and plug statistics), and four transects per lake across the ring line
+    /// with a sample every 2 m (containment of the lake surface). <paramref name="fabricate"/> may lower the natural ground first (the plug control).
+    /// </summary>
+    private LakeStats RunLakes(Func<double, double, double, double>? fabricate, Func<Sample, Sample>? tamper, RiverCarveOperator op)
+    {
+        List<LakeCase> cases = LakeCases();
+        var total = new LakeStats();
+        var locker = new object();
+        double aroundStep = _graph.AroundStepMeters, acrossStep = _graph.AcrossStepMeters;
+        Parallel.For(0, _workers, new ParallelOptions { MaxDegreeOfParallelism = _workers }, w =>
+        {
+            using TerrainGenerationHeightModel natural = new(_recipe, false);
+            var st = new LakeStats();
+            Sample Eval(double around, double across)
+            {
+                double g = natural.CalculateHeight(around, across);
+                if (fabricate != null) g = fabricate(around, across, g);
+                RiverOperatorResult r = op.Evaluate(around, across, g, 0d);
+                Sample sample = new(r.Height, r.Kind, r.WaterLevel, r.CorridorWeight, r.GroundDelta);
+                return tamper != null ? tamper(sample) : sample;
+            }
+            for (int ci = w; ci < cases.Count; ci += _workers)
+            {
+                LakeCase lc = cases[ci];
+                RiverLake lake = _graph.Lakes[lc.Lake];
+                for (int k = 0; k < 100; k++)
+                {
+                    (int col, int row) = lc.Ring[(int)(RiverHash.Unit(Seed, lc.Lake, k, 31) * lc.Ring.Count) % lc.Ring.Count];
+                    double around = (col + 0.5 + (RiverHash.Unit(Seed, lc.Lake, k, 32) * 3d - 1.5)) * aroundStep, across = (row + 0.5 + (RiverHash.Unit(Seed, lc.Lake, k, 33) * 3d - 1.5)) * acrossStep;
+                    Sample s = Eval(around, across);
+                    st.Samples++;
+                    if (s.Kind == InlandWaterKind.Lake) st.LakeKind++;
+                    if (s.Wet) { st.WetSamples++; if (s.Weight < 1d - 1e-9) { st.WetNoWeight++; st.Example(FormattableString.Invariant($"wet sample with weight {s.Weight:F3}: lake {lc.Lake} at around {around:F0} across {across:F0} kind {s.Kind}")); } }
+                    int sc = _graph.Index.ColumnOf(around), sr = _graph.Index.RowOf(across);
+                    if (_graph.Index.IsRing(sc, sr))
+                    {
+                        st.RingSamples++;
+                        if (s.Delta > 0.01) { st.Plugs++; st.PlugHeights.Add((float)s.Delta); if (s.Delta > st.PlugMax) st.PlugMax = s.Delta; }
+                        if (s.Delta > 5d) { st.RingOver5++; st.Example(FormattableString.Invariant($"plug {s.Delta:F1} m: lake {lc.Lake} (level {lake.Level:F0}) at around {around:F0} across {across:F0} kind {s.Kind}")); }
+                    }
+                }
+                for (int t = 0; t < 4; t++)
+                {
+                    (int col, int row, int dx, int dy) = lc.Shore[(int)(RiverHash.Unit(Seed, lc.Lake, t, 34) * lc.Shore.Count) % lc.Shore.Count];
+                    // The direction points from the ring cell to its flooded neighbour: from a cell and a half outside the ring, through the ring cell centre, to the middle of the flooded cell.
+                    double cx = (col + 0.5) * aroundStep, cy = (row + 0.5) * acrossStep, ux = dx * aroundStep, uy = dy * acrossStep, length = Math.Sqrt(ux * ux + uy * uy);
+                    ux /= length; uy /= length;
+                    double from = -1.5 * length, to = length;
+                    Sample previous = default;
+                    bool have = false;
+                    for (double x = from; x <= to; x += 2d)
+                    {
+                        Sample cur = Eval(cx + ux * x, cy + uy * x);
+                        if (cur.Wet && cur.Weight < 1d - 1e-9) st.WetNoWeight++;
+                        if (have && cur.Wet != previous.Wet)
+                        {
+                            Sample wet = cur.Wet ? cur : previous, dry = cur.Wet ? previous : cur;
+                            double violation = wet.Level - dry.Height;
+                            if (dry.Kind == InlandWaterKind.River)
+                            {
+                                double fall = Math.Abs(wet.Level - dry.Level);
+                                st.WaterlinePairs++; if (fall > 0.6) st.WaterlineBad++;
+                                if (fall > st.WaterlineMax) st.WaterlineMax = fall;
+                            }
+                            else
+                            {
+                                st.LeakPairs++;
+                                if (violation > 0.05) st.LeakBad++;
+                                if (violation > 0.5) st.Example(FormattableString.Invariant($"lake containment {violation:F2} m: lake {lc.Lake} (level {lake.Level:F0}) cell {col},{row} x {x:F0} wet height {wet.Height:F2} level {wet.Level:F2} kind {wet.Kind}; dry height {dry.Height:F2} kind {dry.Kind}"));
+                                if (violation > st.LeakMax) st.LeakMax = violation;
+                            }
+                        }
+                        previous = cur; have = true; st.Pairs++;
+                    }
+                }
+            }
+            lock (locker) total.Merge(st);
+        });
+        return total;
+    }
+
+    private static string LakeText(string label, LakeStats s)
+    {
+        float[] sorted = s.PlugHeights.OrderBy(h => h).ToArray();
+        double p50 = sorted.Length > 0 ? sorted[sorted.Length / 2] : 0, p99 = sorted.Length > 0 ? sorted[Math.Min(sorted.Length - 1, (int)(sorted.Length * 0.99))] : 0;
+        return FormattableString.Invariant($"{label}: {s.Samples} hashed samples ({s.LakeKind} Lake kind, {s.WetSamples} wet, {s.WetNoWeight} wet with weight below 1), ring samples {s.RingSamples}: plug count {s.Plugs}, plug height p50 {p50:F2} m, p99 {p99:F2} m, max {s.PlugMax:F2} m, over 5 m on {s.RingOver5} ({(double)s.RingOver5 / Math.Max(1, s.RingSamples):P2}); transects {s.Pairs} samples: containment {s.LeakBad}/{s.LeakPairs} wet-dry pairs with ground below the level over 0.05 m (largest {s.LeakMax:F2} m), waterline {s.WaterlineBad}/{s.WaterlinePairs} over 0.6 m (largest {s.WaterlineMax:F2} m)");
+    }
+
+    /// <summary>River and lake levels at the inlets and outlets of the lakes of the strip: the displayed level of the stem at its end (inlet) or where it leaves the membership (outlet) against the lake's whole-metre level.</summary>
+    private long _outsideOutlets, _uphillOutlets;
+
+    private (long Joins, long Bad, double Max) JoinLevels(double tamper, RiverCarveOperator op)
+    {
+        long joins = 0, bad = 0, outsideOutlets = 0, uphillOutlets = 0;
+        double max = 0;
+        double lo = _stripAroundMin + 20_000, hi = _stripAroundMax - 20_000;
+        for (int l = 0; l < _graph.Lakes.Length; l++)
+        {
+            RiverLake lake = _graph.Lakes[l];
+            double around = lake.MinCol * _graph.AroundStepMeters;
+            if (lake.CellCount == 0 || around < lo || around > hi) continue;
+            void Compare(double level, string what, int stem, double s)
+            {
+                joins++;
+                double d = Math.Abs(level + tamper - lake.Level);
+                if (d > 0.1) { bad++; if (bad <= 8 && tamper == 0d) Detail(FormattableString.Invariant($"join {what}: lake {l} level {lake.Level:F0}, stem {stem} (terminal {_net.Stems[stem].Terminal} {_net.Stems[stem].TerminalId}, receiving level {_net.ReceivingLevel[stem]:F2}, length {_net.Curves[stem].Length:F0}) s {s:F1} reads {level + tamper:F3}")); }
+                if (d > max) max = d;
+            }
+            for (int i = 0; i < lake.InletCount; i++)
+            {
+                RiverInlet inlet = _graph.Inlets[lake.InletStart + i];
+                Compare(RiverLevel.AtStem(_net, inlet.Stem, inlet.S), "inlet", inlet.Stem, inlet.S);
+            }
+            if (lake.OutletStem >= 0 && _net.Stems[lake.OutletStem].Terminal == RiverTerminal.Lake && _graph.Lakes[_net.Stems[lake.OutletStem].TerminalId].Level > lake.Level) uphillOutlets++;
+            else if (lake.OutletStem >= 0)
+            {
+                // The outlet reads the lake level until it has crossed the ring (S8): compared at its start when that lies inside the membership. An outlet that starts on the ring or outside it spills over a sill and holds nothing.
+                if (lake.OutletS > 0d)
+                {
+                    Compare(RiverLevel.AtStem(_net, lake.OutletStem, 0d), "outlet start", lake.OutletStem, 0d);
+                }
+                else outsideOutlets++;
+            }
+        }
+        _outsideOutlets = outsideOutlets; _uphillOutlets = uphillOutlets;
+        return (joins, bad, max);
+    }
+
+    private void Lakes()
+    {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var op = new RiverCarveOperator(_graph);
+        LakeStats real = RunLakes(null, null, op);
+        Detail(LakeText("lakes, real operator", real) + FormattableString.Invariant($"; {clock.Elapsed.TotalSeconds:F1} s"));
+        foreach (string e in real.Examples) Detail("example " + e);
+        Check(real.Samples >= 5000 && real.LakeKind > 500 && real.RingSamples > 1000, $"too little lake ground sampled ({real.Samples} samples, {real.LakeKind} Lake kind, {real.RingSamples} ring)");
+        Check(real.WetNoWeight == 0, $"{real.WetNoWeight} wet lake samples where the corridor weight is below 1");
+        Check(real.LeakPairs > 200, $"too few lake wet-dry pairs ({real.LeakPairs})");
+        Check(real.LeakBad <= real.LeakPairs * 0.005 && real.LeakMax <= 0.5, $"lake containment: {real.LeakBad}/{real.LeakPairs} wet-dry pairs below the level, largest violation {real.LeakMax:F2} m");
+        Check(real.WaterlineBad <= real.WaterlinePairs * 0.005 && real.WaterlineMax <= 1d, $"lake waterline levels: {real.WaterlineBad}/{real.WaterlinePairs}, largest {real.WaterlineMax:F2} m");
+        Check(real.RingOver5 <= real.RingSamples * 0.01, $"plugs: {real.RingOver5}/{real.RingSamples} ring samples over 5 m (limit 1 %)");
+        if (real.PlugMax > 25d) Detail(FormattableString.Invariant($"ESCALATION (T2R-8): a plug of {real.PlugMax:F1} m stands on the ring (limit 25 m); see the plug examples (a lake beside a barrier cell stands above the barrier ground, S8 Barrier cap)"));
+        (long joins, long bad, double max) = JoinLevels(0d, op);
+        Detail(FormattableString.Invariant($"joins ({_outsideOutlets} outlets start outside the membership and {_uphillOutlets} drain into a higher lake (a cascade the lake balance left uphill); neither is compared): {joins} inlet and outlet levels compared with the lake level, {bad} differ by more than 0.1 m (largest {max:F3} m)"));
+        Check(joins > 20 && bad == 0, $"river and lake levels differ by more than 0.1 m at {bad} of {joins} inlets and outlets (largest {max:F2} m)");
+
+        // Negative controls, each against the final code. 1: the plug off on a fabricated gap (the ground dips 3 m under the level across the ring band) must leak; with the plug on it must not.
+        var noPlug = new RiverCarveOperator(_graph) { Plug = false };
+        Func<double, double, double, double> Dip(RiverCarveOperator checker) => (around, across, g) =>
+        {
+            double p = checker.LakeMembership(around, across, out double level, out _);
+            return !double.IsNaN(level) && Math.Abs(p) < 0.45 ? Math.Min(g, level - 3d) : g;
+        };
+        LakeStats gapOn = RunLakes(Dip(op), null, op);
+        LakeStats gapOff = RunLakes(Dip(noPlug), null, noPlug);
+        Detail(LakeText("fabricated gap, plug on", gapOn));
+        Detail(LakeText("fabricated gap, plug OFF", gapOff));
+        Check(gapOff.LeakBad > gapOff.LeakPairs * 0.005 && gapOff.LeakMax > 0.5, $"negative control: the lake containment check did not fail with the plug off on a fabricated gap ({gapOff.LeakBad}/{gapOff.LeakPairs}, largest {gapOff.LeakMax:F2} m)");
+        Check(gapOn.LeakBad <= gapOn.LeakPairs * 0.005 && gapOn.LeakMax <= 0.5, $"the fabricated gap leaked with the plug on ({gapOn.LeakBad}/{gapOn.LeakPairs}, largest {gapOn.LeakMax:F2} m)");
+        // 2: a weight that reads 0 on the water must be flagged. 3: a plug 10 m too high on every ring sample must be flagged. 4: levels 0.5 m off at the joins must be flagged.
+        LakeStats zero = RunLakes(null, s => s with { Weight = 0d }, op);
+        Check(zero.WetNoWeight > 0, "negative control: a zero corridor weight on the water was not flagged");
+        LakeStats tall = RunLakes(null, s => s with { Delta = s.Delta + 10d }, op);
+        Check(tall.RingOver5 > tall.RingSamples * 0.01, $"negative control: plugs 10 m too high were not flagged ({tall.RingOver5}/{tall.RingSamples})");
+        (long _, long badJoins, double _) = JoinLevels(0.5d, op);
+        Check(badJoins > 0, "negative control: join levels 0.5 m off were not flagged");
+        Detail($"controls: plug off leaks {gapOff.LeakBad}/{gapOff.LeakPairs} (largest {gapOff.LeakMax:F2} m), zero weight flags {zero.WetNoWeight}, tall plug flags {tall.RingOver5}/{tall.RingSamples}, shifted joins flag {badJoins}/{joins}");
+    }
+
+    // ------------------------------------------------------------------ rivers reach the lake's water (T2R-8 review)
+
+    private sealed class ReachStats
+    {
+        public int Ends, DryEnds, Rastered, Apart, Lakes;
+        public double GapMax;
+        public readonly List<string> Examples = new();
+    }
+
+    /// <summary>
+    /// Every stem that ends in a lake and every outlet, on the strip: the natural ground at the stem's lake end must stand under the lake level (DryEnds counts the others). On up
+    /// to 24 hashed lakes of at most 12 cells a side, the water is also rastered at 16 m (wet samples of the carved model, plus the wet centreline samples of the lake's stems,
+    /// which keeps a channel narrower than a pixel in one piece): the lake end of each of its stems must lie in the same body of water as most of the lake (8-connected), and
+    /// Apart counts those that do not, with the distance from the end to that body (the dry gap the M2 lake picture showed: 1.8 km at an inlet, 0.8 km at the outlet).
+    /// </summary>
+    private ReachStats LakeReach(RiverGraph graph)
+    {
+        RiverNetwork net = graph.Network;
+        var total = new ReachStats();
+        double lo = _stripAroundMin + 20_000, hi = _stripAroundMax - 20_000;
+        var ends = new List<(int Lake, int Stem, double S)>();
+        for (int l = 0; l < graph.Lakes.Length; l++)
+        {
+            RiverLake lake = graph.Lakes[l];
+            double around = lake.MinCol * graph.AroundStepMeters;
+            if (lake.CellCount == 0 || around < lo || around > hi) continue;
+            for (int i = 0; i < lake.InletCount; i++) ends.Add((l, graph.Inlets[lake.InletStart + i].Stem, net.Curves[graph.Inlets[lake.InletStart + i].Stem].Length));
+            if (lake.OutletStem >= 0) ends.Add((l, lake.OutletStem, 0d));
+        }
+        using (TerrainGenerationHeightModel natural = new(_recipe, false))
+            foreach ((int l, int stem, double s) in ends)
+            {
+                net.Centre(stem, s, out double a, out double c, out _, out _);
+                double g = natural.CalculateHeight(a, c);
+                total.Ends++;
+                if (g >= graph.Lakes[l].Level) { total.DryEnds++; if (total.Examples.Count < 6) total.Examples.Add(FormattableString.Invariant($"dry end: lake {l} (level {graph.Lakes[l].Level:F0}) stem {stem} s {s:F0} ground {g:F1}")); }
+            }
+        const double pixel = 16d;
+        List<int> picks = ends.Select(e => e.Lake).Distinct().Where(l => graph.Lakes[l].MaxCol - graph.Lakes[l].MinCol < 12 && graph.Lakes[l].MaxRow - graph.Lakes[l].MinRow < 12 && graph.Lakes[l].MinRow > 4 && graph.Lakes[l].MaxRow < graph.Rows - 5)
+            .OrderBy(l => RiverHash.Mix(Seed, l, 95)).Take(24).ToList();
+        var locker = new object();
+        Parallel.For(0, _workers, new ParallelOptions { MaxDegreeOfParallelism = _workers }, w =>
+        {
+            using TerrainGenerationHeightModel model = new(_recipe, true, graph);
+            for (int pi = w; pi < picks.Count; pi += _workers)
+            {
+                int l = picks[pi];
+                RiverLake lake = graph.Lakes[l];
+                double around0 = (lake.MinCol - 1.5) * graph.AroundStepMeters, across0 = (lake.MinRow - 1.5) * graph.AcrossStepMeters;
+                int width = (int)((lake.MaxCol - lake.MinCol + 4) * graph.AroundStepMeters / pixel), height = (int)((lake.MaxRow - lake.MinRow + 4) * graph.AcrossStepMeters / pixel);
+                var wet = new byte[width * height]; // 1 river water, 2 lake water
+                for (int y = 0; y < height; y++)
+                    for (int x = 0; x < width; x++)
+                    {
+                        TerrainGenerationHeightModel.Diagnostics d = model.SampleDiagnostics(around0 + (x + 0.5) * pixel, across0 + (y + 0.5) * pixel);
+                        if (d.Height < d.WaterLevel) wet[y * width + x] = d.InlandWater == InlandWaterKind.Lake ? (byte)2 : d.InlandWater == InlandWaterKind.River ? (byte)1 : (byte)0;
+                    }
+                List<(int Lake, int Stem, double S)> mine = ends.Where(e => e.Lake == l).ToList();
+                foreach ((int _, int stem, double _) in mine)
+                {
+                    double length = net.Curves[stem].Length;
+                    for (double s = 0; s <= length; s += 8d)
+                    {
+                        net.Centre(stem, s, out double a, out double c, out _, out _);
+                        int x = (int)Math.Floor((a - around0) / pixel), y = (int)Math.Floor((c - across0) / pixel);
+                        if ((uint)x >= (uint)width || (uint)y >= (uint)height || wet[y * width + x] != 0) continue;
+                        TerrainGenerationHeightModel.Diagnostics d = model.SampleDiagnostics(a, c);
+                        if (d.InlandWater != InlandWaterKind.None && d.Height < d.WaterLevel) wet[y * width + x] = 1;
+                    }
+                }
+                // 8-connected bodies of water; the lake's body is the one with the most lake water.
+                var label = new int[width * height];
+                var lakePixels = new List<int> { 0 };
+                var stack = new Stack<int>();
+                for (int start = 0; start < wet.Length; start++)
+                {
+                    if (wet[start] == 0 || label[start] != 0) continue;
+                    int id = lakePixels.Count, count = 0;
+                    label[start] = id; stack.Push(start);
+                    while (stack.Count > 0)
+                    {
+                        int i = stack.Pop(), x = i % width, y = i / width;
+                        if (wet[i] == 2) count++;
+                        for (int dy = -1; dy <= 1; dy++)
+                            for (int dx = -1; dx <= 1; dx++)
+                            {
+                                int nx = x + dx, ny = y + dy;
+                                if ((uint)nx >= (uint)width || (uint)ny >= (uint)height) continue;
+                                int n = ny * width + nx;
+                                if (wet[n] != 0 && label[n] == 0) { label[n] = id; stack.Push(n); }
+                            }
+                    }
+                    lakePixels.Add(count);
+                }
+                int body = 0;
+                for (int id = 1; id < lakePixels.Count; id++) if (body == 0 || lakePixels[id] > lakePixels[body]) body = id;
+                var st = new ReachStats { Lakes = 1 };
+                foreach ((int _, int stem, double s) in mine)
+                {
+                    net.Centre(stem, s, out double a, out double c, out _, out _);
+                    double ex = (a - around0) / pixel, ey = (c - across0) / pixel;
+                    st.Rastered++;
+                    double gap2 = double.PositiveInfinity;
+                    for (int i = 0; i < label.Length && body > 0; i++)
+                    {
+                        if (label[i] != body) continue;
+                        double dx = i % width + 0.5 - ex, dy = i / width + 0.5 - ey, d2 = dx * dx + dy * dy;
+                        if (d2 < gap2) gap2 = d2;
+                    }
+                    double gap = double.IsInfinity(gap2) ? 99_999d : Math.Sqrt(gap2) * pixel;
+                    if (gap <= 2d * pixel) continue;
+                    st.Apart++;
+                    st.GapMax = Math.Max(st.GapMax, gap);
+                    st.Examples.Add(FormattableString.Invariant($"apart: lake {l} (level {lake.Level:F0}, {lake.CellCount} cells) stem {stem} s {s:F0} stands {gap:F0} m from the lake's water"));
+                }
+                lock (locker)
+                {
+                    total.Lakes += st.Lakes; total.Rastered += st.Rastered; total.Apart += st.Apart; total.GapMax = Math.Max(total.GapMax, st.GapMax);
+                    foreach (string e in st.Examples) if (total.Examples.Count < 14) total.Examples.Add(e);
+                }
+            }
+        });
+        return total;
+    }
+
+    private static string ReachText(string label, ReachStats s)
+        => FormattableString.Invariant($"{label}: {s.Ends} inlet and outlet ends on the strip, {s.DryEnds} on natural ground at or above the lake level; {s.Lakes} lakes rastered at 16 m with {s.Rastered} ends, {s.Apart} apart from the lake's water (largest gap {s.GapMax:F0} m)");
+
+    /// <summary>
+    /// T2R-8 review: reported, not yet checked. As built in T2R-8 the stems end at the first flooded cell and start at the first dry one, and most of them stand apart from the
+    /// lake's water. T2R-8b (docs/work-orders/terrain-vegetation/T2.md) runs the stems through the lake and turns the two counts into checks, with a control.
+    /// </summary>
+    private void LakeWater()
+    {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        ReachStats real = LakeReach(_graph);
+        Detail(ReachText("rivers reach the lake (reported only until T2R-8b)", real) + FormattableString.Invariant($"; {clock.Elapsed.TotalSeconds:F1} s"));
+        foreach (string e in real.Examples.Take(8)) Detail("example " + e);
+        Check(real.Ends >= 100 && real.Rastered >= 20, $"too few lake ends looked at ({real.Ends} on the strip, {real.Rastered} rastered)");
     }
 
     private (long Samples, long Over40, double CutMax, long Pairs, long Rising, long Steps, long StepsOver) _path;
@@ -527,7 +983,7 @@ public partial class RiverCarveInvariantsTest : RefCounted
                 if (da > 3000 || Math.Abs(dc) > 3000) continue;
                 nearest = Math.Min(nearest, Math.Sqrt(da * da + dc * dc));
             }
-            if (nearest < 2000d) continue;
+            if (nearest < 2000d || _graph.IsNear(around, across)) continue;
             tested++;
             TerrainGenerationHeightModel.Diagnostics d = model.SampleDiagnostics(around, across);
             if (d.RiverCorridorWeight != 0d || d.InlandWater != InlandWaterKind.None || d.RiverReach != -1 || !double.IsNaN(d.WaterLevel)) bad++;
@@ -657,7 +1113,122 @@ public partial class RiverCarveInvariantsTest : RefCounted
         Render(System.IO.Path.Combine(folder, "confluence"), ja, jc, 5d);
         Render(System.IO.Path.Combine(folder, "reach_zoom"), ra, rc, 1d);
         Render(System.IO.Path.Combine(folder, "confluence_zoom"), ja, jc, 1d);
+        DumpSections(folder);
+        DumpProfile(folder);
+        DumpLake(folder);
     }
+
+
+    // ------------------------------------------------------------------ M2 data for the pictures (T2R-8): cross-sections, a pools-and-chutes profile, a lake shoreline
+
+    private static void WriteFloats(string path, float[] data)
+    {
+        var bytes = new byte[data.Length * 4];
+        Buffer.BlockCopy(data, 0, bytes, 0, bytes.Length);
+        System.IO.File.WriteAllBytes(path, bytes);
+    }
+
+    /// <summary>One vale (the widest low-cut section) and one deep cut (the deepest reach section), every metre over the section's extent, natural against carved, with the water level.</summary>
+    private void DumpSections(string folder)
+    {
+        using TerrainGenerationHeightModel natural = new(_recipe, false);
+        using TerrainGenerationHeightModel carved = NewModel();
+        Section? vale = null, deep = null;
+        double valeScore = double.MinValue, deepCut = 0;
+        foreach (Section sec in _sections.Where(x => !x.Confluence && !x.LakeTerminal && !x.LakeEnd))
+        {
+            if (natural.CalculateHeight(sec.Around, sec.Across) < 20d) continue;
+            double maxCut = 0;
+            for (double x = -sec.Extent; x <= sec.Extent; x += 5d)
+                maxCut = Math.Max(maxCut, natural.CalculateHeight(sec.Around + x * sec.Nx, sec.Across + x * sec.Ny) - carved.CalculateHeight(sec.Around + x * sec.Nx, sec.Across + x * sec.Ny));
+            _net.ChannelAt(sec.Stem, sec.S, out RiverChannel c);
+            double score = (c.HalfWidth + c.BankWidth + c.Floodplain) - 10d * maxCut;
+            if (c.HalfWidth >= 10d && maxCut < 12d && score > valeScore) { valeScore = score; vale = sec; }
+            if (maxCut > deepCut && maxCut < 120d) { deepCut = maxCut; deep = sec; }
+        }
+        foreach ((string name, Section? sec) in new[] { ("vale", vale), ("deep_cut", deep) })
+        {
+            if (sec == null) { Fail("no section for the " + name + " picture"); continue; }
+            var lines = new List<string> { "x_m,natural_m,carved_m,water_level_m" };
+            for (double x = -sec.Extent; x <= sec.Extent; x += 1d)
+            {
+                double a = sec.Around + x * sec.Nx, c = sec.Across + x * sec.Ny;
+                TerrainGenerationHeightModel.Diagnostics d = carved.SampleDiagnostics(a, c);
+                bool wet = (d.InlandWater == InlandWaterKind.River || d.InlandWater == InlandWaterKind.Lake) && d.Height < d.WaterLevel;
+                lines.Add(FormattableString.Invariant($"{x:F1},{natural.CalculateHeight(a, c):F2},{d.Height:F2},{(wet ? d.WaterLevel : double.NaN):F2}"));
+            }
+            System.IO.File.WriteAllLines(System.IO.Path.Combine(folder, "section_" + name + ".csv"), lines);
+            _net.ChannelAt(sec.Stem, sec.S, out RiverChannel ch);
+            Detail($"section {name}: stem {sec.Stem} s {sec.S:F0}, half width {ch.HalfWidth:F1} m, bank {ch.BankWidth:F1} m, floodplain {ch.Floodplain:F0} m, deepest cut in the section {(name == "vale" ? 0 : deepCut):F1} m");
+        }
+    }
+
+    /// <summary>A reach whose stored profile falls 3.5 to 5.5 %: stored profile, displayed level and the centreline ground every 2 m over 500 m.</summary>
+    private void DumpProfile(string folder)
+    {
+        using TerrainGenerationHeightModel natural = new(_recipe, false);
+        for (int r = 0; r < _net.Reaches.Length; r++)
+        {
+            RiverReach reach = _net.Reaches[r];
+            if (reach.SEnd - reach.SStart < 700f || _net.Stems[reach.Stem].Terminal == RiverTerminal.Lake || _net.Reaches[_net.Stems[reach.Stem].ReachStart].UpstreamLake >= 0) continue;
+            double s0 = 0.5 * (reach.SStart + reach.SEnd) - 250d, s1 = s0 + 500d;
+            double slope = (RiverLevel.Stored(_net, reach.Stem, s0) - RiverLevel.Stored(_net, reach.Stem, s1)) / 500d;
+            _net.Centre(reach.Stem, s0 + 250d, out double ca, out double cc, out _, out _);
+            if (slope < 0.035 || slope > 0.055 || natural.CalculateHeight(ca, cc) < 20d) continue;
+            var lines = new List<string> { "s_m,stored_profile_m,displayed_level_m,bed_m,centreline_ground_m" };
+            for (double s = s0; s <= s1; s += 2d)
+            {
+                _net.Centre(reach.Stem, s, out double a, out double c, out _, out _);
+                _net.ChannelAt(reach.Stem, s, out RiverChannel ch);
+                double level = RiverLevel.AtStem(_net, reach.Stem, s);
+                lines.Add(FormattableString.Invariant($"{s - s0:F1},{RiverLevel.Stored(_net, reach.Stem, s):F3},{level:F3},{level - ch.Depth:F3},{natural.CalculateHeight(a, c):F2}"));
+            }
+            System.IO.File.WriteAllLines(System.IO.Path.Combine(folder, "profile.csv"), lines);
+            Detail($"profile: reach {r} (stem {reach.Stem}), 500 m from s {s0:F0}, stored gradient {slope:P1}");
+            return;
+        }
+        Fail("no 3 to 5.5 % reach found for the profile picture");
+    }
+
+    /// <summary>A compact lake of 25 to 120 cells with an inlet and an outlet: carved height, natural height, ground delta and the wet mask over an 8 km window at 8 m per pixel.</summary>
+    private void DumpLake(string folder)
+    {
+        int pick = -1;
+        foreach (LakeCase lc in LakeCases().OrderBy(c => RiverHash.Mix(Seed, c.Lake, 91)))
+        {
+            RiverLake l = _graph.Lakes[lc.Lake];
+            int boxCells = (l.MaxCol - l.MinCol + 1) * (l.MaxRow - l.MinRow + 1);
+            if (l.CellCount >= 25 && l.CellCount <= 120 && boxCells <= 2 * l.CellCount && l.InletCount >= 1 && l.OutletStem >= 0 && l.OutletS > 0f) { pick = lc.Lake; break; }
+        }
+        if (pick < 0) { Fail("no lake with an inlet and an outlet for the picture"); return; }
+        RiverLake lake = _graph.Lakes[pick];
+        const int size = 1000;
+        double pixel = Math.Clamp((Math.Max(lake.MaxCol - lake.MinCol + 1, lake.MaxRow - lake.MinRow + 1) * 1000d + 3000d) / size, 3d, 12d);
+        double centreAround = 0.5 * (lake.MinCol + lake.MaxCol + 1) * _graph.AroundStepMeters, centreAcross = 0.5 * (lake.MinRow + lake.MaxRow + 1) * _graph.AcrossStepMeters;
+        double around0 = centreAround - 0.5 * size * pixel, across0 = centreAcross - 0.5 * size * pixel;
+        var natural = new float[size * size]; var heights = new float[size * size]; var delta = new float[size * size]; var wet = new float[size * size];
+        Parallel.For(0, _workers, new ParallelOptions { MaxDegreeOfParallelism = _workers }, w =>
+        {
+            using TerrainGenerationHeightModel model = NewModel();
+            using TerrainGenerationHeightModel plain = new(_recipe, true);
+            for (int row = w; row < size; row += _workers)
+                for (int col = 0; col < size; col++)
+                {
+                    double a = around0 + (col + 0.5) * pixel, c = across0 + (row + 0.5) * pixel;
+                    TerrainGenerationHeightModel.Diagnostics d = model.SampleDiagnostics(a, c);
+                    int i = row * size + col;
+                    natural[i] = (float)plain.CalculateHeight(a, c); heights[i] = (float)d.Height; delta[i] = (float)(d.Height - natural[i]);
+                    wet[i] = (d.InlandWater == InlandWaterKind.River || d.InlandWater == InlandWaterKind.Lake) && d.Height < d.WaterLevel ? (d.InlandWater == InlandWaterKind.Lake ? 2f : 1f) : 0f;
+                }
+        });
+        WriteFloats(System.IO.Path.Combine(folder, "lake_natural.bin"), natural);
+        WriteFloats(System.IO.Path.Combine(folder, "lake_carved.bin"), heights);
+        WriteFloats(System.IO.Path.Combine(folder, "lake_delta.bin"), delta);
+        WriteFloats(System.IO.Path.Combine(folder, "lake_wet.bin"), wet);
+        System.IO.File.WriteAllText(System.IO.Path.Combine(folder, "lake_meta.txt"), FormattableString.Invariant($"size={size}\npixel={pixel}\nlake={pick}\nlevel={lake.Level}\ncells={lake.CellCount}\ninlets={lake.InletCount}\noutlet_stem={lake.OutletStem}\n"));
+        Detail($"lake picture: lake {pick}, level {lake.Level:F0} m, {lake.CellCount} cells, {lake.InletCount} inlets, outlet stem {lake.OutletStem}, window {size * pixel / 1000:F1} km at {pixel:F1} m per pixel");
+    }
+
 
     /// <summary>1000 x 1000 pixels of <paramref name="pixel"/> metres, sampled through the height model with and without the graph, lit from the top left of the picture with the same colour scale; rivers in blue after the carve.</summary>
     private void Render(string prefix, double centreAround, double centreAcross, double pixel)
@@ -708,6 +1279,9 @@ public partial class RiverCarveInvariantsTest : RefCounted
             Image.CreateFromData(size, size, false, Image.Format.Rgb8, bytes).SavePng(prefix + (pass == 0 ? "_before.png" : "_after.png"));
         }
         Image.CreateFromData(2 * size, size, false, Image.Format.Rgb8, combined).SavePng(prefix + "_before_after.png");
+        var wetBytes = new float[before.Length];
+        for (int i = 0; i < wetBytes.Length; i++) wetBytes[i] = wet[i] ? 1f : 0f;
+        WriteFloats(prefix + "_natural.bin", before); WriteFloats(prefix + "_carved.bin", after); WriteFloats(prefix + "_wet.bin", wetBytes);
         Detail($"picture {prefix}_before_after.png (left: natural, right: carved; {pixel:F0} m per pixel; elevation scale {lo:F0} to {hi:F0} m)");
     }
 }

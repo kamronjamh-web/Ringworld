@@ -155,28 +155,29 @@ public static class RiverLevel
 
         public LakeIndicator(DrainageField f, DrainageGrid grid) { _f = f; _spec = grid.Spec; _lakeId = f.LakeId.ToArray(); }
 
-        private double J(int col, int row)
+        private double J(int col, int row, int lake)
         {
             row = Math.Clamp(row, 0, _f.Height - 1);
             int strip = ((col % _spec.RingColumns) + _spec.RingColumns) % _spec.RingColumns - _spec.ColumnStart;
             if (strip < 0) strip += _spec.RingColumns;
             if (strip >= _f.Width) return -1;
             int cell = row * _f.Width + strip;
-            if (_lakeId[cell] >= 0) return 1;
+            if (lake < 0 ? _lakeId[cell] >= 0 : _lakeId[cell] == lake) return 1;
             for (int dir = 0; dir < 8; dir++)
             {
                 int m = _f.Domain.GeometricNeighbor(cell, dir);
-                if (m >= 0 && _lakeId[m] >= 0) return 0;
+                if (m >= 0 && (lake < 0 ? _lakeId[m] >= 0 : _lakeId[m] == lake)) return 0;
             }
             return -1;
         }
 
-        public double P(double around, double across)
+        /// <summary>P of S8; with <paramref name="lake"/> at or above 0 the lake's own indicator (T2R-8: an outlet is held until it leaves its own lake's membership, not the membership of a lake it flows into).</summary>
+        public double P(double around, double across, int lake = -1)
         {
             double gx = around / _spec.AroundStepMeters - 0.5, gy = across / _spec.AcrossStepMeters - 0.5;
             int x0 = (int)Math.Floor(gx), y0 = (int)Math.Floor(gy);
             double tx = gx - x0, ty = gy - y0;
-            return (J(x0, y0) * (1 - tx) + J(x0 + 1, y0) * tx) * (1 - ty) + (J(x0, y0 + 1) * (1 - tx) + J(x0 + 1, y0 + 1) * tx) * ty;
+            return (J(x0, y0, lake) * (1 - tx) + J(x0 + 1, y0, lake) * tx) * (1 - ty) + (J(x0, y0 + 1, lake) * (1 - tx) + J(x0 + 1, y0 + 1, lake) * tx) * ty;
         }
     }
 
@@ -307,6 +308,7 @@ public static class RiverLevel
         var running = new float[stemCount][];
         var filled = new bool[stemCount][];
         var endValue = new double[stemCount];
+        var heldStations = new int[stemCount];
         var incoming = new List<(double S, int Stem)>[stemCount];
         foreach (int i in order)
         {
@@ -330,7 +332,8 @@ public static class RiverLevel
                 if (holding)
                 {
                     net.Centre(i, s[i][j], out double around, out double across, out _, out _);
-                    if (lakes.P(net.WrapAround(around), across) > 0) { w[j] = (float)hold; rm[j] = float.NaN; fill[j] = true; continue; }
+                    // T2R-8: the knots sit BandUpper under the profile, so a held level of whole metres would display one metre low; stand BandUpper above it and the knot lands on the lake level.
+                    if (lakes.P(net.WrapAround(around), across, upLake) > 0) { w[j] = (float)(hold + BandUpper); rm[j] = float.NaN; fill[j] = true; heldStations[i] = j + 1; continue; }
                     holding = false;
                 }
                 double ground = g[i][j] - RiverHydraulics.LevelIncision;
@@ -349,7 +352,7 @@ public static class RiverLevel
 
         // Knots.
         var knotLists = new List<RiverKnot>[stemCount];
-        Parallel.For(0, stemCount, new ParallelOptions { MaxDegreeOfParallelism = workers }, i => knotLists[i] = FitKnots(s[i], profile[i]));
+        Parallel.For(0, stemCount, new ParallelOptions { MaxDegreeOfParallelism = workers }, i => knotLists[i] = FitKnots(s[i], profile[i], heldStations[i]));
         var knotCm = new List<(int S, int W)>[stemCount];
         int knotTotal = 0;
         for (int i = 0; i < stemCount; i++)
@@ -446,14 +449,22 @@ public static class RiverLevel
     }
 
     /// <summary>Greedy fit: extend a segment from its start knot while one slope keeps every station inside [W - 0.74, W - 0.005]; slopes never rise above zero.</summary>
-    internal static List<RiverKnot> FitKnots(float[] s, float[] w)
+    internal static List<RiverKnot> FitKnots(float[] s, float[] w, int flatPrefix = 0)
     {
         var knots = new List<RiverKnot>();
         int n = s.Length;
         double s0 = s[0], v0 = w[0] - BandUpper;
         knots.Add(new RiverKnot { S = (float)s0, W = (float)v0 });
         double lo = double.NegativeInfinity, hi = 0;
-        for (int j = 1; j < n; j++)
+        int first = 1;
+        // T2R-8: the stations held at a lake level stay one flat segment (a mid-band slope would sag the displayed level a whole metre under the lake at once).
+        if (flatPrefix >= 2 && s[flatPrefix - 1] > s0 + 1e-9)
+        {
+            s0 = s[flatPrefix - 1];
+            knots.Add(new RiverKnot { S = (float)s0, W = (float)v0 });
+            first = flatPrefix;
+        }
+        for (int j = first; j < n; j++)
         {
             double ds = s[j] - s0;
             if (ds <= 1e-9) continue;

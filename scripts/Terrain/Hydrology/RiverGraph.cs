@@ -210,7 +210,7 @@ public sealed class RiverGraph
                 for (; s < length; s += 10)
                 {
                     net.Centre(i, s, out double around, out double across, out _, out _);
-                    if (lakeIndicator.P(net.WrapAround(around), across) <= 0) break;
+                    if (lakeIndicator.P(net.WrapAround(around), across, upstream) <= 0) break;
                 }
                 lakes[upstream].OutletStem = i;
                 lakes[upstream].OutletS = (float)Math.Min(s, length);

@@ -33,7 +33,7 @@ public sealed class RiverCarveOperator
     /// <summary>Slack added to the stem's true lateral reach (<see cref="RiverNetwork.StemLateralReach"/>) for the cull by the control hull.</summary>
     private const double CullSlackMeters = 10d;
     private const double ValleyOnlyAboveFootprint = 256d, ValleyOnlyNarrowAboveFootprint = 64d;
-    private const int MaxHits = 8;
+    private const int MaxHits = 24;
 
     // Draw-down of a higher channel towards a lower one (T2R-7 review). Inside the lower core and this margin beyond it the higher level equals the lower one; it then
     // returns over a run of 10 m per metre of difference (the chute slope of the level profile), between 10 and 120 m. The margin exceeds the 2 m containment distance.
@@ -47,13 +47,26 @@ public sealed class RiverCarveOperator
     private const double RoundPerMeter = 0.1, RoundMaxMeters = 4d;
     private const double FloorRiseRunMeters = 8d;
 
+    /// <summary>S8: half-width of the plug band in cell units of the indicator P, and the width over which a river's lower bounds fade out inside a lake (P above the band).</summary>
+    private const double PlugBand = 0.25;
+    /// <summary>The ground must stand this far under the lake surface before a river's lower bounds are removed there, and the river must be within 0.5 to 2 m of the lake level (a river on the slope above the water keeps its banks).</summary>
+    private const double LakeDepthRunMeters = 2d;
+
     private readonly RiverGraph _graph;
     private readonly RiverNetwork _net;
     private readonly RiverSpatialIndex _index;
     private readonly double _halfCircumference;
+    /// <summary>Id of the lake each stem leaves (outlet) and of the lake it ends in, -1 for none: the river's own lake, which does not change with the lake a point belongs to.</summary>
+    private readonly int[] _outletLake, _endLake;
 
     /// <summary>Test hook for the negative control (S7 "Checked by"): false makes the core an upper bound only, so a dip in the bank zone is not lifted.</summary>
     internal bool CoreLowerBound { get; init; } = true;
+
+    /// <summary>Test hook for the negative control (S8 "Checked by"): false removes the plug, so a gap in the ring that the lattice cannot see leaks.</summary>
+    internal bool Plug { get; init; } = true;
+
+    /// <summary>Test hook for the lake-held fill comparison: false makes the operator ignore lakes altogether (the T2R-7 state).</summary>
+    internal bool LakeOperator { get; init; } = true;
 
     public RiverCarveOperator(RiverGraph graph)
     {
@@ -61,6 +74,14 @@ public sealed class RiverCarveOperator
         _net = graph.Network;
         _index = graph.Index;
         _halfCircumference = 0.5 * _net.CircumferenceM;
+        _outletLake = new int[_net.Stems.Length]; _endLake = new int[_net.Stems.Length];
+        for (int i = 0; i < _net.Stems.Length; i++)
+        {
+            RiverStem st = _net.Stems[i];
+            int up = _net.Reaches[st.ReachStart].UpstreamLake;
+            _outletLake[i] = up >= 0 && st.Terminal != RiverTerminal.Dead ? up : -1;
+            _endLake[i] = st.Terminal == RiverTerminal.Lake ? st.TerminalId : -1;
+        }
         if (_net.Stems.Length > 0) _net.StemLateralReach(0, FadeEndMeters); // measure the stems' reach now, not on the first sample
     }
 
@@ -211,6 +232,116 @@ public sealed class RiverCarveOperator
             ? level - edgeDepth - (depth - edgeDepth) * (1d - absT * absT / (halfWidth * halfWidth))
             : level - edgeDepth + (edgeDepth + RiverHydraulics.Freeboard) * RiverHydraulics.Smoothstep(halfWidth, halfWidth + bankWidth, absT);
 
+    // ------------------------------------------------------------------ lakes (S8, T2R-8)
+
+    /// <summary>The lake the stem leaves (in its first half) or ends in (in its second), or -1: where the river's own water is the lake's.</summary>
+    private int StemLakeId(int stem, double s)
+    {
+        int outlet = _outletLake[stem], end = _endLake[stem];
+        if (outlet < 0) return end;
+        if (end < 0) return outlet;
+        return s < 0.5 * _net.Curves[stem].Length ? outlet : end;
+    }
+
+    private int LakeCell(int col, int row) => _index.LakeJ(col, row);
+
+    /// <summary>
+    /// The membership indicator P of S8 at the point: the bilinear interpolation of J between the four surrounding cell centres (-1 where none of them is a lake or a ring cell,
+    /// exactly 0 on the ring-centre lines). <paramref name="lake"/> and <paramref name="level"/> are those of the stencil's flooded corners (NaN level and -1 without one),
+    /// resolved only where P is above -p_b. <paramref name="data"/> (length 12) receives, for up to four lakes near the point, the lake's own indicator at [k], its level at [4 + k] and
+    /// its id at [8 + k] (each lake has its own flooded cells and ring, so a ring cell between two lakes of different levels builds each one's plug without a jump, and a river
+    /// reads the indicator of its own lake).
+    /// </summary>
+    internal double LakeMembership(double around, double across, out double level, out int lake, Span<double> data, out int count4)
+    {
+        level = double.NaN; lake = -1; count4 = 0;
+        double circumference = _net.CircumferenceM, a = around;
+        if (a < 0 || a >= circumference) { a %= circumference; if (a < 0) a += circumference; }
+        double gx = a / _graph.AroundStepMeters - 0.5, gy = across / _graph.AcrossStepMeters - 0.5;
+        int x0 = (int)Math.Floor(gx), y0 = (int)Math.Floor(gy);
+        double tx = gx - x0, ty = gy - y0;
+        int j00 = LakeCell(x0, y0), j10 = LakeCell(x0 + 1, y0), j01 = LakeCell(x0, y0 + 1), j11 = LakeCell(x0 + 1, y0 + 1);
+        if (j00 < 0 && j10 < 0 && j01 < 0 && j11 < 0) return -1d;
+        double p = (j00 * (1 - tx) + j10 * tx) * (1 - ty) + (j01 * (1 - tx) + j11 * tx) * ty;
+        if (p <= -PlugBand) return p;
+        // The lake ids of the 4 x 4 block around the stencil (every neighbour of a corner lies in it) and the distinct lakes among them.
+        int rc = _graph.RingColumns;
+        Span<int> block = stackalloc int[16];
+        Span<int> candidates = stackalloc int[4];
+        int candidateCount = 0;
+        for (int bj = 0; bj < 4; bj++)
+            for (int bi = 0; bi < 4; bi++)
+            {
+                int cx = x0 - 1 + bi, cy = y0 - 1 + bj, id = -1;
+                if (LakeCell(cx, cy) == 1)
+                {
+                    id = _graph.LakeAt(((cx % rc) + rc) % rc, Math.Clamp(cy, 0, _graph.Rows - 1));
+                    if (id >= 0)
+                    {
+                        int at = 0;
+                        while (at < candidateCount && candidates[at] != id) at++;
+                        if (at == candidateCount && candidateCount < 4) candidates[candidateCount++] = id;
+                    }
+                }
+                block[bj * 4 + bi] = id;
+            }
+        // The lake of the stencil's flooded corners; where two lakes meet (a blocked diagonal) the larger bilinear share wins, then the lower id.
+        Span<int> ids = stackalloc int[4];
+        Span<double> shares = stackalloc double[4];
+        int count = 0;
+        for (int k = 0; k < 4; k++)
+        {
+            int id = block[((k >> 1) + 1) * 4 + (k & 1) + 1];
+            if (id < 0) continue;
+            double share = ((k & 1) == 0 ? 1 - tx : tx) * ((k >> 1) == 0 ? 1 - ty : ty);
+            int at = 0;
+            while (at < count && ids[at] != id) at++;
+            if (at == count) { ids[count] = id; shares[count++] = share; } else shares[at] += share;
+        }
+        if (count > 0)
+        {
+            int best = 0;
+            for (int i = 1; i < count; i++) if (shares[i] > shares[best] || (shares[i] == shares[best] && ids[i] < ids[best])) best = i;
+            lake = ids[best];
+            level = _graph.Lakes[lake].Level;
+        }
+        else
+        {
+            // Only ring corners: P is 0 or just below and nothing is wet; the highest lake next to them stands for the level (the plug control reads it).
+            double top = double.NegativeInfinity;
+            for (int i = 0; i < candidateCount; i++) if (_graph.Lakes[candidates[i]].Level > top) top = _graph.Lakes[candidates[i]].Level;
+            if (candidateCount > 0) level = top;
+        }
+        if (data.Length < 12) return p;
+        for (int c = 0; c < candidateCount; c++)
+        {
+            double pl = p;
+            if (candidateCount > 1)
+            {
+                // This lake's own indicator: +1 on its flooded cells, 0 on the cells next to them, -1 elsewhere.
+                int target = candidates[c];
+                pl = (OwnJ(block, target, 1, 1) * (1 - tx) + OwnJ(block, target, 2, 1) * tx) * (1 - ty) + (OwnJ(block, target, 1, 2) * (1 - tx) + OwnJ(block, target, 2, 2) * tx) * ty;
+            }
+            data[c] = pl; data[4 + c] = _graph.Lakes[candidates[c]].Level; data[8 + c] = candidates[c];
+        }
+        count4 = candidateCount;
+        return p;
+    }
+
+    private static double OwnJ(ReadOnlySpan<int> block, int target, int bi, int bj)
+    {
+        if (block[bj * 4 + bi] == target) return 1d;
+        for (int dy = -1; dy <= 1; dy++)
+            for (int dx = -1; dx <= 1; dx++)
+                if (block[(bj + dy) * 4 + bi + dx] == target) return 0d;
+        return -1d;
+    }
+
+    internal double LakeMembership(double around, double across, out double level, out int lake) => LakeMembership(around, across, out level, out lake, Span<double>.Empty, out _);
+
+    /// <summary>omega_lake of S8: 1 for P at or above -p_b (the water, the low shore and the dry ring), continuous to 0 below.</summary>
+    private static double LakeWeight(double p) => p >= -PlugBand ? 1d : 1d - RiverHydraulics.Smoothstep(PlugBand, 2d * PlugBand, -p);
+
     // ------------------------------------------------------------------ the pieces at a point
 
     /// <summary>
@@ -332,7 +463,17 @@ public sealed class RiverCarveOperator
         if (!_index.IsNear(col, row)) return new RiverOperatorResult(g, InlandWaterKind.None, double.NaN, -1, 0d, 0d, 0d);
         Span<Hit> hits = stackalloc Hit[MaxHits];
         int n = Collect(col, row, around, across, footprintMeters, hits, out double weight);
-        if (n == 0) return new RiverOperatorResult(g, InlandWaterKind.None, double.NaN, -1, 0d, weight, 0d);
+        // Lakes (S8): the membership P, the level of the lake, the weight and the share of the river lower bounds that a lake's interior removes (a river that ends in or leaves a lake builds no dam under the water).
+        double p = -1d, lakeLevel = double.NaN;
+        Span<double> lakeData = stackalloc double[12];
+        int lakeCount = 0;
+        if (LakeOperator && _graph.Lakes.Length > 0)
+        {
+            p = LakeMembership(around, across, out lakeLevel, out _, lakeData, out lakeCount);
+            double omega = LakeWeight(p);
+            if (omega > weight) weight = omega;
+        }
+        if (n == 0 && lakeCount == 0 && !(p > 0d)) return new RiverOperatorResult(g, InlandWaterKind.None, double.NaN, -1, 0d, weight, 0d);
         const double f = RiverHydraulics.Freeboard;
         double hiCore = double.PositiveInfinity, valley = g, lo = double.NegativeInfinity, loCap = double.PositiveInfinity;
         double seaGuard = RiverHydraulics.Smoothstep(-1d, 0d, g);
@@ -372,6 +513,19 @@ public sealed class RiverCarveOperator
                 if (!double.IsNegativeInfinity(pieceLo)) pieceLo -= away * Math.Max(0d, pieceLo - g);
                 round *= fade;
             }
+            if (lakeCount > 0 && !double.IsNegativeInfinity(pieceLo))
+            {
+                // A river inside its own lake builds no dam under the water: its lower bounds fade out where the ground stands under the lake surface and the river is at the lake level.
+                int ownId = StemLakeId(h.Stem, h.S);
+                if (ownId >= 0)
+                    for (int k = 0; k < lakeCount; k++)
+                    {
+                        if ((int)lakeData[8 + k] != ownId) continue;
+                        double own = lakeData[4 + k];
+                        pieceLo -= RiverHydraulics.Smoothstep(PlugBand, 2d * PlugBand, lakeData[k]) * RiverHydraulics.Smoothstep(0d, LakeDepthRunMeters, own - g) * (1d - RiverHydraulics.Smoothstep(0.5, 2d, level - own)) * Math.Max(0d, pieceLo - g);
+                        break;
+                    }
+            }
             if (!double.IsNegativeInfinity(pieceLo)) pieceLo = g + seaGuard * (pieceLo - g);
             if (!h.ValleyOnly)
             {
@@ -388,12 +542,30 @@ public sealed class RiverCarveOperator
         }
         // Combination (S7, T2R-7): valley bounds clamp the ground from above, every lower bound (bank, levee) then lifts it, and a channel core caps the result, so a channel
         // always beats another reach's levee or valley and the highest lower bound beats a lower reach's valley (a bend beside a lower reach must not cut this reach's bank).
+        // The plug (S8): a lower bound on the dry ring that closes gaps between samples, so that at P = 0 the ground stands at least Level + f and the wet region never reaches the ring line.
+        if (Plug && lakeCount > 0)
+        {
+            // The raise is measured from the clamped ground, not from G, so the plug does not undo a valley cut where it has no work to do (psi = 0 changes nothing).
+            double raise = 0d;
+            for (int k = 0; k < lakeCount; k++)
+                raise = Math.Max(raise, (1d - RiverHydraulics.Smoothstep(0d, PlugBand, Math.Abs(lakeData[k]))) * Math.Max(0d, lakeData[4 + k] + f - valley));
+            if (raise > 0d)
+            {
+                double plugged = valley + seaGuard * raise;
+                if (plugged > lo) lo = plugged;
+            }
+        }
         double height = valley;
         if (lo > loCap) lo = loCap;
         if (lo > height) height = lo;
         if (hiCore < height) height = hiCore;
-        int owner = g >= 0d ? Owner(hits.Slice(0, n)) : -1;
-        if (owner < 0) return new RiverOperatorResult(height, InlandWaterKind.None, double.NaN, -1, 0d, weight, height - g);
+        int owner = n > 0 && g >= 0d ? Owner(hits.Slice(0, n)) : -1;
+        if (owner < 0)
+        {
+            // No river core owns the point: a lake owns it where P > 0 (S8); islands and the ring stay dry because the sampler tests the ground against the level.
+            if (p > 0d && !double.IsNaN(lakeLevel)) return new RiverOperatorResult(height, InlandWaterKind.Lake, lakeLevel, -1, 0d, weight, height - g);
+            return new RiverOperatorResult(height, InlandWaterKind.None, double.NaN, -1, 0d, weight, height - g);
+        }
         return new RiverOperatorResult(height, InlandWaterKind.River, hits[owner].Drawn, hits[owner].Reach, hits[owner].T, weight, height - g);
     }
 
@@ -407,6 +579,7 @@ public sealed class RiverCarveOperator
         if (!_index.IsNear(col, row)) return 0d;
         Span<Hit> hits = stackalloc Hit[MaxHits];
         Collect(col, row, around, across, footprintMeters, hits, out double weight);
+        if (LakeOperator && _graph.Lakes.Length > 0) weight = Math.Max(weight, LakeWeight(LakeMembership(around, across, out _, out _)));
         return weight;
     }
 }

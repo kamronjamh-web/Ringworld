@@ -178,6 +178,17 @@ public sealed class RiverSpatialIndex
     public bool IsFlooded(int col, int row) => Get(_flooded, CellIndex(col, row));
     public bool IsRing(int col, int row) => Get(_ring, CellIndex(col, row));
     public bool IsNear(int col, int row) => Get(_near, CellIndex(col, row));
+
+    /// <summary>
+    /// The lake indicator J of S8 at any integer cell: +1 flooded, 0 ring, -1 otherwise. The column wraps around the ring; the rows replicate the edge row, so a lake against
+    /// a rim wall keeps P above 0 out to the rim.
+    /// </summary>
+    public int LakeJ(int col, int row)
+    {
+        row = row < 0 ? 0 : row >= _rows ? _rows - 1 : row;
+        long i = CellIndex(Wrap(col), row);
+        return Get(_flooded, i) ? 1 : Get(_ring, i) ? 0 : -1;
+    }
     public bool IsNear(double around, double across) => Get(_near, CellIndex(ColumnOf(around), RowOf(across)));
 
     /// <summary>Piece ids (global node indices) listed in the bucket of the point: a superset of every piece within <see cref="ReachRadiusMeters"/> of it.</summary>

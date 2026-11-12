@@ -9,7 +9,7 @@ namespace RingworldTechDemo.Terrain.Generation;
 /// <remarks>Each worker must own its model, or callers must serialize access to its mutable gully cache.</remarks>
 public sealed class TerrainGenerationHeightModel : IDisposable
 {
-    public readonly record struct Diagnostics(double Height, double MacroHeight, double Continentalness, double SeaWeight, double LowlandWeight, double AlpineWeight, double DetailMask, double ValleyWeight, double RidgeWeight, double MountainUplift, double TrenchDepth, double DetailHeight, bool Clamped, double FoothillHeight=0d, double SpurHeight=0d, double ErosionHeight=0d, int SiteIndex=-1, double SiteWeight=0d, SiteSurfaceMask SiteMask=default, int ClimateMachineIndex=-1, double LandformHeight=0d, double LowlandErosionHeight=0d, double Ruggedness=0d, double PlateauWeight=0d, double LandformGate=0d, double WeatherLungWeight=0d, double WaterLevel=double.NaN, InlandWaterKind InlandWater=InlandWaterKind.None, int RiverReach=-1, double ChannelOffset=0d, double RiverCorridorWeight=0d, double RiverGroundDelta=0d);
+    public readonly record struct Diagnostics(double Height, double MacroHeight, double Continentalness, double SeaWeight, double LowlandWeight, double AlpineWeight, double DetailMask, double ValleyWeight, double RidgeWeight, double MountainUplift, double TrenchDepth, double DetailHeight, bool Clamped, double FoothillHeight=0d, double SpurHeight=0d, double ErosionHeight=0d, int SiteIndex=-1, double SiteWeight=0d, SiteSurfaceMask SiteMask=default, int ClimateMachineIndex=-1, double LandformHeight=0d, double LowlandErosionHeight=0d, double Ruggedness=0d, double PlateauWeight=0d, double LandformGate=0d, double WeatherLungWeight=0d, double WaterLevel=double.NaN, InlandWaterKind InlandWater=InlandWaterKind.None, int RiverReach=-1, double ChannelOffset=0d, double RiverCorridorWeight=0d, double RiverGroundDelta=0d, int DryBasin=-1);
     private static readonly double[] ContinentalKnots = { -1d, -.55d, -.20d, -.06d, 0d, .45d, 1d };
     private readonly TerrainGenerationParameters _p;
     private readonly double[] _continentalHeights;
@@ -155,7 +155,7 @@ public sealed class TerrainGenerationHeightModel : IDisposable
         if(_river!=null)
         {
             RiverOperatorResult river=_river.Evaluate(around,across,natural.Height,footprintMeters);
-            natural=natural with { Height=river.Height, WaterLevel=river.WaterLevel, InlandWater=river.Kind, RiverReach=river.Reach, ChannelOffset=river.ChannelOffset, RiverCorridorWeight=river.CorridorWeight, RiverGroundDelta=river.GroundDelta };
+            natural=natural with { Height=river.Height, WaterLevel=river.WaterLevel, InlandWater=river.Kind, RiverReach=river.Reach, ChannelOffset=river.ChannelOffset, RiverCorridorWeight=river.CorridorWeight, RiverGroundDelta=river.GroundDelta, DryBasin=_river.Graph.DryBasinAt(around,across) };
         }
         if(_sites==null) return natural;
         double shaped=_sites.ShapeHeight(around,across,natural.Height,out SiteSurfaceMask mask,out int siteIndex,out double siteWeight,out int climateMachineIndex,out double weatherLungWeight);
