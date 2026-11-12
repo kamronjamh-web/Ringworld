@@ -283,3 +283,11 @@ Each phase reports before and after from the L0 runner. `claude-lead` designs wh
 5. **May the loading screen animate less smoothly (about 30 fps) so that loading finishes sooner?**
    The live menu would keep its smooth, slower loading.
    Recommended: yes.
+
+## User answers (2026-11-12)
+
+1. **Target:** "I don't want to peg you to a number, just do what is possible without drastically changing the look of the game." There is no fixed time target. Every optimisation must leave the look of the game unchanged, and look changes need a before/after comparison.
+2. **Lazy distant segments:** yes. Unseen ring segments may finish 10-20 s after entry. Plain hull on a very fast flight is acceptable.
+3. **Work on the New World screen:** not asked. Default: yes for the scene preload; decide on a speculative river bake after L2.
+4. **Per-machine cache shared by same-seed worlds:** yes (about 20 MB per recipe, inside the 512 MB budget).
+5. **Loading-screen frame rate:** "30 fps until the world is finished loading." The cap applies only while loading, and normal frame pacing returns at entry.
