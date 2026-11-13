@@ -686,3 +686,5 @@ Also noted: the 2 m and 4 m proxy levels overlap (dithered in the levels debug v
 - **RQ3:** natural ground where water was removed; no dry riverbed.
 - RQ4 and RQ5 stand as written (lakes beside a keep-out without spilling stay; all site kinds for now).
 Part A can still measure both readings for the record, but Part B implements C.
+
+**User 2026-11-13 (T2R-21 picture gate):** the head taper at 1,500 m is accepted "fine as is", including the thin first stretch that reads as a sand strip with water patches. `HeadTaperMeters = 1500` is final. Adapted test bars accepted by the primary: wet width against tapered width x untapered ratio at 95 %; source-count floor 50 on the strip.
