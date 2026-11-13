@@ -471,6 +471,21 @@
       "profile": "own-runner",
       "runner": "tools/load_time_benchmark.ps1"
     },
+    "rivers_perf_probe": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "water",
+        "hydrology",
+        "perf-telemetry"
+      ],
+      "marker": "RIVERS_PERF_PROBE",
+      "expected_s": null,
+      "timeout_s": 1800,
+      "profile": "own-runner",
+      "runner": "tools/rivers_perf_probe.ps1"
+    },
     "prepare_tree_assets_editor": {
       "kind": "tool",
       "mode": "headless",
