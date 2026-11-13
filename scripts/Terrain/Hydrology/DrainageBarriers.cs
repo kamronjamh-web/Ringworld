@@ -7,23 +7,23 @@ namespace RingworldTechDemo.Terrain.Hydrology;
 
 /// <summary>
 /// D2: cell kinds of a valley-floor grid. A cell with any sample below 0 is Ocean. Emitter site discs, the Wall Engine stadiums and the Weather Lung
-/// footprint come analytically from the registries, expanded by the corridor radius (300 m), the lateral cap (350 m) and half a cell diagonal, and
+/// footprint come analytically from the registries, expanded by the keep-out (the corridor radius, 300 m, since T2R-23) and half a cell diagonal, and
 /// become Barrier cells (the Lung rectangle itself becomes Lung, the isolated receiving body). A strip's end columns are outlets. Rim walls and the
-/// wrap are in <see cref="DrainageDomain"/>. With site intakes (T2R-19, RS2) the Barrier cells that touch land become Intake cells, outlets at their own height.
+/// wrap are in <see cref="DrainageDomain"/>. The Barrier cells that touch land become Intake cells (T2R-19, RS2): the edge cell of a keep-out, an outlet at its own height where water leaves
+/// the map, with nothing built there; the rivers and lakes that drain into one are not mapped (T2R-23).
 /// </summary>
 public static class DrainageBarriers
 {
     public const double CorridorRadiusMeters = 300d;
-    public const double LateralCapMeters = 350d;
 
-    /// <summary>Today's keep-out: the corridor radius plus the lateral cap.</summary>
-    public const double DefaultKeepOutMeters = CorridorRadiusMeters + LateralCapMeters;
+    /// <summary>The keep-out (user decision 2026-11-13, T2R-23): the corridor radius alone. The lateral cap of 350 m (650 m before) is no longer part of it; the barrier guard keeps the node curve 105 m from keep-out cells and the meander is at most 100 m, so the centreline stays 305 m from a site shape.</summary>
+    public const double DefaultKeepOutMeters = CorridorRadiusMeters;
 
     public static DrainageCellKind[] Rasterise(DrainageGrid grid, TerrainGenerationParameters recipe, out int barrierCells)
-        => Rasterise(grid, recipe, out barrierCells, out _, false, null);
+        => Rasterise(grid, recipe, out barrierCells, out _, true, null);
 
     /// <summary>
-    /// <paramref name="keepOutMeters"/> (null: <see cref="DefaultKeepOutMeters"/>) is the distance the barrier keeps beyond a structure's influence radius, before half a cell diagonal.
+    /// <paramref name="keepOutMeters"/> (null: <see cref="DefaultKeepOutMeters"/>, 300 m) is the distance the barrier keeps beyond a structure's influence radius, before half a cell diagonal.
     /// With <paramref name="siteIntakes"/>, every Barrier cell with a geometric 8-neighbour of kind Land or StripOutlet becomes Intake (RS2); <paramref name="barrierCells"/> then counts the Barrier cells left.
     /// </summary>
     public static DrainageCellKind[] Rasterise(DrainageGrid grid, TerrainGenerationParameters recipe, out int barrierCells, out int intakeCells, bool siteIntakes, double? keepOutMeters)

@@ -14,9 +14,9 @@ public sealed record DrainageBakeOptions
     public double? LakeAbundance { get; init; }
     /// <summary>Multiplies E0. 1 in production; only the report tool's sweep changes it.</summary>
     public double EvaporationScale { get; init; } = 1d;
-    /// <summary>T2R-19 (RS2): the edge cells of every site keep-out become outlets (<see cref="DrainageCellKind.Intake"/>). Off in production; only the report tool sets it.</summary>
-    public bool SiteIntakes { get; init; }
-    /// <summary>T2R-19: the keep-out beyond a structure's influence radius, in metres (null is today's 650 m).</summary>
+    /// <summary>T2R-19, T2R-23 (RS2): the edge cells of every site keep-out are outlets (<see cref="DrainageCellKind.Intake"/>): water that reaches a site leaves the map there. On in production; the report tool can switch it off for the "before" measurement.</summary>
+    public bool SiteIntakes { get; init; } = true;
+    /// <summary>T2R-19: the keep-out beyond a structure's influence radius, in metres (null is <see cref="DrainageBarriers.DefaultKeepOutMeters"/>, 300 m).</summary>
     public double? KeepOutMeters { get; init; }
 }
 

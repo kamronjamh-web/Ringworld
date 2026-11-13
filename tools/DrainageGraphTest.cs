@@ -1011,6 +1011,45 @@ public partial class DrainageGraphTest : RefCounted
         return net.Reaches[net.Stems[st.TerminalId].ReachStart].UpstreamLake == up || (receiving >= 0 && field.LakeId[receiving] == up);
     }
 
+    /// <summary>T2R-23 (rule C): nothing of a river that drains into a site is in the graph, and no lake stands above the ground of an edge cell or spills into one.</summary>
+    private int SiteRemovalChecks(string label, RiverNetwork net, DrainageField field, DrainageGrid grid)
+    {
+        int edgeCells = 0;
+        for (int c = 0; c < field.Count; c++) if (field.Kind[c] == DrainageCellKind.Intake) edgeCells++;
+        int intakeStems = 0, drainsToSite = 0, inSiteBasin = 0, endsAtEdge = 0;
+        foreach (RiverStem st in net.Stems)
+        {
+            if (st.Terminal == RiverTerminal.Intake) intakeStems++;
+            // Every cell of a chain has the terminal of its last cell, so the last cell stands for the whole stem.
+            if (field.Terminal[st.LastCell] == DrainageCellKind.Intake || field.Terminal[st.HeadCell] == DrainageCellKind.Intake) drainsToSite++;
+            int next = field.Down[st.LastCell];
+            if (next >= 0 && field.Kind[next] == DrainageCellKind.Intake) endsAtEdge++;
+            int basin = field.BasinId[st.LastCell];
+            if (basin >= 0 && field.Basins.Span[basin].SiteDrained) inSiteBasin++;
+        }
+        Check(intakeStems == 0 && drainsToSite == 0 && endsAtEdge == 0 && inSiteBasin == 0, $"{label}: stems with terminal Intake {intakeStems}, stems whose water ends at a site {drainsToSite}, stems that run into an edge cell {endsAtEdge}, stems in a site-drained basin {inSiteBasin}");
+        int lakeIntoEdge = 0, lakeAboveEdge = 0;
+        for (int c = 0; c < field.Count; c++)
+        {
+            int lake = field.LakeId[c];
+            if (lake < 0 || !field.IsLakeWater(c)) continue;
+            int next = field.Down[c];
+            if (next >= 0 && field.Kind[next] == DrainageCellKind.Intake) lakeIntoEdge++;
+            for (int dir = 0; dir < 8; dir++)
+            {
+                int n = field.Domain.GeometricNeighbor(c, dir);
+                if (n >= 0 && field.Kind[n] == DrainageCellKind.Intake && field.Lakes.Span[lake].Level > field.Lowest[n] + 1e-3) lakeAboveEdge++;
+            }
+        }
+        Check(lakeIntoEdge == 0 && lakeAboveEdge == 0, $"{label}: {lakeIntoEdge} wet lake cells flow into an edge cell, {lakeAboveEdge} (wet cell, edge cell) pairs have the lake level above the edge cell's lowest sample");
+        // Negative control: a stem list that kept a river which drains to a site would be flagged by the same test on the build without the removal.
+        RiverNetwork off = RiverGraphBuilder.Build(field, grid, DrainageGridTest.Recipe(), new RiverBuildOptions { Levels = false, SiteRemoval = false }, CancellationToken.None, out _);
+        int offDrains = 0;
+        foreach (RiverStem st in off.Stems) if (field.Terminal[st.LastCell] == DrainageCellKind.Intake) offDrains++;
+        Console.WriteLine($"DRAINAGE_GRAPH_DETAIL {label}: site removal: {edgeCells} edge cells; {off.Stems.Length - net.Stems.Length} stems fewer than the build without removal; the build without removal has {offDrains} stems that drain into a site (negative control)");
+        return offDrains;
+    }
+
     private static string DrainageFixturePath =>ProjectSettings.GlobalizePath("res://tools/fixtures/hydrology/d4_baseline/graph.json.gz");
 
     private void Rivers()
@@ -1020,6 +1059,7 @@ public partial class DrainageGraphTest : RefCounted
         DrainageClimateInputs climate = DrainageClimateInputs.FromSampler(root);
         int workers = Math.Clamp(System.Environment.ProcessorCount, 2, 8);
         var source = new CpuDrainageHeightSource(recipe, climate, workers);
+        int siteControl = 0;
         foreach ((string label, DrainageGridSpec spec) in DrainageGridTest.Strips(recipe))
         {
             DrainageGrid grid = source.SampleGrid(spec, null, CancellationToken.None);
@@ -1147,7 +1187,8 @@ public partial class DrainageGraphTest : RefCounted
             Check(report.MaxNodeShiftMeters <= RiverWander.NodeShiftCapMeters + 1e-6 && report.MaxSmoothMeters <= RiverWander.NodeShiftCapMeters + 1e-6, $"{label}: node shift beyond the 350 m cap (total {report.MaxNodeShiftMeters:F1}, smoothing {report.MaxSmoothMeters:F1})");
             Check(report.MaxWanderMeters <= RiverHydraulics.WanderAmplitudeMeters + 1e-6 && report.MaxMeanderMeters <= RiverHydraulics.MeanderAmplitudeCapMeters + 1e-6, $"{label}: lateral cap exceeded (wander {report.MaxWanderMeters:F1}, meander {report.MaxMeanderMeters:F1})");
             string example = ""; int barrierBad = 0, meanderBad = 0, vertices = 0;
-            var sites = recipe.HasEmitterSites ? EmitterSiteTerrainShaper.GetOrCreate(recipe).Registry.Sites : System.Array.Empty<EmitterSite>();
+            EmitterSiteTerrainShaper? shaperForSites = recipe.HasEmitterSites ? EmitterSiteTerrainShaper.GetOrCreate(recipe) : null;
+            var sites = shaperForSites != null ? shaperForSites.Registry.Sites : System.Array.Empty<EmitterSite>();
             double ring = spec.CircumferenceMeters;
             for (int i = 0; i < net.Stems.Length; i++)
                 for (double s = 0; s < net.Curves[i].Length; s += 100)
@@ -1157,17 +1198,37 @@ public partial class DrainageGraphTest : RefCounted
                     int col = (int)Math.Floor(wrapped / spec.AroundStepMeters) - spec.ColumnStart, row = (int)Math.Floor(across / spec.AcrossStepMeters);
                     if (col < 0) col += spec.RingColumns;
                     vertices++;
-                    if (col >= 0 && col < field.Width && row >= 0 && row < field.Height && field.Kind[row * field.Width + col] == DrainageCellKind.Barrier) { barrierBad++; if (example.Length == 0) example = $"stem {i} {net.Stems[i].Terminal} s {s:F0} of {net.Curves[i].Length:F0} cell kind barrier at col {col} row {row}, last cell {net.Stems[i].LastCell % field.Width},{net.Stems[i].LastCell / field.Width}, down {field.Down[net.Stems[i].LastCell] % field.Width},{field.Down[net.Stems[i].LastCell] / field.Width} lake {field.LakeId[field.Down[net.Stems[i].LastCell]]}, nodes {net.Stems[i].NodeCount}, point at col {wrapped / spec.AroundStepMeters - spec.ColumnStart:F3} row {across / spec.AcrossStepMeters:F3}"; }
+                    if (col >= 0 && col < field.Width && row >= 0 && row < field.Height && field.Kind[row * field.Width + col] is DrainageCellKind.Barrier or DrainageCellKind.Intake) { barrierBad++; if (example.Length == 0) example = $"stem {i} {net.Stems[i].Terminal} s {s:F0} of {net.Curves[i].Length:F0} cell kind barrier at col {col} row {row}, last cell {net.Stems[i].LastCell % field.Width},{net.Stems[i].LastCell / field.Width}, down {field.Down[net.Stems[i].LastCell] % field.Width},{field.Down[net.Stems[i].LastCell] / field.Width} lake {field.LakeId[field.Down[net.Stems[i].LastCell]]}, nodes {net.Stems[i].NodeCount}, point at col {wrapped / spec.AroundStepMeters - spec.ColumnStart:F3} row {across / spec.AcrossStepMeters:F3}"; }
                     foreach (EmitterSite site in sites)
                     {
                         double da = Math.Abs(wrapped - site.Around); da = Math.Min(da, ring - da);
                         double dw = across - site.Across;
                         if (Math.Sqrt(da * da + dw * dw) < site.InfluenceRadius + DrainageBarriers.CorridorRadiusMeters - 1) { barrierBad++; if (example.Length == 0) example = $"stem {i} {net.Stems[i].Terminal} s {s:F0} of {net.Curves[i].Length:F0} near site at around {site.Around:F0} across {site.Across:F0}, distance {Math.Sqrt(da * da + dw * dw):F0} m"; break; }
                     }
+                    // R21: the Wall Engine stadiums and the Weather Lung bound are tested with the same bar (influence radius + the corridor radius, minus 1 m).
+                    if (shaperForSites?.Climate != null)
+                    {
+                        double half = shaperForSites.Climate.Recipe.ForecourtLengthM * 0.5, reach = shaperForSites.Climate.Recipe.InfluenceRadiusM + DrainageBarriers.CorridorRadiusMeters - 1;
+                        foreach (ClimateMachine m in shaperForSites.Climate.Machines)
+                        {
+                            double da = Math.Abs(wrapped - m.Around); da = Math.Min(da, ring - da);
+                            double sx = Math.Max(0d, da - half), sy = across - m.Across;
+                            if (Math.Sqrt(sx * sx + sy * sy) < reach) { barrierBad++; if (example.Length == 0) example = $"stem {i} {net.Stems[i].Terminal} s {s:F0} inside the bar of a Wall Engine stadium at around {m.Around:F0}"; break; }
+                        }
+                    }
+                    if (shaperForSites?.WeatherLung != null)
+                    {
+                        double da = Math.Abs(wrapped - shaperForSites.WeatherLung.Site.Around); da = Math.Min(da, ring - da);
+                        double ex = Math.Max(0d, da - shaperForSites.WeatherLung.Recipe.BoundHalfXM), ey = Math.Max(0d, Math.Abs(across - shaperForSites.WeatherLung.Site.Across) - shaperForSites.WeatherLung.Recipe.BoundHalfYM);
+                        if (Math.Sqrt(ex * ex + ey * ey) < DrainageBarriers.CorridorRadiusMeters - 1) { barrierBad++; if (example.Length == 0) example = $"stem {i} {net.Stems[i].Terminal} s {s:F0} inside the bar of the Weather Lung bound"; }
+                    }
                     if (Math.Abs(net.Meander(i, s)) > RiverHydraulics.MeanderAmplitudeCapMeters + 1e-6) meanderBad++;
                 }
             Check(barrierBad == 0 && meanderBad == 0, $"{label}: {barrierBad} of {vertices} centreline points inside a barrier clearance, {meanderBad} beyond the meander cap ({example})");
+            siteControl += SiteRemovalChecks(label, net, field, grid);
         }
+
+        Check(siteControl > 0, "site removal: negative control: on no strip does the build without the removal have a stem that drains into a site, so the checks could not fail");
 
         // D4 on the production centrelines: the evaluator first on the frozen baseline, then the 2,000 km strip at 50 km^2.
         PathSegment[] fixture = RiverPathMetrics.ReadFixtureSegments(DrainageFixturePath, out PathGrid maskGrid);

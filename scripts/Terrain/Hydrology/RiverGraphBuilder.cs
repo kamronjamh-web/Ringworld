@@ -8,8 +8,8 @@ using RingworldTechDemo.Terrain.Generation;
 
 namespace RingworldTechDemo.Terrain.Hydrology;
 
-/// <summary>How a stem ends (S5). StripEnd (a strip's end column) and Dead (reaches no outlet; never expected) exist for tools and tests. Intake and Cut exist only with the site removal options of T2R-23 (Cut: a river that joined a river that was removed at a site).</summary>
-public enum RiverTerminal : byte { Sea, Lake, Confluence, Lung, StripEnd, Dead, Intake, Cut }
+/// <summary>How a stem ends (S5). StripEnd (a strip's end column) and Dead (reaches no outlet; never expected) exist for tools and tests. Intake is a value the builder uses between finding cells and finding stems (T2R-23); a built network never holds one, because the rivers that drain into a site are not channel cells.</summary>
+public enum RiverTerminal : byte { Sea, Lake, Confluence, Lung, StripEnd, Dead, Intake }
 
 /// <summary>A maximal chain of channel cells (S5): at each confluence it continues up the incoming branch with the larger area.</summary>
 public struct RiverStem
@@ -470,8 +470,8 @@ public sealed class RiverBuildOptions
     public bool LakeChannels { get; init; } = true;
     /// <summary>T2R-8b: the in-lake stem of a chain of marked cells starts at its first deep cell (lowest sample 2 m under the lake level); the shallower cells before it are plain channel cells of the river that enters. False starts it at the entry cell (the work order's literal item 3: 12 % of the ends then stand on ground above the lake level, and inlet counts equal the T2R-8 graph's).</summary>
     public bool DeepEntries { get; init; } = true;
-    /// <summary>T2R-23 (RS2): which rivers a site removes. None in production (Part A only measures it; the report tool sets it together with <see cref="DrainageBakeOptions.SiteIntakes"/>).</summary>
-    public RiverSiteRemovalRule SiteRemoval { get; init; } = RiverSiteRemovalRule.None;
+    /// <summary>T2R-23 (RS2, rule C): a river whose water ends at a site is not a channel cell, tributaries included; nothing of it is in the graph. True in production. False exists for the report tool (one build without the removal on the same field, to measure what was removed) and has an effect only where the bake has site edge cells.</summary>
+    public bool SiteRemoval { get; init; } = true;
     public int Workers { get; init; } = 4;
     /// <summary>Keep the level stations on the network (tests and reports).</summary>
     public bool KeepStations { get; init; }
@@ -496,10 +496,6 @@ public sealed record RiverBuildReport
     public int TerminalDead { get; init; }
     /// <summary>T2R-19: stems that end at a site intake cell (always 0 with the option off).</summary>
     public int TerminalIntake { get; init; }
-    /// <summary>T2R-23: stems that end where the river they joined was removed (rule Branch), and what the removal took (zero with the option off).</summary>
-    public int TerminalCut { get; init; }
-    public int RemovedStems { get; init; }
-    public int RemovedCells { get; init; }
     public double[] Q { get; init; } = Array.Empty<double>();
     public double[] Gradient { get; init; } = Array.Empty<double>();
     public double[] Depth { get; init; } = Array.Empty<double>();
@@ -549,7 +545,7 @@ public sealed record RiverBuildReport
         return string.Join("\n", new[]
         {
             FormattableString.Invariant($"rivers: threshold {ThresholdKm2:F0} km^2, channel cells {ChannelCells}, stems {Stems}, reaches {Reaches}, nodes {Nodes}, knots {Knots}, stations {Stations}, length {LengthKm:F0} km"),
-            $"terminals: sea {TerminalSea}, lake {TerminalLake}, confluence {TerminalConfluence}, lung {TerminalLung}, strip end {TerminalStripEnd}, dead {TerminalDead}" + (TerminalIntake > 0 ? $", intake {TerminalIntake}" : "") + (TerminalCut > 0 ? $", cut {TerminalCut}" : "") + (RemovedStems > 0 ? $" (site removal took {RemovedStems} stems, {RemovedCells} cells)" : ""),
+            $"terminals: sea {TerminalSea}, lake {TerminalLake}, confluence {TerminalConfluence}, lung {TerminalLung}, strip end {TerminalStripEnd}, dead {TerminalDead}" + (TerminalIntake > 0 ? $", intake {TerminalIntake}" : ""),
             "hydraulics p10/p50/p90 over reach length: Q " + P(Q) + " m3/s, S " + P(Gradient) + ", d " + P(Depth) + " m, w " + P(Width) + " m, U " + P(Speed) + " m/s",
             FormattableString.Invariant($"class share by length: calm {ClassShare.ElementAtOrDefault(0):P1}, swift {ClassShare.ElementAtOrDefault(1):P1}, fierce {ClassShare.ElementAtOrDefault(2):P1}, torrent {ClassShare.ElementAtOrDefault(3):P1}"),
             FormattableString.Invariant($"lake channels: {LakeChannelCells} marked cells ({LakeLeads} outlet leads), {InLakeStems} stems start inside a lake, in-lake length {InLakeKm:F1} km, cut over 40 m on {InLakeCutOver40Share:P2} of it (largest {InLakeCutMax:F1} m)"),
@@ -609,9 +605,9 @@ public static class RiverGraphBuilder
 
     /// <summary>
     /// Steps 1 and 2 of <see cref="Build"/>: channel cells, lake channels, the main upstream neighbour of each cell and the stems (chains of cells, sorted by last cell then head cell).
-    /// <paramref name="removed"/> (T2R-23): cells that are not channel cells; <paramref name="excludeIntakeTerminal"/>: cells whose water ends at a site are not channel cells. Both are off in production.
+    /// <paramref name="excludeIntakeTerminal"/> (T2R-23, rule C): cells whose water ends at a site are not channel cells.
     /// </summary>
-    internal static ChainResult FindChains(ChainField f, double threshold, bool lakeChannels, bool deepEntries, bool[]? removed, bool excludeIntakeTerminal)
+    internal static ChainResult FindChains(ChainField f, double threshold, bool lakeChannels, bool deepEntries, bool excludeIntakeTerminal)
     {
         DrainageDomain d = f.Domain;
         int n = f.Down.Length;
@@ -625,7 +621,7 @@ public static class RiverGraphBuilder
         for (int c = 0; c < n; c++)
         {
             channel[c] = kind[c] == DrainageCellKind.Land && visited[c] && lakeId[c] < 0 && down[c] >= 0 && area[c] * cellArea >= threshold - 1e-9 && terminalKind[c] != DrainageCellKind.Barrier
-                && (removed == null || !removed[c]) && !(excludeIntakeTerminal && terminalKind[c] == DrainageCellKind.Intake); // T2R-23: the removal rules (both off by default)
+                && !(excludeIntakeTerminal && terminalKind[c] == DrainageCellKind.Intake); // T2R-23: the water of this cell ends at a site
             if (channel[c]) channelCells++;
         }
         // T2R-8b items 1 and 2: lake channel cells, the flooded cells on the flow path from each inlet to the lake's exit or pit (and an outlet lead where no inlet reaches the exit).
@@ -809,7 +805,7 @@ public static class RiverGraphBuilder
         Array.Fill(cellStem, -1);
         for (int i = 0; i < stemCount; i++)
             for (int k = 0; k < chains[i].Length; k++) { cellStem[chains[i][k]] = i; cellIndex[chains[i][k]] = k; }
-        var counts = new int[8];
+        var counts = new int[7];
         for (int i = 0; i < stemCount; i++)
         {
             int last = chains[i][^1], next = down[last];
@@ -828,7 +824,6 @@ public static class RiverGraphBuilder
             else if (kind[next] == DrainageCellKind.Lung) terminals[i] = RiverTerminal.Lung;
             else if (kind[next] == DrainageCellKind.StripOutlet) terminals[i] = RiverTerminal.StripEnd;
             else if (kind[next] == DrainageCellKind.Intake) terminals[i] = RiverTerminal.Intake;
-            else if (removed != null && removed[next]) terminals[i] = RiverTerminal.Cut; // T2R-23, rule Branch: it joined a river that was removed
             else terminals[i] = RiverTerminal.Dead;
             counts[(int)terminals[i]]++;
         }
@@ -839,28 +834,11 @@ public static class RiverGraphBuilder
         };
     }
 
-    /// <summary>T2R-23: the channel finding under the site removal rule. Catchment: one pass without the cells whose water ends at a site. Branch: pass 1 finds the chains, <see cref="RiverSiteRemoval.Mark"/> marks the removed ones, pass 2 runs without their cells.</summary>
-    internal static ChainResult FindChannels(ChainField cf, double threshold, RiverBuildOptions options, bool[]? siteDrainedCell, out RiverSiteRemovalStats stats, out bool[]? removedCells)
+    /// <summary>T2R-23, rule C: <see cref="FindChains"/> with the cells whose water ends at a site left out (<paramref name="removeSiteCatchment"/>), so everything that drains into a site is not a channel cell, tributaries included. No stem of the result ends at a site; the builder throws if one does.</summary>
+    internal static ChainResult FindChannels(ChainField cf, double threshold, RiverBuildOptions options, bool removeSiteCatchment)
     {
-        stats = default;
-        removedCells = null;
-        ChainResult result;
-        switch (options.SiteRemoval)
-        {
-            case RiverSiteRemovalRule.Catchment:
-                result = FindChains(cf, threshold, options.LakeChannels, options.DeepEntries, null, true);
-                break;
-            case RiverSiteRemovalRule.Branch:
-            {
-                ChainResult first = FindChains(cf, threshold, options.LakeChannels, options.DeepEntries, null, false);
-                removedCells = RiverSiteRemoval.Mark(first.Chains, cf.Down, cf.Kind, cf.Terminal, siteDrainedCell, out stats);
-                result = FindChains(cf, threshold, options.LakeChannels, options.DeepEntries, removedCells, false);
-                break;
-            }
-            default:
-                return FindChains(cf, threshold, options.LakeChannels, options.DeepEntries, null, false);
-        }
-        if (result.TerminalCounts[(int)RiverTerminal.Intake] > 0) throw new InvalidOperationException("site removal left " + result.TerminalCounts[(int)RiverTerminal.Intake] + " stems that end at a site");
+        ChainResult result = FindChains(cf, threshold, options.LakeChannels, options.DeepEntries, removeSiteCatchment);
+        if (removeSiteCatchment && result.TerminalCounts[(int)RiverTerminal.Intake] > 0) throw new InvalidOperationException("site removal left " + result.TerminalCounts[(int)RiverTerminal.Intake] + " stems that end at a site");
         return result;
     }
 
@@ -894,8 +872,7 @@ public static class RiverGraphBuilder
             Lowest = options.LakeChannels ? f.Lowest.ToArray() : Array.Empty<float>(),
             LakeLevel = options.LakeChannels ? f.Lakes.ToArray().Select(l => l.Level).ToArray() : Array.Empty<float>(),
         };
-        bool[]? siteDrainedCell = options.SiteRemoval == RiverSiteRemovalRule.None ? null : RiverSiteRemoval.SiteDrainedCells(f);
-        ChainResult chainResult = FindChannels(chainField, threshold, options, siteDrainedCell, out RiverSiteRemovalStats removal, out bool[]? removedCells);
+        ChainResult chainResult = FindChannels(chainField, threshold, options, options.SiteRemoval);
         bool[] channel = chainResult.Channel, lakeChannel = chainResult.LakeChannel, deepCell = chainResult.DeepCell;
         int channelCells = chainResult.ChannelCells, lakeChannelCells = chainResult.LakeChannelCells, lakeLeads = chainResult.LakeLeads;
         int[] mainUp = chainResult.MainUp;
@@ -1052,7 +1029,7 @@ public static class RiverGraphBuilder
             {
                 StemTmp s = tmp[si];
                 maxNodeShift = Math.Max(maxNodeShift, RiverWander.ClampShift(s.X, s.Y, s.OX, s.OY));
-                if (options.BarrierGuard) { (int movedNodes, double movedMax) = GuardBarriers(s, kind, spec, width, f.Height, s.Terminal == RiverTerminal.Cut); guardMoved += movedNodes; guardMax = Math.Max(guardMax, movedMax); }
+                if (options.BarrierGuard) { (int movedNodes, double movedMax) = GuardBarriers(s, kind, spec, width, f.Height); guardMoved += movedNodes; guardMax = Math.Max(guardMax, movedMax); }
                 int nodes = s.X.Length;
                 double originAround = s.OriginAround, originAcross = s.OriginAcross;
                 // Quantise to decimetres (the stored form) and clamp across the rim.
@@ -1156,7 +1133,7 @@ public static class RiverGraphBuilder
         {
             ThresholdKm2 = threshold, ChannelCells = channelCells, Stems = stemCount, Reaches = reaches.Length, Nodes = totalNodes, LengthKm = lengthKm,
             TerminalSea = report0[(int)RiverTerminal.Sea], TerminalLake = report0[(int)RiverTerminal.Lake], TerminalConfluence = report0[(int)RiverTerminal.Confluence],
-            TerminalLung = report0[(int)RiverTerminal.Lung], TerminalStripEnd = report0[(int)RiverTerminal.StripEnd], TerminalDead = report0[(int)RiverTerminal.Dead], TerminalIntake = report0[(int)RiverTerminal.Intake], TerminalCut = report0[(int)RiverTerminal.Cut], RemovedStems = removal.RemovedStems, RemovedCells = removal.RemovedCells,
+            TerminalLung = report0[(int)RiverTerminal.Lung], TerminalStripEnd = report0[(int)RiverTerminal.StripEnd], TerminalDead = report0[(int)RiverTerminal.Dead], TerminalIntake = report0[(int)RiverTerminal.Intake],
             LakeChannelCells = lakeChannelCells, LakeLeads = lakeLeads, InLakeStems = inLakeStems, InLakeKm = inLakeKm,
             CentrelineSeconds = centrelineSeconds, MaxWanderMeters = maxWander, MaxMeanderMeters = maxMeander, MaxNodeShiftMeters = maxNodeShift, MaxSmoothMeters = maxSmooth, SnappedNodes = snapped, GuardMovedNodes = guardMoved, GuardMaxMeters = guardMax,
         };
@@ -1223,10 +1200,10 @@ public static class RiverGraphBuilder
     /// plus the meander (at most 100 m, applied at query time) never enters one. Offending samples push the node under them (and half of each neighbour) away from the nearest barrier cell; the last
     /// node (a junction or the end in water) never moves. Fixed order and fixed passes, so it is deterministic. Returns the number of nodes moved and the largest total move.
     /// </summary>
-    private static (int Moved, double MaxMove) GuardBarriers(StemTmp s, DrainageCellKind[] kind, DrainageGridSpec spec, int width, int rows, bool lastMovable = false)
+    private static (int Moved, double MaxMove) GuardBarriers(StemTmp s, DrainageCellKind[] kind, DrainageGridSpec spec, int width, int rows)
     {
         int n = s.X.Length;
-        int movable = lastMovable ? n : n - 1; // T2R-23: the end node of a Cut stem is neither a junction nor in water, so it may move
+        int movable = n - 1;
         if (n < 2) return (0, 0);
         double stepA = spec.AroundStepMeters, stepC = spec.AcrossStepMeters, circumference = spec.CircumferenceMeters, m = BarrierClearanceMeters;
         var startX = (double[])s.X.Clone();

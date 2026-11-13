@@ -11,8 +11,8 @@ namespace RingworldTechDemo.Tools;
 /// T2R-19 (docs/work-orders/terrain-vegetation/T2-rules.md, Spec RS2): site intakes on synthetic domains. A valley slopes into a Barrier block. With the option off (today) a lake stands against the block above the block's ground;
 /// with it on the block's edge becomes outlet cells, no lake stands above that ground and the valley drains to an Intake terminal. Every Barrier cell that touches land becomes Intake and no Land cell touches a Barrier cell
 /// (also across the wrap seam), interior Barrier cells stay blocked, the mass balance closes with the intake outflow counted, and a depression beside the block that is lower than the block's ground keeps its lake.
-/// T2R-23 (Part A) adds: a depression against the block whose lowest rim cell is an edge cell holds no lake and passes its whole inflow on (and keeps its lake when the inflow is too small to spill), a valley on the far side of a block carries only
-/// its own runoff, the mass balance closes with the site term, and the chain method with the removal rules on one hand-built field (rules None, Branch and Catchment).
+/// T2R-23 adds: a depression against the block whose lowest rim cell is an edge cell holds no lake and passes its whole inflow on (and keeps its lake when the inflow is too small to spill), a valley on the far side of a block carries only
+/// its own runoff, the mass balance closes with the site term, and the chain method with the removal rule on one hand-built field (rule C, and off).
 /// Prints DRAINAGE_SITE_INTAKE=PASS|FAIL. Headless: tools/run_tests.ps1 -Tests drainage_site_intake_test.
 /// </summary>
 public partial class DrainageSiteIntakeTest : RefCounted
@@ -245,7 +245,7 @@ public partial class DrainageSiteIntakeTest : RefCounted
     }
 
     /// <summary>
-    /// The chain method (RiverGraphBuilder.FindChannels) on one hand-built field, 12 x 7 cells, threshold 1 cell: row 3 holds river i1 (columns 1 and 2) into lake A (columns 3 and 4), then the trunk T (columns 5 to 8, the cells in columns 7 and 8 lie in a site-drained basin)
+    /// The chain method (RiverGraphBuilder.FindChannels, rule C) on one hand-built field, 12 x 7 cells, threshold 1 cell: row 3 holds river i1 (columns 1 and 2) into lake A (columns 3 and 4), then the trunk T (columns 5 to 8, the cells in columns 7 and 8 lie in a site-drained basin)
     /// to the edge cell in column 9. t1 (column 6, rows 0 to 2) joins T and t2 (row 1, columns 4 and 5) joins t1; V (column 7, rows 5 and 4) joins T inside the basin; U (row 6) reaches the sea.
     /// </summary>
     private void ChainRemoval()
@@ -286,29 +286,17 @@ public partial class DrainageSiteIntakeTest : RefCounted
         int StemOf(RiverGraphBuilder.ChainResult r, int row, int col) => r.Chains.FindIndex(c => c[0] == Id(row, col));
         bool Contains(RiverGraphBuilder.ChainResult r, int row, int col) => r.Chains.Any(c => c.Contains(Id(row, col)));
 
-        // None: nothing is removed; T ends at the edge cell with terminal Intake (the check can fail).
-        RiverGraphBuilder.ChainResult none = RiverGraphBuilder.FindChannels(field, 1d, new RiverBuildOptions(), siteDrained, out RiverSiteRemovalStats noneStats, out bool[]? noneRemoved);
-        Check(noneRemoved == null && noneStats.RemovedStems == 0, "chains, rule None: something was removed");
-        Check(none.Chains.Count == 6 && none.TerminalCounts[(int)RiverTerminal.Intake] == 1, $"chains, rule None: {none.Chains.Count} stems (expected 6), {none.TerminalCounts[(int)RiverTerminal.Intake]} ending at an intake (expected 1)");
+        // Off: nothing is removed; T ends at the edge cell with terminal Intake (the check can fail).
+        RiverGraphBuilder.ChainResult none = RiverGraphBuilder.FindChannels(field, 1d, new RiverBuildOptions { SiteRemoval = false }, false);
+        Check(none.Chains.Count == 6 && none.TerminalCounts[(int)RiverTerminal.Intake] == 1, $"chains, removal off: {none.Chains.Count} stems (expected 6), {none.TerminalCounts[(int)RiverTerminal.Intake]} ending at an intake (expected 1)");
         int tNone = StemOf(none, 3, 3);
-        Check(tNone >= 0 && none.Terminals[tNone] == RiverTerminal.Intake && none.Chains[tNone].Length == 6, "chains, rule None: T does not run from lake A to the edge cell");
+        Check(tNone >= 0 && none.Terminals[tNone] == RiverTerminal.Intake && none.Chains[tNone].Length == 6, "chains, removal off: T does not run from lake A to the edge cell");
+        Check(RiverSiteRemoval.Classify(none.Chains[tNone][^1], down, kind, terminal, siteDrained) == RiverSiteRemoval.ReasonEndsAtSite, "chains, removal off: T is not classified as ending at a site");
 
-        // Branch: T and V are removed; t1 is Cut, t2 still joins t1; i1 ends in lake A, which has no outlet; U is unchanged.
-        RiverGraphBuilder.ChainResult branch = RiverGraphBuilder.FindChannels(field, 1d, new RiverBuildOptions { SiteRemoval = RiverSiteRemovalRule.Branch }, siteDrained, out RiverSiteRemovalStats branchStats, out bool[]? branchRemoved);
-        Check(branchStats.RemovedStems == 2 && branchStats.ByReason[RiverSiteRemoval.ReasonEndsAtSite] == 1 && branchStats.ByReason[RiverSiteRemoval.ReasonSiteDrainedInlet] == 1, $"chains, Branch: removed {branchStats.RemovedStems} stems (by reason {branchStats.ByReason[1]}/{branchStats.ByReason[2]}), expected T and V");
-        Check(branchRemoved != null && branchRemoved[Id(3, 6)] && branchRemoved[Id(4, 7)] && !branchRemoved[Id(2, 6)] && !branchRemoved[Id(3, 2)], "chains, Branch: the removed cells are not those of T and V");
-        Check(branch.TerminalCounts[(int)RiverTerminal.Intake] == 0 && branch.TerminalCounts[(int)RiverTerminal.Dead] == 0 && branch.TerminalCounts[(int)RiverTerminal.Cut] == 1, $"chains, Branch: terminals intake {branch.TerminalCounts[(int)RiverTerminal.Intake]}, dead {branch.TerminalCounts[(int)RiverTerminal.Dead]}, cut {branch.TerminalCounts[(int)RiverTerminal.Cut]}");
-        int t1 = StemOf(branch, 0, 6), t2 = StemOf(branch, 1, 4), i1 = StemOf(branch, 3, 1), aStem = StemOf(branch, 3, 3), u = StemOf(branch, 6, 1);
-        Check(t1 >= 0 && branch.Terminals[t1] == RiverTerminal.Cut && branch.Chains[t1].Length == 3, "chains, Branch: t1 is not a Cut stem of its own three cells");
-        Check(t2 >= 0 && t1 >= 0 && branch.Terminals[t2] == RiverTerminal.Confluence && branch.ReceiverStems[t2] == t1, "chains, Branch: t2 does not join t1");
-        Check(aStem >= 0 && i1 >= 0 && branch.Terminals[aStem] == RiverTerminal.Lake && branch.TerminalIds[aStem] == 0 && branch.Terminals[i1] == RiverTerminal.Confluence && branch.ReceiverStems[i1] == aStem, "chains, Branch: i1 does not end in lake A");
-        Check(!Contains(branch, 3, 5) && !Contains(branch, 3, 6) && !Contains(branch, 3, 7) && !Contains(branch, 3, 8) && !Contains(branch, 5, 7), "chains, Branch: lake A still has an outlet river or a removed cell is a channel");
-        Check(u >= 0 && branch.Terminals[u] == RiverTerminal.Sea && branch.Chains[u].Length == 3 && branch.Chains.Count == 5, $"chains, Branch: U changed or the stem count is {branch.Chains.Count} (expected 5)");
-
-        // Catchment: T, V, t1, t2 and i1 are removed, no stem is Cut, lake A stays (without rivers), U is unchanged.
-        RiverGraphBuilder.ChainResult catchment = RiverGraphBuilder.FindChannels(field, 1d, new RiverBuildOptions { SiteRemoval = RiverSiteRemovalRule.Catchment }, siteDrained, out _, out bool[]? catchmentRemoved);
-        Check(catchmentRemoved == null && catchment.Chains.Count == 1 && catchment.TerminalCounts[(int)RiverTerminal.Sea] == 1 && catchment.Chains[0][0] == Id(6, 1), $"chains, Catchment: {catchment.Chains.Count} stems, expected U alone");
-        Check(catchment.TerminalCounts[(int)RiverTerminal.Cut] == 0 && catchment.TerminalCounts[(int)RiverTerminal.Dead] == 0 && catchment.TerminalCounts[(int)RiverTerminal.Intake] == 0, "chains, Catchment: a Cut, Dead or Intake stem");
-        Check(!catchment.LakeMarked[Id(3, 3)] && lakeId[Id(3, 3)] == 0, "chains, Catchment: lake A is marked by a river or gone");
+        // Rule C (production): T, V, t1, t2 and i1 are removed, lake A stays (without rivers), U is unchanged.
+        RiverGraphBuilder.ChainResult catchment = RiverGraphBuilder.FindChannels(field, 1d, new RiverBuildOptions(), true);
+        Check(catchment.Chains.Count == 1 && catchment.TerminalCounts[(int)RiverTerminal.Sea] == 1 && catchment.Chains[0][0] == Id(6, 1), $"chains, rule C: {catchment.Chains.Count} stems, expected U alone");
+        Check(catchment.TerminalCounts[(int)RiverTerminal.Dead] == 0 && catchment.TerminalCounts[(int)RiverTerminal.Intake] == 0, "chains, rule C: a Dead or Intake stem");
+        Check(!catchment.LakeMarked[Id(3, 3)] && lakeId[Id(3, 3)] == 0, "chains, rule C: lake A is marked by a river or gone");
     }
 }

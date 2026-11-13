@@ -10,8 +10,8 @@ using RingworldTechDemo.Terrain.Sites;
 namespace RingworldTechDemo.Tools;
 
 /// <summary>
-/// T2R-23 Part A (docs/work-orders/terrain-vegetation/T2-rules.md, Spec RS2 "Measurement table"): the <c>--site-removal=&lt;branch|catchment&gt;</c> measurement. The bake runs with the site intakes on (edge cells of the keep-out are outlets, a basin that spills into
-/// one holds no lake) and the builder with the rule. A second build of the same field without the rule gives the rivers that the rule took: a stem of that build is removed when no stem of the rule build has the same head and last cell. Reads only; the graph is not changed.
+/// T2R-23 (docs/work-orders/terrain-vegetation/T2-rules.md, Spec RS2 "Measurement table"): what the site removal took (rule C, production). The bake has the site intakes on (edge cells of the keep-out are outlets, a basin that spills into
+/// one holds no lake) and the builder the removal. A second build of the same field without the removal gives the rivers that it took: a stem of that build is removed when no stem of the production build has the same head and last cell. Reads only; the graph is not changed.
 /// Every line is "key | value" so the runs can be tabulated.
 /// </summary>
 public partial class DrainageBakeReportTool
@@ -64,7 +64,7 @@ public partial class DrainageBakeReportTool
         }
     }
 
-    private static string SiteRemovalReport(RiverSiteRemovalRule rule, RiverNetwork net, RiverNetwork reference, RiverBuildReport rivers, RiverBuildReport referenceRivers, DrainageField field, DrainageGrid grid, TerrainGenerationParameters recipe)
+    private static string SiteRemovalReport(RiverNetwork net, RiverNetwork reference, RiverBuildReport rivers, RiverBuildReport referenceRivers, DrainageField field, DrainageGrid grid, TerrainGenerationParameters recipe)
     {
         var sb = new StringBuilder();
         CultureInfo ci = CultureInfo.InvariantCulture;
@@ -82,7 +82,7 @@ public partial class DrainageBakeReportTool
         double perKm2 = RiverHydraulics.DischargePerKm2;
         double total = Math.Max(1e-12, rep.TotalRunoff);
 
-        Row("site removal rule", rule.ToString());
+        Row("site removal", "rule C: everything that drains into a site is removed, tributaries included");
         Row("keep-out cells (barrier + intake), of them edge cells (intake)", $"{rep.BarrierCells + rep.IntakeCells} / {rep.IntakeCells}");
         Row("site-drained basins: count / cells / inflow passed on (m3/s) / share of runoff", $"{rep.SiteDrainedBasins} / {rep.SiteDrainedCells} / {F(rep.SiteDrainedInflow * perKm2)} / {F(100d * rep.SiteDrainedInflow / total, "F2")} %");
         Row("runoff that arrives at edge cells, share of the ring's runoff", F(100d * rep.SiteRunoff / total, "F2") + " %");
@@ -136,41 +136,32 @@ public partial class DrainageBakeReportTool
         Row("rivers without the rule: stems / km", $"{reference.Stems.Length} / {F(referenceKm, "F0")}");
         Row("rivers left: stems / km", $"{net.Stems.Length} / {F(net.Curves.Sum(c => c.Length) / 1000d, "F0")}");
         Row("removed rivers: stems / km / share of the river length", $"{removed.Count} / {F(removedKm, "F0")} / {F(100d * removedKm / Math.Max(1e-9, referenceKm), "F2")} %");
-        Row("removed by reason: ends at a site / inlet of a site-drained basin / drains to a site (rule C only): stems", $"{byReasonCount[1]} / {byReasonCount[2]} / {byReasonCount[3]}");
+        Row("removed by reason: ends at a site / inlet of a site-drained basin / drains to a site (a tributary): stems", $"{byReasonCount[1]} / {byReasonCount[2]} / {byReasonCount[3]}");
         Row("removed by reason: km", $"{F(byReasonKm[1], "F0")} / {F(byReasonKm[2], "F0")} / {F(byReasonKm[3], "F0")}");
-        Row("rule C beyond rule L: stems / km (the stems of reason 3: tributaries of removed rivers, all that drain to a site)", $"{byReasonCount[3]} / {F(byReasonKm[3], "F0")}");
         removedQ.Sort(); removedW.Sort();
         Row("removed discharge at the end (m3/s) p50 / p90 / sum", $"{F(Quantile(removedQ, 0.5), "F2")} / {F(Quantile(removedQ, 0.9), "F2")} / {F(removedQSum, "F1")}");
         Row("removed width at the end (m, law of RS3) p50 / p90 / max", Q3(removedW, "F1"));
         Row("removed discharge as a share of the discharge of all river ends of the reference build", F(100d * removedQSum / Math.Max(1e-9, allEndQ), "F2") + " %");
         Row("sites with at least one removed river: emitter sites (of " + geometry.EmitterSites + ") / Wall Engines (of " + geometry.WallEngines + ") / Weather Lung", $"{siteSet.Count} / {engineSet.Count} / {(lungHit ? 1 : 0)}");
 
-        // ------------------------------------------------------------------ rule L: Cut ends and lakes that lost their outlet river
-        var cutQ = new List<double>(); var cutW = new List<double>(); var cutDist = new List<double>();
-        int cutStems = 0;
-        for (int i = 0; i < net.Stems.Length; i++)
+        // ------------------------------------------------------------------ overflows (T2R-22) against the removal: does anything overflow into a site-drained basin or towards a site?
         {
-            RiverStem st = net.Stems[i];
-            if (st.Terminal != RiverTerminal.Cut) continue;
-            cutStems++;
-            int reach = st.ReachStart + st.ReachCount - 1;
-            cutQ.Add(net.Reaches[reach].Q); cutW.Add(net.Sections[reach].Width);
-            double dist = 0;
-            int cur = st.LastCell;
-            for (int guard = 0; guard < 100000 && cur >= 0 && kind[cur] != DrainageCellKind.Intake; guard++)
+            int overflows = 0, outToSite = 0, outInSiteBasin = 0, outToSiteWithLake = 0, overflowStemsRemoved = 0;
+            var outCells = new HashSet<int>();
+            foreach (DrainageOverflow o in field.Routed.Overflows)
             {
-                int next = down[cur];
-                if (next < 0) break;
-                int dir = domain.Direction(cur, next);
-                dist += dir >= 0 ? domain.StepMeters(dir) : domain.AroundStepMeters;
-                cur = next;
+                overflows++;
+                bool toSite = o.OutCell >= 0 && terminal[o.OutCell] == DrainageCellKind.Intake;
+                bool inSiteBasin = o.OutCell >= 0 && siteDrainedCell != null && siteDrainedCell[o.OutCell];
+                if (toSite) { outToSite++; if (o.HasLake) outToSiteWithLake++; outCells.Add(o.SaddleCell); }
+                if (inSiteBasin) outInSiteBasin++;
             }
-            cutDist.Add(dist / 1000d);
+            foreach (int i in removed) if (outCells.Contains(reference.Stems[i].HeadCell) || outCells.Contains(reference.Stems[i].LastCell)) overflowStemsRemoved++;
+            Row("overflows (T2R-22): total / whose hand-over cell drains to a site (of them with a lake) / whose hand-over cell lies in a site-drained basin", $"{overflows} / {outToSite} ({outToSiteWithLake}) / {outInSiteBasin}");
+            Row("overflows towards a site: removed stems that start or end at their saddle cell", overflowStemsRemoved.ToString(ci));
         }
-        Row("Cut ends (rule L): count", cutStems.ToString(ci));
-        Row("Cut ends: discharge (m3/s) p50 / p90 / max", Q3(cutQ));
-        Row("Cut ends: width (m) p50 / p90 / max", Q3(cutW, "F1"));
-        Row("Cut ends: distance along the removed river from the Cut end to the edge cell (km) p50 / p90 / max", Q3(cutDist, "F1"));
+
+        // ------------------------------------------------------------------ lakes whose river was removed (they stay as riverless lakes)
         var lostLakes = new HashSet<int>();
         foreach (int i in removed)
         {
@@ -178,29 +169,22 @@ public partial class DrainageBakeReportTool
             if (st.Terminal == RiverTerminal.Lake || lakeId[st.HeadCell] < 0 || reference.Reaches[st.ReachStart].UpstreamLake != lakeId[st.HeadCell]) continue;
             lostLakes.Add(lakeId[st.HeadCell]);
         }
-        var inletsOf = new Dictionary<int, int>();
-        foreach (RiverStem st in net.Stems)
-        {
-            if (st.Terminal == RiverTerminal.Lake) inletsOf[st.TerminalId] = inletsOf.GetValueOrDefault(st.TerminalId) + 1;
-        }
-        var lostInflow = new List<double>(); int lostWithInlets = 0;
-        foreach (int lake in lostLakes)
-        {
-            lostInflow.Add(lakes[lake].Inflow * perKm2);
-            if (inletsOf.GetValueOrDefault(lake) > 0) lostWithInlets++;
-        }
-        Row("lakes that lost their outlet river: count / of those with an inlet river left (rule L)", $"{lostLakes.Count} / {lostWithInlets}");
-        Row("lakes that lost their outlet river: inflow (m3/s) p50 / p90 / max", Q3(lostInflow, "F1"));
+        var lostInflow = new List<double>();
+        foreach (int lake in lostLakes) lostInflow.Add(lakes[lake].Inflow * perKm2);
+        var lakesWithRemovedInlet = new HashSet<int>();
+        foreach (int i in removed) if (reference.Stems[i].Terminal == RiverTerminal.Lake) lakesWithRemovedInlet.Add(reference.Stems[i].TerminalId);
+        Row("lakes that lost their outlet river (they stay, riverless): count / inflow (m3/s) p50 / p90 / max", $"{lostLakes.Count} / {Q3(lostInflow, "F1")}");
+        Row("lakes that lost an inlet river (they stay): count", lakesWithRemovedInlet.Count.ToString(ci));
 
         // ------------------------------------------------------------------ river ends by class and the runoff shares
-        var ends = new int[8];
+        var ends = new int[7];
         foreach (RiverStem st in net.Stems) ends[(int)st.Terminal]++;
-        Row("river ends of the rivers left: sea / lake / lung / strip end / dead / cut / intake", $"{ends[(int)RiverTerminal.Sea]} / {ends[(int)RiverTerminal.Lake]} / {ends[(int)RiverTerminal.Lung]} / {ends[(int)RiverTerminal.StripEnd]} / {ends[(int)RiverTerminal.Dead]} / {ends[(int)RiverTerminal.Cut]} / {ends[(int)RiverTerminal.Intake]}");
-        Row("river ends of the reference build: sea / lake / lung / strip end / dead / cut / intake", string.Join(" / ", new[] { RiverTerminal.Sea, RiverTerminal.Lake, RiverTerminal.Lung, RiverTerminal.StripEnd, RiverTerminal.Dead, RiverTerminal.Cut, RiverTerminal.Intake }.Select(t => reference.Stems.Count(s => s.Terminal == t).ToString(ci))));
-        Row("builder: removed stems / cells, guard moved nodes / largest move (m), terminal cut", $"{rivers.RemovedStems} / {rivers.RemovedCells}, {rivers.GuardMovedNodes} / {F(rivers.GuardMaxMeters, "F0")}, {rivers.TerminalCut} (reference: guard moved {referenceRivers.GuardMovedNodes} / {F(referenceRivers.GuardMaxMeters, "F0")})");
+        Row("river ends of the rivers left: sea / lake / lung / strip end / dead / intake", $"{ends[(int)RiverTerminal.Sea]} / {ends[(int)RiverTerminal.Lake]} / {ends[(int)RiverTerminal.Lung]} / {ends[(int)RiverTerminal.StripEnd]} / {ends[(int)RiverTerminal.Dead]} / {ends[(int)RiverTerminal.Intake]}");
+        Row("river ends of the reference build: sea / lake / lung / strip end / dead / intake", string.Join(" / ", new[] { RiverTerminal.Sea, RiverTerminal.Lake, RiverTerminal.Lung, RiverTerminal.StripEnd, RiverTerminal.Dead, RiverTerminal.Intake }.Select(t => reference.Stems.Count(s => s.Terminal == t).ToString(ci))));
+        Row("builder: guard moved nodes / largest move (m)", $"{rivers.GuardMovedNodes} / {F(rivers.GuardMaxMeters, "F0")} (reference: guard moved {referenceRivers.GuardMovedNodes} / {F(referenceRivers.GuardMaxMeters, "F0")})");
 
         // ------------------------------------------------------------------ centrelines against the bar, by how the stem ends
-        long within = 0, cutWithin = 0;
+        long within = 0;
         var badStems = new Dictionary<int, (long Samples, double Min)>();
         for (int i = 0; i < net.Stems.Length; i++)
             for (double s = 0; s < net.Curves[i].Length; s += 100)
@@ -209,10 +193,9 @@ public partial class DrainageBakeReportTool
                 (int cls, _, double clearance) = geometry.Nearest(net.WrapAround(around), across);
                 if (cls < 0 || clearance >= 300d) continue;
                 within++;
-                if (net.Stems[i].Terminal == RiverTerminal.Cut) cutWithin++;
                 badStems[i] = badStems.TryGetValue(i, out var v) ? (v.Samples + 1, Math.Min(v.Min, clearance)) : (1, clearance);
             }
-        Row("centreline samples closer than influence radius + 300 m (every 100 m): all / on Cut stems / stems", $"{within} / {cutWithin} / {badStems.Count}");
+        Row("centreline samples closer than influence radius + 300 m (every 100 m): all / stems", $"{within} / {badStems.Count}");
         foreach (var kv in badStems.OrderBy(k => k.Value.Min).Take(12))
         {
             RiverStem st = net.Stems[kv.Key];

@@ -221,7 +221,7 @@ public static class RiverMapWriter
         return (cropPath, closePath);
     }
 
-    /// <summary>T2R-23 Part A, report tool only: what the removal rule took. <paramref name="Reference"/> is the build without the rule (its stems whose head and last cell are not in the rule build are drawn thin grey), <paramref name="Net"/> the rule build (its Cut ends are drawn as small squares), <paramref name="SiteDrainedCells"/> the cells of basins that spill into a site (light grey).</summary>
+    /// <summary>T2R-23, report tool only: what the removal took. <paramref name="Reference"/> is the build without the rule (its stems whose head and last cell are not in the rule build are drawn thin grey), <paramref name="Net"/> the rule build, <paramref name="SiteDrainedCells"/> the cells of basins that spill into a site (light grey).</summary>
     public sealed record RemovalOverlay(RiverNetwork Reference, RiverNetwork Net, bool[]? SiteDrainedCells);
 
     /// <summary>T2R-19: a window of <paramref name="widthKm"/> x <paramref name="heightKm"/> centred on a ring position with the production curves (barrier cells violet, intake cells orange), <paramref name="pixelsPerKm"/> pixels per km.</summary>
@@ -256,14 +256,6 @@ public static class RiverMapWriter
             new RiverNetworkView(overlay.Reference, spec, origin, firstRow * f.AcrossStepMeters).DrawStems(window, zoom / spec.AroundStepMeters, removedStems, 1.2, (150, 150, 150));
         }
         view.Draw(window, zoom / spec.AroundStepMeters, ClassColors, 1d, null);
-        if (overlay != null)
-            for (int i = 0; i < overlay.Net.Stems.Length; i++)
-            {
-                if (overlay.Net.Stems[i].Terminal != RiverTerminal.Cut) continue;
-                view.EndPoint(i, zoom / spec.AroundStepMeters, out double x, out double y);
-                window.Rect(x, y, 5, (255, 255, 255));
-                window.Rect(x, y, 3, (220, 30, 30));
-            }
         Save(window, path);
         return path;
     }

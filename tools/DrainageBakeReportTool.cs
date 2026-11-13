@@ -13,7 +13,7 @@ namespace RingworldTechDemo.Tools;
 /// T2R-4 (docs/work-orders/terrain-vegetation/T2.md): the drainage bake report tool. Runs the production height source (GPU or CPU), the barriers,
 /// conditioning, routing and accumulation on the whole ring or a strip, writes the report (text and JSON) and the river map under
 /// .godot/audit_baseline/&lt;machine&gt;/t2r/bake/&lt;stamp&gt;/. Arguments after `--`: --source=gpu|cpu (default gpu), --ring (default) or --strip=&lt;start m&gt;,&lt;km&gt;,
-/// --seed=1337, --noise=6 (m), --lake-abundance=&lt;0..1&gt; (default: the recipe's 0.5), --crop=&lt;start km&gt;,&lt;km&gt; (default 10134,300), --rim-crop=&lt;start km&gt;,&lt;km&gt;, --evap-sweep (T2R-6b), --danger and --danger-grid (T3R-1; --no-danger-maps), --part-hashes=<graph file> (T3R-3), --site-intakes (the option) or --intake-report (the measurement alone, today's rule) with an optional --keep-out=<m> (T2R-19; DrainageBakeReportTool.SiteIntakes.cs), --site-removal=<branch|catchment> (T2R-23 Part A: site intakes on and the rule in the builder; DrainageBakeReportTool.SiteRemoval.cs), --window=<around km>,<across km>,<size km>[;...] (map windows), --terminals with an optional --near=&lt;around km&gt;,&lt;across km&gt;,&lt;radius km&gt; (T2R-6c and T2R-17; DrainageBakeReportTool.Terminals.cs), --label=&lt;text&gt;, --no-maps.
+/// --seed=1337, --noise=6 (m), --lake-abundance=&lt;0..1&gt; (default: the recipe's 0.5), --crop=&lt;start km&gt;,&lt;km&gt; (default 10134,300), --rim-crop=&lt;start km&gt;,&lt;km&gt;, --evap-sweep (T2R-6b), --danger and --danger-grid (T3R-1; --no-danger-maps), --part-hashes=<graph file> (T3R-3), --site-intakes or --intake-report (the T2R-19 keep-out measurement) with an optional --keep-out=<m> (default 300; DrainageBakeReportTool.SiteIntakes.cs), --no-site-intakes (the bake without site edge cells) and --no-site-removal (edge cells without the removal of the rivers that drain into them; T2R-23, DrainageBakeReportTool.SiteRemoval.cs), --window=<around km>,<across km>,<size km>[;...] (map windows), --terminals with an optional --near=&lt;around km&gt;,&lt;across km&gt;,&lt;radius km&gt; (T2R-6c and T2R-17; DrainageBakeReportTool.Terminals.cs), --label=&lt;text&gt;, --no-maps.
 /// GPU runs need a windowed Vulkan run (not --headless). Prints DRAINAGE_BAKE_REPORT=PASS|FAIL.
 /// </summary>
 public partial class DrainageBakeReportTool : RefCounted
@@ -47,8 +47,11 @@ public partial class DrainageBakeReportTool : RefCounted
             string[] crop = Arg("crop", "10134,300").Split(',');
             double cropStartKm = double.Parse(crop[0], System.Globalization.CultureInfo.InvariantCulture), cropKm = double.Parse(crop[1], System.Globalization.CultureInfo.InvariantCulture);
             string label = Arg("label", "");
-            RiverSiteRemovalRule removalRule = Arg("site-removal", "") switch { "branch" => RiverSiteRemovalRule.Branch, "catchment" => RiverSiteRemovalRule.Catchment, _ => RiverSiteRemovalRule.None };
-            bool intakesOn = Flag("site-intakes") || removalRule != RiverSiteRemovalRule.None;
+            // Production (T2R-23): site edge cells are outlets and what drains into one is removed. --no-site-intakes is the "before" bake, --no-site-removal keeps the edge cells but not the removal;
+            // --site-intakes and --intake-report print the T2R-19 keep-out measurement.
+            bool intakesOn = !Flag("no-site-intakes");
+            bool removalOn = intakesOn && !Flag("no-site-removal");
+            bool intakeReport = Flag("site-intakes") || Flag("intake-report");
             int workers = Math.Clamp(System.Environment.ProcessorCount, 2, 16);
 
             TerrainGenerationParameters recipe = EmitterSiteTestWorlds.Gen17WorldRecipe(seed, 1, new[] { "water.rivers" });
@@ -112,22 +115,22 @@ public partial class DrainageBakeReportTool : RefCounted
             if (!Flag("no-rivers"))
             {
                 bool diag = Flag("diag");
-                RiverNetwork net = RiverGraphBuilder.Build(field, grid, recipe, new RiverBuildOptions { Source = source, Workers = workers, Levels = !Flag("no-levels"), KeepStations = diag, WanderScale = double.Parse(Arg("wander-scale", "1"), System.Globalization.CultureInfo.InvariantCulture), MeanderScale = double.Parse(Arg("meander-scale", "1"), System.Globalization.CultureInfo.InvariantCulture), EaseHairpins = Arg("ease-hairpins", "1") != "0", Smooth = Arg("smooth", "1") != "0", Snap = Arg("snap", "0") != "0", SiteRemoval = removalRule }, CancellationToken.None, out RiverBuildReport rivers);
+                RiverNetwork net = RiverGraphBuilder.Build(field, grid, recipe, new RiverBuildOptions { Source = source, Workers = workers, Levels = !Flag("no-levels"), KeepStations = diag, WanderScale = double.Parse(Arg("wander-scale", "1"), System.Globalization.CultureInfo.InvariantCulture), MeanderScale = double.Parse(Arg("meander-scale", "1"), System.Globalization.CultureInfo.InvariantCulture), EaseHairpins = Arg("ease-hairpins", "1") != "0", Smooth = Arg("smooth", "1") != "0", Snap = Arg("snap", "0") != "0", SiteRemoval = removalOn }, CancellationToken.None, out RiverBuildReport rivers);
                 File.WriteAllText(Path.Combine(dir, "river_report.txt"), rivers.ToText());
                 foreach (string line in rivers.ToText().Split('\n', StringSplitOptions.RemoveEmptyEntries)) Console.WriteLine("DRAINAGE_BAKE_REPORT_DETAIL " + line);
                 RiverNetwork? referenceNet = null;
                 RiverBuildReport referenceRivers = default!;
-                if (removalRule != RiverSiteRemovalRule.None)
+                if (removalOn)
                 {
-                    // T2R-23 Part A: the same field built without the rule, for what the rule took.
-                    referenceNet = RiverGraphBuilder.Build(field, grid, recipe, new RiverBuildOptions { Source = source, Workers = workers, Levels = false, Smooth = Arg("smooth", "1") != "0", Snap = Arg("snap", "0") != "0" }, CancellationToken.None, out referenceRivers);
+                    // T2R-23: the same field built without the removal, for what the removal took.
+                    referenceNet = RiverGraphBuilder.Build(field, grid, recipe, new RiverBuildOptions { Source = source, Workers = workers, Levels = false, Smooth = Arg("smooth", "1") != "0", Snap = Arg("snap", "0") != "0", SiteRemoval = false }, CancellationToken.None, out referenceRivers);
                     File.WriteAllText(Path.Combine(dir, "river_report_reference.txt"), referenceRivers.ToText());
                 }
                 string window = Arg("window", "");
                 if (window.Length > 0)
                 {
                     // T2R-19 picture: --window=<around km>,<across km>,<size km> writes a square map window with the curves (barrier cells violet, intake cells orange); several windows separated by ';'.
-                    // With a removal rule (T2R-23): removed rivers thin grey, the cells of a site-drained basin light grey, a Cut end a small square.
+                    // With a removal rule (T2R-23): removed rivers thin grey, the cells of a site-drained basin light grey.
                     int windowIndex = 0;
                     foreach (string one in window.Split(';', StringSplitOptions.RemoveEmptyEntries))
                     {
@@ -141,18 +144,18 @@ public partial class DrainageBakeReportTool : RefCounted
                 }
                 if (referenceNet != null)
                 {
-                    string removalText = SiteRemovalReport(removalRule, net, referenceNet, rivers, referenceRivers, field, grid, recipe);
+                    string removalText = SiteRemovalReport(net, referenceNet, rivers, referenceRivers, field, grid, recipe);
                     File.WriteAllText(Path.Combine(dir, "site_removal.txt"), removalText);
                     foreach (string line in removalText.Split('\n', StringSplitOptions.RemoveEmptyEntries)) Console.WriteLine("DRAINAGE_BAKE_REPORT_DETAIL " + line);
                 }
-                if (intakesOn || Flag("intake-report"))
+                if (intakeReport)
                 {
                     // T2R-19: the keep-out measurement (read-only; reads no spans, so it runs with --no-levels).
                     string intakeText = SiteIntakeReport(net, field, grid, recipe, rivers, intakesOn, Arg("keep-out", "").Length == 0 ? DrainageBarriers.DefaultKeepOutMeters : double.Parse(Arg("keep-out", ""), System.Globalization.CultureInfo.InvariantCulture));
                     File.WriteAllText(Path.Combine(dir, "site_intakes.txt"), intakeText);
                     foreach (string line in intakeText.Split('\n', StringSplitOptions.RemoveEmptyEntries)) Console.WriteLine("DRAINAGE_BAKE_REPORT_DETAIL " + line);
                 }
-                if (Flag("no-levels") && (intakesOn || Flag("intake-report")))
+                if (Flag("no-levels"))
                 {
                     // The graph wrap needs the levels; the T2R-19 measurement runs without them and ends here.
                     (source as IDisposable)?.Dispose();
