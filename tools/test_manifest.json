@@ -4898,6 +4898,34 @@
       "timeout_s": 600,
       "user_args": "--generation=1 --review-features=water.rivers"
     },
+    "river_far_water_fraction_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "far-viewport",
+        "water",
+        "hydrology"
+      ],
+      "marker": "RIVER_FAR_WATER_FRACTION",
+      "expected_s": 20,
+      "timeout_s": 120,
+      "parallel_safe": false
+    },
+    "river_lod_consistency_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "far-viewport",
+        "water",
+        "hydrology"
+      ],
+      "marker": "RIVER_LOD_CONSISTENCY",
+      "expected_s": 180,
+      "timeout_s": 600,
+      "user_args": "--generation=1 --review-features=water.rivers"
+    },
     "river_graph_cache_test": {
       "kind": "test",
       "mode": "headless",

@@ -1059,9 +1059,21 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         }
     }
 
+    private bool _riverLineUniform;
+
+    // T2R-12: the terrain shader reads the river line coverage from the vertex and tile alpha only on worlds with a river graph.
+    private void ApplyRiverLineUniform(RingTerrainSampler sampler)
+    {
+        bool enabled = sampler.HasRiverLine;
+        if (enabled == _riverLineUniform) return;
+        _riverLineUniform = enabled;
+        _material?.SetShaderParameter("river_line_enabled", enabled);
+    }
+
     private PendingSegmentPreparation CreatePendingSegment(int segmentIndex, int segmentCount, MeshInstance3D? existing, RingLodSurfaceEditSnapshot edits)
     {
         RingTerrainSampler sampler = _grid!.TerrainSampler!;
+        ApplyRiverLineUniform(sampler);
         int aroundCount = Mathf.Max(64, AroundSegments);
         int acrossCount = Mathf.Max(4, AcrossSegments);
         int aroundStartIndex = segmentIndex * aroundCount / segmentCount;
@@ -1109,7 +1121,10 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
                 : state.HeightPyramid!.PreserveFeatureHeight((int)sampledHeight, (float)around, (float)across, sampleFootprint)
             : sampledHeight;
         float waterHeight = terrainSample.ResolveDisplayedHeight(terrainHeight);
-        state.TerrainColors[index] = RingTerrainVisuals.ResolveMacroTextureColor(terrainSample, Mathf.RoundToInt(terrainHeight), state.Sampler, state.LowColor, state.HighColor);
+        // T2R-12: far river line coverage in the vertex alpha (S11); alpha stays 1 without a river graph.
+        state.TerrainColors[index] = state.Sampler.WithRiverLineAlpha(
+            RingTerrainVisuals.ResolveMacroTextureColor(terrainSample, Mathf.RoundToInt(terrainHeight), state.Sampler, state.LowColor, state.HighColor),
+            around, across, state.AroundSpacing, state.AcrossSpacing);
         state.WaterColors[index] = RingWaterModel.EncodeWaterKind(RingTerrainVisuals.ResolveMacroTextureColor(terrainSample, Mathf.RoundToInt(waterHeight), state.Sampler, state.LowColor, state.HighColor), terrainSample.WaterKind);
         state.DisplayedWater[index] = terrainSample.HasSurfaceWater && terrainHeight < terrainSample.WaterSurfaceHeight;
         float terrainCanonicalHeight = terrainHeight + (state.UsesPresentationSurface ? 0.0f : 1.0f) - state.Underlay;

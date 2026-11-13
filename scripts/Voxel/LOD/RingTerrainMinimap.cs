@@ -7,6 +7,7 @@ using RingworldTechDemo.Voxel.Integration;
 using RingworldTechDemo.Voxel.Phase2;
 using RingworldTechDemo.Voxel.Phase3;
 using RingworldTechDemo.Terrain.Editable;
+using RingworldTechDemo.Terrain.Hydrology;
 
 namespace RingworldTechDemo.Voxel.LOD;
 
@@ -61,6 +62,7 @@ public partial class RingTerrainMinimap : CanvasLayer
     private Node3D? _terrainRoot;
     private Node3D? _trackableRoot;
     private MeshInstance3D? _terrainMesh;
+    private MeshInstance3D? _riverMesh;
     private MeshInstance3D? _playerMarker;
     private MeshInstance3D? _landingTether;
     private MeshInstance3D? _landingMarker;
@@ -116,7 +118,11 @@ public partial class RingTerrainMinimap : CanvasLayer
         float CenterElevation,
         float MaximumDisplayHeight,
         RingCanonicalPosition Center,
-        ulong EditVersion);
+        ulong EditVersion,
+        RiverLineData? Rivers = null);
+
+    /// <summary>T2R-12 (S11): the river polylines of the window as one ribbon mesh in the terrain mesh local coordinates (null on a world without a river graph).</summary>
+    private sealed record RiverLineData(Vector3[] Vertices, Color[] Colors, int[] Indices);
 
     public override void _Ready()
     {
@@ -329,6 +335,19 @@ public partial class RingTerrainMinimap : CanvasLayer
             IgnoreOcclusionCulling = true
         };
         _terrainRoot.AddChild(_terrainMesh);
+        _riverMesh = new MeshInstance3D
+        {
+            Name = "RiverLines",
+            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+            IgnoreOcclusionCulling = true,
+            MaterialOverride = new StandardMaterial3D
+            {
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                VertexColorUseAsAlbedo = true,
+                CullMode = BaseMaterial3D.CullModeEnum.Disabled
+            }
+        };
+        _terrainRoot.AddChild(_riverMesh);
 
         Shader? shader = GD.Load<Shader>("res://materials/ring_terrain_minimap.gdshader");
         if (shader != null)
@@ -573,8 +592,9 @@ public partial class RingTerrainMinimap : CanvasLayer
         float ringWidth = _grid.RingAcrossWidthMeters;
         float structuralDepth = _grid.StructuralDepthMeters;
         RingTerrainSampler sampler = _grid.TerrainSampler.CreateIndependentCopy();
+        float metresPerPixel = Mathf.Clamp(MapSpanMeters, MinimumSpanMeters, MaximumSpanMeters) / Math.Max(1, PixelSize);
         _pendingBuild = Task.Run(() => BuildTerrainData(
-            center, cells, span, verticalScale, ringWidth, structuralDepth, sampler, edits));
+            center, cells, span, verticalScale, ringWidth, structuralDepth, sampler, edits, metresPerPixel));
     }
 
     private MinimapMeshData BuildTerrainData(
@@ -585,7 +605,8 @@ public partial class RingTerrainMinimap : CanvasLayer
         float ringWidth,
         float structuralDepth,
         RingTerrainSampler sampler,
-        RingLodSurfaceEditSnapshot edits)
+        RingLodSurfaceEditSnapshot edits,
+        float metresPerPixel)
     {
         try
         {
@@ -655,13 +676,92 @@ public partial class RingTerrainMinimap : CanvasLayer
                 indices[cursor++] = i00; indices[cursor++] = i01; indices[cursor++] = i10;
                 indices[cursor++] = i10; indices[cursor++] = i01; indices[cursor++] = i11;
             }
+            RiverLineData? rivers = sampler.RuntimeRiverGraph is { } graph
+                ? BuildRiverLines(graph, center, cells, step, span, heights, centerHeight, verticalScale, metresPerPixel)
+                : null;
             return new MinimapMeshData(vertices, normals, colors, uvs, indices,
-                centerHeight, maximumHeight, center, edits.Version);
+                centerHeight, maximumHeight, center, edits.Version, rivers);
         }
         finally
         {
             sampler.Dispose();
         }
+    }
+
+    // T2R-12 (S11): base-curve polylines of the graph at every zoom, in the River colour, max(1 px, w / metres-per-pixel) wide, sitting on the highest corner of the terrain cell they cross.
+    private static RiverLineData? BuildRiverLines(RiverGraph graph, RingCanonicalPosition center, int cells, float step, float span, float[] heights,
+        float centerHeight, float verticalScale, float metresPerPixel)
+    {
+        var pieces = new List<int>(256);
+        double half = span * 0.5;
+        graph.Index.CollectPieces(center.AroundMeters - half, center.AroundMeters + half, center.AcrossMeters - half, center.AcrossMeters + half, pieces);
+        if (pieces.Count == 0) return null;
+        int row = cells + 1;
+        var vertices = new List<Vector3>(pieces.Count * 16);
+        var colors = new List<Color>(pieces.Count * 16);
+        var indices = new List<int>(pieces.Count * 24);
+        var color = new Color(0.075f, 0.36f, 0.43f, 1.0f);
+        const int segments = RiverGraph.CoverageSegmentsPerPiece;
+        var around = new double[segments + 1];
+        var across = new double[segments + 1];
+        var width = new double[segments];
+        var lx = new double[segments + 1];
+        var lz = new double[segments + 1];
+        float lift = Math.Max(0.5f, step * 0.12f * verticalScale);
+        float Lift(double x, double z)
+        {
+            double gx = Math.Clamp((x + half) / step, 0, cells), gz = Math.Clamp((z + half) / step, 0, cells);
+            int x0 = Math.Min((int)gx, cells - 1), z0 = Math.Min((int)gz, cells - 1);
+            float top = Math.Max(Math.Max(heights[z0 * row + x0], heights[z0 * row + x0 + 1]), Math.Max(heights[(z0 + 1) * row + x0], heights[(z0 + 1) * row + x0 + 1]));
+            return (top - centerHeight) * verticalScale + lift;
+        }
+        foreach (int piece in pieces)
+        {
+            graph.SamplePiece(piece, around, across, width);
+            bool any = false;
+            for (int i = 0; i <= segments; i++)
+            {
+                lx[i] = graph.Network.WrapDelta(around[i] - center.AroundMeters);
+                lz[i] = across[i] - center.AcrossMeters;
+                if (Math.Abs(lx[i]) <= half + step && Math.Abs(lz[i]) <= half + step) any = true;
+            }
+            if (!any) continue;
+            int first = vertices.Count;
+            for (int i = 0; i <= segments; i++)
+            {
+                int a = Math.Max(0, i - 1), b = Math.Min(segments, i + 1);
+                double dx = lx[b] - lx[a], dz = lz[b] - lz[a], norm = Math.Sqrt(dx * dx + dz * dz);
+                if (norm < 1e-9) { dx = 1; dz = 0; norm = 1; }
+                double w = i == 0 ? width[0] : i == segments ? width[segments - 1] : 0.5 * (width[i - 1] + width[i]);
+                double hw = 0.5 * Math.Max(w, metresPerPixel);
+                double nx = -dz / norm * hw, nz = dx / norm * hw;
+                float y = Lift(lx[i], lz[i]);
+                vertices.Add(new Vector3((float)(lx[i] + nx), y, (float)(lz[i] + nz)));
+                vertices.Add(new Vector3((float)(lx[i] - nx), y, (float)(lz[i] - nz)));
+                colors.Add(color); colors.Add(color);
+            }
+            for (int i = 0; i < segments; i++)
+            {
+                int v = first + i * 2;
+                indices.Add(v); indices.Add(v + 1); indices.Add(v + 2);
+                indices.Add(v + 2); indices.Add(v + 1); indices.Add(v + 3);
+            }
+        }
+        return vertices.Count == 0 ? null : new RiverLineData(vertices.ToArray(), colors.ToArray(), indices.ToArray());
+    }
+
+    private void ApplyRiverLines(RiverLineData? data)
+    {
+        if (_riverMesh == null) return;
+        if (data == null) { _riverMesh.Mesh = null; return; }
+        var arrays = new Godot.Collections.Array();
+        arrays.Resize((int)Mesh.ArrayType.Max);
+        arrays[(int)Mesh.ArrayType.Vertex] = data.Vertices;
+        arrays[(int)Mesh.ArrayType.Color] = data.Colors;
+        arrays[(int)Mesh.ArrayType.Index] = data.Indices;
+        var mesh = new ArrayMesh();
+        mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
+        _riverMesh.Mesh = mesh;
     }
 
     private void ApplyTerrainMesh(MinimapMeshData data)
@@ -677,6 +777,7 @@ public partial class RingTerrainMinimap : CanvasLayer
         var mesh = new ArrayMesh();
         mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
         _terrainMesh.Mesh = mesh;
+        ApplyRiverLines(data.Rivers);
         _terrainMaterial?.SetShaderParameter("center_elevation_meters", data.CenterElevation);
         _terrainMaterial?.SetShaderParameter("vertical_scale", VerticalScale);
         _terrainMaterial?.SetShaderParameter("contour_interval_meters", GetEffectiveContourInterval());

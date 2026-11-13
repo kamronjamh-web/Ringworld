@@ -155,6 +155,7 @@ public partial class RingAnalyticGlobalLod : MeshInstance3D
             if (UseStagedStartup) throw new InvalidOperationException("The seeded terrain sampler is unavailable.");
             yield break;
         }
+        _surfaceMaterial?.SetShaderParameter("river_line_enabled", sampler.HasRiverLine);
         int aroundCount = Mathf.Max(128, AroundSegments);
         int acrossCount = Mathf.Max(2, AcrossSegments);
         RingLodSurfaceEditSnapshot edits = _grid.CaptureLodSurfaceEditSnapshot();
@@ -181,12 +182,13 @@ public partial class RingAnalyticGlobalLod : MeshInstance3D
                 : sample.SurfaceHeight;
             float displayedHeight = sample.ResolveDisplayedHeight(terrainHeight);
             vertices[index] = Point(around, displayedHeight - SurfaceUnderlayMeters, across);
-            colors[index] = RingTerrainVisuals.ResolveSeededColor(
+            // T2R-12: far river line coverage in the vertex alpha (S11); alpha stays 1 without a river graph.
+            colors[index] = sampler.WithRiverLineAlpha(RingTerrainVisuals.ResolveSeededColor(
                 sample,
                 Mathf.RoundToInt(displayedHeight),
                 sampler,
                 LowColor,
-                HighColor);
+                HighColor), around, across, aroundStep, acrossStep);
             if ((index & 127) == 127) yield return true;
         }
 

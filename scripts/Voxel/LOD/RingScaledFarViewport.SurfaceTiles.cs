@@ -503,7 +503,9 @@ public partial class RingScaledFarViewport
             Vector3 normal = new Vector3(-da / arcScale, 1, -dz).Normalized();
             int index = (y * size + x) * 4;
             colors[index] = PackSurfaceTileByte(color.R); colors[index + 1] = PackSurfaceTileByte(color.G);
-            colors[index + 2] = PackSurfaceTileByte(color.B); colors[index + 3] = 255;
+            colors[index + 2] = PackSurfaceTileByte(color.B);
+            // T2R-12: far river line coverage in the colour alpha (S11), 255 without a river graph. The texel is the tile step in both directions.
+            colors[index + 3] = sampler.RiverLineTileAlpha(around, across, key.AroundExtent / (key.Resolution - 1), key.AcrossExtent / (key.Resolution - 1));
             normals[index] = PackSurfaceTileByte(normal.X * .5f + .5f);
             normals[index + 1] = PackSurfaceTileByte(normal.Y * .5f + .5f);
             normals[index + 2] = PackSurfaceTileByte(normal.Z * .5f + .5f); normals[index + 3] = 255;

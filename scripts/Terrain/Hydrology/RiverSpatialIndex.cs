@@ -216,6 +216,36 @@ public sealed class RiverSpatialIndex
         return new ReadOnlySpan<int>(_entries, _offsets[b], _offsets[b + 1] - _offsets[b]);
     }
 
+    /// <summary>
+    /// Appends the unique ids (ascending) of every piece listed in a bucket that overlaps the rectangle (T2R-12): a superset of the pieces within <see cref="ReachRadiusMeters"/> of it.
+    /// Around is unwrapped metres (any range; a span of a circumference or more takes every column); across clamps to the first and last row.
+    /// </summary>
+    public void CollectPieces(double aroundMin, double aroundMax, double acrossMin, double acrossMax, List<int> pieces)
+    {
+        int start = pieces.Count;
+        int c0 = (int)Math.Floor(aroundMin / _aroundStep), c1 = (int)Math.Floor(aroundMax / _aroundStep);
+        if (c1 - c0 + 1 > _ringColumns) c1 = c0 + _ringColumns - 1;
+        int r0 = RowOf(acrossMin), r1 = RowOf(acrossMax);
+        for (int br = r0 / BucketCells; br <= r1 / BucketCells; br++)
+        {
+            int last = -1;
+            for (int c = c0; c <= c1; c++)
+            {
+                int bc = Wrap(c) / BucketCells;
+                if (bc == last) continue;
+                last = bc;
+                int b = br * _bucketColumns + bc;
+                for (int i = _offsets[b]; i < _offsets[b + 1]; i++) pieces.Add(_entries[i]);
+            }
+        }
+        if (pieces.Count - start < 2) return;
+        pieces.Sort(start, pieces.Count - start, null);
+        int write = start + 1;
+        for (int read = start + 1; read < pieces.Count; read++)
+            if (pieces[read] != pieces[write - 1]) pieces[write++] = pieces[read];
+        pieces.RemoveRange(write, pieces.Count - write);
+    }
+
     /// <summary>As <see cref="PiecesNear(double, double)"/> for a cell already resolved with <see cref="ColumnOf"/> and <see cref="RowOf"/>.</summary>
     public ReadOnlySpan<int> PiecesNear(int col, int row)
     {

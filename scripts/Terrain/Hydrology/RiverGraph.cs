@@ -118,6 +118,122 @@ public sealed class RiverGraph
         return (tx, ty);
     }
 
+    // ------------------------------------------------------------------ far coverage (T2R-12, S11)
+
+    /// <summary>The least coverage of a rectangle any reach crosses (S11, tuned at the T2R-12 review): a river narrower than its cell still draws a line.</summary>
+    public const double LineCoverageMinimum = 0.2;
+    /// <summary>Segments a piece is sampled in (S11): nine base-curve points per piece.</summary>
+    public const int CoverageSegmentsPerPiece = 8;
+
+    [ThreadStatic] private static List<int>? _coveragePieces;
+
+    /// <summary>
+    /// S11 far coverage: <c>c = min(1, sum of (length of each base-curve segment inside the rectangle) * (full water width there) / area)</c>, raised to <see cref="LineCoverageMinimum"/> when any
+    /// reach crosses the rectangle, and 0 when none does. Around is unwrapped metres. The base curve is sampled at <see cref="CoverageSegmentsPerPiece"/> segments per piece (the meander is not
+    /// included, so the length is that of the base curve). Allocation-free after the first call on a thread.
+    /// </summary>
+    public double LineCoverage(double aroundMin, double aroundMax, double acrossMin, double acrossMax)
+        => LineCoverage(aroundMin, aroundMax, acrossMin, acrossMax, null, out _);
+
+    /// <summary>
+    /// As <see cref="LineCoverage(double, double, double, double)"/> with a per-span weight (T3R-9's whitewater): <paramref name="weightedMean"/> is the width-weighted mean of
+    /// <paramref name="spanWeight"/> over the length inside the rectangle, <c>sum(len * w * weight) / sum(len * w)</c> (0 when nothing crosses, and without a weight). The weight
+    /// receives the span index of <see cref="RiverNetwork.ChannelAt"/> (-1 before spans are installed).
+    /// </summary>
+    public double LineCoverage(double aroundMin, double aroundMax, double acrossMin, double acrossMax, Func<int, double>? spanWeight, out double weightedMean)
+    {
+        double channelArea = LineArea(aroundMin, aroundMax, acrossMin, acrossMax, spanWeight, out weightedMean, out bool crossed);
+        if (!crossed) return 0d;
+        return Math.Min(1d, Math.Max(LineCoverageMinimum, channelArea / ((aroundMax - aroundMin) * (acrossMax - acrossMin))));
+    }
+
+    /// <summary>
+    /// The piece-in-rectangle loop of <see cref="LineCoverage(double, double, double, double)"/> without the minimum and the cap (T3.md reset, interface 7): the channel area inside the
+    /// rectangle in square metres (the sum over base-curve segments of the length inside times the full water width), whether any reach crosses it, and the weighted mean of
+    /// <paramref name="spanWeight"/> as described there.
+    /// </summary>
+    public double LineArea(double aroundMin, double aroundMax, double acrossMin, double acrossMax, Func<int, double>? spanWeight, out double weightedMean, out bool crossed)
+    {
+        weightedMean = 0d;
+        crossed = false;
+        double area = (aroundMax - aroundMin) * (acrossMax - acrossMin);
+        if (!(area > 0d)) return 0d;
+        List<int> pieces = _coveragePieces ??= new List<int>(64);
+        pieces.Clear();
+        Index.CollectPieces(aroundMin, aroundMax, acrossMin, acrossMax, pieces);
+        if (pieces.Count == 0) return 0d;
+        double cx = 0.5 * (aroundMin + aroundMax), cy = 0.5 * (acrossMin + acrossMax), hw = 0.5 * (aroundMax - aroundMin), hh = 0.5 * (acrossMax - acrossMin);
+        Span<double> px = stackalloc double[CoverageSegmentsPerPiece + 1], py = stackalloc double[CoverageSegmentsPerPiece + 1];
+        double sum = 0d, weighted = 0d;
+        for (int n = 0; n < pieces.Count; n++)
+        {
+            int piece = pieces[n];
+            int stem = PieceStem[piece], k = piece - Network.Stems[stem].NodeStart;
+            RiverStemCurve curve = Network.Curves[stem];
+            curve.Controls(k, out double ax, out double ay, out double mx, out double my, out double bx, out double by);
+            double off = Network.WrapDelta(curve.OriginAround + ax - cx) - ax;
+            double yOff = curve.OriginAcross - cy;
+            if (off + Math.Max(ax, Math.Max(mx, bx)) < -hw || off + Math.Min(ax, Math.Min(mx, bx)) > hw
+                || yOff + Math.Max(ay, Math.Max(my, by)) < -hh || yOff + Math.Min(ay, Math.Min(my, by)) > hh) continue;
+            for (int i = 0; i <= CoverageSegmentsPerPiece; i++)
+            {
+                curve.EvalPiece(k, (double)i / CoverageSegmentsPerPiece, out double x, out double y, out _, out _);
+                px[i] = off + x; py[i] = yOff + y;
+            }
+            for (int i = 0; i < CoverageSegmentsPerPiece; i++)
+            {
+                double inside = ClipSegment(px[i], py[i], px[i + 1], py[i + 1], hw, hh);
+                if (inside <= 0d) continue;
+                crossed = true;
+                double s = curve.S0[k] + curve.Len[k] * (i + 0.5) / CoverageSegmentsPerPiece;
+                Network.ChannelAt(stem, s, out RiverChannel channel);
+                double w = 2d * channel.HalfWidth * inside;
+                sum += w;
+                if (spanWeight != null) weighted += w * spanWeight(channel.Span);
+            }
+        }
+        if (spanWeight != null && sum > 0d) weightedMean = weighted / sum;
+        return sum;
+    }
+
+    /// <summary>Length of the segment inside the box [-hw, hw] x [-hh, hh] (Liang-Barsky); 0 when it misses.</summary>
+    private static double ClipSegment(double x0, double y0, double x1, double y1, double hw, double hh)
+    {
+        double dx = x1 - x0, dy = y1 - y0, t0 = 0d, t1 = 1d;
+        if (!ClipEdge(-dx, x0 + hw, ref t0, ref t1) || !ClipEdge(dx, hw - x0, ref t0, ref t1)
+            || !ClipEdge(-dy, y0 + hh, ref t0, ref t1) || !ClipEdge(dy, hh - y0, ref t0, ref t1)) return 0d;
+        return Math.Sqrt(dx * dx + dy * dy) * (t1 - t0);
+    }
+
+    private static bool ClipEdge(double p, double q, ref double t0, ref double t1)
+    {
+        if (p == 0d) return q >= 0d;
+        double r = q / p;
+        if (p < 0d) { if (r > t1) return false; if (r > t0) t0 = r; }
+        else { if (r < t0) return false; if (r < t1) t1 = r; }
+        return true;
+    }
+
+    /// <summary>
+    /// The base-curve polyline of one piece for drawing (the minimap): <see cref="CoverageSegmentsPerPiece"/> + 1 points in unwrapped ring metres and the full water width at the
+    /// middle of each of the eight segments.
+    /// </summary>
+    public void SamplePiece(int piece, Span<double> around, Span<double> across, Span<double> width)
+    {
+        int stem = PieceStem[piece], k = piece - Network.Stems[stem].NodeStart;
+        RiverStemCurve curve = Network.Curves[stem];
+        for (int i = 0; i <= CoverageSegmentsPerPiece; i++)
+        {
+            curve.EvalPiece(k, (double)i / CoverageSegmentsPerPiece, out double x, out double y, out _, out _);
+            around[i] = curve.OriginAround + x; across[i] = curve.OriginAcross + y;
+        }
+        for (int i = 0; i < CoverageSegmentsPerPiece; i++)
+        {
+            Network.ChannelAt(stem, curve.S0[k] + curve.Len[k] * (i + 0.5) / CoverageSegmentsPerPiece, out RiverChannel channel);
+            width[i] = 2d * channel.HalfWidth;
+        }
+    }
+
     // ------------------------------------------------------------------ build
 
     /// <summary>

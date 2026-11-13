@@ -68,6 +68,37 @@ public sealed partial class RingTerrainSampler
         => RuntimeRiverGraph?.Index.AnyNear(aroundMin, aroundMax, acrossMin, acrossMax) ?? false;
 
     /// <summary>
+    /// T2R-12 (S11): the far line coverage of a cell of the given size centred on (around, across): 0 on a world without a river graph (generation 1 and legacy rivers), so the far
+    /// vertex alpha and the tile alpha keep their old values there.
+    /// </summary>
+    internal double RiverLineCoverage(double around, double across, double aroundSize, double acrossSize)
+    {
+        if (RuntimeRiverGraph is not { } graph) return 0d;
+        double a0 = around - 0.5 * aroundSize, a1 = around + 0.5 * aroundSize, c0 = across - 0.5 * acrossSize, c1 = across + 0.5 * acrossSize;
+        // The minimum keeps a line alive in cells up to 4 km (S11); a vertex of the 8 to 250 km global tiers would tint a whole cell for one river, so those carry the plain area fraction only.
+        if (Math.Max(aroundSize, acrossSize) <= RiverLineMinimumCellMeters) return graph.LineCoverage(a0, a1, c0, c1);
+        return Math.Min(1d, graph.LineArea(a0, a1, c0, c1, null, out _, out _) / (aroundSize * acrossSize));
+    }
+
+    /// <summary>The largest cell the S11 minimum coverage applies to (the test checks 512 m and 4 km).</summary>
+    internal const double RiverLineMinimumCellMeters = 4096d;
+
+    /// <summary>T2R-12: true when far meshes of this sampler carry the river line coverage in their alpha (the owners then set <c>river_line_enabled</c> on the terrain material).</summary>
+    internal bool HasRiverLine => RuntimeRiverGraph != null;
+
+    /// <summary>S11 vertex encoding: <c>alpha = 1 - c</c>, so a vertex colour of a world with no coverage keeps its alpha of 1.</summary>
+    internal Godot.Color WithRiverLineAlpha(Godot.Color color, double around, double across, double aroundSize, double acrossSize)
+    {
+        double c = RiverLineCoverage(around, across, aroundSize, acrossSize);
+        if (c > 0d) color.A = (float)(1d - c);
+        return color;
+    }
+
+    /// <summary>S11 tile encoding: <c>255 - round(254 c)</c> (255 with no coverage).</summary>
+    internal byte RiverLineTileAlpha(double around, double across, double aroundSize, double acrossSize)
+        => (byte)(255 - (int)Math.Round(254d * RiverLineCoverage(around, across, aroundSize, acrossSize)));
+
+    /// <summary>
     /// True when the (wrapped) rectangle [aroundMin, aroundMax] x [acrossMin, acrossMax] may touch an emitter site, Wall Engine or the
     /// Weather Lung influence region. Conservative: discs and the Weather Lung bound are tested as their bounding boxes.
     /// Such sectors stay on the CPU model, which owns the site operators (docs/gpu-offload-plan.md 4.1).

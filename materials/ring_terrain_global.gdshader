@@ -47,6 +47,15 @@ uniform float ring_width_meters = 20000.0;
 uniform bool debug_color_enabled = false;
 uniform vec3 debug_color = vec3(1.0, 1.0, 0.0);
 #include "res://materials/ring_far_surface_tile.gdshaderinc"
+// T2R-12 (S11): far river line. Worlds with water.rivers carry the line coverage c in the vertex alpha (1 - c) and in the tile colour alpha (255 - round(254 c));
+// everything else keeps alpha 1, so nothing changes unless the owner sets river_line_enabled. river_far_color is in the same colour space as the vertex colours.
+uniform bool river_line_enabled = false;
+uniform vec3 river_far_color = vec3(0.075, 0.36, 0.43);
+// Whitewater input, fixed at 0 until T3R-9 feeds it.
+uniform float river_whitewater : hint_range(0.0, 1.0) = 0.0;
+// Peak strength and tightness of the sun glint on the river line (a constant of the look, not a tunable).
+const float RIVER_GLINT_STRENGTH = 0.3;
+const float RIVER_GLINT_SHININESS = 140.0;
 
 varying vec3 world_position;
 // Inward radial at this vertex (the local zenith); the light() helper uses it while the eclipse hub sun is up.
@@ -56,6 +65,15 @@ varying vec2 terrain_macro_shadow_uv;
 // Both ambient occlusion and the directional-light path consume the same
 // day-gated strongest cloud estimate for this fragment.
 varying float combined_cloud_shadow_occlusion;
+
+// S11: the coverage c, then the floor that keeps a line through diluted mips: c' = c > 0.004 ? max(c, 0.2 smoothstep(0.004, 0.02, c)) : 0.
+float river_line_coverage(float vertex_alpha, vec2 tile_uv) {
+	float c = 1.0 - vertex_alpha;
+	if (surface_tile_enabled) {
+		c = max(c, (1.0 - texture(surface_tile_color, surface_tile_sample_uv(tile_uv)).a) * surface_tile_blend);
+	}
+	return c > 0.004 ? max(c, 0.2 * smoothstep(0.004, 0.02, c)) : 0.0;
+}
 
 float sample_combined_cloud_shadow(vec3 sample_world_position, float day_factor) {
 	// The Sunshine projected maps own their footprint; the far weather shell
@@ -115,6 +133,10 @@ void fragment() {
 	vec3 terrain_color = ring_vertex_color_to_linear(
 		debug_color_enabled ? debug_color : (surface_tile_enabled
 			? mix(COLOR.rgb, texture(surface_tile_color, surface_tile_sample_uv(UV2)).rgb, surface_tile_blend) : COLOR.rgb));
+	float river_c = river_line_enabled ? river_line_coverage(COLOR.a, UV2) : 0.0;
+	if (river_c > 0.0) {
+		terrain_color = mix(terrain_color, mix(ring_vertex_color_to_linear(river_far_color), vec3(0.92), river_whitewater), river_c);
+	}
 	if (surface_tile_enabled) {
 		vec3 canonical_normal = normalize(texture(surface_tile_normal, surface_tile_sample_uv(UV2)).xyz * 2.0 - 1.0);
 		float angle = surface_tile_angle_start + UV2.x * surface_tile_angle_span;
@@ -134,6 +156,11 @@ void fragment() {
 		RingWet wet_state = ring_wet_sample(world_position, wet_normal, wet_up);
 		ring_wet_apply(wet_state, mix(0.5, 1.0, smoothstep(0.45, 0.78, dot(wet_normal, wet_up))), lit_color, surface_roughness, surface_specular);
 	}
+	// S11 glint: low roughness and more specular on the line; the sun highlight itself is added in light() (this shader owns the lighting, so the built-in specular is not).
+	if (river_c > 0.0) {
+		surface_roughness = mix(surface_roughness, 0.06, river_c);
+		surface_specular = mix(surface_specular, 0.5, river_c);
+	}
 	RingHaze haze = ring_haze_sample(camera_world_position, world_position, ring_center, ring_day_factor);
 	ALBEDO = lit_color * haze.T;
 	EMISSION = ring_haze_inscatter(haze);
@@ -141,6 +168,13 @@ void fragment() {
 	SPECULAR = surface_specular;
 	METALLIC = 0.0;
 	combined_cloud_shadow_occlusion = sample_combined_cloud_shadow(world_position, ring_day_factor);
+	if (river_c > 0.0) {
+		// River line glint (S11): a tight Blinn-Phong lobe of the sun on the line, added as emission (light() stays untouched, so no other pixel changes): it follows the day factor, the cloud
+		// shadow and the haze transmittance like the lit ground does.
+		vec3 glint_sun = normalize((VIEW_MATRIX * vec4(sun_direction, 0.0)).xyz);
+		float glint = pow(max(dot(normalize(NORMAL), normalize(glint_sun + VIEW)), 0.0), RIVER_GLINT_SHININESS) * (RIVER_GLINT_SHININESS + 8.0) / 8.0;
+		EMISSION += vec3(1.0, 0.97, 0.9) * glint * RIVER_GLINT_STRENGTH * river_c * ring_day_factor * (1.0 - combined_cloud_shadow_occlusion) * haze.T;
+	}
 	AO = min(1.0 - combined_cloud_shadow_occlusion * 0.72, ring_storm_ambient(ring_storm_level_far(world_position, camera_world_position, ring_center, ring_atmosphere_coordinate_scale))); // storm light
 	AO_LIGHT_AFFECT = 0.0;
 	if (ring_shadow_debug_enabled()) {

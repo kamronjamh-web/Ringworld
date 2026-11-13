@@ -247,6 +247,7 @@ public partial class RingScaledFarViewport : Node
 	private DirectionalLight3D? _regionalFarSun;
 	private DirectionalLight3D? _regionalFarPlanetLight;
 	private ShaderMaterial? _terrainMaterial;
+	private bool _riverLineUniform;
 	private ShaderMaterial? _waterMaterial;
 	private ShaderMaterial? _hullMaterial;
 	private ShaderMaterial? _cavityShellMaterial;
@@ -1536,7 +1537,10 @@ public partial class RingScaledFarViewport : Node
 				around, displayedHeight - 150.0, across,
 				anchorAround, 0.0, anchorAcross,
 				circumference, radius, width, scale);
-			colors[index] = RingTerrainVisuals.ResolveMacroTextureColor(sample, Mathf.RoundToInt(displayedHeight), sampler, low, high);
+			// T2R-12: far river line coverage in the vertex alpha (S11); the cell is the larger of the radial and the angular step here.
+			double cell = Math.Max((outerRadius - innerRadius) / radialSteps, distance * Math.Tau / angularSteps);
+			colors[index] = sampler.WithRiverLineAlpha(RingTerrainVisuals.ResolveMacroTextureColor(sample, Mathf.RoundToInt(displayedHeight), sampler, low, high),
+				WrapSurfaceTileAround(around, circumference), across, cell, cell);
 			double unwrappedAround = canonicalAnchorAround + (around - anchorAround);
 			canonicalAroundValues[index] = unwrappedAround;
 			canonicalAcrossValues[index] = across;
@@ -1694,6 +1698,8 @@ public partial class RingScaledFarViewport : Node
 		mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
 		instance.Mesh = mesh;
 		ShaderMaterial material = (ShaderMaterial)_terrainMaterial!.Duplicate();
+		// T2R-12: a band can be built before the per-frame uniform sync has run, so it reads the sampler directly.
+		if (_grid?.TerrainSampler?.HasRiverLine == true) material.SetShaderParameter("river_line_enabled", true);
 		RingAtmosphereModel.ConfigureMaterial(material, _radiusMeters, CoordinateScale);
 		global::RingworldTechDemo.RingTerrainMacroShadowProjector.Register(material, CoordinateScale);
 		// This band receives a fresh material after an asynchronous rebuild.
@@ -2748,6 +2754,13 @@ public partial class RingScaledFarViewport : Node
 	private void UpdateTerrainFallbackCutout(in RingCanonicalPosition canonical)
 	{
 		if (_terrainMaterial == null || _grid?.TerrainSampler == null) return;
+		// T2R-12: the terrain shader reads the river line coverage from the vertex and tile alpha only on worlds with a river graph.
+		bool riverLine = _grid.TerrainSampler.HasRiverLine;
+		if (riverLine != _riverLineUniform)
+		{
+			_riverLineUniform = riverLine;
+			_terrainMaterial.SetShaderParameter("river_line_enabled", riverLine);
+		}
 		float baseCutout = (Mathf.Max(0.0f, FadeStartMeters)
 			+ Mathf.Max(FadeStartMeters, FadeEndMeters)) * 0.5f;
 		float cutoutMeters = baseCutout;

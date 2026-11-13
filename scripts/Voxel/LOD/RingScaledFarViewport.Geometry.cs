@@ -436,7 +436,9 @@ public partial class RingScaledFarViewport
             rawWaterHeights[index] = waterHeight;
             terrain[index] = Point(height - 150.0);
             water[index] = Point(waterHeight - 150.0);
-            colors[index] = RingTerrainVisuals.ResolveMacroTextureColor(sample, Mathf.RoundToInt(height), sampler, low, high);
+            // T2R-12: far river line coverage in the vertex alpha (S11); alpha stays 1 without a river graph.
+            colors[index] = sampler.WithRiverLineAlpha(RingTerrainVisuals.ResolveMacroTextureColor(sample, Mathf.RoundToInt(height), sampler, low, high),
+                around, across, circumference / aroundCount, width / (double)acrossCount);
             waterColors[index] = RingWaterModel.EncodeWaterKind(RingTerrainVisuals.ResolveMacroTextureColor(sample, Mathf.RoundToInt(waterHeight), sampler, low, high), sample.WaterKind);
             displayedWater[index] = sample.HasSurfaceWater && height < sample.WaterSurfaceHeight;
             uv[index] = new Vector2(x / (float)aroundCount, z / (float)acrossCount);
