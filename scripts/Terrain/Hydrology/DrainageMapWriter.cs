@@ -53,6 +53,7 @@ public static class DrainageMapWriter
                     }
                     case DrainageCellKind.Barrier: Put(cell, 0.80, 0.20, 0.80); continue;
                     case DrainageCellKind.Lung: Put(cell, 0.30, 0.25, 0.70); continue;
+                    case DrainageCellKind.Intake: Put(cell, 1.00, 0.55, 0.10); continue;
                     case DrainageCellKind.StripOutlet: Put(cell, 0.80, 0.65, 0.25); continue;
                 }
                 if (f.IsLakeWater(cell)) { Put(cell, 0.24, 0.64, 0.86); continue; }

@@ -160,11 +160,14 @@ func _check_water_pose(game: Node, key: String, p: Dictionary) -> void:
 			failures.append("%s: no %d m proxy level in the scene" % [key, spacing])
 			return
 	var all_spacings: Array = levels.keys()
-	# Sectors: every checked level holds water at the point.
+	# Sectors: every checked level that holds the point's water has a sector there. A lake is classified the same at every level; a river is held as water by the levels where it is at least
+	# 2 spacings wide (T2R-12c, S13.2), the others carry it as coverage.
+	var river_width := float(p.get("width", 0.0))
 	for spacing in LEVELS:
 		var has: bool = levels[spacing].call("HasActiveWaterSectorAt", float(p["around"]), float(p["across"]))
-		print("%s %s level %d m: water sector at the point = %s" % [MARKER, key, spacing, str(has)])
-		if not has:
+		var owns: bool = key != "river" or spacing <= 2 or river_width >= 2.0 * float(spacing)
+		print("%s %s level %d m: water sector at the point = %s%s" % [MARKER, key, spacing, str(has), (" (river %.1f m wide, owns: %s)" % [river_width, str(owns)]) if key == "river" else ""])
+		if owns and not has:
 			failures.append("%s: no installed water sector at the point on the %d m level" % [key, spacing])
 	# Pixels: with every proxy hidden the water is gone; (The levels are nested nodes, so one level cannot be shown alone.)
 	_set_levels_visible(levels, [])

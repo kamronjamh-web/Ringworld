@@ -132,6 +132,8 @@ public sealed class RiverGraph
 
     /// <summary>Segments a piece is sampled in (S11): nine base-curve points per piece.</summary>
     public const int CoverageSegmentsPerPiece = 8;
+    /// <summary>Most segments a piece is walked in by <see cref="SplatLineArea"/> (S13.2).</summary>
+    public const int MaxSplatSegmentsPerPiece = 64;
 
     [ThreadStatic] private static List<int>? _coveragePieces;
 
@@ -206,7 +208,7 @@ public sealed class RiverGraph
     /// <summary>
     /// T2R-12b (S11b): deposits the valley-only channel area of the pieces near a lattice onto its vertices. Vertex (x, z) of <paramref name="coverage"/> (row-major, <paramref name="columns"/> by
     /// <paramref name="rows"/>) is at <c>origin + index * spacing</c> (around is unwrapped metres). A segment that has no river owner at <paramref name="footprintMeters"/>
-    /// (<see cref="RiverCarveOperator.ValleyOnly"/>) is cut into steps of at most half a spacing along and across its width, and each step's water area goes to its four surrounding vertices
+    /// (<see cref="RiverCarveOperator.ValleyOnly"/>) is walked in 8 to 64 segments (S13.2: a chord of at most two spacings) and cut into steps of at most half a spacing along and across its width, and each step's water area goes to its four surrounding vertices
     /// with bilinear weights, so the lattice holds the channel area; values clamp to 1 and there is no minimum. A vertex's sum does not depend on the lattice that contains it.
     /// Returns true when any value is above 0.
     /// </summary>
@@ -221,11 +223,11 @@ public sealed class RiverGraph
         Index.CollectPieces(aroundOrigin - grow, aroundMax + grow, acrossOrigin - grow, acrossMax + grow, pieces);
         if (pieces.Count == 0) return false;
         bool displaced = spacing <= 1024d;
-        int segments = displaced ? CoverageSegmentsPerPiece : 1;
         double circumference = Network.CircumferenceM, centreAround = 0.5 * (aroundOrigin + aroundMax);
         double originColumn = aroundOrigin / spacing, originRow = acrossOrigin / spacing;
-        double aroundLo = aroundOrigin - spacing, aroundHi = aroundMax + spacing, acrossLo = acrossOrigin - spacing, acrossHi = acrossMax + spacing;
-        Span<double> px = stackalloc double[CoverageSegmentsPerPiece + 1], py = stackalloc double[CoverageSegmentsPerPiece + 1];
+        // Two spacings: a step lies up to half the water width (under 0.75 spacings on a level that has owners at all, under one spacing elsewhere) beside its chord and still deposits on a vertex one spacing out.
+        double aroundLo = aroundOrigin - 2d * spacing, aroundHi = aroundMax + 2d * spacing, acrossLo = acrossOrigin - 2d * spacing, acrossHi = acrossMax + 2d * spacing;
+        Span<double> px = stackalloc double[MaxSplatSegmentsPerPiece + 1], py = stackalloc double[MaxSplatSegmentsPerPiece + 1];
         bool any = false;
         for (int n = 0; n < pieces.Count; n++)
         {
@@ -234,6 +236,7 @@ public sealed class RiverGraph
             RiverStemCurve curve = Network.Curves[stem];
             // The image of the piece nearest the lattice: one fixed shift per piece, so two lattices that share a column see the same positions.
             curve.Controls(k, out _, out _, out double mx, out _, out _, out _);
+            int segments = displaced ? Math.Clamp((int)Math.Ceiling(curve.Len[k] / Math.Max(2d * spacing, 16d)), CoverageSegmentsPerPiece, MaxSplatSegmentsPerPiece) : 1;
             double baseAround = curve.OriginAround + Math.Round((centreAround - (curve.OriginAround + mx)) / circumference) * circumference;
             for (int i = 0; i <= segments; i++)
             {

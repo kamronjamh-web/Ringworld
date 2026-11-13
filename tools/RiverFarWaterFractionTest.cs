@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Diagnostics;
 using System.IO;
 using Godot;
@@ -39,6 +40,7 @@ public partial class RiverFarWaterFractionTest : RefCounted
     {
         TerrainGenerationParameters recipe = EmitterSiteTestWorlds.Gen17WorldRecipe(Seed, 1, new[] { "water.rivers" });
         using VoxelTerrainSettings settings = EmitterSiteTestWorlds.CreateProductionSettings(Seed, recipe);
+        _recipe = recipe; _settings = settings;
         try
         {
             var clock = Stopwatch.StartNew();
@@ -68,7 +70,43 @@ public partial class RiverFarWaterFractionTest : RefCounted
     }
 
     /// <summary>Every stem walked in 2 m steps of arc length on the base curve; the points for the distance checks every 10th step, and the full widths for the reference area.</summary>
-    private readonly List<(double Around, double Across, double Width, double DAround, double DAcross, double HalfWidth, double DStep)> _walk = new();
+    private List<(double Around, double Across, double Width, double DAround, double DAcross, double HalfWidth, double DStep)> _walk = new();
+
+    // A longer strip of the same world (S13.2 needs rivers under 12 and 48 m, which the 100 km strip does not have); the small-spacing checks swap it in for _graph and _walk.
+    private RiverGraph? _narrowGraph;
+    private List<(double Around, double Across, double Width, double DAround, double DAcross, double HalfWidth, double DStep)> _narrowWalk = new();
+    private TerrainGenerationParameters _recipe = null!;
+    private VoxelTerrainSettings _settings = null!;
+    private const int NarrowStripKm = 400;
+
+    private void SwapNarrow()
+    {
+        if (_narrowGraph == null)
+        {
+            var clock = Stopwatch.StartNew();
+            _narrowGraph = RiverTestGraphs.Strip(_recipe, _settings, StripStart, NarrowStripKm, Math.Clamp(System.Environment.ProcessorCount / 2, 2, 6), 0x1234UL);
+            RiverNetwork net = _narrowGraph.Network;
+            for (int stem = 0; stem < net.Stems.Length; stem++)
+            {
+                RiverStemCurve curve = net.Curves[stem];
+                int n = 0;
+                for (double s = 0; s <= curve.Length; s += 2d, n++)
+                {
+                    curve.Eval(s, out double x, out double y, out double tx, out double ty);
+                    net.ChannelAt(stem, s, out RiverChannel channel);
+                    double a = curve.OriginAround + x, c = curve.OriginAcross + y, d = net.Meander(stem, s, in channel);
+                    double da = a - d * ty, dc = c + d * tx;
+                    double step = _narrowWalk.Count > 0 && n > 0 ? Math.Sqrt((da - _narrowWalk[^1].DAround) * (da - _narrowWalk[^1].DAround) + (dc - _narrowWalk[^1].DAcross) * (dc - _narrowWalk[^1].DAcross)) : 2d;
+                    _narrowWalk.Add((a, c, 2d * channel.HalfWidth, da, dc, channel.HalfWidth, step));
+                }
+            }
+            int narrow8 = 0, narrow32 = 0;
+            foreach (var w in _narrowWalk) { if (2d * w.HalfWidth < 12d) narrow8++; if (2d * w.HalfWidth < 48d) narrow32++; }
+            Detail($"narrow strip: {net.Stems.Length} stems, {_narrowWalk.Count * 2d / 1000d:F0} km of channel in {clock.Elapsed.TotalSeconds:F1} s; {narrow8} samples under 12 m wide, {narrow32} under 48 m");
+        }
+        (_graph, _narrowGraph) = (_narrowGraph, _graph);
+        (_walk, _narrowWalk) = (_narrowWalk, _walk);
+    }
 
     private void WalkChannel()
     {
@@ -272,6 +310,16 @@ public partial class RiverFarWaterFractionTest : RefCounted
         return area;
     }
 
+    /// <summary>The displaced centreline point of a valley-only segment at the footprint (the middle one of the walk), so a small lattice around it holds river.</summary>
+    private (double Around, double Across) ValleyOnlyPoint(double footprint)
+    {
+        var hits = new List<int>();
+        for (int i = 0; i < _walk.Count; i++) if (RiverCarveOperator.ValleyOnly(footprint, _walk[i].HalfWidth)) hits.Add(i);
+        Check(hits.Count > 0, $"no valley-only segment at footprint {footprint}");
+        var p = _walk[hits.Count > 0 ? hits[hits.Count / 2] : 0];
+        return (p.DAround, p.DAcross);
+    }
+
     private void ProxySplat()
     {
         (double centreAround, double centreAcross) = BestWindowCentre();
@@ -279,9 +327,11 @@ public partial class RiverFarWaterFractionTest : RefCounted
         var values = new float[n * n];
         double maxHalf = 0d;
         foreach (var w in _walk) maxHalf = Math.Max(maxHalf, w.HalfWidth);
-        foreach (int spacing in new[] { 256, 512, 2048, 8192 })
+        foreach (int spacing in new[] { 8, 32, 128, 256, 512, 2048, 8192 })
         {
-            double footprint = spacing == 256 ? RiverFootprint.Far : RiverFootprint.ToMeters(RiverFootprint.ForProxySpacing(spacing));
+            double footprint = RiverFootprint.ToMeters(RiverFootprint.ForProxySpacing(spacing));
+            if (spacing <= 32) SwapNarrow();
+            if (spacing <= 32) (centreAround, centreAcross) = ValleyOnlyPoint(footprint); else (centreAround, centreAcross) = BestWindowCentre();
             double aroundOrigin = Math.Round((centreAround - 0.5 * n * spacing) / spacing) * spacing, acrossOrigin = Math.Round((centreAcross - 0.5 * n * spacing) / spacing) * spacing;
             bool any = _graph.SplatLineArea(aroundOrigin, acrossOrigin, spacing, n, n, footprint, values);
             double sum = 0d, max = 0d;
@@ -290,10 +340,10 @@ public partial class RiverFarWaterFractionTest : RefCounted
             double reference = ReferenceSplatArea(aroundOrigin, acrossOrigin, spacing, n, footprint);
             Detail($"splat {spacing} m: {(any ? "covered" : "empty")}, lattice area {sum:F0} m2 against the valley-only channel area {reference:F0} m2 ({(reference > 0 ? 100 * (sum - reference) / reference : 0):+0.00;-0.00} %), max {max:F3}, {clamped} at 1");
             Check(reference > 0d && Within(sum, reference, 0.05), $"splat at {spacing} m holds {sum:F0} m2 against the channel area {reference:F0} m2 (5 %)");
-            Check(clamped == 0, $"splat at {spacing} m clamped {clamped} vertices");
+            if (spacing >= 128) Check(clamped == 0, $"splat at {spacing} m clamped {clamped} vertices");
             // Zero beyond reach: a vertex farther than one spacing diagonal, the half width, the 350 m meander cap and the walk step from every base-curve point is 0.
             double limit = Math.Sqrt(2d) * spacing + maxHalf + 350d + 20d;
-            if (spacing <= 2048)
+            if (spacing >= 128 && spacing <= 2048)
             {
                 int beyond = 0, leaks = 0;
                 for (int z = 0; z < n; z++)
@@ -305,28 +355,95 @@ public partial class RiverFarWaterFractionTest : RefCounted
                 }
                 Check(beyond > 100 && leaks == 0, $"{leaks} of {beyond} vertices beyond the splat reach at {spacing} m have coverage");
             }
+            if (spacing <= 32) SwapNarrow();
         }
-        // Owner rule: at 256 m a segment 16 m or wider is a river with an owner and adds nothing; the same lattice with no owners (Far) holds more.
+        SwapNarrow();
+        // Owner rule (S13.2): a piece adds coverage exactly when w < 2 spacings; UsesProxyLine(4) is false. Per spacing, a lattice around a piece just wide enough to own: the owners add nothing, and the
+        // difference to the same lattice with no owners is the area of the segments that own.
         {
-            const int spacing = 256;
-            double aroundOrigin = Math.Round((centreAround - 0.5 * n * spacing) / spacing) * spacing, acrossOrigin = Math.Round((centreAcross - 0.5 * n * spacing) / spacing) * spacing;
-            var all = new float[n * n];
-            _graph.SplatLineArea(aroundOrigin, acrossOrigin, spacing, n, n, 256d, values);
-            _graph.SplatLineArea(aroundOrigin, acrossOrigin, spacing, n, n, RiverFootprint.Far, all);
-            double narrow = 0d, every = 0d;
-            for (int i = 0; i < values.Length; i++) { narrow += values[i]; every += all[i]; }
-            double wideRef = ReferenceSplatArea(aroundOrigin, acrossOrigin, spacing, n, RiverFootprint.Far) - ReferenceSplatArea(aroundOrigin, acrossOrigin, spacing, n, 256d);
-            Detail($"owner rule at 256 m: {narrow * spacing * spacing:F0} m2 with owners of 16 m and wider, {every * spacing * spacing:F0} m2 without; the wide segments hold {wideRef:F0} m2");
-            Check(wideRef > 1000d && every > narrow * 1.02, $"the 256 m owner rule did not remove wide segments (wide reference {wideRef:F0} m2, {narrow:F1} against {every:F1})");
+            foreach (int spacing in new[] { 8, 16, 32, 64, 128, 256 })
+            {
+                int wrong = 0;
+                foreach (var w in _walk) if (RiverCarveOperator.ValleyOnly(spacing, w.HalfWidth) != (2d * w.HalfWidth < RiverCarveOperator.OwnerWidthPerFootprint * spacing)) wrong++;
+                Check(wrong == 0, $"the owner rule at {spacing} m disagrees with w < 2 spacings on {wrong} samples");
+                var owner = default((double Around, double Across, double Width, double DAround, double DAcross, double HalfWidth, double DStep));
+                bool found = false;
+                foreach (var w in _walk)
+                    if (2d * w.HalfWidth >= RiverCarveOperator.OwnerWidthPerFootprint * spacing && (!found || w.Width < owner.Width)) { owner = w; found = true; }
+                if (!found) { Detail($"owner rule at {spacing} m: no river on the strip is 2 spacings wide ({RiverCarveOperator.OwnerWidthPerFootprint * spacing:F0} m), skipped"); continue; }
+                double aroundOrigin = Math.Round((owner.DAround - 0.5 * n * spacing) / spacing) * spacing, acrossOrigin = Math.Round((owner.DAcross - 0.5 * n * spacing) / spacing) * spacing;
+                var all = new float[n * n];
+                _graph.SplatLineArea(aroundOrigin, acrossOrigin, spacing, n, n, spacing, values);
+                _graph.SplatLineArea(aroundOrigin, acrossOrigin, spacing, n, n, RiverFootprint.Far, all);
+                double narrow = 0d, every = 0d;
+                for (int i = 0; i < values.Length; i++) { narrow += values[i] * (double)spacing * spacing; every += all[i] * (double)spacing * spacing; }
+                double wideRef = ReferenceSplatArea(aroundOrigin, acrossOrigin, spacing, n, RiverFootprint.Far) - ReferenceSplatArea(aroundOrigin, acrossOrigin, spacing, n, spacing);
+                Detail($"owner rule at {spacing} m: {narrow:F0} m2 with owners of {RiverCarveOperator.OwnerWidthPerFootprint * spacing:F0} m and wider, {every:F0} m2 without; the owning segments hold {wideRef:F0} m2 (width {owner.Width:F1} m)");
+                double narrowRef = ReferenceSplatArea(aroundOrigin, acrossOrigin, spacing, n, spacing);
+                Check(wideRef > 0d && Within(narrow, narrowRef, 0.05) && every - narrow >= 0.5 * wideRef, $"the {spacing} m owner rule: valley-only lattice {narrow:F0} m2 against {narrowRef:F0} m2 of channel area, owners hold {every - narrow:F0} m2 against {wideRef:F0} m2 (the lattice clamps at 1)");
+            }
+            Check(!RiverFootprint.UsesProxyLine(4) && !RiverFootprint.UsesProxyLine(2) && RiverFootprint.UsesProxyLine(8) && RiverFootprint.UsesProxyLine(64) && RiverFootprint.UsesProxyLine(8192), "UsesProxyLine(4) is not false, or a level from 8 m does not carry coverage");
             // At 512 m and coarser every piece adds: ValleyOnly is true for any width at the far footprint (the conservation sums above use it).
             Check(RiverCarveOperator.ValleyOnly(RiverFootprint.Far, maxHalf) && RiverCarveOperator.ValleyOnly(RiverFootprint.Far, 0.5), "a river has an owner at the far footprint");
-            Check(!RiverCarveOperator.ValleyOnly(256d, 8.5) && RiverCarveOperator.ValleyOnly(256d, 7.5), "the 256 m owner threshold is not 16 m");
+            Check(!RiverCarveOperator.ValleyOnly(8d, 8.5) && RiverCarveOperator.ValleyOnly(8d, 7.5) && !RiverCarveOperator.ValleyOnly(0d, 0.5), "the 8 m owner threshold is not 16 m, or footprint 0 is valley only");
         }
+        // Placement (S13.2): at 8 and 32 m, for 50 valley-only points the coverage-weighted centre across the river lies within half a spacing of the operator's centreline at footprint 0.
+        foreach (int spacing in new[] { 8, 32 })
+        {
+            var candidates = new List<int>();
+            for (int i = 2; i + 2 < _walk.Count; i++)
+                if (RiverCarveOperator.ValleyOnly(spacing, _walk[i].HalfWidth) && _walk[i + 2].DStep < 3d && _walk[i + 1].DStep < 3d && _walk[i].DStep < 3d) candidates.Add(i);
+            const int k = 7;
+            var cell = new float[k * k];
+            var offsets = new List<double>();
+            // A river wider than a spacing is clamped to coverage 1 on its centre vertices, which a centroid cannot place within half a spacing; those points are printed, the bar is for rivers up to one spacing wide.
+            var wideOffsets = new List<(double Width, double Offset)>();
+            double radius = 1.2 * k * spacing, radiusSq = radius * radius;
+            int stride = Math.Max(1, candidates.Count / 600);
+            for (int t = 0; t < candidates.Count && offsets.Count < 50; t += stride)
+            {
+                int index = candidates[t];
+                var p = _walk[index];
+                // A point whose lattice holds another valley-only reach (a branch, a bend that returns) is left out: the centroid then has two rivers in it.
+                bool alone = true;
+                for (int j = 0; j < _walk.Count && alone; j++)
+                {
+                    if (Math.Abs(j - index) <= (int)(radius / 2d) + 5) continue;
+                    double ddx = _walk[j].DAround - p.DAround, ddy = _walk[j].DAcross - p.DAcross;
+                    if (ddx * ddx + ddy * ddy < radiusSq) alone = false;
+                }
+                if (!alone) continue;
+                var before = _walk[index - 1];
+                var after = _walk[index + 1];
+                double tx = after.DAround - before.DAround, ty = after.DAcross - before.DAcross, norm = Math.Sqrt(tx * tx + ty * ty);
+                if (norm < 1e-6) continue;
+                double nx = -ty / norm, ny = tx / norm;
+                double aroundOrigin = Math.Round(p.DAround / spacing - k / 2) * spacing, acrossOrigin = Math.Round(p.DAcross / spacing - k / 2) * spacing;
+                if (!_graph.SplatLineArea(aroundOrigin, acrossOrigin, spacing, k, k, spacing, cell)) continue;
+                double mass = 0d, lateral = 0d;
+                for (int z = 0; z < k; z++)
+                for (int x = 0; x < k; x++)
+                {
+                    double c = cell[z * k + x];
+                    if (c <= 0d) continue;
+                    mass += c; lateral += c * ((aroundOrigin + x * spacing - p.DAround) * nx + (acrossOrigin + z * spacing - p.DAcross) * ny);
+                }
+                if (mass > 0d) { if (p.Width <= spacing) offsets.Add(Math.Abs(lateral / mass)); else wideOffsets.Add((p.Width, Math.Abs(lateral / mass))); if (Math.Abs(lateral / mass) > 0.5 * spacing) Detail($"placement at {spacing} m: offset {Math.Abs(lateral / mass):F1} m at river width {p.Width:F1} m, peak coverage {System.Linq.Enumerable.Max(cell):F2}"); }
+            }
+            offsets.Sort();
+            double median = offsets.Count > 0 ? offsets[offsets.Count / 2] : double.NaN, worst = offsets.Count > 0 ? offsets[^1] : double.NaN;
+            if (wideOffsets.Count > 0) Detail($"placement at {spacing} m: {wideOffsets.Count} wider-than-a-spacing points, largest offset {wideOffsets.Max(w => w.Offset):F1} m (not a bar)");
+            Detail($"placement at {spacing} m: {offsets.Count} valley-only points, centre offset median {median:F2} m, largest {worst:F2} m (limit {0.5 * spacing:F1} m)");
+            Check(offsets.Count >= 40 && worst <= 0.5 * spacing, $"placement at {spacing} m: {offsets.Count} points, largest centre offset {worst:F2} m (limit {0.5 * spacing:F1} m)");
+        }
+        SwapNarrow();
         // Seam: two lattices that share a column (and a row) give bit-equal values on it.
-        foreach (int spacing in new[] { 256, 512, 4096 })
+        foreach (int spacing in new[] { 8, 32, 256, 4096 })
         {
             const int m = 17;
-            double footprint = spacing == 256 ? RiverFootprint.Far : RiverFootprint.ToMeters(RiverFootprint.ForProxySpacing(spacing));
+            double footprint = RiverFootprint.ToMeters(RiverFootprint.ForProxySpacing(spacing));
+            if (spacing <= 32) SwapNarrow();
+            if (spacing <= 32) (centreAround, centreAcross) = ValleyOnlyPoint(footprint); else (centreAround, centreAcross) = BestWindowCentre();
             // The shared column and row pass through the window centre.
             double a0 = Math.Round(centreAround / spacing) * spacing - (m - 1) * spacing, z0 = Math.Round(centreAcross / spacing) * spacing - (m - 1) * spacing;
             var left = new float[m * m];
@@ -351,6 +468,7 @@ public partial class RiverFarWaterFractionTest : RefCounted
             Detail($"seam at {spacing} m: {nonzero} nonzero shared vertices, {differ} differ");
             Check(nonzero > 0, $"the seam check at {spacing} m has no river on the shared edge");
             Check(differ == 0, $"{differ} shared vertices differ between two lattices at {spacing} m");
+            if (spacing <= 32) SwapNarrow();
         }
         // Wide river: the widest reach, a lattice of half its width, no owners.
         {
@@ -366,13 +484,35 @@ public partial class RiverFarWaterFractionTest : RefCounted
             Detail($"wide river: width {widest.Width:F0} m, spacing {spacing:F1} m, centreline vertex {centre:F3}");
             Check(centre > 0.8f, $"the centreline vertex of the widest reach ({widest.Width:F0} m wide) has coverage {centre:F3}");
         }
+        // Cost of one sector splat (T2R-12c: segments follow the spacing): 65 x 65 lattices of each level centred on river points of the 400 km strip, one call each, timed in a warm loop.
+        SwapNarrow();
+        {
+            const int m = 65;
+            var lattice = new float[m * m];
+            var rng = new Random(11);
+            foreach (int spacing in new[] { 8, 16, 32, 64, 128, 256 })
+            {
+                var times = new List<double>();
+                for (int rep = 0; rep < 200; rep++)
+                {
+                    var p = _walk[rng.Next(_walk.Count)];
+                    double aroundOrigin = Math.Round((p.DAround + rng.NextDouble() * m * spacing - 0.5 * m * spacing) / spacing) * spacing, acrossOrigin = Math.Round((p.DAcross + rng.NextDouble() * m * spacing - 0.5 * m * spacing) / spacing) * spacing;
+                    long t0 = Stopwatch.GetTimestamp();
+                    _graph.SplatLineArea(aroundOrigin, acrossOrigin, spacing, m, m, spacing, lattice);
+                    times.Add((Stopwatch.GetTimestamp() - t0) * 1000d / Stopwatch.Frequency);
+                }
+                times.Sort();
+                Detail($"splat cost at {spacing} m (65 x 65 lattice near a river, 200 calls): median {times[times.Count / 2]:F3} ms, p95 {times[(int)(times.Count * 0.95)]:F3} ms, max {times[^1]:F3} ms");
+                Check(times[^1] <= 10d, $"a splat call at {spacing} m took {times[^1]:F2} ms (limit 10)");
+            }
+        }
+        SwapNarrow();
         // Other spacings and positions outside every river influence leave the buffer alone.
         {
             var untouched = new float[16];
             Array.Fill(untouched, 7f);
-            Check(!_sampler.TrySplatRiverLine(0, 0, 128, 4, 4, untouched) && untouched[0] == 7f, "TrySplatRiverLine ran for a spacing of 128 m");
+            Check(!_sampler.TrySplatRiverLine(0, 0, 4, 4, 4, untouched) && untouched[0] == 7f, "TrySplatRiverLine ran for a spacing of 4 m");
             Check(!_sampler.TrySplatRiverLine((long)(StripStart + 500_000d) / 512 * 512, 0, 512, 4, 4, untouched) && untouched[0] == 7f, "TrySplatRiverLine ran outside every river influence");
-            Check(RiverFootprint.UsesProxyLine(256) && !RiverFootprint.UsesProxyLine(128), "UsesProxyLine is not spacing >= 256");
         }
     }
 
@@ -410,7 +550,7 @@ public partial class RiverFarWaterFractionTest : RefCounted
         Check(!gen1.HasRiverLine, "a generation-1 sampler reports a river line");
         var gen1Values = new float[16];
         Array.Fill(gen1Values, 7f);
-        foreach (int spacing in new[] { 256, 512, 8192 })
+        foreach (int spacing in new[] { 8, 256, 512, 8192 })
             Check(!gen1.TrySplatRiverLine((long)StripStart / spacing * spacing, 0, spacing, 4, 4, gen1Values) && gen1Values[0] == 7f, $"a generation-1 sampler splatted a river line at {spacing} m");
         int gen1Changed = 0;
         var gen1Rng = new Random(9);

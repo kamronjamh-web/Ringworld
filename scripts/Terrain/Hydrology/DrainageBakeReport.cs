@@ -36,6 +36,9 @@ public sealed record DrainageBakeReport
     public int SeaCells { get; init; }
     public int BarrierCells { get; init; }
     public int LungCells { get; init; }
+    /// <summary>T2R-19: Intake cells (zero, and left out of the JSON, unless the option is on).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int IntakeCells { get; init; }
     /// <summary>Land cells that are not barriers: the denominator of the lake share.</summary>
     public int NonBarrierLandCells { get; init; }
 
@@ -110,7 +113,7 @@ public sealed record DrainageBakeReport
     {
         DrainageBalanceParameters balance = DrainageBalanceParameters.From(lakeAbundance, evaporationScale);
         double parametersE0 = balance.E0, parametersLambda = balance.Lambda;
-        int land = 0, sea = 0, barrier = 0, lung = 0;
+        int land = 0, sea = 0, barrier = 0, lung = 0, intake = 0;
         for (int i = 0; i < d.Count; i++)
             switch (d.Kind[i])
             {
@@ -118,6 +121,7 @@ public sealed record DrainageBakeReport
                 case DrainageCellKind.Ocean: sea++; break;
                 case DrainageCellKind.Barrier: barrier++; break;
                 case DrainageCellKind.Lung: lung++; break;
+                case DrainageCellKind.Intake: intake++; break;
             }
         int water = 0, flooded = 0;
         for (int i = 0; i < d.Count; i++)
@@ -173,7 +177,7 @@ public sealed record DrainageBakeReport
             BarrierSeconds = barrierSeconds, NoiseSeconds = noiseSeconds, ConditioningSeconds = conditioningSeconds, FloodSeconds = c.FloodSeconds,
             BreachSearchSeconds = c.SearchSeconds, LakeSeconds = c.LakeSeconds, RoutingSeconds = routingSeconds,
             RouteDirectionsSeconds = r.DirectionsSeconds, RouteRepairSeconds = r.RepairSeconds, RouteAccumulationSeconds = r.AccumulationSeconds,
-            LandCells = land, SeaCells = sea, BarrierCells = barrier, LungCells = lung, NonBarrierLandCells = nonBarrierLand,
+            LandCells = land, SeaCells = sea, BarrierCells = barrier, LungCells = lung, IntakeCells = intake, NonBarrierLandCells = nonBarrierLand,
             LakeCount = r.Lakes.Length, LakeWaterCells = water, LakeFloodedCells = flooded,
             LakeShareOfLand = nonBarrierLand == 0 ? 0 : (double)water / nonBarrierLand,
             LakeDepthP50 = Percentile(lakeDepths, 0.5), LakeDepthMax = Percentile(lakeDepths, 1),
@@ -252,6 +256,7 @@ public sealed record DrainageBakeReport
         s.AppendLine(FormattableString.Invariant($"grid {Columns} x {Rows} cells ({(WholeRing ? "whole ring" : "strip")}), cell {CellAreaKm2:F3} km^2, lake_abundance {LakeAbundance:F2}"));
         s.AppendLine(FormattableString.Invariant($"seconds: grid {GridSeconds:F2}  barriers {BarrierSeconds:F2}  noise {NoiseSeconds:F2}  conditioning {ConditioningSeconds:F2} (flood {FloodSeconds:F2}, breach search {BreachSearchSeconds:F2}, lakes {LakeSeconds:F2})  routing {RoutingSeconds:F2} (directions {RouteDirectionsSeconds:F2}, repair {RouteRepairSeconds:F2}, accumulation {RouteAccumulationSeconds:F2})  bake total (without grid) {BakeSeconds:F2}  with grid {BakeSeconds + GridSeconds:F2}"));
         s.AppendLine(FormattableString.Invariant($"cells: land {LandCells}  sea {SeaCells}  barrier {BarrierCells}  lung {LungCells}"));
+        if (IntakeCells > 0) s.AppendLine(FormattableString.Invariant($"site intakes (T2R-19): {IntakeCells} intake cells (outlets at the edge of the keep-out)"));
         s.AppendLine(FormattableString.Invariant($"lakes: {LakeCount}, water cells {LakeWaterCells} ({LakeShareOfLand:P2} of non-barrier land), flooded cells {LakeFloodedCells}, depth p50 {LakeDepthP50:F1} m max {LakeDepthMax:F1} m; routing fill {RoutingFillBasins} basins / {RoutingFillCells} cells"));
         s.AppendLine(FormattableString.Invariant($"water balance: E0 {EvaporationE0:F1}, lambda {BalanceLambda:F3}; basins {BasinsClosed + BasinsSpilling} (closed {BasinsClosed}, spilling {BasinsSpilling}); lakes closed {LakesClosed}, spilling {LakesSpilling}; dry pans {DryPans}, multi-patch lakes {MultiPatchLakes}, multi-root spills {MultiRootSpills}, pits above spill {PitsAboveSpill}, basin crossings (legal) {BasinCrossings}; dry floor {DryCells} cells ({DryShareOfLand:P2} of land); balance {BalanceSeconds:F2} s"));
         s.AppendLine(FormattableString.Invariant($"lake depth (level minus lowest cell) all p50/p90/p99/max {LakeDepthP50:F1}/{LakeDepthP90:F1}/{LakeDepthP99:F1}/{LakeDepthMax:F1} m; closed {ClosedDepthP50:F1}/{ClosedDepthP90:F1}/{ClosedDepthP99:F1}/{ClosedDepthMax:F1} m; spilling {SpillingDepthP50:F1}/{SpillingDepthP90:F1}/{SpillingDepthP99:F1}/{SpillingDepthMax:F1} m"));

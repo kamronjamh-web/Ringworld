@@ -74,6 +74,7 @@ public static class RiverMapWriter
             double r, g, b;
             if (kind[cell] == DrainageCellKind.Ocean) { double k = 1 - 0.6 * Math.Clamp(-Height(gx, gy) / 600d, 0, 1); r = 0.10 * k; g = 0.20 * k; b = 0.45 * k; }
             else if (kind[cell] == DrainageCellKind.Barrier) { r = 0.8; g = 0.2; b = 0.8; }
+            else if (kind[cell] == DrainageCellKind.Intake) { r = 1.0; g = 0.55; b = 0.1; }
             else if (kind[cell] == DrainageCellKind.Lung) { r = 0.3; g = 0.25; b = 0.7; }
             else if (f.IsLakeWater(cell)) { r = 0.24; g = 0.64; b = 0.86; }
             else
@@ -208,6 +209,22 @@ public static class RiverMapWriter
         Save(window, closePath);
         File.WriteAllText(Path.Combine(directory, "river_curves_legend.txt"), Legend + $" Close-up window: columns {bestX}..{bestX + winW}, rows {bestY}..{bestY + winH} (24 x 18 km).");
         return (cropPath, closePath);
+    }
+
+    /// <summary>T2R-19: a window of <paramref name="widthKm"/> x <paramref name="heightKm"/> centred on a ring position with the production curves (barrier cells violet, intake cells orange), <paramref name="pixelsPerKm"/> pixels per km.</summary>
+    public static string WriteWindow(DrainageField f, DrainageGrid grid, RiverNetwork net, string path, double centreAroundMeters, double centreAcrossMeters, double widthKm, double heightKm, double pixelsPerKm)
+    {
+        DrainageGridSpec spec = grid.Spec;
+        int winW = (int)Math.Round(widthKm * 1000d / f.AroundStepMeters), winH = (int)Math.Round(heightKm * 1000d / f.AcrossStepMeters);
+        int firstColumn = Math.Clamp((int)Math.Round(centreAroundMeters / f.AroundStepMeters) - winW / 2 - spec.ColumnStart, 0, Math.Max(0, f.Width - winW));
+        int firstRow = Math.Clamp((int)Math.Round(centreAcrossMeters / f.AcrossStepMeters) - winH / 2, 0, Math.Max(0, f.Height - winH));
+        double zoom = pixelsPerKm * f.AroundStepMeters / 1000d;
+        Canvas window = Base(f, firstColumn, winW, winH, zoom, firstRow);
+        double origin = (spec.ColumnStart + firstColumn) * f.AroundStepMeters;
+        var view = new RiverNetworkView(net, spec, origin, firstRow * f.AcrossStepMeters);
+        view.Draw(window, zoom / spec.AroundStepMeters, ClassColors, 1d, null);
+        Save(window, path);
+        return path;
     }
 
     private static void DrawD8(DrainageField f, DrainageGrid grid, Canvas canvas, int firstColumn, int firstRow, double zoom)

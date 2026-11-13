@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using RingworldTechDemo.Terrain.Generation;
 using RingworldTechDemo.Terrain.Sites;
 
@@ -8,14 +9,24 @@ namespace RingworldTechDemo.Terrain.Hydrology;
 /// D2: cell kinds of a valley-floor grid. A cell with any sample below 0 is Ocean. Emitter site discs, the Wall Engine stadiums and the Weather Lung
 /// footprint come analytically from the registries, expanded by the corridor radius (300 m), the lateral cap (350 m) and half a cell diagonal, and
 /// become Barrier cells (the Lung rectangle itself becomes Lung, the isolated receiving body). A strip's end columns are outlets. Rim walls and the
-/// wrap are in <see cref="DrainageDomain"/>.
+/// wrap are in <see cref="DrainageDomain"/>. With site intakes (T2R-19, RS2) the Barrier cells that touch land become Intake cells, outlets at their own height.
 /// </summary>
 public static class DrainageBarriers
 {
     public const double CorridorRadiusMeters = 300d;
     public const double LateralCapMeters = 350d;
 
+    /// <summary>Today's keep-out: the corridor radius plus the lateral cap.</summary>
+    public const double DefaultKeepOutMeters = CorridorRadiusMeters + LateralCapMeters;
+
     public static DrainageCellKind[] Rasterise(DrainageGrid grid, TerrainGenerationParameters recipe, out int barrierCells)
+        => Rasterise(grid, recipe, out barrierCells, out _, false, null);
+
+    /// <summary>
+    /// <paramref name="keepOutMeters"/> (null: <see cref="DefaultKeepOutMeters"/>) is the distance the barrier keeps beyond a structure's influence radius, before half a cell diagonal.
+    /// With <paramref name="siteIntakes"/>, every Barrier cell with a geometric 8-neighbour of kind Land or StripOutlet becomes Intake (RS2); <paramref name="barrierCells"/> then counts the Barrier cells left.
+    /// </summary>
+    public static DrainageCellKind[] Rasterise(DrainageGrid grid, TerrainGenerationParameters recipe, out int barrierCells, out int intakeCells, bool siteIntakes, double? keepOutMeters)
     {
         DrainageGridSpec spec = grid.Spec;
         var kind = new DrainageCellKind[grid.Count];
@@ -26,7 +37,7 @@ public static class DrainageBarriers
                 kind[row * spec.Columns] = StripOutlet(kind[row * spec.Columns]);
                 kind[row * spec.Columns + spec.Columns - 1] = StripOutlet(kind[row * spec.Columns + spec.Columns - 1]);
             }
-        double clearance = CorridorRadiusMeters + LateralCapMeters + 0.5 * Math.Sqrt(spec.AroundStepMeters * spec.AroundStepMeters + spec.AcrossStepMeters * spec.AcrossStepMeters);
+        double clearance = (keepOutMeters ?? DefaultKeepOutMeters) + 0.5 * Math.Sqrt(spec.AroundStepMeters * spec.AroundStepMeters + spec.AcrossStepMeters * spec.AcrossStepMeters);
         double circumference = spec.CircumferenceMeters;
         if (recipe.HasEmitterSites)
         {
@@ -55,11 +66,37 @@ public static class DrainageBarriers
                 Mark(spec, kind, lung.Around, lung.Across, hx, hy, (da, dw) => Math.Abs(da) < hx && Math.Abs(dw) < hy, DrainageCellKind.Lung);
             }
         }
+        int intakes = 0;
+        if (siteIntakes) intakes = MarkIntakes(spec.Columns, spec.Rows, spec.IsWholeRing, kind);
         int barriers = 0;
         foreach (DrainageCellKind k in kind) if (k == DrainageCellKind.Barrier) barriers++;
         barrierCells = barriers;
+        intakeCells = intakes;
         _ = circumference;
         return kind;
+    }
+
+    /// <summary>RS2: Barrier cells with a geometric 8-neighbour of kind Land or StripOutlet become Intake. The neighbours are read before any cell changes, so the change does not spread.</summary>
+    internal static int MarkIntakes(int width, int height, bool wrap, DrainageCellKind[] kind)
+    {
+        var edge = new List<int>();
+        for (int row = 0; row < height; row++)
+            for (int col = 0; col < width; col++)
+            {
+                int cell = row * width + col;
+                if (kind[cell] != DrainageCellKind.Barrier) continue;
+                bool touches = false;
+                for (int d = 0; d < 8 && !touches; d++)
+                {
+                    int r = row + DrainageDomain.Dy[d], c = col + DrainageDomain.Dx[d];
+                    if ((uint)r >= (uint)height) continue;
+                    if ((uint)c >= (uint)width) { if (!wrap) continue; c = c < 0 ? width - 1 : 0; }
+                    if (kind[r * width + c] is DrainageCellKind.Land or DrainageCellKind.StripOutlet) touches = true;
+                }
+                if (touches) edge.Add(cell);
+            }
+        foreach (int cell in edge) kind[cell] = DrainageCellKind.Intake;
+        return edge.Count;
     }
 
     private static DrainageCellKind StripOutlet(DrainageCellKind kind) => kind == DrainageCellKind.Land ? DrainageCellKind.StripOutlet : kind;

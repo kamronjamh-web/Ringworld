@@ -91,7 +91,11 @@ public partial class InlandSwimProbe : RefCounted
                 net.Centre(reach.Stem, 0.5 * (reach.SStart + reach.SEnd), out double ca, out double cz, out _, out _);
                 long a = (long)Math.Round(ca / 2d) * 2L; int z = (int)Math.Round(cz / 2d) * 2;
                 if (z < 3000 || z > 315_000 || !Wet(sampler, a, z, SurfaceWaterKind.River, out float level, out float bed) || level - bed < 1.5f) continue;
-                result["river"] = Describe(sampler, "river", a, z, SurfaceWaterKind.River);
+                var river = Describe(sampler, "river", a, z, SurfaceWaterKind.River);
+                // T2R-12c: the reach's water width, which decides the proxy levels that hold the river as water (w >= 1.5 spacings).
+                net.ChannelAt(reach.Stem, 0.5 * (reach.SStart + reach.SEnd), out RiverChannel channel);
+                river["width"] = 2d * channel.HalfWidth;
+                result["river"] = river;
                 result["ok"] = true;
                 return result;
             }

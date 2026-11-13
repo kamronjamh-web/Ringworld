@@ -13,7 +13,7 @@ namespace RingworldTechDemo.Tools;
 /// T2R-4 (docs/work-orders/terrain-vegetation/T2.md): the drainage bake report tool. Runs the production height source (GPU or CPU), the barriers,
 /// conditioning, routing and accumulation on the whole ring or a strip, writes the report (text and JSON) and the river map under
 /// .godot/audit_baseline/&lt;machine&gt;/t2r/bake/&lt;stamp&gt;/. Arguments after `--`: --source=gpu|cpu (default gpu), --ring (default) or --strip=&lt;start m&gt;,&lt;km&gt;,
-/// --seed=1337, --noise=6 (m), --lake-abundance=&lt;0..1&gt; (default: the recipe's 0.5), --crop=&lt;start km&gt;,&lt;km&gt; (default 10134,300), --rim-crop=&lt;start km&gt;,&lt;km&gt;, --evap-sweep (T2R-6b), --danger and --danger-grid (T3R-1; --no-danger-maps), --part-hashes=<graph file> (T3R-3), --label=&lt;text&gt;, --no-maps.
+/// --seed=1337, --noise=6 (m), --lake-abundance=&lt;0..1&gt; (default: the recipe's 0.5), --crop=&lt;start km&gt;,&lt;km&gt; (default 10134,300), --rim-crop=&lt;start km&gt;,&lt;km&gt;, --evap-sweep (T2R-6b), --danger and --danger-grid (T3R-1; --no-danger-maps), --part-hashes=<graph file> (T3R-3), --site-intakes (the option) or --intake-report (the measurement alone, today's rule) with an optional --keep-out=<m> (T2R-19; DrainageBakeReportTool.SiteIntakes.cs), --terminals with an optional --near=&lt;around km&gt;,&lt;across km&gt;,&lt;radius km&gt; (T2R-6c and T2R-17; DrainageBakeReportTool.Terminals.cs), --label=&lt;text&gt;, --no-maps.
 /// GPU runs need a windowed Vulkan run (not --headless). Prints DRAINAGE_BAKE_REPORT=PASS|FAIL.
 /// </summary>
 public partial class DrainageBakeReportTool : RefCounted
@@ -74,7 +74,7 @@ public partial class DrainageBakeReportTool : RefCounted
             var clock = System.Diagnostics.Stopwatch.StartNew();
             DrainageGrid grid = source.SampleGrid(spec, null, CancellationToken.None);
             double gridSeconds = clock.Elapsed.TotalSeconds;
-            DrainageField field = DrainageBake.Bake(grid, recipe, workers, null, CancellationToken.None, new DrainageBakeOptions { RoutingNoiseMeters = noise, LakeAbundance = abundance });
+            DrainageField field = DrainageBake.Bake(grid, recipe, workers, null, CancellationToken.None, new DrainageBakeOptions { RoutingNoiseMeters = noise, LakeAbundance = abundance, SiteIntakes = Flag("site-intakes"), KeepOutMeters = Arg("keep-out", "").Length == 0 ? null : double.Parse(Arg("keep-out", ""), System.Globalization.CultureInfo.InvariantCulture) });
             DrainageBakeReport report = field.Report with { GridSeconds = gridSeconds };
 
             string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss") + (label.Length == 0 ? "" : "_" + label);
@@ -113,9 +113,38 @@ public partial class DrainageBakeReportTool : RefCounted
                 RiverNetwork net = RiverGraphBuilder.Build(field, grid, recipe, new RiverBuildOptions { Source = source, Workers = workers, Levels = !Flag("no-levels"), KeepStations = diag, WanderScale = double.Parse(Arg("wander-scale", "1"), System.Globalization.CultureInfo.InvariantCulture), MeanderScale = double.Parse(Arg("meander-scale", "1"), System.Globalization.CultureInfo.InvariantCulture), EaseHairpins = Arg("ease-hairpins", "1") != "0", Smooth = Arg("smooth", "1") != "0", Snap = Arg("snap", "0") != "0" }, CancellationToken.None, out RiverBuildReport rivers);
                 File.WriteAllText(Path.Combine(dir, "river_report.txt"), rivers.ToText());
                 foreach (string line in rivers.ToText().Split('\n', StringSplitOptions.RemoveEmptyEntries)) Console.WriteLine("DRAINAGE_BAKE_REPORT_DETAIL " + line);
-                string graphText = GraphReport(net, field, grid, dir, sourceName == "cpu" ? (byte)0 : (byte)1);
+                string window = Arg("window", "");
+                if (window.Length > 0)
+                {
+                    // T2R-19 picture: --window=<around km>,<across km>,<size km> writes a square map window with the curves (barrier cells violet, intake cells orange).
+                    string[] w = window.Split(',');
+                    string windowPath = RiverMapWriter.WriteWindow(field, grid, net, Path.Combine(dir, "site_window.png"), double.Parse(w[0], System.Globalization.CultureInfo.InvariantCulture) * 1000d, double.Parse(w[1], System.Globalization.CultureInfo.InvariantCulture) * 1000d, double.Parse(w[2], System.Globalization.CultureInfo.InvariantCulture), double.Parse(w[2], System.Globalization.CultureInfo.InvariantCulture), 40d);
+                    Console.WriteLine("DRAINAGE_BAKE_REPORT_DETAIL site window=" + windowPath);
+                }
+                if (Flag("site-intakes") || Flag("intake-report"))
+                {
+                    // T2R-19: the keep-out measurement (read-only; reads no spans, so it runs with --no-levels).
+                    string intakeText = SiteIntakeReport(net, field, grid, recipe, rivers, Flag("site-intakes"), Arg("keep-out", "").Length == 0 ? DrainageBarriers.DefaultKeepOutMeters : double.Parse(Arg("keep-out", ""), System.Globalization.CultureInfo.InvariantCulture));
+                    File.WriteAllText(Path.Combine(dir, "site_intakes.txt"), intakeText);
+                    foreach (string line in intakeText.Split('\n', StringSplitOptions.RemoveEmptyEntries)) Console.WriteLine("DRAINAGE_BAKE_REPORT_DETAIL " + line);
+                }
+                if (Flag("no-levels") && (Flag("site-intakes") || Flag("intake-report")))
+                {
+                    // The graph wrap needs the levels; the T2R-19 measurement runs without them and ends here.
+                    (source as IDisposable)?.Dispose();
+                    Console.WriteLine("DRAINAGE_BAKE_REPORT=PASS");
+                    return 0;
+                }
+                string graphText = GraphReport(net, field, grid, dir, sourceName == "cpu" ? (byte)0 : (byte)1, out RiverGraph graph);
                 File.WriteAllText(Path.Combine(dir, "graph_report.txt"), graphText);
                 foreach (string line in graphText.Split('\n', StringSplitOptions.RemoveEmptyEntries)) Console.WriteLine("DRAINAGE_BAKE_REPORT_DETAIL " + line);
+                if (Flag("terminals"))
+                {
+                    // T2R-6c and T2R-17: how stems end and how water meets barrier cells (read-only; without the flag the report and its time are unchanged).
+                    string terminalsText = TerminalsReport(net, graph, field, grid, source, recipe, workers, Arg("near", ""), dir);
+                    File.WriteAllText(Path.Combine(dir, "terminals_report.txt"), terminalsText);
+                    foreach (string line in terminalsText.Split('\n', StringSplitOptions.RemoveEmptyEntries)) Console.WriteLine("DRAINAGE_BAKE_REPORT_DETAIL " + line);
+                }
                 if (Flag("danger") || Flag("danger-grid")) DangerBlock(net, field, grid, dir, seed, recipe);
                 if (diag && net.Stations != null)
                 {
@@ -233,11 +262,12 @@ public partial class DrainageBakeReportTool : RefCounted
     }
 
     /// <summary>T2R-6: wraps the network into the graph, writes the file, reads it back and prints counts, bytes by part, the round trip and the lake statistics (the deepest five).</summary>
-    private static string GraphReport(RiverNetwork net, DrainageField field, DrainageGrid grid, string dir, byte source)
+    private static string GraphReport(RiverNetwork net, DrainageField field, DrainageGrid grid, string dir, byte source, out RiverGraph built)
     {
         var sb = new System.Text.StringBuilder();
         var clock = System.Diagnostics.Stopwatch.StartNew();
         RiverGraph graph = RiverGraph.Build(net, field, grid, 0, source);
+        built = graph;
         double buildSeconds = clock.Elapsed.TotalSeconds;
         byte[] bytes = RiverGraphFormat.Write(graph);
         File.WriteAllBytes(Path.Combine(dir, $"river_graph_v{HydrologyVersions.GraphFormat}.bin"), bytes);

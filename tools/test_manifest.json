@@ -486,6 +486,20 @@
       "profile": "own-runner",
       "runner": "tools/rivers_perf_probe.ps1"
     },
+    "river_site_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "water",
+        "hydrology"
+      ],
+      "marker": "RIVER_SITE_CAPTURE",
+      "expected_s": null,
+      "timeout_s": 3300,
+      "profile": "own-runner",
+      "runner": "tools/river_site_capture.ps1"
+    },
     "prepare_tree_assets_editor": {
       "kind": "tool",
       "mode": "headless",
@@ -4820,6 +4834,18 @@
       "timeout_s": 1500,
       "parallel_safe": false
     },
+    "drainage_site_intake_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain",
+        "hydrology"
+      ],
+      "marker": "DRAINAGE_SITE_INTAKE",
+      "expected_s": 20,
+      "timeout_s": 180
+    },
     "river_danger_test": {
       "kind": "test",
       "mode": "headless",
@@ -4912,6 +4938,19 @@
       "expected_s": 230,
       "timeout_s": 600,
       "user_args": "--generation=1 --review-features=water.rivers"
+    },
+    "proxy_river_true_width_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain",
+        "water",
+        "hydrology"
+      ],
+      "marker": "PROXY_RIVER_TRUE_WIDTH",
+      "expected_s": 40,
+      "timeout_s": 240
     },
     "river_far_water_fraction_test": {
       "kind": "test",

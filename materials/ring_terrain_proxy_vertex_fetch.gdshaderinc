@@ -70,6 +70,8 @@ void proxy_vertex_table_apply(int vertex_id, inout vec3 vertex, inout vec3 norma
 	normal = proxy_vertex_table_decode_normal(attr.x);
 	color = vec4(float(attr.y & 0xFFu), float((attr.y >> 8u) & 0xFFu), float((attr.y >> 16u) & 0xFFu), float((attr.y >> 24u) & 0xFFu)) / 255.0;
 	uv2 = vec2(pos_morph.w, need_attr ? ((attr.z & 1u) != 0u ? 1.0 : 0.0) : (water_rows ? 1.0 : 0.0));
+	// T2R-12c: slot levels carry the river line coverage as float bits in attr.w of terrain lattice texels (0.49 c; the flag bit stays 1.0).
+	if (need_attr && !water_rows && !skirt && (attr.z & 1u) == 0u) uv2.y = 0.49 * uintBitsToFloat(attr.w);
 	if (skirt) {
 		// One UV component is a lattice value k / cells (z bits 16..31); the other is stored as float bits in w.
 		// z bit 2 set: y is the lattice component.

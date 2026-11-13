@@ -406,7 +406,9 @@ public partial class RingTerrainProxySector
             uint skirtBits = 0u, skirtWord = 0u;
             if (skirt && !TryEncodeSkirtUv(data.Uvs[i], cells, out skirtBits, out skirtWord)) return null;
             attr[texel * 4 + 2] = (data.MorphData[i].Y >= 0.5f ? 1u : 0u) | (skirt ? 2u : 0u) | skirtBits;
-            attr[texel * 4 + 3] = skirtWord;
+            // T2R-12c (S13.2): a terrain lattice vertex carries its river line coverage c as float bits in w (0 today for non-skirts); water rows and skirts are unchanged.
+            float lineMorph = data.MorphData[i].Y;
+            attr[texel * 4 + 3] = !skirt && i < layout.LatticeVertices && lineMorph > 0f && lineMorph < 0.5f ? BitConverter.SingleToUInt32Bits(lineMorph / RiverLineMorphScale) : skirtWord;
             if (chordBytes != null)
             {
                 Vector3 offset = data.ParentChordOffsets[i];
@@ -1043,6 +1045,10 @@ public partial class RingTerrainProxySector
                     // Exactly what the shader derives: column / cells and lattice row / cells.
                     int lattice = texel % layout.LatticeVertices;
                     uv = new Vector2((lattice % layout.Width) / (float)_cells, (lattice / layout.Width) / (float)_cells);
+                    // T2R-12c: the river line coverage payload of a terrain lattice texel (zero for water rows and rows without a river).
+                    float lineMorph = _data.MorphData[i].Y;
+                    uint expectedLine = i < layout.LatticeVertices && lineMorph > 0f && lineMorph < 0.5f ? BitConverter.SingleToUInt32Bits(lineMorph / RiverLineMorphScale) : 0u;
+                    if (attrU[texel * 4 + 3] != expectedLine) return $"river line payload differs at vertex {i}";
                 }
                 if (BitConverter.SingleToInt32Bits(uv.X) != BitConverter.SingleToInt32Bits(_data.Uvs[i].X)
                     || BitConverter.SingleToInt32Bits(uv.Y) != BitConverter.SingleToInt32Bits(_data.Uvs[i].Y))

@@ -14,6 +14,10 @@ public sealed record DrainageBakeOptions
     public double? LakeAbundance { get; init; }
     /// <summary>Multiplies E0. 1 in production; only the report tool's sweep changes it.</summary>
     public double EvaporationScale { get; init; } = 1d;
+    /// <summary>T2R-19 (RS2): the edge cells of every site keep-out become outlets (<see cref="DrainageCellKind.Intake"/>). Off in production; only the report tool sets it.</summary>
+    public bool SiteIntakes { get; init; }
+    /// <summary>T2R-19: the keep-out beyond a structure's influence radius, in metres (null is today's 650 m).</summary>
+    public double? KeepOutMeters { get; init; }
 }
 
 /// <summary>
@@ -100,7 +104,7 @@ public static class DrainageBake
         double lakeAbundance = options.LakeAbundance ?? (parameters.HasRivers ? parameters.GetExtensionField("lake_abundance") : 0.5d);
         DrainageGridSpec spec = grid.Spec;
         var clock = Stopwatch.StartNew();
-        DrainageCellKind[] kind = DrainageBarriers.Rasterise(grid, parameters, out int barrierCells);
+        DrainageCellKind[] kind = DrainageBarriers.Rasterise(grid, parameters, out int barrierCells, out _, options.SiteIntakes, options.KeepOutMeters);
         double barrierSeconds = clock.Elapsed.TotalSeconds;
         progress?.Report(0.1);
         cancellation.ThrowIfCancellationRequested();

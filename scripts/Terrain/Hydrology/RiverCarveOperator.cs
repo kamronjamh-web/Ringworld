@@ -32,7 +32,9 @@ public sealed class RiverCarveOperator
     private const double TerraceStepMeters = 40d, TerraceRiser = 0.14;
     /// <summary>Slack added to the stem's true lateral reach (<see cref="RiverNetwork.StemLateralReach"/>) for the cull by the control hull.</summary>
     private const double CullSlackMeters = 10d;
-    private const double ValleyOnlyAboveFootprint = 256d, ValleyOnlyNarrowAboveFootprint = 64d;
+    private const double ValleyOnlyAboveFootprint = 256d;
+    /// <summary>S13.2: a piece owns water at footprint fp only when its width is at least this many spacings (sqrt(2) is the least that keeps the water connected on a lattice; 2.0 is the user decision of 2026-11-13 after 1.5 drew 64 m rivers too wide). It decides whether a level has water geometry for a river and never changes a width. Tune at review.</summary>
+    public const double OwnerWidthPerFootprint = 2.0;
     private const int MaxHits = 24;
 
     // Draw-down of a higher channel towards a lower one (T2R-7 review). Inside the lower core and this margin beyond it the higher level equals the lower one; it then
@@ -107,7 +109,7 @@ public sealed class RiverCarveOperator
         public int Piece, Stem, Reach;
         public bool ValleyOnly;
         public double S, T, AbsT, TanX, TanY;
-        /// <summary>Section values with the footprint applied; Edge = A + B.</summary>
+        /// <summary>Section values (the same at every footprint); Edge = A + B.</summary>
         public double A, B, Depth, EdgeDepth, Edge;
         /// <summary>Half width plus bank width without the footprint (the draw-down and the valley look must not depend on the footprint), and the width.</summary>
         public double PlainEdge, Width;
@@ -233,8 +235,8 @@ public sealed class RiverCarveOperator
         return h <= 0d ? m : m - h * h / (4d * k);
     }
 
-    /// <summary>S7 footprint rule: is the piece only a valley at this footprint (no core, no owner).</summary>
-    internal static bool ValleyOnly(double footprint, double halfWidth) => footprint > ValleyOnlyAboveFootprint || (footprint > ValleyOnlyNarrowAboveFootprint && 2d * halfWidth < footprint / 16d);
+    /// <summary>S13.2 footprint rule: is the piece only a valley at this footprint (no core, no owner). A footprint never changes the section; it only decides ownership.</summary>
+    internal static bool ValleyOnly(double footprint, double halfWidth) => footprint > ValleyOnlyAboveFootprint || (footprint > 0d && 2d * halfWidth < OwnerWidthPerFootprint * footprint);
 
     /// <summary>
     /// The core of S7 as a pure function: the bed <c>L - d_e - (d - d_e) (1 - (t / a)^2)</c> inside the half width, then the bank rising to the level plus the freeboard
@@ -360,27 +362,18 @@ public sealed class RiverCarveOperator
 
     /// <summary>
     /// Every piece that acts on the point, with its level and the level after the draw-down, sorted by level. The caller has checked <c>Near</c> for the cell. The
-    /// corridor weight comes out as a by-product (it also counts pieces beyond the fade end at coarse footprints).
+    /// corridor weight comes out as a by-product.
     /// </summary>
     private int Collect(int col, int row, double around, double across, double fp, Span<Hit> hits, out double weight)
     {
         weight = 0d;
-        // Only the corridor weight of a widened channel reaches beyond the fade end.
-        double lateralLimit = fp > 0d && fp <= ValleyOnlyAboveFootprint ? Math.Max(FadeEndMeters, 1.25 * fp + 72d) : FadeEndMeters;
+        double lateralLimit = FadeEndMeters;
         ReadOnlySpan<int> pieces = _index.PiecesNear(col, row);
         int n = 0;
         for (int i = 0; i < pieces.Length; i++)
         {
             if (!LocatePiece(pieces[i], around, across, lateralLimit, out Hit h)) continue;
             h.ValleyOnly = ValleyOnly(fp, h.A);
-            if (!h.ValleyOnly && fp > 0d)
-            {
-                double ap = Math.Max(h.A, 0.75 * fp);
-                h.Depth = Math.Max(h.Depth * h.A / ap, 0.05);
-                h.A = ap; h.B = Math.Max(h.B, 0.5 * fp);
-                h.EdgeDepth = Math.Min(h.EdgeDepth, 0.5 * h.Depth);
-                h.Edge = h.A + h.B;
-            }
             if (h.AbsT >= FadeEndMeters && h.AbsT >= h.Edge + 60d) continue;
             double w = 1d - RiverHydraulics.Smoothstep(h.Edge + 10d, h.Edge + 60d, h.AbsT);
             if (w > weight) weight = w;
@@ -467,6 +460,17 @@ public sealed class RiverCarveOperator
         ref readonly Hit h = ref hits[owner];
         location = new RiverLocation(h.Piece, h.Stem, h.Reach, h.S, h.T, h.TanX, h.TanY, h.A, h.B, h.Depth, h.EdgeDepth, h.Drawn);
         return true;
+    }
+
+    /// <summary>Test hook (T2R-12c): true when any piece that acts on the point is only a valley at this footprint (no core, no owner).</summary>
+    internal bool AnyValleyOnlyNear(double around, double across, double footprintMeters)
+    {
+        int col = _index.ColumnOf(around), row = _index.RowOf(across);
+        if (!_index.IsNear(col, row)) return false;
+        Span<Hit> hits = stackalloc Hit[MaxHits];
+        int n = Collect(col, row, around, across, footprintMeters, hits, out _);
+        for (int i = 0; i < n; i++) if (hits[i].ValleyOnly) return true;
+        return false;
     }
 
     /// <summary>The carved height and the owner at the point; <paramref name="naturalHeight"/> is the natural ground G there and <paramref name="footprintMeters"/> the sample spacing (0 for a point; +infinity for the far views).</summary>

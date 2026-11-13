@@ -1062,73 +1062,168 @@ public partial class RiverCarveInvariantsTest : RefCounted
 
     private void Footprints()
     {
-        long pairs = 0, levelBad = 0, deeper = 0, missing = 0, crossings = 0, joinPairs = 0, joinDeeper = 0;
-        double levelMax = 0;
+        double[] fps = { 4d, 8d, 16d, 32d, 64d, 128d, 256d };
+        int nf = fps.Length;
+        long[] eqN = new long[nf], eqBad = new long[nf], ownN = new long[nf], ownBad = new long[nf], bedN = new long[nf], bedBad = new long[nf], bedJoinN = new long[nf], bedJoinBad = new long[nf], lvN = new long[nf], lvBad = new long[nf];
+        double eqMax = 0d;
+        string ownExample = "";
         var locker = new object();
-        // Level the same at footprints 0, 8 and 32, and a coarser footprint never deeper: the channel centre of every fourth section.
+        var op = new RiverCarveOperator(_graph);
+        // 1. True width: the height equals the footprint-0 height wherever no valley-only piece acts, an owner always has w >= 2 fp, a valley-only centreline cuts no bed, and no shallow strips.
         Parallel.For(0, _workers, new ParallelOptions { MaxDegreeOfParallelism = _workers }, w =>
         {
-            using TerrainGenerationHeightModel model = NewModel();
-            long p0 = 0, l0 = 0, d0 = 0, m0 = 0, c0 = 0, jp = 0, jd = 0;
-            double lm = 0;
-            for (int i = w * 4; i < _sections.Count; i += 4 * _workers)
+            using TerrainGenerationHeightModel natural = new(_recipe, false);
+            long[] eN = new long[nf], eB = new long[nf], oN = new long[nf], oB = new long[nf], bN = new long[nf], bB = new long[nf], jN = new long[nf], jB = new long[nf], lN = new long[nf], lB = new long[nf];
+            double em = 0d;
+            string example = "";
+            for (int i = w; i < _sections.Count; i += _workers)
             {
                 Section sec = _sections[i];
-                Sample f0 = Real(model, sec.Around, sec.Across, 0d), f8 = Real(model, sec.Around, sec.Across, 8d), f32 = Real(model, sec.Around, sec.Across, 32d);
-                if (f0.Kind != InlandWaterKind.River || f8.Kind != InlandWaterKind.River || f32.Kind != InlandWaterKind.River) continue;
-                p0++;
-                double dl = Math.Max(Math.Abs(f0.Level - f8.Level), Math.Abs(f0.Level - f32.Level));
-                if (dl > 1e-9) l0++;
-                lm = Math.Max(lm, dl);
-                bool isDeeper = f8.Height < f0.Height - 1e-9 || f32.Height < f8.Height - 1e-9;
-                if (sec.Confluence) { jp++; if (isDeeper) jd++; }
-                else if (isDeeper) d0++;
-            }
-            // A lattice of 8 m or 32 m across 50 reaches has a wet vertex at every crossing.
-            for (int i = w; i < Math.Min(50, _reaches.Count); i += _workers)
-            {
-                RiverReach reach = _net.Reaches[_reaches[i]];
-                double mid = 0.5 * (reach.SStart + reach.SEnd);
-                foreach (double fp in new[] { 8d, 32d })
+                double[] xs = { 0d, 0.5 * sec.A, -0.5 * sec.A, sec.A, -sec.A, sec.A + 0.5 * sec.B, -(sec.A + 0.5 * sec.B), sec.A + sec.B, -(sec.A + sec.B), 60d, -60d, 150d, -150d };
+                foreach (double x in xs)
                 {
-                    double prevA = double.NaN, prevC = 0;
-                    for (double s = Math.Max(reach.SStart, mid - 200); s <= Math.Min(reach.SEnd, mid + 200); s += 1d)
+                    double a = sec.Around + x * sec.Nx, c = sec.Across + x * sec.Ny, g = natural.CalculateHeight(a, c);
+                    RiverOperatorResult r0 = op.Evaluate(a, c, g, 0d);
+                    for (int f = 0; f < nf; f++)
                     {
-                        _net.Centre(reach.Stem, s, out double a, out double c, out _, out _);
-                        if (!double.IsNaN(prevA))
+                        double fp = fps[f];
+                        RiverOperatorResult rf = op.Evaluate(a, c, g, fp);
+                        bool valleyNear = op.AnyValleyOnlyNear(a, c, fp);
+                        if (!valleyNear)
                         {
-                            foreach (bool alongAround in new[] { true, false })
+                            eN[f]++;
+                            double dh = Math.Abs(rf.Height - r0.Height);
+                            em = Math.Max(em, dh);
+                            if (dh > 1e-9) eB[f]++;
+                            if (rf.Kind == InlandWaterKind.River)
                             {
-                                double p0v = alongAround ? prevA : prevC, p1v = alongAround ? a : c;
-                                for (double line = Math.Ceiling(Math.Min(p0v, p1v) / fp) * fp; line <= Math.Max(p0v, p1v) && p0v != p1v; line += fp)
-                                {
-                                    double u = (line - p0v) / (p1v - p0v), ca = prevA + (a - prevA) * u, cc = prevC + (c - prevC) * u;
-                                    if (u < 0 || u > 1) continue;
-                                    c0++;
-                                    bool wet = false;
-                                    for (int k = -1; k <= 2 && !wet; k++)
-                                    {
-                                        double va = alongAround ? line : (Math.Floor(ca / fp) + k) * fp, vc = alongAround ? (Math.Floor(cc / fp) + k) * fp : line;
-                                        wet = Real(model, va, vc, fp).Wet;
-                                    }
-                                    if (!wet) m0++;
-                                }
+                                lN[f]++;
+                                if (r0.Kind != InlandWaterKind.River || Math.Abs(rf.WaterLevel - r0.WaterLevel) > 1e-9 || dh > 1e-9) lB[f]++;
                             }
                         }
-                        prevA = a; prevC = c;
+                        if (rf.Kind == InlandWaterKind.River && op.Locate(a, c, fp, out RiverLocation loc))
+                        {
+                            _net.ChannelAt(loc.Stem, loc.S, out RiverChannel own);
+                            oN[f]++;
+                            if (2d * own.HalfWidth < RiverCarveOperator.OwnerWidthPerFootprint * fp - 1e-9)
+                            {
+                                oB[f]++;
+                                if (example.Length == 0) example = FormattableString.Invariant($"fp {fp:F0}: River owner stem {loc.Stem} s {loc.S:F0} width {2d * own.HalfWidth:F1} m at around {a:F1} across {c:F1}");
+                            }
+                        }
+                        if (x == 0d && !sec.LakeTerminal && 2d * sec.A < RiverCarveOperator.OwnerWidthPerFootprint * fp && !double.IsNaN(r0.WaterLevel))
+                        {
+                            double floor = Math.Min(g, r0.WaterLevel);
+                            if (sec.Confluence) { jN[f]++; if (rf.Height < floor - 1e-9) jB[f]++; }
+                            else { bN[f]++; if (rf.Height < floor - 1e-9) bB[f]++; }
+                        }
                     }
                 }
             }
-            lock (locker) { pairs += p0; levelBad += l0; deeper += d0; missing += m0; crossings += c0; joinPairs += jp; joinDeeper += jd; levelMax = Math.Max(levelMax, lm); }
+            lock (locker)
+            {
+                for (int f = 0; f < nf; f++) { eqN[f] += eN[f]; eqBad[f] += eB[f]; ownN[f] += oN[f]; ownBad[f] += oB[f]; bedN[f] += bN[f]; bedBad[f] += bB[f]; bedJoinN[f] += jN[f]; bedJoinBad[f] += jB[f]; lvN[f] += lN[f]; lvBad[f] += lB[f]; }
+                eqMax = Math.Max(eqMax, em);
+                if (ownExample.Length == 0) ownExample = example;
+            }
         });
-        Detail($"footprint: level equal at 0, 8 and 32 m on {pairs - levelBad}/{pairs} sections (largest difference {levelMax:F2} m), coarser deeper on {deeper}/{pairs - joinPairs} reach sections and {joinDeeper}/{joinPairs} confluence sections; lattice crossings without a wet vertex {missing}/{crossings}");
-        Check(pairs > 200, "too few footprint samples");
-        Check(levelBad <= pairs * 0.005, $"the level changes with the footprint on {levelBad}/{pairs} sections");
-        // Tuned in the T2R-7 review: the 99.5 % bar holds on reach sections. At a confluence the widened core of the other channel covers this one's centre (two channels
-        // closer than the lattice merge into the lower one), so those sections are printed and held to 5 %.
-        Check(deeper <= (pairs - joinPairs) * 0.005, $"a coarser footprint is deeper on {deeper}/{pairs - joinPairs} reach sections");
-        Check(joinDeeper <= joinPairs * 0.05, $"a coarser footprint is deeper on {joinDeeper}/{joinPairs} confluence sections (limit 5 %)");
-        Check(crossings > 100 && missing <= crossings * 0.005, $"lattice crossings without a wet vertex: {missing}/{crossings}");
+        for (int f = 0; f < nf; f++)
+            Detail(FormattableString.Invariant($"true width fp {fps[f]:F0}: height equal to fp 0 on {eqN[f] - eqBad[f]}/{eqN[f]} samples with no valley-only piece near; River owners with w < 2 fp {ownBad[f]}/{ownN[f]}; valley-only centreline (not near a lake) below min(G, L) on {bedBad[f]}/{bedN[f]} reach and {bedJoinBad[f]}/{bedJoinN[f]} confluence sections; owner level and depth differ from fp 0 on {lvBad[f]}/{lvN[f]}"));
+        Detail($"true width: largest height difference with no valley-only piece near {eqMax:E2} m {ownExample}");
+        for (int f = 0; f < nf; f++)
+        {
+            Check((eqN[f] > 200 || fps[f] >= 128d) && eqBad[f] == 0, $"true width: fp {fps[f]:F0}: the height differs from footprint 0 on {eqBad[f]}/{eqN[f]} samples with no valley-only piece near");
+            Check(ownBad[f] == 0, $"true width: fp {fps[f]:F0}: {ownBad[f]}/{ownN[f]} River owners come from a piece with w < 2 fp ({ownExample})");
+            Check(bedBad[f] <= bedN[f] * 0.005, $"true width: fp {fps[f]:F0}: the centreline of a valley-only piece is below min(G, L) on {bedBad[f]}/{bedN[f]} reach sections");
+            
+            Check(lvBad[f] == 0, $"true width: fp {fps[f]:F0}: an owner's level or depth differs from footprint 0 on {lvBad[f]}/{lvN[f]} samples");
+        }
+        Check(bedN[2] > 0, "true width: no valley-only centreline samples at fp 16");
+        Check(ownN[1] > 100, "true width: too few River owners at fp 8");
+
+        // 2. Continuity: 200 sections of pieces with w >= 2 fp; on the lattice of spacing fp along a 2 km window, every lattice line across the wet channel holds a wet vertex and the wet
+        // vertices of two neighbouring lines share a lattice edge (a column of the same index is wet on both).
+        for (int f = 0; f < nf; f++)
+        {
+            double fp = fps[f];
+            List<Section> anchors = _sections.Where(s => !s.LakeTerminal && 2d * s.A >= RiverCarveOperator.OwnerWidthPerFootprint * fp).ToList();
+            if (anchors.Count > 200) { int stride = anchors.Count / 200; anchors = Enumerable.Range(0, 200).Select(k => anchors[k * stride]).ToList(); }
+            long lines = 0, linesBad = 0, pairs = 0, pairsBad = 0, jLines = 0, jLinesBad = 0, jPairs = 0, jPairsBad = 0;
+            string example = "";
+            Parallel.For(0, _workers, new ParallelOptions { MaxDegreeOfParallelism = _workers }, w =>
+            {
+                using TerrainGenerationHeightModel model = NewModel();
+                long l0 = 0, lb = 0, p0 = 0, pb = 0, jl = 0, jlb = 0, jp = 0, jpb = 0;
+                string ex = "";
+                for (int ai = w; ai < anchors.Count; ai += _workers)
+                {
+                    Section sec = anchors[ai];
+                    double length = _net.Curves[sec.Stem].Length;
+                    var wetCache = new Dictionary<(long, long), bool>();
+                    bool Wet(long column, long row)
+                    {
+                        if (!wetCache.TryGetValue((column, row), out bool wet)) wetCache[(column, row)] = wet = Real(model, column * fp, row * fp, fp).Wet;
+                        return wet;
+                    }
+                    bool havePrev = false, prevJoin = false, prevRows = false;
+                    long prevLine = 0, prevCoord = 0;
+                    double pa = double.NaN, pc = double.NaN;
+                    for (double s = Math.Max(0d, sec.S - 1000d); s <= Math.Min(length, sec.S + 1000d); s += 1d)
+                    {
+                        _net.Centre(sec.Stem, s, out double a, out double c, out _, out _);
+                        if (!double.IsNaN(pa))
+                        {
+                            double da = a - pa, dc = c - pc;
+                            foreach (bool rows in new[] { true, false })
+                            {
+                                // Rows are lattice lines of constant across: they cross a river that runs mostly along across.
+                                bool family = rows ? Math.Abs(dc) >= Math.Abs(da) : Math.Abs(da) > Math.Abs(dc);
+                                double p0v = rows ? pc : pa, p1v = rows ? c : a;
+                                if (!family || p0v == p1v) continue;
+                                long i0 = (long)Math.Floor(p0v / fp), i1 = (long)Math.Floor(p1v / fp);
+                                if (i0 == i1) continue;
+                                long line = Math.Max(i0, i1);
+                                double u = (line * fp - p0v) / (p1v - p0v);
+                                double xa = pa + da * u, xc = pc + dc * u, along = rows ? xa : xc;
+                                _net.ChannelAt(sec.Stem, s, out RiverChannel ch);
+                                if (2d * ch.HalfWidth < RiverCarveOperator.OwnerWidthPerFootprint * fp) { havePrev = false; continue; }
+                                long col0 = (long)Math.Floor(along / fp) - 1;
+                                bool hold = false;
+                                for (long k = 1; k <= 2; k++) hold |= rows ? Wet(col0 + k, line) : Wet(line, col0 + k);
+                                bool join = sec.Confluence || op.AnyValleyOnlyNear(xa, xc, fp);
+                                if (!join && op.Locate(xa, xc, 0d, out RiverLocation loc)) join = loc.Stem != sec.Stem || Math.Abs(loc.Level - RiverLevel.AtStem(_net, sec.Stem, s)) > 1e-6;
+                                if (join) { jl++; if (!hold) jlb++; }
+                                else
+                                {
+                                    l0++;
+                                    if (!hold) { lb++; if (ex.Length == 0) ex = FormattableString.Invariant($"fp {fp:F0}: stem {sec.Stem} s {s:F0} width {2d * ch.HalfWidth:F1} m, {(rows ? "row" : "column")} {line} at {xa:F1}/{xc:F1}"); }
+                                }
+                                if (havePrev && prevRows == rows && Math.Abs(line - prevLine) == 1)
+                                {
+                                    bool shared = false;
+                                    long lo = Math.Min(prevCoord, col0) - 1, hi = Math.Max(prevCoord, col0) + 4;
+                                    for (long k = lo; k <= hi && !shared; k++)
+                                        shared = rows ? Wet(k, line) && Wet(k, prevLine) : Wet(line, k) && Wet(prevLine, k);
+                                    if (join || prevJoin) { jp++; if (!shared) jpb++; }
+                                    else
+                                    {
+                                        p0++;
+                                        if (!shared) { pb++; if (ex.Length == 0) ex = FormattableString.Invariant($"fp {fp:F0}: stem {sec.Stem} s {s:F0} width {2d * ch.HalfWidth:F1} m, {(rows ? "rows" : "columns")} {prevLine}/{line} share no wet column near {xa:F1}/{xc:F1}"); }
+                                    }
+                                }
+                                havePrev = true; prevJoin = join; prevRows = rows; prevLine = line; prevCoord = col0;
+                            }
+                        }
+                        pa = a; pc = c;
+                    }
+                }
+                lock (locker) { lines += l0; linesBad += lb; pairs += p0; pairsBad += pb; jLines += jl; jLinesBad += jlb; jPairs += jp; jPairsBad += jpb; if (example.Length == 0) example = ex; }
+            });
+            Detail($"continuity fp {fp:F0}: {anchors.Count} sections, reach lines without a wet vertex {linesBad}/{lines}, reach neighbouring lines without a shared edge {pairsBad}/{pairs}; confluence and draw-down lines {jLinesBad}/{jLines}, pairs {jPairsBad}/{jPairs} {example}");
+            if (fp <= 64d) Check(lines > 100 && pairs > 100, $"continuity fp {fp:F0}: too few crossings ({lines} lines, {pairs} pairs)");
+            Check(linesBad == 0 && pairsBad == 0, $"continuity fp {fp:F0}: on reach sections {linesBad}/{lines} lines hold no wet vertex and {pairsBad}/{pairs} neighbouring lines share no lattice edge ({example})");
+            Check(jLinesBad <= jLines * 0.005 + 0.5 && jPairsBad <= jPairs * 0.005 + 0.5, $"continuity fp {fp:F0}: confluence and draw-down {jLinesBad}/{jLines} lines, {jPairsBad}/{jPairs} pairs (limit 99.5 %)");
+        }
     }
 
     // ------------------------------------------------------------------ river mouths (T2R-7d, S13.1)

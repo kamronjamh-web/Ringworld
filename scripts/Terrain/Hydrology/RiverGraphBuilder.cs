@@ -9,7 +9,7 @@ using RingworldTechDemo.Terrain.Generation;
 namespace RingworldTechDemo.Terrain.Hydrology;
 
 /// <summary>How a stem ends (S5). StripEnd (a strip's end column) and Dead (reaches no outlet; never expected) exist for tools and tests.</summary>
-public enum RiverTerminal : byte { Sea, Lake, Confluence, Lung, StripEnd, Dead }
+public enum RiverTerminal : byte { Sea, Lake, Confluence, Lung, StripEnd, Dead, Intake }
 
 /// <summary>A maximal chain of channel cells (S5): at each confluence it continues up the incoming branch with the larger area.</summary>
 public struct RiverStem
@@ -470,6 +470,8 @@ public sealed record RiverBuildReport
     public int TerminalLung { get; init; }
     public int TerminalStripEnd { get; init; }
     public int TerminalDead { get; init; }
+    /// <summary>T2R-19: stems that end at a site intake cell (always 0 with the option off).</summary>
+    public int TerminalIntake { get; init; }
     public double[] Q { get; init; } = Array.Empty<double>();
     public double[] Gradient { get; init; } = Array.Empty<double>();
     public double[] Depth { get; init; } = Array.Empty<double>();
@@ -515,7 +517,7 @@ public sealed record RiverBuildReport
         return string.Join("\n", new[]
         {
             FormattableString.Invariant($"rivers: threshold {ThresholdKm2:F0} km^2, channel cells {ChannelCells}, stems {Stems}, reaches {Reaches}, nodes {Nodes}, knots {Knots}, stations {Stations}, length {LengthKm:F0} km"),
-            $"terminals: sea {TerminalSea}, lake {TerminalLake}, confluence {TerminalConfluence}, lung {TerminalLung}, strip end {TerminalStripEnd}, dead {TerminalDead}",
+            $"terminals: sea {TerminalSea}, lake {TerminalLake}, confluence {TerminalConfluence}, lung {TerminalLung}, strip end {TerminalStripEnd}, dead {TerminalDead}" + (TerminalIntake > 0 ? $", intake {TerminalIntake}" : ""),
             "hydraulics p10/p50/p90 over reach length: Q " + P(Q) + " m3/s, S " + P(Gradient) + ", d " + P(Depth) + " m, w " + P(Width) + " m, U " + P(Speed) + " m/s",
             FormattableString.Invariant($"class share by length: calm {ClassShare.ElementAtOrDefault(0):P1}, swift {ClassShare.ElementAtOrDefault(1):P1}, fierce {ClassShare.ElementAtOrDefault(2):P1}, torrent {ClassShare.ElementAtOrDefault(3):P1}"),
             FormattableString.Invariant($"lake channels: {LakeChannelCells} marked cells ({LakeLeads} outlet leads), {InLakeStems} stems start inside a lake, in-lake length {InLakeKm:F1} km, cut over 40 m on {InLakeCutOver40Share:P2} of it (largest {InLakeCutMax:F1} m)"),
@@ -605,7 +607,7 @@ public static class RiverGraphBuilder
             bool Continues(int cell)
             {
                 int next = down[cell];
-                return (channel[next] && provisionalUp[next] < 0) || kind[next] is DrainageCellKind.Ocean or DrainageCellKind.Lung or DrainageCellKind.StripOutlet;
+                return (channel[next] && provisionalUp[next] < 0) || kind[next] is DrainageCellKind.Ocean or DrainageCellKind.Lung or DrainageCellKind.StripOutlet or DrainageCellKind.Intake;
             }
             void MarkFrom(int entry)
             {
@@ -645,7 +647,7 @@ public static class RiverGraphBuilder
                     if (next >= 0 && channel[next] && provisionalUp[next] == tail) tail = next; else break;
                 }
                 int after = down[tail];
-                if (!channel[after] && lakeId[after] < 0 && kind[after] is not (DrainageCellKind.Ocean or DrainageCellKind.Lung or DrainageCellKind.StripOutlet)) continue;
+                if (!channel[after] && lakeId[after] < 0 && kind[after] is not (DrainageCellKind.Ocean or DrainageCellKind.Lung or DrainageCellKind.StripOutlet or DrainageCellKind.Intake)) continue;
                 lead.Clear();
                 int cur = first;
                 bool found = false;
@@ -756,7 +758,7 @@ public static class RiverGraphBuilder
             tmp[i] = new StemTmp { Cells = chains[i] };
             for (int k = 0; k < chains[i].Length; k++) { cellStem[chains[i][k]] = i; cellIndex[chains[i][k]] = k; }
         }
-        var report0 = new int[6];
+        var report0 = new int[7];
         for (int i = 0; i < stemCount; i++)
         {
             StemTmp s = tmp[i];
@@ -775,6 +777,7 @@ public static class RiverGraphBuilder
             else if (kind[next] == DrainageCellKind.Ocean) s.Terminal = RiverTerminal.Sea;
             else if (kind[next] == DrainageCellKind.Lung) s.Terminal = RiverTerminal.Lung;
             else if (kind[next] == DrainageCellKind.StripOutlet) s.Terminal = RiverTerminal.StripEnd;
+            else if (kind[next] == DrainageCellKind.Intake) s.Terminal = RiverTerminal.Intake;
             else s.Terminal = RiverTerminal.Dead;
             report0[(int)s.Terminal]++;
         }
@@ -1029,7 +1032,7 @@ public static class RiverGraphBuilder
         {
             ThresholdKm2 = threshold, ChannelCells = channelCells, Stems = stemCount, Reaches = reaches.Length, Nodes = totalNodes, LengthKm = lengthKm,
             TerminalSea = report0[(int)RiverTerminal.Sea], TerminalLake = report0[(int)RiverTerminal.Lake], TerminalConfluence = report0[(int)RiverTerminal.Confluence],
-            TerminalLung = report0[(int)RiverTerminal.Lung], TerminalStripEnd = report0[(int)RiverTerminal.StripEnd], TerminalDead = report0[(int)RiverTerminal.Dead],
+            TerminalLung = report0[(int)RiverTerminal.Lung], TerminalStripEnd = report0[(int)RiverTerminal.StripEnd], TerminalDead = report0[(int)RiverTerminal.Dead], TerminalIntake = report0[(int)RiverTerminal.Intake],
             LakeChannelCells = lakeChannelCells, LakeLeads = lakeLeads, InLakeStems = inLakeStems, InLakeKm = inLakeKm,
             CentrelineSeconds = centrelineSeconds, MaxWanderMeters = maxWander, MaxMeanderMeters = maxMeander, MaxNodeShiftMeters = maxNodeShift, MaxSmoothMeters = maxSmooth, SnappedNodes = snapped, GuardMovedNodes = guardMoved, GuardMaxMeters = guardMax,
         };
@@ -1109,7 +1112,7 @@ public static class RiverGraphBuilder
             if ((uint)rj >= (uint)rows) return false;
             long ring = ((ci % spec.RingColumns) + spec.RingColumns) % spec.RingColumns - spec.ColumnStart;
             if (ring < 0) ring += spec.RingColumns;
-            return ring < width && kind[rj * width + (int)ring] == DrainageCellKind.Barrier;
+            return ring < width && kind[rj * width + (int)ring] is DrainageCellKind.Barrier or DrainageCellKind.Intake; // Intake cells (T2R-19, RS2) are guarded like barrier cells; none exist with the option off
         }
         // Push vector (away from the nearest barrier cell, length = missing clearance) for a point in absolute around (unwrapped) and across metres.
         bool Push(double a, double c, out double px, out double py)

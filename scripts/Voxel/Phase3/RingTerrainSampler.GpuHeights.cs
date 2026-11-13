@@ -79,7 +79,7 @@ public sealed partial class RingTerrainSampler
     }
 
     /// <summary>
-    /// T2R-12b (S11b): the valley-only channel area of the lattice of a proxy level of 256 m and coarser as coverage in [0, 1] per vertex (row-major). False without a river graph, for other
+    /// T2R-12b (S11b): the valley-only channel area of the lattice of a proxy level that carries coverage (8 m and coarser, S13.2) as coverage in [0, 1] per vertex (row-major). False without a river graph, for other
     /// spacings and where no river influences the rectangle; <paramref name="coverage"/> is then left untouched.
     /// </summary>
     internal bool TrySplatRiverLine(long aroundOrigin, long acrossOrigin, int spacing, int columns, int rows, Span<float> coverage)

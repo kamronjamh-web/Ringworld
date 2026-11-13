@@ -3918,7 +3918,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         // fresh climate/hydrology query for every high-detail proxy vertex.
         const int biomeSampleSpacing = 16;
         Dictionary<TerrainColumnKey, Color> biomeWeightCache = scratch.BiomeWeightCache;
-        // T2R-12b (S11b): the river line coverage of this lattice rides in UV2.y of terrain vertices as 0.49 c (every reader thresholds at 0.5); 0 without a river graph.
+        // T2R-12b (S11b): the river line coverage of this lattice rides in UV2.y of terrain vertices as 0.49 c (every reader thresholds at 0.5); 0 without a river graph. S13.2: from the 8 m level up.
         float[] riverLine = scratch.RiverLine;
         bool hasRiverLine = false;
         if (RiverFootprint.UsesProxyLine(spacing))
@@ -6571,7 +6571,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         _uniformNearFadeEnabled = enabled;
     }
 
-    /// <summary>T2R-12b: the proxy shader reads the river line coverage of UV2.y only on river worlds and on levels that carry it (256 m and coarser).</summary>
+    /// <summary>T2R-12b: the proxy shader reads the river line coverage of UV2.y only on river worlds and on levels that carry it (8 m and coarser).</summary>
     private void SetRiverLineEnabled()
     {
         bool enabled = _grid?.TerrainSampler?.HasRiverLine == true && RiverFootprint.UsesProxyLine(SampleSpacingMeters);
