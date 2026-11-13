@@ -66,13 +66,13 @@ varying vec2 terrain_macro_shadow_uv;
 // day-gated strongest cloud estimate for this fragment.
 varying float combined_cloud_shadow_occlusion;
 
-// S11: the coverage c, then the floor that keeps a line through diluted mips: c' = c > 0.004 ? max(c, 0.2 smoothstep(0.004, 0.02, c)) : 0.
+// S11 (T2R-12b): the true area fraction c, with no floor.
 float river_line_coverage(float vertex_alpha, vec2 tile_uv) {
 	float c = 1.0 - vertex_alpha;
 	if (surface_tile_enabled) {
 		c = max(c, (1.0 - texture(surface_tile_color, surface_tile_sample_uv(tile_uv)).a) * surface_tile_blend);
 	}
-	return c > 0.004 ? max(c, 0.2 * smoothstep(0.004, 0.02, c)) : 0.0;
+	return c;
 }
 
 float sample_combined_cloud_shadow(vec3 sample_world_position, float day_factor) {

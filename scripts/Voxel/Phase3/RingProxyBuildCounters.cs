@@ -47,6 +47,8 @@ internal static class RingProxyBuildCounters
     private static readonly long[] GpuLatencySumUs = new long[LevelSlots], GpuLatencyMaxUs = new long[LevelSlots], GpuLatencyCount = new long[LevelSlots];
     private static readonly long[] GpuEditedToCpu = new long[LevelSlots];
     private static readonly long[] GpuRiverToCpu = new long[LevelSlots];
+    // T2R-12b: river line splat (S11b) calls, Stopwatch ticks and the largest single call per level.
+    private static readonly long[] RiverSplatCalls = new long[LevelSlots], RiverSplatTicks = new long[LevelSlots], RiverSplatMaxTicks = new long[LevelSlots];
     private static long _windowStart = Stopwatch.GetTimestamp();
 
     public readonly struct Scope : IDisposable
@@ -162,6 +164,32 @@ internal static class RingProxyBuildCounters
     public static void AddGpuRiverToCpu(int spacingMeters) => Interlocked.Increment(ref GpuRiverToCpu[SlotFor(spacingMeters)]);
     public static long GpuRiverToCpuCount(int spacingMeters) => Interlocked.Read(ref GpuRiverToCpu[SlotFor(spacingMeters)]);
 
+    /// <summary>T2R-12b: one river line splat of a sector at the given spacing took <paramref name="ticks"/> Stopwatch ticks.</summary>
+    public static void AddRiverLineSplat(int spacingMeters, long ticks)
+    {
+        int slot = SlotFor(spacingMeters);
+        Interlocked.Increment(ref RiverSplatCalls[slot]);
+        Interlocked.Add(ref RiverSplatTicks[slot], ticks);
+        long seen;
+        while (ticks > (seen = Interlocked.Read(ref RiverSplatMaxTicks[slot])) && Interlocked.CompareExchange(ref RiverSplatMaxTicks[slot], ticks, seen) != seen) { }
+    }
+
+    private static object RiverLineSplatSnapshot()
+    {
+        double toMs = 1000d / Stopwatch.Frequency, totalMs = 0d, maxMs = 0d;
+        long calls = 0;
+        var levels = new List<object>();
+        for (int i = 0; i < LevelSlots; i++)
+        {
+            long c = Interlocked.Read(ref RiverSplatCalls[i]);
+            if (c == 0) continue;
+            double ms = Interlocked.Read(ref RiverSplatTicks[i]) * toMs, max = Interlocked.Read(ref RiverSplatMaxTicks[i]) * toMs;
+            calls += c; totalMs += ms; maxMs = Math.Max(maxMs, max);
+            levels.Add(new { spacing = 1 << i, calls = c, totalMs = ms, maxMs = max });
+        }
+        return new { calls, totalMs, maxMs, levels };
+    }
+
     /// <summary>Total GPU batches (compute dispatch groups recorded) since the last reset: the "stationary adds 0 dispatches" check.</summary>
     public static long GpuBatchTotal()
     {
@@ -194,6 +222,7 @@ internal static class RingProxyBuildCounters
             Interlocked.Exchange(ref GpuLatencySumUs[i], 0); Interlocked.Exchange(ref GpuLatencyMaxUs[i], 0); Interlocked.Exchange(ref GpuLatencyCount[i], 0);
             Interlocked.Exchange(ref GpuEditedToCpu[i], 0);
             Interlocked.Exchange(ref GpuRiverToCpu[i], 0);
+            Interlocked.Exchange(ref RiverSplatCalls[i], 0); Interlocked.Exchange(ref RiverSplatTicks[i], 0); Interlocked.Exchange(ref RiverSplatMaxTicks[i], 0);
         }
         Interlocked.Exchange(ref _shorelineRebuilds, 0);
         Interlocked.Exchange(ref _shorelineSkips, 0);
@@ -240,6 +269,7 @@ internal static class RingProxyBuildCounters
             slotFallbackInstalls = Interlocked.Read(ref _slotFallbacks),
             slotPeakUsedBySpacing = SlotPeakSnapshot(),
             gpuHeights = GpuSnapshot(),
+            riverLineSplat = RiverLineSplatSnapshot(),
             slotSectorsDry = Interlocked.Read(ref _slotOceanKinds[0]),
             slotSectorsWaterGrid = Interlocked.Read(ref _slotOceanKinds[1]),
             slotSectorsCompactOcean = Interlocked.Read(ref _slotOceanKinds[2]),

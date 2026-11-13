@@ -54,6 +54,13 @@ uniform bool analytic_cloud_shadow_enabled = true;
 uniform float ring_width_meters = 20000.0;
 uniform bool debug_color_enabled = false;
 uniform vec3 debug_color = vec3(1.0, 0.0, 1.0);
+// T2R-12b (S11b): river line coverage. River worlds carry the true area fraction c of channel water in UV2.y of terrain lattice vertices as 0.49 c (water and skirt vertices hold 1, so every reader
+// thresholds at 0.5); the owner sets river_line_enabled only on levels that carry it. river_far_color is the River seeded colour, in the vertex-colour space.
+uniform bool river_line_enabled = false;
+uniform vec3 river_far_color = vec3(0.075, 0.36, 0.43);
+// Peak strength and tightness of the sun glint on the river line (constants of the look, as in ring_terrain_global).
+const float RIVER_GLINT_STRENGTH = 0.3;
+const float RIVER_GLINT_SHININESS = 140.0;
 // Shared per-LOD atlas.  Each sector supplies its own rect as an instance
 // uniform, so coverage changes need no unique materials or mesh rebuilds.
 uniform sampler2D coverage_atlas : filter_nearest, repeat_disable;
@@ -73,6 +80,8 @@ varying vec3 surface_up_world;
 varying float combined_cloud_shadow_occlusion;
 // Wet gloss for the custom light(): weight, roughness, specular reflectance.
 varying vec3 proxy_wet_specular_state;
+// The river line coverage c of this fragment (0 off the line).
+varying float river_line_c;
 
 float sample_combined_cloud_shadow(vec3 sample_world_position, float day_factor) {
 	// The Sunshine projected maps own their footprint; the far weather shell
@@ -85,6 +94,7 @@ void vertex() {
 	vec3 proxy_chord = CUSTOM0.xyz;
 	if (proxy_vertex_table_enabled) proxy_vertex_table_apply(VERTEX_ID, VERTEX, NORMAL, COLOR, UV, UV2, proxy_chord);
 	proxy_coverage_uv = UV;
+	river_line_c = river_line_enabled && UV2.y < 0.5 ? UV2.y / 0.49 : 0.0;
 	vec3 original_world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	if (geomorph_enabled) {
 		float morph_distance = distance(original_world_position, camera_world_position);
@@ -207,6 +217,7 @@ void fragment() {
 		grass_coverage_upward,
 		grass_coverage_eligibility);
 	terrain_color = ring_apply_terrain_grass_coverage(terrain_color, grass_coverage);
+	if (river_line_enabled && !debug_color_enabled) terrain_color = mix(terrain_color, ring_vertex_color_to_linear(river_far_color), river_line_c);
 	if (!structural_surface) terrain_color = ring_terrain_albedo_scaled(terrain_color);
 	// Wet world: per-location wetness darkens and glosses the proxy ground; puddles are only an averaged roughness drop (no normals, no mask shapes).
 	float surface_roughness = mix(roughness_value, max(roughness_value, .90), grass_coverage);
@@ -224,6 +235,10 @@ void fragment() {
 		wet_gloss = max(wet_gloss, puddle_far);
 	}
 	proxy_wet_specular_state = vec3(wet_gloss, surface_roughness, surface_specular);
+	if (river_line_enabled) {
+		surface_roughness = mix(surface_roughness, 0.06, river_line_c);
+		surface_specular = mix(surface_specular, 0.5, river_line_c);
+	}
 	// Keep a spatially varying night tint, but leave brightness to Godot's
 	// environment ambient light and directional-light pipeline.
 	vec3 lit_color = terrain_color * mix(night_tint, vec3(1.0), ring_day_factor);
@@ -238,6 +253,13 @@ void fragment() {
 	combined_cloud_shadow_occlusion = sample_combined_cloud_shadow(world_position, ring_day_factor);
 	AO = min(1.0 - combined_cloud_shadow_occlusion * 0.72, ring_storm_ambient(ring_storm_level(world_position))); // storm light
 	AO_LIGHT_AFFECT = 0.0;
+	if (river_line_enabled && river_line_c > 0.0) {
+		// River line glint (S11b): the sun lobe of ring_terrain_global scaled by the real coverage. River water is level, so the normal is the local zenith, not the coarse ground normal.
+		vec3 glint_sun = normalize((VIEW_MATRIX * vec4(sun_direction, 0.0)).xyz);
+		vec3 glint_up = normalize((VIEW_MATRIX * vec4(surface_up_world, 0.0)).xyz);
+		float glint = pow(max(dot(glint_up, normalize(glint_sun + VIEW)), 0.0), RIVER_GLINT_SHININESS) * (RIVER_GLINT_SHININESS + 8.0) / 8.0;
+		EMISSION += vec3(1.0, 0.97, 0.9) * glint * RIVER_GLINT_STRENGTH * river_line_c * ring_day_factor * (1.0 - combined_cloud_shadow_occlusion) * haze.T;
+	}
 	if (ring_shadow_debug_enabled()) {
 		// Shadow debug view: only the selected shadow term reaches the screen (see ring_shadow_compose.gdshaderinc).
 		ALBEDO = vec3(1.0);

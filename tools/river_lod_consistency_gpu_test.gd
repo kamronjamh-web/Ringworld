@@ -20,7 +20,19 @@ const END_ALTITUDE_M := 200000.0
 const DISTANCE_PER_ALTITUDE := 1.5
 const PITCH_DEG := -33.7
 # The one step saved at full size (full_stepN.png beside the frames): the minimap panel in the corner is only readable there.
-const FULL_FRAME_STEP := 20
+const FULL_FRAME_STEPS := [20, 45, 60, 69]
+# T2R-12b glint poses: 150 km above the river point, sun 35 degrees up; the river is under a pixel wide at this range and the aim is a few pixels off, so the measure is the peak 5 x 5 mean luma gain of the line (same pose, line on minus line off) within +-GLINT_SEARCH_HALF pixels of the frame centre.
+# The mirror pose must gain at least GLINT_MIN_DELTA and the pose 90 degrees off in azimuth under GLINT_OFF_FRACTION of that: the tint of the line shows in both, only the glint belongs to the mirror pose.
+const GLINT_ALTITUDE_M := 150000.0
+const GLINT_SUN_ELEVATION := 35.0
+const GLINT_SUN_RISING := true
+const GLINT_RING_WIDTH_M := 318000.0
+const GLINT_ACROSS_MIN_M := 64000.0
+const GLINT_ACROSS_MAX_M := 90000.0
+const GLINT_SEARCH_HALF := 100
+const GLINT_PEAK_HALF := 2
+const GLINT_OFF_FRACTION := 0.6
+const GLINT_MIN_DELTA := 0.05
 const FRAME_SIZE := Vector2i(640, 360)
 const SPIKE_FACTOR := 1.25
 const SPIKE_MAX_ALTITUDE_M := 25000.0
@@ -81,7 +93,8 @@ func _run() -> void:
 	var points: Dictionary = probe.call("FindPoints", game)
 	var rivers := bool(points.get("ok", false))
 	var far_only := _arg("far-only") == "1" or OS.get_cmdline_user_args().has("--far-only")
-	var tag := ("rivers" if rivers else "gen1") + ("_far" if far_only else "")
+	var no_line := OS.get_cmdline_user_args().has("--no-proxy-line")
+	var tag := ("rivers" if rivers else "gen1") + ("_far" if far_only else "") + ("_noline" if no_line else "")
 	var pose_path := ProjectSettings.globalize_path(OUT_ROOT).path_join("pose.json")
 	var pose := {}
 	if rivers:
@@ -103,16 +116,31 @@ func _run() -> void:
 	print("%s %s pose around=%.0f across=%.0f level=%.2f" % [MARKER, tag, float(pose["around"]), float(pose["across"]), float(pose["level"])])
 	if far_only:
 		_hide_proxies(game)
-	var series: Dictionary = await _fly_out(game, pose, tag, far_only)
+	var series: Dictionary = await _fly_out(game, pose, tag, far_only, no_line)
 	if series.is_empty():
 		return
+	if rivers and not far_only:
+		# The glint poses sit 230 km off along the sun azimuth (a third of it across the ring): the river must be 64 to 90 km from the ring edge. The widest such reach, so the glint has coverage to show.
+		var glint_point: Dictionary = probe.call("FindRiverAcross", game, GLINT_ACROSS_MIN_M, GLINT_ACROSS_MAX_M, float(pose["around"]), 400000.0)
+		if not bool(glint_point.get("ok", false)):
+			_fail("no glint river point: %s" % str(glint_point.get("error", "")))
+			return
+		print("%s glint river point around=%.0f across=%.0f level=%.2f width=%.0f m" % [MARKER, float(glint_point["around"]), float(glint_point["across"]), float(glint_point["level"]), float(glint_point["width"])])
+		var glint: Dictionary = await _glint(game, glint_point, _out_dir(tag), no_line)
+		if glint.is_empty():
+			return
+		series["glint"] = glint
+		if glint.has("mirror_noline") and not no_line:
+			_compare_glint(glint)
 	var series_path := ProjectSettings.globalize_path(OUT_ROOT).path_join("series_%s.json" % tag)
 	var out := FileAccess.open(series_path, FileAccess.WRITE)
 	out.store_string(JSON.stringify(series))
 	out.close()
 	var other_tag := ("gen1" if rivers else "rivers") + ("_far" if far_only else "")
 	var other_path := ProjectSettings.globalize_path(OUT_ROOT).path_join("series_%s.json" % other_tag)
-	if FileAccess.file_exists(other_path):
+	if no_line:
+		pass
+	elif FileAccess.file_exists(other_path):
 		var other_file := FileAccess.open(other_path, FileAccess.READ)
 		var other: Dictionary = JSON.parse_string(other_file.get_as_text())
 		other_file.close()
@@ -160,7 +188,7 @@ func _luma_small(image: Image) -> PackedFloat32Array:
 	return values
 
 
-func _fly_out(game: Node, pose: Dictionary, tag: String, far_only := false) -> Dictionary:
+func _fly_out(game: Node, pose: Dictionary, tag: String, far_only := false, no_line := false) -> Dictionary:
 	var explorer := game.get_node_or_null("Explorer")
 	if explorer == null:
 		_fail("no Explorer")
@@ -182,15 +210,20 @@ func _fly_out(game: Node, pose: Dictionary, tag: String, far_only := false) -> D
 		var altitude := START_ALTITUDE_M * pow(ratio, step)
 		if far_only:
 			_hide_proxies(game)
+		if no_line:
+			_apply_no_line(game)
 		explorer.call("TeleportToCanonicalMeters", float(pose["around"]) - altitude * DISTANCE_PER_ALTITUDE, float(pose["level"]) + altitude, float(pose["across"]), 0.0, PITCH_DEG, true)
 		await HARNESS.COMMON.settle(self, 0.4)
 		await HARNESS.COMMON.wait_builds_idle(self, game, 12.0, 10)
 		await HARNESS.COMMON.settle(self, 0.6)
+		if no_line:
+			_apply_no_line(game)
+			await HARNESS.COMMON.settle(self, 0.1)
 		await RenderingServer.frame_post_draw
 		var image := root.get_texture().get_image()
 		if image.get_format() != Image.FORMAT_RGBA8:
 			image.convert(Image.FORMAT_RGBA8)
-		if step == FULL_FRAME_STEP:
+		if FULL_FRAME_STEPS.has(step):
 			image.save_png(dir.path_join("full_step%d.png" % step))
 			await _save_minimap(dir.path_join("minimap_step%d.png" % step))
 		image.resize(FRAME_SIZE.x, FRAME_SIZE.y, Image.INTERPOLATE_BILINEAR)
@@ -258,3 +291,187 @@ func _compare(rivers: Dictionary, gen1: Dictionary) -> void:
 	print("%s centre patch differs from gen-1 at %d of %d steps from %.0f m (%.0f %%, need %.0f %%); same at steps %s" % [MARKER, different, far_steps, LINE_FROM_ALTITUDE_M, 100.0 * share, 100.0 * MIN_LINE_SHARE, str(missing)])
 	if share < MIN_LINE_SHARE:
 		failures.append("the river line shows at the centre in only %.0f %% of the steps from %.0f m" % [100.0 * share, LINE_FROM_ALTITUDE_M])
+
+
+# ------------------------------------------------------------------ T2R-12b: glint poses and the no-line variant
+
+## Every distinct proxy-terrain ShaderMaterial in the scene (the sector meshes carry them as surface materials).
+func _proxy_materials(game: Node) -> Array:
+	var found: Dictionary = {}
+	var stack: Array = [game]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		if node is MeshInstance3D and (node as MeshInstance3D).mesh != null:
+			var mesh := (node as MeshInstance3D).mesh
+			for s in mesh.get_surface_count():
+				var material := mesh.surface_get_material(s)
+				if material is ShaderMaterial and (material as ShaderMaterial).shader != null and (material as ShaderMaterial).shader.resource_path.ends_with("ring_terrain_proxy.gdshader"):
+					found[material.get_instance_id()] = material
+		for child in node.get_children():
+			stack.append(child)
+	return found.values()
+
+
+## --no-proxy-line: the proxy shader ignores the river coverage (test side only). The owner caches its own copy of the flag and writes only on a change, so this holds until a level is rebuilt.
+func _apply_no_line(game: Node) -> void:
+	for material in _proxy_materials(game):
+		(material as ShaderMaterial).set_shader_parameter("river_line_enabled", false)
+
+
+## Switches the Sunshine cloud compositor effects off (the cloud shell is drawn there): only the shader term is measured, and a river under one pixel wide at this range would drown in cloud noise.
+func _disable_cloud_effects(game: Node) -> void:
+	var stack: Array = [game]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		if node is WorldEnvironment and (node as WorldEnvironment).compositor != null:
+			for effect in (node as WorldEnvironment).compositor.compositor_effects:
+				if effect != null and effect.get_script() != null and (effect.get_script() as Script).resource_path.contains("Sunshine"):
+					effect.enabled = false
+		for child in node.get_children():
+			stack.append(child)
+
+
+func _flat(v: Vector3) -> Vector3:
+	return Vector3(v.x, 0.0, v.z)
+
+
+## The camera at a canonical pose, read back in world space.
+func _camera_at(explorer: Node, around: float, vertical: float, across: float, yaw: float, pitch: float) -> Dictionary:
+	explorer.call("TeleportToCanonicalMeters", around, vertical, across, yaw, pitch, true)
+	await HARNESS.COMMON.settle(self, 0.25)
+	var camera := root.get_camera_3d()
+	return {"pos": camera.global_position, "forward": -camera.global_transform.basis.z}
+
+
+## Takes the glint stills: at GLINT_ALTITUDE_M above the river point, once on the mirror ray of the sun and once 90 degrees off in azimuth at the same altitude and range. Returns the centre-patch luma of each.
+func _glint(game: Node, pose: Dictionary, dir: String, no_line: bool) -> Dictionary:
+	# The measurement is of the shader term: cloud meshes would cover a river that is under one pixel wide at this range.
+	_disable_cloud_effects(game)
+	var explorer := game.get_node_or_null("Explorer")
+	var applied: Dictionary = HARNESS.COMMON.apply_time(game, {"mode": "elevation", "value": GLINT_SUN_ELEVATION, "rising": GLINT_SUN_RISING})
+	if applied.has("error"):
+		_fail("glint time: %s" % str(applied["error"]))
+		return {}
+	var around := float(pose["around"])
+	var across := float(pose["across"])
+	var level := float(pose["level"]) + 2.0
+	# The camera sits at the world origin whatever its canonical pose (floating origin), so positions read after different teleports are not comparable. Everything is derived from one snapshot at the river point
+	# (the ring centre and sun uniforms, the camera forward at yaw 0 and 90); the across direction comes from how the ring centre moves for a 1 km step across.
+	var river: Dictionary = await _camera_at(explorer, around, level, across, 0.0, 0.0)
+	await HARNESS.COMMON.wait_builds_idle(self, game, 60.0, 10)
+	river = await _camera_at(explorer, around, level, across, 0.0, 0.0)
+	var materials := _proxy_materials(game)
+	if materials.is_empty():
+		_fail("glint: no proxy material found")
+		return {}
+	var material := materials[0] as ShaderMaterial
+	var centre: Vector3 = material.get_shader_parameter("ring_center")
+	var sun := (material.get_shader_parameter("sun_direction") as Vector3).normalized()
+	var r_pos: Vector3 = river["pos"]
+	var turned: Dictionary = await _camera_at(explorer, around, level, across, 90.0, 0.0)
+	var side: Dictionary = await _camera_at(explorer, around, level, across + 1000.0, 0.0, 0.0)
+	var centre_side: Vector3 = (_proxy_materials(game)[0] as ShaderMaterial).get_shader_parameter("ring_center")
+	var rel_r := _flat(r_pos - centre)
+	var up := (-rel_r).normalized()
+	var radius_datum := rel_r.length() + level
+	var t_axis := _flat(river["forward"] as Vector3).normalized()
+	var a_axis := (centre - centre_side).normalized()
+	var yaw_sign := 1.0 if (turned["forward"] as Vector3).dot(a_axis) > 0.0 else -1.0
+	print("%s glint calibration: up.t %.3f up.a %.3f t.a %.3f a.y %.3f yaw_sign %.0f sun.up %.3f radius_datum %.0f" % [MARKER, up.dot(t_axis), up.dot(a_axis), t_axis.dot(a_axis), a_axis.y, yaw_sign, sun.dot(up), radius_datum])
+	# The mirror ray: the reflection of the sun direction about the local zenith.
+	var mirror := (2.0 * sun.dot(up) * up - sun).normalized()
+	var elevation := mirror.dot(up)
+	if elevation < 0.1:
+		_fail("glint: the sun is below the horizon at the river point (elevation sine %.2f), no mirror pose" % sun.dot(up))
+		return {}
+	var range_m := GLINT_ALTITUDE_M / elevation
+	var horizontal := (mirror - up * elevation).normalized()
+	var luma := {}
+	# Both poses with the line first, then both again with it switched off (the owner writes the flag only on a change, so it stays off once set).
+	for combo in [["mirror", false], ["off", false], ["mirror", true], ["off", true]]:
+		var pose_name: String = combo[0]
+		var line_off: bool = combo[1] or no_line
+		var key: String = pose_name + ("_noline" if combo[1] else "")
+		# The pose off the mirror ray turns 90 degrees either way, whichever side stays on the ring.
+		var turn := 90.0
+		if pose_name == "off" and not (across + horizontal.rotated(up, deg_to_rad(turn)).dot(a_axis) * range_m * sqrt(1.0 - elevation * elevation) > 0.0):
+			turn = -90.0
+		var h := horizontal if pose_name == "mirror" else horizontal.rotated(up, deg_to_rad(turn))
+		var view_dir := (h * sqrt(maxf(0.0, 1.0 - elevation * elevation)) + up * elevation).normalized()
+		var cam_world: Vector3 = r_pos + view_dir * range_m
+		# Back to canonical: around by the angle about the ring centre, vertical by the radial difference, across along the ring axis.
+		var rel_c := _flat(cam_world - centre)
+		var angle := absf(rel_r.angle_to(rel_c))
+		var can_around := around + (angle if (rel_c - rel_r).dot(t_axis) > 0.0 else -angle) * radius_datum
+		var can_vertical := level + (rel_r.length() - rel_c.length())
+		var can_across := across + (cam_world - r_pos).dot(a_axis)
+		if can_across < 0.0 or can_across > GLINT_RING_WIDTH_M:
+			_fail("glint %s: the camera would sit at across %.0f m, off the ring; pick another sun side or river point" % [pose_name, can_across])
+			return {}
+		# Aim at the river point from the camera: the heading frame is that of the camera position.
+		var up_c := (-rel_c).normalized()
+		var tangent_c := a_axis.cross(up_c).normalized() * (1.0 if a_axis.cross(up).dot(t_axis) > 0.0 else -1.0)
+		var look := (r_pos - cam_world).normalized()
+		var pitch := rad_to_deg(asin(clampf(look.dot(up_c), -1.0, 1.0)))
+		var yaw := rad_to_deg(atan2(yaw_sign * look.dot(a_axis), look.dot(tangent_c)))
+		print("%s glint %s target: around %.0f vertical %.0f across %.0f yaw %.1f pitch %.1f (view azimuth t %.2f a %.2f)" % [MARKER, key, can_around, can_vertical, can_across, yaw, pitch, h.dot(t_axis), h.dot(a_axis)])
+		await _camera_at(explorer, can_around, can_vertical, can_across, yaw, pitch)
+		await HARNESS.COMMON.wait_builds_idle(self, game, 12.0, 10)
+		await HARNESS.COMMON.settle(self, 1.0)
+		if line_off:
+			_apply_no_line(game)
+			await HARNESS.COMMON.settle(self, 0.3)
+		await RenderingServer.frame_post_draw
+		luma[key] = _patch_luma(dir.path_join("glint_%s.png" % key))
+		print("%s glint %s: view elevation %.1f deg, range %.0f km, centre luma %.5f%s" % [MARKER, key, rad_to_deg(asin(elevation)), range_m / 1000.0, luma[key], ""])
+	luma["mirror_peak"] = _peak_gain(dir.path_join("glint_mirror.png"), dir.path_join("glint_mirror_noline.png"))
+	luma["off_peak"] = _peak_gain(dir.path_join("glint_off.png"), dir.path_join("glint_off_noline.png"))
+	return luma
+
+
+func _patch_luma(path: String) -> float:
+	var image := root.get_texture().get_image()
+	if image.get_format() != Image.FORMAT_RGBA8:
+		image.convert(Image.FORMAT_RGBA8)
+	image.save_png(path)
+	var size := image.get_size()
+	var c := image.get_pixel(size.x / 2, size.y / 2)
+	return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+
+
+## Peak 5 x 5 mean of (with - without) luma within GLINT_SEARCH_HALF pixels of the frame centre, from the two saved stills.
+func _peak_gain(with_path: String, without_path: String) -> float:
+	var a := Image.load_from_file(with_path)
+	var b := Image.load_from_file(without_path)
+	var w := a.get_width()
+	var h := a.get_height()
+	var x0 := w / 2 - GLINT_SEARCH_HALF - GLINT_PEAK_HALF
+	var y0 := h / 2 - GLINT_SEARCH_HALF - GLINT_PEAK_HALF
+	var n := 2 * (GLINT_SEARCH_HALF + GLINT_PEAK_HALF) + 1
+	var gain := PackedFloat32Array()
+	gain.resize(n * n)
+	for y in n:
+		for x in n:
+			var ca := a.get_pixel(x0 + x, y0 + y)
+			var cb := b.get_pixel(x0 + x, y0 + y)
+			gain[y * n + x] = (0.2126 * ca.r + 0.7152 * ca.g + 0.0722 * ca.b) - (0.2126 * cb.r + 0.7152 * cb.g + 0.0722 * cb.b)
+	var best := -1.0
+	var k := 2 * GLINT_PEAK_HALF + 1
+	for y in range(0, n - k + 1):
+		for x in range(0, n - k + 1):
+			var sum := 0.0
+			for j in k:
+				for i in k:
+					sum += gain[(y + j) * n + x + i]
+			best = maxf(best, sum / float(k * k))
+	return best
+
+
+func _compare_glint(glint: Dictionary) -> void:
+	var mirror_gain := float(glint["mirror_peak"])
+	var off_gain := float(glint["off_peak"])
+	print("%s glint: peak 5 x 5 luma gain of the line, mirror pose %.4f (need at least %.4f), pose 90 degrees off %.4f (need under %.4f = %.1f x the mirror gain)" % [MARKER, mirror_gain, GLINT_MIN_DELTA, off_gain, GLINT_OFF_FRACTION * mirror_gain, GLINT_OFF_FRACTION])
+	if mirror_gain < GLINT_MIN_DELTA:
+		failures.append("the mirror pose gains only %.4f luma from the line (need %.4f)" % [mirror_gain, GLINT_MIN_DELTA])
+	if off_gain >= GLINT_OFF_FRACTION * mirror_gain:
+		failures.append("off the mirror ray the line gains %.4f luma, not under %.1f x the mirror gain %.4f" % [off_gain, GLINT_OFF_FRACTION, mirror_gain])

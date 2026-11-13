@@ -233,7 +233,7 @@ public sealed class RiverCarveOperator
     }
 
     /// <summary>S7 footprint rule: is the piece only a valley at this footprint (no core, no owner).</summary>
-    private static bool ValleyOnly(double footprint, double halfWidth) => footprint > ValleyOnlyAboveFootprint || (footprint > ValleyOnlyNarrowAboveFootprint && 2d * halfWidth < footprint / 16d);
+    internal static bool ValleyOnly(double footprint, double halfWidth) => footprint > ValleyOnlyAboveFootprint || (footprint > ValleyOnlyNarrowAboveFootprint && 2d * halfWidth < footprint / 16d);
 
     /// <summary>
     /// The core of S7 as a pure function: the bed <c>L - d_e - (d - d_e) (1 - (t / a)^2)</c> inside the half width, then the bank rising to the level plus the freeboard

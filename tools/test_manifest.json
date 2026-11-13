@@ -4922,8 +4922,8 @@
         "hydrology"
       ],
       "marker": "RIVER_LOD_CONSISTENCY",
-      "expected_s": 180,
-      "timeout_s": 600,
+      "expected_s": 300,
+      "timeout_s": 900,
       "user_args": "--generation=1 --review-features=water.rivers"
     },
     "river_graph_cache_test": {

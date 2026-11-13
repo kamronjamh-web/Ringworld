@@ -120,16 +120,13 @@ public sealed class RiverGraph
 
     // ------------------------------------------------------------------ far coverage (T2R-12, S11)
 
-    /// <summary>The least coverage of a rectangle any reach crosses (S11, tuned at the T2R-12 review): a river narrower than its cell still draws a line.</summary>
-    public const double LineCoverageMinimum = 0.2;
     /// <summary>Segments a piece is sampled in (S11): nine base-curve points per piece.</summary>
     public const int CoverageSegmentsPerPiece = 8;
 
     [ThreadStatic] private static List<int>? _coveragePieces;
 
     /// <summary>
-    /// S11 far coverage: <c>c = min(1, sum of (length of each base-curve segment inside the rectangle) * (full water width there) / area)</c>, raised to <see cref="LineCoverageMinimum"/> when any
-    /// reach crosses the rectangle, and 0 when none does. Around is unwrapped metres. The base curve is sampled at <see cref="CoverageSegmentsPerPiece"/> segments per piece (the meander is not
+    /// S11 far coverage: <c>c = min(1, sum of (length of each base-curve segment inside the rectangle) * (full water width there) / area)</c>: the true area fraction, with no minimum (T2R-12b). Around is unwrapped metres. The base curve is sampled at <see cref="CoverageSegmentsPerPiece"/> segments per piece (the meander is not
     /// included, so the length is that of the base curve). Allocation-free after the first call on a thread.
     /// </summary>
     public double LineCoverage(double aroundMin, double aroundMax, double acrossMin, double acrossMax)
@@ -144,11 +141,11 @@ public sealed class RiverGraph
     {
         double channelArea = LineArea(aroundMin, aroundMax, acrossMin, acrossMax, spanWeight, out weightedMean, out bool crossed);
         if (!crossed) return 0d;
-        return Math.Min(1d, Math.Max(LineCoverageMinimum, channelArea / ((aroundMax - aroundMin) * (acrossMax - acrossMin))));
+        return Math.Min(1d, channelArea / ((aroundMax - aroundMin) * (acrossMax - acrossMin)));
     }
 
     /// <summary>
-    /// The piece-in-rectangle loop of <see cref="LineCoverage(double, double, double, double)"/> without the minimum and the cap (T3.md reset, interface 7): the channel area inside the
+    /// The piece-in-rectangle loop of <see cref="LineCoverage(double, double, double, double)"/> without the cap (T3.md reset, interface 7): the channel area inside the
     /// rectangle in square metres (the sum over base-curve segments of the length inside times the full water width), whether any reach crosses it, and the weighted mean of
     /// <paramref name="spanWeight"/> as described there.
     /// </summary>
@@ -194,6 +191,95 @@ public sealed class RiverGraph
         }
         if (spanWeight != null && sum > 0d) weightedMean = weighted / sum;
         return sum;
+    }
+
+    /// <summary>
+    /// T2R-12b (S11b): deposits the valley-only channel area of the pieces near a lattice onto its vertices. Vertex (x, z) of <paramref name="coverage"/> (row-major, <paramref name="columns"/> by
+    /// <paramref name="rows"/>) is at <c>origin + index * spacing</c> (around is unwrapped metres). A segment that has no river owner at <paramref name="footprintMeters"/>
+    /// (<see cref="RiverCarveOperator.ValleyOnly"/>) is cut into steps of at most half a spacing along and across its width, and each step's water area goes to its four surrounding vertices
+    /// with bilinear weights, so the lattice holds the channel area; values clamp to 1 and there is no minimum. A vertex's sum does not depend on the lattice that contains it.
+    /// Returns true when any value is above 0.
+    /// </summary>
+    public bool SplatLineArea(double aroundOrigin, double acrossOrigin, double spacing, int columns, int rows, double footprintMeters, Span<float> coverage)
+    {
+        coverage.Slice(0, columns * rows).Clear();
+        if (!(spacing > 0d) || columns < 1 || rows < 1) return false;
+        List<int> pieces = _coveragePieces ??= new List<int>(64);
+        pieces.Clear();
+        double grow = spacing + RiverSpatialIndex.ReachRadiusMeters;
+        double aroundMax = aroundOrigin + (columns - 1) * spacing, acrossMax = acrossOrigin + (rows - 1) * spacing;
+        Index.CollectPieces(aroundOrigin - grow, aroundMax + grow, acrossOrigin - grow, acrossMax + grow, pieces);
+        if (pieces.Count == 0) return false;
+        bool displaced = spacing <= 1024d;
+        int segments = displaced ? CoverageSegmentsPerPiece : 1;
+        double circumference = Network.CircumferenceM, centreAround = 0.5 * (aroundOrigin + aroundMax);
+        double originColumn = aroundOrigin / spacing, originRow = acrossOrigin / spacing;
+        double aroundLo = aroundOrigin - spacing, aroundHi = aroundMax + spacing, acrossLo = acrossOrigin - spacing, acrossHi = acrossMax + spacing;
+        Span<double> px = stackalloc double[CoverageSegmentsPerPiece + 1], py = stackalloc double[CoverageSegmentsPerPiece + 1];
+        bool any = false;
+        for (int n = 0; n < pieces.Count; n++)
+        {
+            int piece = pieces[n];
+            int stem = PieceStem[piece], k = piece - Network.Stems[stem].NodeStart;
+            RiverStemCurve curve = Network.Curves[stem];
+            // The image of the piece nearest the lattice: one fixed shift per piece, so two lattices that share a column see the same positions.
+            curve.Controls(k, out _, out _, out double mx, out _, out _, out _);
+            double baseAround = curve.OriginAround + Math.Round((centreAround - (curve.OriginAround + mx)) / circumference) * circumference;
+            for (int i = 0; i <= segments; i++)
+            {
+                double u = (double)i / segments;
+                curve.EvalPiece(k, u, out double x, out double y, out double tx, out double ty);
+                double pa = baseAround + x, pc = curve.OriginAcross + y;
+                if (displaced)
+                {
+                    // The operator's displaced centreline: the base point moved along (-ty, tx) by the meander.
+                    double s = curve.S0[k] + curve.Len[k] * u;
+                    Network.ChannelAt(stem, s, out RiverChannel endChannel);
+                    double d = Network.Meander(stem, s, in endChannel);
+                    pa -= d * ty; pc += d * tx;
+                }
+                px[i] = pa; py[i] = pc;
+            }
+            for (int i = 0; i < segments; i++)
+            {
+                double x0 = px[i], y0 = py[i], x1 = px[i + 1], y1 = py[i + 1];
+                if (Math.Max(x0, x1) < aroundLo || Math.Min(x0, x1) > aroundHi || Math.Max(y0, y1) < acrossLo || Math.Min(y0, y1) > acrossHi) continue;
+                Network.ChannelAt(stem, curve.S0[k] + curve.Len[k] * (i + 0.5) / segments, out RiverChannel channel);
+                if (!RiverCarveOperator.ValleyOnly(footprintMeters, channel.HalfWidth)) continue;
+                double dx = x1 - x0, dy = y1 - y0, chord = Math.Sqrt(dx * dx + dy * dy);
+                double length = displaced ? chord : curve.Len[k], w = 2d * channel.HalfWidth;
+                if (!(chord > 0d) || !(w > 0d)) continue;
+                int along = Math.Max(1, (int)Math.Ceiling(length / (0.5 * spacing))), across = Math.Max(1, (int)Math.Ceiling(w / (0.5 * spacing)));
+                double nx = -dy / chord, ny = dx / chord, area = (length / along) * (w / across) / (spacing * spacing);
+                for (int a = 0; a < along; a++)
+                {
+                    double t = (a + 0.5) / along, cx = x0 + dx * t, cy = y0 + dy * t;
+                    for (int c = 0; c < across; c++)
+                    {
+                        double lateral = w * ((c + 0.5) / across - 0.5);
+                        // Lattice coordinates: an integer origin index (the sector lattices) is subtracted exactly, so a vertex shared by two lattices gets the same weights.
+                        double fx = (cx + nx * lateral) / spacing - originColumn, fy = (cy + ny * lateral) / spacing - originRow;
+                        double ix = Math.Floor(fx), iy = Math.Floor(fy), wx = fx - ix, wy = fy - iy;
+                        int col = (int)ix, row = (int)iy;
+                        any |= Deposit(coverage, columns, rows, col, row, (1d - wx) * (1d - wy) * area);
+                        any |= Deposit(coverage, columns, rows, col + 1, row, wx * (1d - wy) * area);
+                        any |= Deposit(coverage, columns, rows, col, row + 1, (1d - wx) * wy * area);
+                        any |= Deposit(coverage, columns, rows, col + 1, row + 1, wx * wy * area);
+                    }
+                }
+            }
+        }
+        if (!any) return false;
+        for (int i = 0; i < columns * rows; i++)
+            if (coverage[i] > 1f) coverage[i] = 1f;
+        return true;
+    }
+
+    private static bool Deposit(Span<float> coverage, int columns, int rows, int col, int row, double value)
+    {
+        if ((uint)col >= (uint)columns || (uint)row >= (uint)rows || !(value > 0d)) return false;
+        coverage[row * columns + col] += (float)value;
+        return true;
     }
 
     /// <summary>Length of the segment inside the box [-hw, hw] x [-hh, hh] (Liang-Barsky); 0 when it misses.</summary>

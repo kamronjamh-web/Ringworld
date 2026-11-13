@@ -75,13 +75,31 @@ public sealed partial class RingTerrainSampler
     {
         if (RuntimeRiverGraph is not { } graph) return 0d;
         double a0 = around - 0.5 * aroundSize, a1 = around + 0.5 * aroundSize, c0 = across - 0.5 * acrossSize, c1 = across + 0.5 * acrossSize;
-        // The minimum keeps a line alive in cells up to 4 km (S11); a vertex of the 8 to 250 km global tiers would tint a whole cell for one river, so those carry the plain area fraction only.
-        if (Math.Max(aroundSize, acrossSize) <= RiverLineMinimumCellMeters) return graph.LineCoverage(a0, a1, c0, c1);
         return Math.Min(1d, graph.LineArea(a0, a1, c0, c1, null, out _, out _) / (aroundSize * acrossSize));
     }
 
-    /// <summary>The largest cell the S11 minimum coverage applies to (the test checks 512 m and 4 km).</summary>
-    internal const double RiverLineMinimumCellMeters = 4096d;
+    /// <summary>
+    /// T2R-12b (S11b): the valley-only channel area of the lattice of a proxy level of 256 m and coarser as coverage in [0, 1] per vertex (row-major). False without a river graph, for other
+    /// spacings and where no river influences the rectangle; <paramref name="coverage"/> is then left untouched.
+    /// </summary>
+    internal bool TrySplatRiverLine(long aroundOrigin, long acrossOrigin, int spacing, int columns, int rows, Span<float> coverage)
+    {
+        if (RuntimeRiverGraph is not { } graph || !RiverFootprint.UsesProxyLine(spacing)) return false;
+        double grow = spacing + RiverSpatialIndex.ReachRadiusMeters;
+        long aroundMax = aroundOrigin + (long)(columns - 1) * spacing;
+        double acrossMax = acrossOrigin + (double)(rows - 1) * spacing;
+        if (!IntersectsRiverInfluence(aroundOrigin - (long)grow, aroundMax + (long)grow, acrossOrigin - grow, acrossMax + grow)) return false;
+        return graph.SplatLineArea(aroundOrigin, acrossOrigin, spacing, columns, rows, RiverFootprint.ToMeters(RiverFootprint.ForProxySpacing(spacing)), coverage);
+    }
+
+    /// <summary>
+    /// S10 as amended (T2R-12b): the far tier (far viewport, global LOD) keeps its point samples and drops the river owner, which gives the same classification as a footprint of
+    /// <see cref="RiverFootprint.Far"/> (valley only, no River sample). Heights are unchanged; lakes and the ocean are untouched.
+    /// </summary>
+    internal TerrainSample WithoutFarRiverOwner(in TerrainSample sample)
+        => RuntimeRiverGraph != null && sample.WaterKind == SurfaceWaterKind.River
+            ? sample with { WaterKind = SurfaceWaterKind.None, WaterSurfaceHeight = sample.SurfaceHeight, ExactWaterLevel = 0f, HasExactWaterLevel = false }
+            : sample;
 
     /// <summary>T2R-12: true when far meshes of this sampler carry the river line coverage in their alpha (the owners then set <c>river_line_enabled</c> on the terrain material).</summary>
     internal bool HasRiverLine => RuntimeRiverGraph != null;

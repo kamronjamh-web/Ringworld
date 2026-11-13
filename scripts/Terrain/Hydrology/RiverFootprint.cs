@@ -19,6 +19,9 @@ public static class RiverFootprint
     public static int ForProxySpacing(int spacingMeters)
         => spacingMeters <= 2 ? 0 : spacingMeters <= LargestFinitePointSpacing ? spacingMeters : FarCode;
 
+    /// <summary>T2R-12b (S11b): proxy levels of 256 m and coarser carry the valley-only channel area as coverage in the vertex payload.</summary>
+    public static bool UsesProxyLine(int spacingMeters) => spacingMeters >= 256;
+
     /// <summary>The footprint in metres for a cache footprint code.</summary>
     public static double ToMeters(int footprintCode) => footprintCode >= FarCode ? Far : footprintCode;
 }

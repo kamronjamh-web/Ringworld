@@ -1527,9 +1527,9 @@ public partial class RingScaledFarViewport : Node
 			long around = anchorAround + (long)Math.Round(Math.Cos(angle) * distance);
 			int across = Mathf.Clamp(anchorAcross + Mathf.RoundToInt((float)(Math.Sin(angle) * distance)), 0, width);
 			bool usesPresentationSurface = edits.UsesFloatSurface || sampler.UsesRuntimeSurfaceGeneration;
-			TerrainSample sample = usesPresentationSurface
+			TerrainSample sample = sampler.WithoutFarRiverOwner(usesPresentationSurface
 				? edits.GetPresentationTerrainSample(sampler, around, across)
-				: sampler.GetTerrainSample(around, across);
+				: sampler.GetTerrainSample(around, across));
 			float terrainHeight = ResolveFarTerrainHeight(sampler, edits, around, across);
 			float displayedHeight = sample.ResolveDisplayedHeight(terrainHeight);
 			int index = radial * (angularSteps + 1) + angular;

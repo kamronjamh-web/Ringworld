@@ -1104,9 +1104,9 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         double around = (state.AroundStartIndex + x) * state.AroundSpacing;
         double across = z * state.AcrossSpacing;
         int sampleAround = (int)Math.Round(around), sampleAcross = (int)Math.Round(across);
-        TerrainSample terrainSample = state.UsesPresentationSurface
+        TerrainSample terrainSample = state.Sampler.WithoutFarRiverOwner(state.UsesPresentationSurface
             ? state.Edits.GetPresentationTerrainSample(state.Sampler, sampleAround, sampleAcross)
-            : state.Sampler.GetTerrainSample(sampleAround, sampleAcross);
+            : state.Sampler.GetTerrainSample(sampleAround, sampleAcross));
         float sampledHeight = state.UsesPresentationSurface
             ? state.Sampler.UsesRuntimeSurfaceGeneration
                 ? state.Edits.GetPresentationSurfaceHeight(state.Sampler, around, across)

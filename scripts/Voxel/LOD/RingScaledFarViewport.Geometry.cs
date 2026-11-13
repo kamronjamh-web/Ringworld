@@ -426,7 +426,7 @@ public partial class RingScaledFarViewport
             double around = circumference * x / aroundCount, across = width * (double)z / acrossCount;
             long sampleAround = x == aroundCount ? 0 : (long)Math.Round(around);
             int sampleAcross = (int)Math.Round(across);
-            TerrainSample sample = presentation ? edits.GetPresentationTerrainSample(sampler, sampleAround, sampleAcross) : sampler.GetTerrainSample(sampleAround, sampleAcross);
+            TerrainSample sample = sampler.WithoutFarRiverOwner(presentation ? edits.GetPresentationTerrainSample(sampler, sampleAround, sampleAcross) : sampler.GetTerrainSample(sampleAround, sampleAcross));
             float height = ResolveFarTerrainHeight(sampler, edits, sampleAround, sampleAcross);
             float waterHeight = sample.ResolveDisplayedHeight(height);
             int index = z * row + x;

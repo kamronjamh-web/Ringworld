@@ -525,6 +525,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
     private const int LodSectorCacheVersion = 11;
     // T2R-10 (S9): water.rivers worlds use this version and append footprint, exact level and flag to every record; generation 1 keeps version 11 and its bytes.
     private const int LodSectorCacheRiverVersion = 12;
+    /// <summary>T2R-12b (S11b): the river line coverage c is stored in UV2.y of terrain vertices as 0.49 c, below the 0.5 threshold every reader of that flag uses.</summary>
+    private const float RiverLineMorphScale = 0.49f;
     private const float ShorelineOverlapMeters = RingShorelineClip.OverlapMeters;
     private const int MaximumCachedSampleCount = 1_000_000;
     private static readonly ConcurrentDictionary<string, byte> UnavailableCacheDirectories = new();
@@ -648,6 +650,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
         public double[] AroundCoordinates = Array.Empty<double>();
         public float[] AcrossCoordinates = Array.Empty<float>();
         public CachedTerrainPoint[] TerrainPoints = Array.Empty<CachedTerrainPoint>();
+        /// <summary>T2R-12b: river line coverage per lattice vertex (S11b).</summary>
+        public float[] RiverLine = Array.Empty<float>();
 
         /// <summary>Returns this thread's scratch reset to the state of freshly constructed empty collections.</summary>
         public static SectorBuildScratch Acquire()
@@ -689,6 +693,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             Prepare(ref AroundCoordinates, count);
             Prepare(ref AcrossCoordinates, count);
             Prepare(ref TerrainPoints, count);
+            Prepare(ref RiverLine, count);
         }
 
         private static void Prepare<T>(ref T[] array, int count)
@@ -3913,6 +3918,15 @@ public partial class RingTerrainProxySector : MeshInstance3D
         // fresh climate/hydrology query for every high-detail proxy vertex.
         const int biomeSampleSpacing = 16;
         Dictionary<TerrainColumnKey, Color> biomeWeightCache = scratch.BiomeWeightCache;
+        // T2R-12b (S11b): the river line coverage of this lattice rides in UV2.y of terrain vertices as 0.49 c (every reader thresholds at 0.5); 0 without a river graph.
+        float[] riverLine = scratch.RiverLine;
+        bool hasRiverLine = false;
+        if (RiverFootprint.UsesProxyLine(spacing))
+        {
+            long splatStart = Stopwatch.GetTimestamp();
+            hasRiverLine = sampler.TrySplatRiverLine((long)coordinate.AroundSector * size, (long)coordinate.AcrossSector * size, spacing, row, row, riverLine.AsSpan(0, surfaceVertexCount));
+            if (sampler.HasRiverLine) RingProxyBuildCounters.AddRiverLineSplat(spacing, Stopwatch.GetTimestamp() - splatStart);
+        }
         for (int z = 0; z <= cells; z++)
         for (int x = 0; x <= cells; x++)
         {
@@ -3951,7 +3965,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             float parentWaterRestore = parentRestoresWaterUnderlay ? parentUnderlay : 0.0f;
             morphData[i] = new Vector2(
                 parentTerrainHeight - terrainGeometryHeight + underlay - parentUnderlay,
-                0.0f);
+                hasRiverLine ? RiverLineMorphScale * riverLine[i] : 0.0f);
             morphData[waterIndex] = new Vector2(
                 parentWaterHeight - waterHeight + underlay - ownWaterRestore - parentUnderlay + parentWaterRestore,
                 1.0f);
@@ -6429,6 +6443,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         _material.SetShaderParameter("surface_apertures_enabled", true);
         // Fresh materials hold authored defaults; forget every cached per-frame uniform.
         _uniformNearFadeEnabled = null;
+        _uniformRiverLine = null;
         _uniformFftCoverageDistance = null;
         _uniformOceanReplacementEnabled = null;
         _uniformOceanReplacementDistance = null;
@@ -6535,9 +6550,11 @@ public partial class RingTerrainProxySector : MeshInstance3D
     }
 
     private static readonly StringName NearFadeEnabledName = "near_fade_enabled";
+    private static readonly StringName RiverLineEnabledName = "river_line_enabled";
     private static readonly StringName OceanReplacementCoverageEnabledName = "ocean_replacement_coverage_enabled";
     private static readonly StringName OceanReplacementDistanceMetersName = "ocean_replacement_distance_meters";
     private bool? _uniformNearFadeEnabled;
+    private bool? _uniformRiverLine;
     private float? _uniformFftCoverageDistance;
     private bool? _uniformOceanReplacementEnabled;
     private float? _uniformOceanReplacementDistance;
@@ -6550,6 +6567,15 @@ public partial class RingTerrainProxySector : MeshInstance3D
         if (_material == null || _uniformNearFadeEnabled == enabled) return;
         _material.SetShaderParameter(NearFadeEnabledName, enabled);
         _uniformNearFadeEnabled = enabled;
+    }
+
+    /// <summary>T2R-12b: the proxy shader reads the river line coverage of UV2.y only on river worlds and on levels that carry it (256 m and coarser).</summary>
+    private void SetRiverLineEnabled()
+    {
+        bool enabled = _grid?.TerrainSampler?.HasRiverLine == true && RiverFootprint.UsesProxyLine(SampleSpacingMeters);
+        if (_material == null || _uniformRiverLine == enabled) return;
+        _material.SetShaderParameter(RiverLineEnabledName, enabled);
+        _uniformRiverLine = enabled;
     }
 
     private void SetOceanReplacementCoverageEnabled(bool enabled)
@@ -6570,6 +6596,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
     {
         if (_focus == null) return;
         SetNearFadeEnabled(ResolveTerrain3DNearFadeEnabled());
+        SetRiverLineEnabled();
         if (ReferenceEquals(FinestOceanGeometryInstance, this))
         {
             UpdateSharedFftOceanCoverage();
@@ -7440,6 +7467,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         _material?.SetShaderParameter("fade_start_meters", FadeStartMeters);
         _material?.SetShaderParameter("fade_end_meters", FadeEndMeters);
         SetNearFadeEnabled(ResolveTerrain3DNearFadeEnabled());
+        SetRiverLineEnabled();
         _material?.SetShaderParameter("far_fade_enabled", EnableFarFade);
         _material?.SetShaderParameter("fade_out_start_meters", FadeOutStartMeters);
         _material?.SetShaderParameter("fade_out_end_meters", FadeOutEndMeters);

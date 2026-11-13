@@ -99,12 +99,27 @@ func _run() -> void:
 		quit(4)
 		return
 	result["post_entry"] = await _sample_post_entry(float(_args.get("post-seconds", 10)))
+	result["river_line_splat"] = _river_line_splat()
 	if _args.has("shot"):
 		await _capture_views(String(_args["shot"]))
 	_write(out_dir, result)
 	await _shutdown()
 	print("LOAD_BENCHMARK=PASS scenario=%s open_to_ready_ms=%d" % [scenario, int(result["open_to_ready_ms"])])
 	quit(0)
+
+## T2R-12b: the proxy river-line splat counters (calls, worker milliseconds, the largest call) since the world started, read from the performance export.
+func _river_line_splat() -> Dictionary:
+	var monitor := _game.get_node_or_null("RingPerformanceMonitor")
+	if monitor == null or not monitor.has_method("CaptureSlowdown"):
+		return {}
+	var path := String(monitor.call("CaptureSlowdown"))
+	if not FileAccess.file_exists(path):
+		return {"error": path}
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	DirAccess.remove_absolute(path)
+	if parsed is Dictionary and (parsed as Dictionary).has("proxyBuildCounters"):
+		return (parsed["proxyBuildCounters"] as Dictionary).get("riverLineSplat", {})
+	return {}
 
 func _connect_loader() -> void:
 	_loader.world_ready.connect(func(world: Node): _game = world)

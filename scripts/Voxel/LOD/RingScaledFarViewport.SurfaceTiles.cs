@@ -483,7 +483,7 @@ public partial class RingScaledFarViewport
             double across = Math.Clamp(key.Across + (y - 1.0) / (key.Resolution - 1) * key.AcrossExtent, 0, key.Width);
             long canonicalAround = (long)Math.Round(WrapSurfaceTileAround(around, key.Circumference));
             int canonicalAcross = (int)Math.Round(across);
-            TerrainSample sample = edits.GetPresentationTerrainSample(sampler, canonicalAround, canonicalAcross);
+            TerrainSample sample = sampler.WithoutFarRiverOwner(edits.GetPresentationTerrainSample(sampler, canonicalAround, canonicalAcross));
             float height = ResolveFarTerrainHeight(sampler, edits, canonicalAround, canonicalAcross);
             if (key.DisplayWater) height = sample.ResolveDisplayedHeight(height);
             Color color = RingTerrainVisuals.ResolveMacroTextureColor(sample, Mathf.RoundToInt(height), sampler, key.Low, key.High);
@@ -492,7 +492,7 @@ public partial class RingScaledFarViewport
                 long ca = (long)Math.Round(WrapSurfaceTileAround(a, key.Circumference));
                 int cz = (int)Math.Round(Math.Clamp(z, 0, key.Width));
                 float terrainHeight = ResolveFarTerrainHeight(sampler, edits, ca, cz);
-                return key.DisplayWater ? edits.GetPresentationTerrainSample(sampler, ca, cz).ResolveDisplayedHeight(terrainHeight) : terrainHeight;
+                return key.DisplayWater ? sampler.WithoutFarRiverOwner(edits.GetPresentationTerrainSample(sampler, ca, cz)).ResolveDisplayedHeight(terrainHeight) : terrainHeight;
             }
             double left = Math.Max(0, across - derivative), right = Math.Min(key.Width, across + derivative);
             float da = (Height(around + derivative, across) - Height(around - derivative, across)) / (float)(derivative * 2);

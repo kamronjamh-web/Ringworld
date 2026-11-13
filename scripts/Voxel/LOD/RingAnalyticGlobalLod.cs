@@ -173,9 +173,9 @@ public partial class RingAnalyticGlobalLod : MeshInstance3D
             long sampleAround = (long)Math.Round(around);
             int sampleAcross = (int)Math.Round(across);
             bool usesPresentationSurface = edits.UsesFloatSurface || sampler.UsesRuntimeSurfaceGeneration;
-            TerrainSample sample = usesPresentationSurface
+            TerrainSample sample = sampler.WithoutFarRiverOwner(usesPresentationSurface
                 ? edits.GetPresentationTerrainSample(sampler, sampleAround, sampleAcross)
-                : sampler.GetTerrainSample(sampleAround, sampleAcross);
+                : sampler.GetTerrainSample(sampleAround, sampleAcross));
             int index = z * row + x;
             float terrainHeight = usesPresentationSurface
                 ? edits.GetPresentationSurfaceHeight(sampler, sampleAround, sampleAcross)

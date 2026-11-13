@@ -102,6 +102,42 @@ public partial class InlandSwimProbe : RefCounted
     }
 
     /// <summary>
+    /// T2R-12b: the widest river reach whose middle lies at across in [minAcross, maxAcross] and holds water at least 1.5 m deep: {ok, around, across, level, width}. The glint poses need a river far
+    /// enough from the ring edge for a camera 230 km off along the sun azimuth, and near <paramref name="nearAround"/> so the time of day set there holds.
+    /// </summary>
+    public Godot.Collections.Dictionary FindRiverAcross(Node game, double minAcross, double maxAcross, double nearAround, double aroundHalfRange)
+    {
+        var result = new Godot.Collections.Dictionary { ["ok"] = false, ["error"] = "" };
+        try
+        {
+            using RingTerrainSampler? sampler = game.GetNodeOrNull<VoxelChunkGridManager>("ChunkGridManager")?.CreateIndependentTerrainSampler();
+            RiverGraph? graph = sampler?.RuntimeRiverGraph;
+            if (sampler == null || graph == null) { result["error"] = "the game's sampler has no river graph"; return result; }
+            RiverNetwork net = graph.Network;
+            double bestWidth = 0d;
+            for (int r = 0; r < net.Reaches.Length; r++)
+            {
+                RiverReach reach = net.Reaches[r];
+                if (reach.SEnd - reach.SStart < 200f) continue;
+                double mid = 0.5 * (reach.SStart + reach.SEnd);
+                net.Centre(reach.Stem, mid, out double ca, out double cz, out _, out _);
+                if (cz < minAcross || cz > maxAcross) continue;
+                if (Math.Abs(net.WrapDelta(ca - nearAround)) > aroundHalfRange) continue;
+                net.ChannelAt(reach.Stem, mid, out RiverChannel channel);
+                if (2d * channel.HalfWidth <= bestWidth) continue;
+                long a = (long)Math.Round(ca / 2d) * 2L; int z = (int)Math.Round(cz / 2d) * 2;
+                if (!Wet(sampler, a, z, SurfaceWaterKind.River, out float level, out float bed) || level - bed < 1.5f) continue;
+                bestWidth = 2d * channel.HalfWidth;
+                result["around"] = (double)a; result["across"] = (double)z; result["level"] = (double)level; result["width"] = bestWidth;
+                result["ok"] = true;
+            }
+            if (!result["ok"].AsBool()) result["error"] = "no river pool in the across range";
+        }
+        catch (Exception e) { result["error"] = e.ToString(); }
+        return result;
+    }
+
+    /// <summary>
     /// T2R-11 escalation measure: of the land sectors of a proxy level (64 cells of <paramref name="spacing"/> metres, parent 2x) the share whose build routes to the CPU because a river or lake reaches it
     /// (S10), over the whole ring, sampling every <paramref name="stride"/>th sector on both axes. Land = the sector centre is not Ocean. Returns {sectors, land, river_land, share}.
     /// </summary>
