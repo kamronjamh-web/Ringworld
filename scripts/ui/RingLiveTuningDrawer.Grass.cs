@@ -135,9 +135,10 @@ public partial class RingLiveTuningDrawer
     private void RefreshGrassControls() { if (_drawer == null) return; RefreshGrassControlsRecursive(_drawer); UpdateGrassStatus(); }
     private void RefreshGrassControlsRecursive(Node node)
     {
-        foreach (Node child in node.GetChildren())
+        for (int childIndex = 0, childCount = node.GetChildCount(); childIndex < childCount; childIndex++)
         {
-            string name = child.Name.ToString(); string key = name.EndsWith("Entry", StringComparison.Ordinal) ? name[..^5] : name;
+            Node child = node.GetChild(childIndex);
+            string name = CachedNodeName(child); string key = name.EndsWith("Entry", StringComparison.Ordinal) ? name[..^5] : name;
             if (_grassControlKeys.Contains(key) && !_pendingGrassValues.ContainsKey(key))
             {
                 Variant live = GrassValue(key);

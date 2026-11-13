@@ -182,9 +182,10 @@ public partial class RingLiveTuningDrawer
     }
     private void RefreshWaterControlsRecursive(Node node)
     {
-        foreach (Node child in node.GetChildren())
+        for (int childIndex = 0, childCount = node.GetChildCount(); childIndex < childCount; childIndex++)
         {
-            string name = child.Name.ToString();
+            Node child = node.GetChild(childIndex);
+            string name = CachedNodeName(child);
             string key = name.EndsWith("Entry", StringComparison.Ordinal) ? name[..^5] : name;
             if (_waterControlKeys.Contains(key))
             {

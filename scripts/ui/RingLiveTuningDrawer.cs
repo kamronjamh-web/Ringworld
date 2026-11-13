@@ -748,12 +748,21 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         string providerState = _cloudBridge.RuntimeVisible ? "active" : "suspended";
         _effectiveCloudHandoffStatus.Text = $"Sunshine {mode.ToLowerInvariant()} blend: {effectiveStart / 1000.0f:0.0}-{effectiveEnd / 1000.0f:0.0} km | ray budget {nearReach / 1000.0f:0.0} km | {providerState}";
     }
+    // Node names never change; the per-frame drawer refresh walks use this instead of allocating Name.ToString() for every node on every pass.
+    private static readonly System.Collections.Generic.Dictionary<ulong, string> _nodeNameCache = new();
+    private static string CachedNodeName(Node node)
+    {
+        ulong id = node.GetInstanceId();
+        if (!_nodeNameCache.TryGetValue(id, out string? name)) _nodeNameCache[id] = name = node.Name.ToString();
+        return name;
+    }
     private void RefreshCloudControlsRecursive(Node node)
     {
-        foreach (Node child in node.GetChildren())
+        for (int childIndex = 0, childCount = node.GetChildCount(); childIndex < childCount; childIndex++)
         {
+            Node child = node.GetChild(childIndex);
             if (child is not HSlider and not CheckButton and not OptionButton) { RefreshCloudControlsRecursive(child); continue; }
-            string key = child.Name.ToString();
+            string key = CachedNodeName(child);
             if (!_cloudControlKeys.Contains(key)) { RefreshCloudControlsRecursive(child); continue; }
             Variant live = _cloudBridge!.Get(key);
             if (child is HSlider slider && live.VariantType is Variant.Type.Float or Variant.Type.Int)
