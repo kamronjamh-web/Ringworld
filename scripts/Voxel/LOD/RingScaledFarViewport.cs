@@ -248,6 +248,7 @@ public partial class RingScaledFarViewport : Node
 	private DirectionalLight3D? _regionalFarPlanetLight;
 	private ShaderMaterial? _terrainMaterial;
 	private bool _riverLineUniform;
+	private RingWaterBodyColors.Snapshot? _riverTintUniform;
 	private ShaderMaterial? _waterMaterial;
 	private ShaderMaterial? _hullMaterial;
 	private ShaderMaterial? _cavityShellMaterial;
@@ -2756,6 +2757,12 @@ public partial class RingScaledFarViewport : Node
 		if (_terrainMaterial == null || _grid?.TerrainSampler == null) return;
 		// T2R-12: the terrain shader reads the river line coverage from the vertex and tile alpha only on worlds with a river graph.
 		bool riverLine = _grid.TerrainSampler.HasRiverLine;
+		RingWaterBodyColors.Snapshot riverTint = RingWaterBodyColors.Current;
+		if (riverLine && !ReferenceEquals(_riverTintUniform, riverTint))
+		{
+			_riverTintUniform = riverTint;
+			_terrainMaterial.SetShaderParameter("river_far_color", RingWaterBodyColors.RiverFarColor(riverTint));
+		}
 		if (riverLine != _riverLineUniform)
 		{
 			_riverLineUniform = riverLine;

@@ -138,7 +138,8 @@ func get_recipe_snapshot() -> Resource:
 
 func apply_recipe_setting(name: String, value: Variant) -> void:
 	_initialize_recipe()
-	_recipe.set(name, value)
+	if _recipe.extension_values.has(name): _recipe.extension_values[name] = value
+	else: _recipe.set(name, value)
 	_recipe_epoch += 1
 	_queue_definition_change()
 

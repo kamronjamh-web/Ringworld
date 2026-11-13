@@ -2,6 +2,9 @@ class_name TerrainGenerationPreview
 extends Control
 
 const PREVIEW_HANDOFF := preload("res://scripts/Terrain/Generation/terrain_generation_preview_handoff.gd")
+const DRAINAGE_BRIDGE := preload("res://scripts/Terrain/Hydrology/DrainagePreviewBridge.cs")
+const DRAINAGE_MODE := 5
+const DRAINAGE_MARGIN_M := 1000.0
 
 const DETAIL_SIDE := 129
 const DETAIL_SPACING_M := 2.0
@@ -21,6 +24,20 @@ var _origin_across := 0.0
 var _selected_around := 0.0
 var _selected_across := DEFAULT_ACROSS_SPAN_M * .5
 var _view_mode := 0
+# Drainage view (T2R-13): a CPU strip bake of the preview window on a worker thread, started after the debounce while the Drainage mode is shown.
+var _drain_task := -1
+var _drain_restart := false
+var _drain_task_revision := -1
+var _drain_worker_result: Dictionary = {}
+var _drain_image: Image
+var _drain_origin_m := 0.0
+var _drain_cell_m := 1000.0
+var _drain_cell_across_m := 1000.0
+var _drain_baked_revision := -1
+var _drain_error := ""
+var _drain_ms := 0.0
+var _drain_river_cells := 0
+var _drain_lake_cells := 0
 var _revision := 0
 var _committed_revision := 0
 var _pending_seconds := 0.0
@@ -101,7 +118,7 @@ func _build_ui() -> void:
 	var help := Label.new(); help.text = "Regional 512 m diagnostic overview. Click the map to select a 129 x 129 sample, 2 m detail patch. Open the grave-key Terrain3D tab to tune the isolated recipe."; help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART; root.add_child(help)
 	var modes := HBoxContainer.new(); root.add_child(modes)
 	var mode_group := ButtonGroup.new()
-	for label in ["Height (-8km..8km)", "Zone weights", "Detail mask (0..1)", "Slope (0..60 deg)", "Landforms (R, Q, gate)"]:
+	for label in ["Height (-8km..8km)", "Zone weights", "Detail mask (0..1)", "Slope (0..60 deg)", "Landforms (R, Q, gate)", "Drainage (rivers, lakes)"]:
 		var button := Button.new(); button.text = label; button.toggle_mode = true; button.button_group = mode_group; button.button_pressed = label.begins_with("Height"); button.pressed.connect(func(): set_view_mode(modes.get_children().find(button))); modes.add_child(button)
 	var pan := HBoxContainer.new(); root.add_child(pan)
 	pan.add_child(Label.new()); pan.get_child(0).text = "Around origin (m)"
@@ -123,7 +140,8 @@ func _build_ui() -> void:
 func apply_recipe_setting(name: String, value: Variant) -> void:
 	_initialize_recipe()
 	if _recipe == null: return
-	_recipe.set(name, value)
+	if _recipe.extension_values.has(name): _recipe.extension_values[name] = value
+	else: _recipe.set(name, value)
 	regenerate()
 
 func get_recipe_snapshot() -> Resource:
@@ -132,13 +150,18 @@ func get_recipe_snapshot() -> Resource:
 func regenerate() -> void:
 	_revision += 1; _preview_ready = false; _pending_seconds = DEBOUNCE_SECONDS; _phase = "debouncing"; _error = "" if _error.is_empty() else _error; _set_status()
 func set_view_mode(index: int) -> void:
-	_view_mode = clampi(index, 0, 4)
+	_view_mode = clampi(index, 0, DRAINAGE_MODE)
+	if _view_mode == DRAINAGE_MODE and _drain_baked_revision != _revision and _phase != "debouncing": _request_drainage()
 	if _preview_ready: _rebuild_textures()
 func select_location(around: float, across: float) -> void:
 	if not _preview_ready: return
 	_selected_around = around; _selected_across = clampf(across, _origin_across, _origin_across + (_rows - 1) * _spacing_m); _begin_detail()
 
+func _exit_tree() -> void:
+	if _drain_task >= 0: WorkerThreadPool.wait_for_task_completion(_drain_task); _drain_task = -1
+
 func _process(delta: float) -> void:
+	if _drain_task >= 0 and WorkerThreadPool.is_task_completed(_drain_task): _finish_drainage()
 	if _phase == "debouncing":
 		_pending_seconds -= delta
 		if _pending_seconds <= 0: _begin_overview()
@@ -147,7 +170,47 @@ func _process(delta: float) -> void:
 func _begin_overview() -> void:
 	var errors := _recipe.validation_errors()
 	if not errors.is_empty(): _error = ", ".join(errors); _phase = "idle"; _set_status(); return
-	_recipe = _recipe.snapshot(); _model = TerrainHeightModel.new(_recipe); _cols = int(floor(_around_span_m / _spacing_m)) + 1; _rows = int(floor(_across_span_m / _spacing_m)) + 1; _overview.resize(_cols * _rows); _sea.resize(_overview.size()); _alpine.resize(_overview.size()); _mask.resize(_overview.size()); _slope.resize(_overview.size()); _landform_view.resize(_overview.size()); _row = 0; _locations.clear(); _phase = "overview"; _started_usec = Time.get_ticks_usec(); _diagnostics = {"min": INF, "max": -INF, "clamp": 0, "ocean": 0, "lowland": 0, "alpine": 0, "histogram": PackedInt32Array(), "slopes": PackedFloat32Array()}; _diagnostics.histogram.resize(16); _set_status()
+	_recipe = _recipe.snapshot(); _request_drainage(); _model = TerrainHeightModel.new(_recipe); _cols = int(floor(_around_span_m / _spacing_m)) + 1; _rows = int(floor(_across_span_m / _spacing_m)) + 1; _overview.resize(_cols * _rows); _sea.resize(_overview.size()); _alpine.resize(_overview.size()); _mask.resize(_overview.size()); _slope.resize(_overview.size()); _landform_view.resize(_overview.size()); _row = 0; _locations.clear(); _phase = "overview"; _started_usec = Time.get_ticks_usec(); _diagnostics = {"min": INF, "max": -INF, "clamp": 0, "ocean": 0, "lowland": 0, "alpine": 0, "histogram": PackedInt32Array(), "slopes": PackedFloat32Array()}; _diagnostics.histogram.resize(16); _set_status()
+
+## Starts the drainage strip bake of the window when the Drainage mode is shown; a bake already running is restarted once it ends.
+func _request_drainage() -> void:
+	if _view_mode != DRAINAGE_MODE or _recipe == null: return
+	if _drain_task >= 0: _drain_restart = true; return
+	var errors := _recipe.validation_errors()
+	if not errors.is_empty(): _drain_error = ", ".join(errors); return
+	_drain_error = ""
+	_drain_task_revision = _revision
+	var workers := maxi(1, OS.get_processor_count() - 2)
+	_drain_task = WorkerThreadPool.add_task(_drainage_worker.bind(_recipe.to_normalized_dictionary(), _origin_around - DRAINAGE_MARGIN_M, _around_span_m + 2.0 * DRAINAGE_MARGIN_M, workers), false, "terrain preview drainage")
+
+func _drainage_worker(snapshot: Dictionary, start_m: float, span_m: float, workers: int) -> void:
+	var bridge = DRAINAGE_BRIDGE.new()
+	_drain_worker_result = bridge.BakeStrip(snapshot, start_m, span_m, workers)
+
+func _finish_drainage() -> void:
+	WorkerThreadPool.wait_for_task_completion(_drain_task)
+	_drain_task = -1
+	var result := _drain_worker_result
+	_drain_worker_result = {}
+	var error := str(result.get("error", "no result"))
+	if error.is_empty():
+		_drain_image = Image.create_from_data(int(result.width), int(result.height), false, Image.FORMAT_RGB8, result.rgb)
+		_drain_origin_m = float(result.origin_around_m); _drain_cell_m = float(result.cell_m); _drain_cell_across_m = float(result.cell_across_m)
+		_drain_ms = float(result.milliseconds); _drain_river_cells = int(result.river_cells); _drain_lake_cells = int(result.lake_cells)
+		_drain_baked_revision = _drain_task_revision
+	_drain_error = error
+	if _drain_restart: _drain_restart = false; _request_drainage()
+	elif _view_mode == DRAINAGE_MODE and _preview_ready: _rebuild_textures()
+
+func _drainage_color(around: float, across: float) -> Color:
+	if _drain_image == null: return Color(.12, .12, .14)
+	var column := int(floor(fposmod(around - _drain_origin_m, TerrainGenerationRecipe.CERTIFIED_CIRCUMFERENCE_M) / _drain_cell_m))
+	var row := int(floor(across / _drain_cell_across_m))
+	if column < 0 or column >= _drain_image.get_width() or row < 0 or row >= _drain_image.get_height(): return Color(.12, .12, .14)
+	return _drain_image.get_pixel(column, row)
+
+func _drainage_diagnostics() -> Dictionary:
+	return {"running": _drain_task >= 0, "baked_revision": _drain_baked_revision, "milliseconds": _drain_ms, "river_cells": _drain_river_cells, "lake_cells": _drain_lake_cells, "width": _drain_image.get_width() if _drain_image != null else 0, "height": _drain_image.get_height() if _drain_image != null else 0, "error": _drain_error}
 
 func _begin_detail() -> void:
 	if _model == null: return
@@ -239,6 +302,7 @@ func _color_image(values: PackedFloat32Array, width: int, height: int, is_detail
 				var sea := (_detail_sea if is_detail else _sea)[i]; var alpine := (_detail_alpine if is_detail else _alpine)[i]; color = Color(alpine, 1.0 - sea - alpine, sea)
 			elif _view_mode == 2: var mask := (_detail_mask if is_detail else _mask)[i]; color = Color(mask, mask, mask)
 			elif _view_mode == 4: color = (_detail_landform_view if is_detail else _landform_view)[i]
+			elif _view_mode == DRAINAGE_MODE: color = _drainage_color(_selected_around + (x - (DETAIL_SIDE - 1) * .5) * DETAIL_SPACING_M, _selected_across + (y - (DETAIL_SIDE - 1) * .5) * DETAIL_SPACING_M) if is_detail else _drainage_color(_origin_around + x * _spacing_m, _origin_across + y * _spacing_m)
 			elif _view_mode == 3: var slope := (_detail_slope if is_detail else _slope)[i]; color = Color(clampf(slope / 60.0, 0, 1), clampf(slope / 60.0, 0, 1), clampf(slope / 60.0, 0, 1))
 			image.set_pixel(x, y, color)
 	return image
@@ -267,7 +331,7 @@ func _set_stats() -> void:
 
 func get_preview_diagnostics() -> Dictionary:
 	var slopes: PackedFloat32Array = _diagnostics.get("slopes", PackedFloat32Array())
-	return {"ready": _preview_ready, "revision": _revision, "committed_revision": _committed_revision, "sample_count": _overview.size(), "detail_sample_count": _detail.size(), "min_height": _diagnostics.get("min", 0.0), "max_height": _diagnostics.get("max", 0.0), "clamp_count": _diagnostics.get("clamp", 0), "generation_time_ms": _diagnostics.get("time_ms", 0.0), "histogram": _diagnostics.get("histogram", PackedInt32Array()), "ocean_count": _diagnostics.get("ocean", 0), "lowland_count": _diagnostics.get("lowland", 0), "alpine_count": _diagnostics.get("alpine", 0), "slope_p50_degrees": slopes[int(slopes.size() * .5)] if not slopes.is_empty() else 0.0, "slope_p95_degrees": slopes[int(slopes.size() * .95)] if not slopes.is_empty() else 0.0, "slope_max_degrees": slopes[-1] if not slopes.is_empty() else 0.0, "selected_around": _selected_around, "selected_across": _selected_across, "view_mode": _view_mode, "error": _error, "save_blocked": _save_blocked}
+	return {"ready": _preview_ready, "revision": _revision, "committed_revision": _committed_revision, "sample_count": _overview.size(), "detail_sample_count": _detail.size(), "min_height": _diagnostics.get("min", 0.0), "max_height": _diagnostics.get("max", 0.0), "clamp_count": _diagnostics.get("clamp", 0), "generation_time_ms": _diagnostics.get("time_ms", 0.0), "histogram": _diagnostics.get("histogram", PackedInt32Array()), "ocean_count": _diagnostics.get("ocean", 0), "lowland_count": _diagnostics.get("lowland", 0), "alpine_count": _diagnostics.get("alpine", 0), "slope_p50_degrees": slopes[int(slopes.size() * .5)] if not slopes.is_empty() else 0.0, "slope_p95_degrees": slopes[int(slopes.size() * .95)] if not slopes.is_empty() else 0.0, "slope_max_degrees": slopes[-1] if not slopes.is_empty() else 0.0, "selected_around": _selected_around, "selected_across": _selected_across, "view_mode": _view_mode, "error": _error, "save_blocked": _save_blocked, "drainage": _drainage_diagnostics()}
 func save_recipe() -> bool:
 	if _save_blocked: _error = "Saved recipe is protected. Use Reset recipe before saving."; _set_status(); return false
 	var error := TerrainGenerationPreviewStore.save_recipe(_recipe, _recipe_path()); _error = error; _set_status(); return error.is_empty()

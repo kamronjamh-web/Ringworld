@@ -53,6 +53,20 @@ func _run() -> void:
 		detail_modes[_texture_hash(preview.get("_detail_map"))] = true
 	_expect(overview_modes.size() > 1 and detail_modes.size() > 1, "view modes change both overview and detail pixels")
 	_expect(overview_before != 0, "overview texture had image data")
+	# T2R-13: the Drainage mode shows a CPU strip bake of the preview window, started after the debounce and kept apart from the height revision.
+	preview.set_view_mode(5)
+	if not await _wait_drainage(preview, latest.revision): _finish(); return
+	var drainage: Dictionary = preview.get_preview_diagnostics().drainage
+	_expect(drainage.error.is_empty() and drainage.baked_revision == latest.revision, "drainage bake completes for the latest revision (%s)" % drainage.error)
+	_expect(drainage.width >= 8 and drainage.height == 318, "drainage strip covers every row across the ring width (%d x %d)" % [drainage.width, drainage.height])
+	_expect(drainage.milliseconds < 2000.0, "drainage strip bake takes under 2 s (%.0f ms)" % drainage.milliseconds)
+	_expect(_texture_hash(preview.get("_map")) != 0 and not overview_modes.has(_texture_hash(preview.get("_map"))), "drainage mode paints its own overview pixels")
+	preview.apply_recipe_setting("land_balance", 0.12)
+	if not await _wait_ready(preview): _finish(); return
+	if not await _wait_drainage(preview, preview.get_preview_diagnostics().revision): _finish(); return
+	_expect(preview.get_preview_diagnostics().drainage.baked_revision == preview.get_preview_diagnostics().revision, "a recipe change re-bakes the drainage strip after the debounce")
+	preview.set_view_mode(0)
+	latest = preview.get_preview_diagnostics()
 	preview.select_location(0.0, 0.0)
 	if not await _wait_ready(preview): _finish(); return
 	_expect(preview.get_preview_diagnostics().sample_count == latest.sample_count, "selection retains overview")
@@ -133,6 +147,17 @@ func _texture_hash(texture_rect: Variant) -> int:
 	if texture_rect == null or texture_rect.texture == null:
 		return 0
 	return hash(texture_rect.texture.get_image().get_data())
+
+func _wait_drainage(preview: TerrainGenerationPreview, revision: int) -> bool:
+	var started := Time.get_ticks_msec()
+	for frame in MAX_FRAMES:
+		var drainage: Dictionary = preview.get_preview_diagnostics().drainage
+		if drainage.baked_revision == revision and not drainage.running: return true
+		if not drainage.error.is_empty(): _fail("drainage bake failed: " + drainage.error); return false
+		if Time.get_ticks_msec() - started > 30000: _fail("drainage wall-clock timeout"); return false
+		await process_frame
+	_fail("drainage frame timeout")
+	return false
 
 func _wait_ready(preview: TerrainGenerationPreview) -> bool:
 	var started := Time.get_ticks_msec()

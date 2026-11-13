@@ -74,6 +74,9 @@ public partial class RingLiveTuningDrawer
         AddWaterColor(section, "WaterShallowTint", "Shallow tint");
         AddWaterColor(section, "WaterDeepTint", "Deep tint");
         AddWaterColor(section, "WaterFoamColor", "Foam colour");
+        AddWaterColor(section, "WaterRiverColor", "River colour (far and mid terrain)");
+        AddWaterColor(section, "WaterLakeColor", "Lake colour (far and mid terrain)");
+        AddWaterSlider(section, "WaterTurbidity", "River and lake turbidity (silt)", 0, 1, .01);
         section = AddWaterGroup(tab, "Foam", "Shore foam uses depth. Near-ocean whitecaps come from FFT compression; analytic crest foam remains for fallback water.");
         AddWaterSlider(section, "WaterShoreFoamDepthMeters", "Shore foam depth (m)", .1, 20, .1);
         AddWaterSlider(section, "WaterShoreFoamStrength", "Shore foam strength", 0, 2, .01);

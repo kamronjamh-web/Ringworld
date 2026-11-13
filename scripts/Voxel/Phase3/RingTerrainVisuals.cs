@@ -172,13 +172,14 @@ public static class RingTerrainVisuals
             && displayedHeight >= sample.WaterSurfaceHeight;
         if (displayingWater)
         {
+            RingWaterBodyColors.Snapshot tint = RingWaterBodyColors.Current;
             Color water = sample.WaterKind switch
             {
                 SurfaceWaterKind.Ocean => sample.WaterDepth > 500
                     ? new Color(0.025f, 0.13f, 0.24f, 1.0f)
                     : new Color(0.035f, 0.25f, 0.34f, 1.0f),
-                SurfaceWaterKind.Lake => new Color(0.045f, 0.29f, 0.36f, 1.0f),
-                SurfaceWaterKind.River => new Color(0.075f, 0.36f, 0.43f, 1.0f),
+                SurfaceWaterKind.Lake => RingWaterBodyColors.Resolve(tint.Lake, tint.Turbidity),
+                SurfaceWaterKind.River => RingWaterBodyColors.Resolve(tint.River, tint.Turbidity),
                 _ => new Color(0.04f, 0.22f, 0.30f, 1.0f)
             };
             float climateVariation = (sample.Moisture - 0.5f) * 0.06f;

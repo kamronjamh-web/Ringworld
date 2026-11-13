@@ -1,5 +1,7 @@
 using System;
+using System.Linq;
 using Godot;
+using RingworldTechDemo.Terrain.Generation;
 
 namespace RingworldTechDemo.UI;
 
@@ -19,6 +21,8 @@ public partial class RingLiveTuningDrawer
     private Button? _generationPreviewUpgradeLandforms;
     private CheckBox? _generationPreviewClimateToggle;
     private double _generationPreviewRefreshDelay;
+    private Control? _generationPreviewRiverSection;
+    private readonly System.Collections.Generic.List<(HSlider Slider, Label Value, string Field)> _generationPreviewRiverRows = new();
 
     private void BuildGenerationPreviewTab(TabContainer tabs)
     {
@@ -140,6 +144,8 @@ public partial class RingLiveTuningDrawer
         landformSettings.AddChild(upgradeLandforms);
         _generationPreviewUpgradeLandforms = upgradeLandforms;
 
+        BuildRiverRecipeSection(tab, recipe);
+
         var actions = new HBoxContainer();
         var regenerate = new Button { Text = "Regenerate", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         regenerate.Pressed += () => _generationPreview?.Call("regenerate");
@@ -153,6 +159,62 @@ public partial class RingLiveTuningDrawer
         tab.AddChild(reset);
         _generationPreviewStatus = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted };
         tab.AddChild(_generationPreviewStatus);
+    }
+
+    /// <summary>The water.rivers recipe fields active in this recipe (v9 world recipes only); empty for every other recipe.</summary>
+    private static System.Collections.Generic.IReadOnlyList<RecipeFieldSpec> ActiveRiverFields(Resource recipe)
+    {
+        if (recipe.Get("generator_id").AsString() != "ringworld_surface_world_v9") return System.Array.Empty<RecipeFieldSpec>();
+        try
+        {
+            string[] review = WorldGenerationLedger.ParseReviewFeatures(recipe.Get("review_features").AsString());
+            return WorldRecipeSchema.Production.ActiveRecipeFields(recipe.Get("world_generation").AsInt32(), review)
+                .Where(spec => spec.FeatureId == "water.rivers").ToArray();
+        }
+        catch (ArgumentException) { return System.Array.Empty<RecipeFieldSpec>(); }
+    }
+
+    /// <summary>A loaded world has frozen recipe fields; the preview of a new world does not.</summary>
+    private static bool RecipeFieldsFrozen() => !string.IsNullOrWhiteSpace(ProjectSettings.GetSetting("ringworld/runtime/active_world_directory", "").AsString());
+
+    private static string RiverFieldLabel(string field) => field switch
+    {
+        "river_density" => "River density",
+        "lake_abundance" => "Lake abundance",
+        "river_valley_width" => "River valley width",
+        "channel_depth" => "Channel depth",
+        "meander_strength" => "Meander strength",
+        "river_ferocity" => "River ferocity",
+        _ => field,
+    };
+
+    private static double RecipeExtensionValue(Resource recipe, string field, double fallback)
+    {
+        Godot.Collections.Dictionary values = recipe.Get("extension_values").AsGodotDictionary();
+        return values.TryGetValue(field, out Variant value) && value.VariantType is Variant.Type.Float or Variant.Type.Int ? value.AsDouble() : fallback;
+    }
+
+    /// <summary>River recipe rows (T2R-13): six sliders for a v9 recipe with water.rivers, none otherwise. All six are read-only for a loaded world.</summary>
+    private void BuildRiverRecipeSection(VBoxContainer tab, Resource recipe)
+    {
+        System.Collections.Generic.IReadOnlyList<RecipeFieldSpec> specs = ActiveRiverFields(recipe);
+        if (specs.Count == 0) return;
+        bool frozen = RecipeFieldsFrozen();
+        VBoxContainer rivers = TuningMenuUi.CreateSection(tab, "Rivers and lakes (new world)",
+            "These fields are frozen with the world when it is created. " + (frozen ? "This world is loaded, so they are read-only." : "Choose them before creating a world."));
+        _generationPreviewRiverSection = rivers.GetParent()?.GetParent() as Control ?? rivers;
+        foreach (RecipeFieldSpec spec in specs)
+        {
+            double initial = RecipeExtensionValue(recipe, spec.Name, spec.Default);
+            rivers.AddChild(new Label { Text = RiverFieldLabel(spec.Name) });
+            var row = new HBoxContainer();
+            var slider = new HSlider { Name = spec.Name, MinValue = spec.Min, MaxValue = spec.Max, Step = .01, Value = initial, Editable = !frozen, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, TooltipText = "Frozen with the world." };
+            var value = new Label { Text = initial.ToString("0.###"), CustomMinimumSize = new Vector2(58, 0) };
+            string field = spec.Name;
+            slider.ValueChanged += current => { value.Text = current.ToString("0.###"); _generationPreview?.Call("apply_recipe_setting", field, current); _generationPreviewRefreshDelay = 0; };
+            row.AddChild(slider); row.AddChild(value); rivers.AddChild(row);
+            _generationPreviewRiverRows.Add((slider, value, spec.Name));
+        }
     }
 
     private void AddRecipeSlider(VBoxContainer parent, Resource recipe, string property, string label, double min, double max, double step, bool detailOnly = false, bool coastalOnly = false, bool enhancedOnly = false, bool landformOnly = false)
@@ -224,6 +286,15 @@ public partial class RingLiveTuningDrawer
             double current = recipe.Get(control.Property).AsDouble();
             control.Slider.SetValueNoSignal(current);
             control.Value.Text = current.ToString("0.###");
+        }
+        if (_generationPreviewRiverSection != null) _generationPreviewRiverSection.Visible = ActiveRiverFields(recipe).Count > 0;
+        bool riverFrozen = RecipeFieldsFrozen();
+        foreach (var row in _generationPreviewRiverRows)
+        {
+            row.Slider.Editable = !riverFrozen;
+            double current = RecipeExtensionValue(recipe, row.Field, row.Slider.Value);
+            row.Slider.SetValueNoSignal(current);
+            row.Value.Text = current.ToString("0.###");
         }
         foreach (var control in _generationPreviewSpins)
         {

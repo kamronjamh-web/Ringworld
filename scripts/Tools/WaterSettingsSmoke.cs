@@ -2,6 +2,7 @@ using System;
 using Godot;
 using RingworldTechDemo.UI;
 using RingworldTechDemo.Voxel.LOD;
+using RingworldTechDemo.Voxel.Phase3;
 
 namespace RingworldTechDemo.Tools;
 
@@ -68,6 +69,67 @@ public partial class WaterSettingsSmoke : RefCounted
         System.IO.File.Delete(globalPath);
         detail = $"startup={startup} low={low} high={high} reverse={reverse} medium={medium} lowDefault={lowDefault} highDefault={highDefault} highPreset={highPreset} ultraPreset={ultraPreset}";
         return startup && low && high && reverse && medium && lowDefault && highDefault && highPreset && ultraPreset;
+    }
+
+    /// <summary>T2R-13: river colour, lake colour and turbidity. Defaults equal the constants the seeded colour path used before, so generation-1 and legacy pixels are unchanged.</summary>
+    private static bool RunBodyColors(string path, out string detail)
+    {
+        string globalPath = ProjectSettings.GlobalizePath(path);
+        if (System.IO.File.Exists(globalPath)) System.IO.File.Delete(globalPath);
+        // The literal values are today's constants (RingTerrainVisuals.ResolveSeededColor before T2R-13); changing them changes every river and lake vertex colour.
+        bool constants = RingWaterBodyColors.DefaultRiver.IsEqualApprox(new Color(0.075f, 0.36f, 0.43f, 1f))
+            && RingWaterBodyColors.DefaultLake.IsEqualApprox(new Color(0.045f, 0.29f, 0.36f, 1f))
+            && RingWaterBodyColors.DefaultTurbidity == 0f
+            && RingWaterBodyColors.Resolve(RingWaterBodyColors.DefaultRiver, 0f) == RingWaterBodyColors.DefaultRiver;
+        bool defaults;
+        bool set, invalid, clamp, roundTrip, reset, absent;
+        using (var graphics = new RingGraphicsQualityController())
+        {
+            var settings = new GameplayWaterDefaults(path);
+            settings.Initialize(graphics, null);
+            graphics.ApplyWaterTuning();
+            defaults = graphics.WaterRiverColor == RingWaterBodyColors.DefaultRiver && graphics.WaterLakeColor == RingWaterBodyColors.DefaultLake
+                && graphics.WaterTurbidity == 0f && RingWaterBodyColors.Current.River == RingWaterBodyColors.DefaultRiver
+                && RingWaterBodyColors.Current.Lake == RingWaterBodyColors.DefaultLake && RingWaterBodyColors.Current.Turbidity == 0f;
+            set = settings.SetOverride(graphics, null, "WaterRiverColor", new Color(.2f, .3f, .1f, 1))
+                && settings.SetOverride(graphics, null, "WaterLakeColor", new Color(.1f, .2f, .5f, 1))
+                && settings.SetOverride(graphics, null, "WaterTurbidity", .4f)
+                && RingWaterBodyColors.Current.River.IsEqualApprox(new Color(.2f, .3f, .1f, 1))
+                && RingWaterBodyColors.Current.Lake.IsEqualApprox(new Color(.1f, .2f, .5f, 1))
+                && Near(RingWaterBodyColors.Current.Turbidity, .4f);
+            invalid = !settings.SetOverride(graphics, null, "WaterRiverColor", new Color(float.NaN, 0, 0, 1))
+                && !settings.SetOverride(graphics, null, "WaterLakeColor", .5f)
+                && !settings.SetOverride(graphics, null, "WaterTurbidity", float.NaN)
+                && !settings.SetOverride(graphics, null, "WaterTurbidity", "murky");
+            clamp = settings.SetOverride(graphics, null, "WaterTurbidity", 5f) && Near(graphics.WaterTurbidity, 1f)
+                && settings.SetOverride(graphics, null, "WaterTurbidity", .4f);
+            bool saved = settings.Save();
+            using var reloaded = new RingGraphicsQualityController();
+            new GameplayWaterDefaults(path).Initialize(reloaded, null);
+            roundTrip = saved && reloaded.WaterRiverColor.IsEqualApprox(new Color(.2f, .3f, .1f, 1))
+                && reloaded.WaterLakeColor.IsEqualApprox(new Color(.1f, .2f, .5f, 1)) && Near(reloaded.WaterTurbidity, .4f)
+                && RingWaterBodyColors.Current.River.IsEqualApprox(new Color(.2f, .3f, .1f, 1));
+            settings.Reset(graphics, null);
+            reset = graphics.WaterRiverColor == RingWaterBodyColors.DefaultRiver && graphics.WaterLakeColor == RingWaterBodyColors.DefaultLake
+                && graphics.WaterTurbidity == 0f && RingWaterBodyColors.Current.River == RingWaterBodyColors.DefaultRiver && RingWaterBodyColors.Current.Turbidity == 0f;
+            // An older file without the three keys loads the defaults.
+            string olderPath = path.Replace(".tres", "_older.tres");
+            if (System.IO.File.Exists(ProjectSettings.GlobalizePath(olderPath))) System.IO.File.Delete(ProjectSettings.GlobalizePath(olderPath));
+            var older = new GameplayWaterDefaults(olderPath);
+            using var olderGraphics = new RingGraphicsQualityController();
+            older.Initialize(olderGraphics, null);
+            older.SetOverride(olderGraphics, null, "WaterWaveSpeed", 2f);
+            older.Save();
+            using var olderReloaded = new RingGraphicsQualityController();
+            new GameplayWaterDefaults(olderPath).Initialize(olderReloaded, null);
+            absent = olderReloaded.WaterRiverColor == RingWaterBodyColors.DefaultRiver && olderReloaded.WaterLakeColor == RingWaterBodyColors.DefaultLake
+                && olderReloaded.WaterTurbidity == 0f && RingWaterBodyColors.Current.Turbidity == 0f;
+            System.IO.File.Delete(ProjectSettings.GlobalizePath(olderPath));
+        }
+        RingWaterBodyColors.Set(RingWaterBodyColors.DefaultRiver, RingWaterBodyColors.DefaultLake, RingWaterBodyColors.DefaultTurbidity);
+        System.IO.File.Delete(globalPath);
+        detail = $"constants={constants} defaults={defaults} set={set} invalid={invalid} clamp={clamp} roundTrip={roundTrip} reset={reset} absent={absent}";
+        return constants && defaults && set && invalid && clamp && roundTrip && reset && absent;
     }
 
     public Godot.Collections.Dictionary Run(string path)
@@ -278,6 +340,7 @@ public partial class WaterSettingsSmoke : RefCounted
             && Math.Abs(reloadedFft.FullRateDistanceMeters - 200f) < .001f
             && Math.Abs(reloadedFft.FullRateAreaSquareKilometers - .25f) < .001f
             && Math.Abs(reloadedFft.IdleGraceSeconds - 1f) < .001f;
+        bool bodyColors = RunBodyColors(path.Replace(".tres", "_body.tres"), out string bodyDetail);
         bool ssrPresetPersistence = RunSsrPresetPersistence(path.Replace(".tres", "_ssr.tres"), out string ssrDetail);
         const double circumference = 1495000000.0;
         double tile = RingWaterFftController.PeriodicLength(12, circumference);
@@ -285,8 +348,8 @@ public partial class WaterSettingsSmoke : RefCounted
         double phaseB = RingWaterFftController.PositiveModulo(-.125, tile) / tile;
         bool periodic = double.IsFinite(tile) && Math.Abs(phaseA - phaseB) < 1e-5
             && RingWaterFftController.PositiveModulo(-circumference * 3.0 - .5, tile) >= 0;
-        result["pass"] = setFalse && setFloat && setColor && setOptics && setVariation && setSsr && materialBinding && unchangedMaterialCache && newMaterialClearsDisabledProvider && setSavedLargePatch && setGeometry && deepWaterOrdering && setAdaptiveDemand && adaptiveClamps && setExpandedLimits && invalid && saved && roundTrip && setTrue && failedWriteStaysDirty && reset && periodic && ssrPresetPersistence;
-        result["detail"] = $"ssrPresets={ssrPresetPersistence}({ssrDetail})false={setFalse} float={setFloat} color={setColor} optics={setOptics} variation={setVariation} ssr={setSsr} productionShaders={productionShaders} material={materialBinding} cache={unchangedMaterialCache} newMaterialClear={newMaterialClearsDisabledProvider} savedLargePatch={setSavedLargePatch} geometry={setGeometry} deepOrdering={deepWaterOrdering} adaptive={setAdaptiveDemand} adaptiveClamps={adaptiveClamps} expanded={setExpandedLimits} invalid={invalid} save={saved} roundTrip={roundTrip} true={setTrue} failedWrite={failedWriteStaysDirty} reset={reset} periodic={periodic}";
+        result["pass"] = setFalse && setFloat && setColor && setOptics && setVariation && setSsr && materialBinding && unchangedMaterialCache && newMaterialClearsDisabledProvider && setSavedLargePatch && setGeometry && deepWaterOrdering && setAdaptiveDemand && adaptiveClamps && setExpandedLimits && invalid && saved && roundTrip && setTrue && failedWriteStaysDirty && reset && periodic && ssrPresetPersistence && bodyColors;
+        result["detail"] = $"ssrPresets={ssrPresetPersistence}({ssrDetail})false={setFalse} float={setFloat} color={setColor} optics={setOptics} variation={setVariation} ssr={setSsr} productionShaders={productionShaders} material={materialBinding} cache={unchangedMaterialCache} newMaterialClear={newMaterialClearsDisabledProvider} savedLargePatch={setSavedLargePatch} geometry={setGeometry} deepOrdering={deepWaterOrdering} adaptive={setAdaptiveDemand} adaptiveClamps={adaptiveClamps} expanded={setExpandedLimits} invalid={invalid} save={saved} roundTrip={roundTrip} true={setTrue} failedWrite={failedWriteStaysDirty} reset={reset} periodic={periodic} bodyColors={bodyColors}({bodyDetail})";
         return result;
     }
 }

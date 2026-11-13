@@ -2,6 +2,7 @@ using Godot;
 using RingworldTechDemo.UI;
 using System.Collections.Generic;
 using RingworldTechDemo.Voxel.Phase2;
+using RingworldTechDemo.Voxel.Phase3;
 using RingworldTechDemo.Weather;
 
 namespace RingworldTechDemo.Voxel.LOD;
@@ -172,6 +173,10 @@ public partial class RingGraphicsQualityController : Node
     [Export] public Color WaterShallowTint { get; set; } = new(0.055f, 0.42f, 0.50f, 1.0f);
     [Export] public Color WaterDeepTint { get; set; } = new(0.012f, 0.075f, 0.16f, 1.0f);
     [Export] public Color WaterFoamColor { get; set; } = new(0.72f, 0.88f, 0.91f, 1.0f);
+    // River and lake colour of the seeded terrain colour path, and turbidity toward silt. Defaults are the constants that path used before (RingWaterBodyColors); older saves keep them.
+    [Export] public Color WaterRiverColor { get; set; } = RingWaterBodyColors.DefaultRiver;
+    [Export] public Color WaterLakeColor { get; set; } = RingWaterBodyColors.DefaultLake;
+    [Export(PropertyHint.Range, "0,1,0.01")] public float WaterTurbidity { get; set; } = RingWaterBodyColors.DefaultTurbidity;
 
     private RingTerrainLodCoordinator? _coordinator;
     private RingTerrainGlobalLod? _globalLod;
@@ -676,7 +681,13 @@ public partial class RingGraphicsQualityController : Node
     }
 
     /// <summary>Applies only water uniforms; live tuning must not reapply the graphics preset.</summary>
-    public void ApplyWaterTuning() => RingWaterModel.ApplyTuning(
+    public void ApplyWaterTuning()
+    {
+        RingWaterBodyColors.Set(WaterRiverColor, WaterLakeColor, WaterTurbidity);
+        ApplyWaterModelTuning();
+    }
+
+    private void ApplyWaterModelTuning() => RingWaterModel.ApplyTuning(
         WaterWaveHeightMeters, WaterWaveLengthMeters, WaterWaveSpeed,
         WaterWaveDetailStrength, WaterWaveDomainWarpStrength, WaterWaveCrestSharpness,
         WaterWaveCrestBlend, WaterWaveNormalStrength, WaterWaveBandlimitStartRadians,

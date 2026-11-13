@@ -1060,11 +1060,18 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
     }
 
     private bool _riverLineUniform;
+    private RingWaterBodyColors.Snapshot? _riverTintUniform;
 
     // T2R-12: the terrain shader reads the river line coverage from the vertex and tile alpha only on worlds with a river graph.
     private void ApplyRiverLineUniform(RingTerrainSampler sampler)
     {
         bool enabled = sampler.HasRiverLine;
+        RingWaterBodyColors.Snapshot tint = RingWaterBodyColors.Current;
+        if (enabled && !ReferenceEquals(_riverTintUniform, tint))
+        {
+            _riverTintUniform = tint;
+            _material?.SetShaderParameter("river_far_color", RingWaterBodyColors.RiverFarColor(tint));
+        }
         if (enabled == _riverLineUniform) return;
         _riverLineUniform = enabled;
         _material?.SetShaderParameter("river_line_enabled", enabled);

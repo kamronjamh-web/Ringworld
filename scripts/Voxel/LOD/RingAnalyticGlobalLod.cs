@@ -156,6 +156,7 @@ public partial class RingAnalyticGlobalLod : MeshInstance3D
             yield break;
         }
         _surfaceMaterial?.SetShaderParameter("river_line_enabled", sampler.HasRiverLine);
+        if (sampler.HasRiverLine) _surfaceMaterial?.SetShaderParameter("river_far_color", RingWaterBodyColors.RiverFarColor(RingWaterBodyColors.Current));
         int aroundCount = Mathf.Max(128, AroundSegments);
         int acrossCount = Mathf.Max(2, AcrossSegments);
         RingLodSurfaceEditSnapshot edits = _grid.CaptureLodSurfaceEditSnapshot();

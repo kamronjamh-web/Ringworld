@@ -6444,6 +6444,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         // Fresh materials hold authored defaults; forget every cached per-frame uniform.
         _uniformNearFadeEnabled = null;
         _uniformRiverLine = null;
+        _uniformRiverTint = null;
         _uniformFftCoverageDistance = null;
         _uniformOceanReplacementEnabled = null;
         _uniformOceanReplacementDistance = null;
@@ -6555,6 +6556,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
     private static readonly StringName OceanReplacementDistanceMetersName = "ocean_replacement_distance_meters";
     private bool? _uniformNearFadeEnabled;
     private bool? _uniformRiverLine;
+    private RingWaterBodyColors.Snapshot? _uniformRiverTint;
     private float? _uniformFftCoverageDistance;
     private bool? _uniformOceanReplacementEnabled;
     private float? _uniformOceanReplacementDistance;
@@ -6573,7 +6575,14 @@ public partial class RingTerrainProxySector : MeshInstance3D
     private void SetRiverLineEnabled()
     {
         bool enabled = _grid?.TerrainSampler?.HasRiverLine == true && RiverFootprint.UsesProxyLine(SampleSpacingMeters);
-        if (_material == null || _uniformRiverLine == enabled) return;
+        if (_material == null) return;
+        RingWaterBodyColors.Snapshot tint = RingWaterBodyColors.Current;
+        if (enabled && !ReferenceEquals(_uniformRiverTint, tint))
+        {
+            _material.SetShaderParameter("river_far_color", RingWaterBodyColors.RiverFarColor(tint));
+            _uniformRiverTint = tint;
+        }
+        if (_uniformRiverLine == enabled) return;
         _material.SetShaderParameter(RiverLineEnabledName, enabled);
         _uniformRiverLine = enabled;
     }

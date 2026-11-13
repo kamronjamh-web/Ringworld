@@ -6059,7 +6059,7 @@
       "world": "scene",
       "marker": "TERRAIN_LANDFORM_UI",
       "expected_s": 8,
-      "timeout_s": 60
+      "timeout_s": 120
     },
     "terrain_generation_native_adapter_test": {
       "kind": "test",
@@ -6128,7 +6128,7 @@
       "world": "scene",
       "marker": "TERRAIN_GENERATION_PREVIEW_SMOKE",
       "expected_s": 8,
-      "timeout_s": 60
+      "timeout_s": 90
     },
     "terrain_generation_reference_test": {
       "kind": "test",
