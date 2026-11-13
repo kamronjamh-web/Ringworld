@@ -559,3 +559,11 @@ Not asked, only reported: the flooded share of land will move when the dammed la
 ## Phase acceptance (additions to T2.md)
 
 9. The rule orders of 2026-11-13 are done: T2R-19 to T2R-24 pass their validation, including `drainage_overflow_test`, `drainage_site_intake_test` and `river_intake_sites_test` (headless). T2R-25 has reported: on three seeds no river ends in a full pool without an outlet, no lake stands above keep-out ground, no section has a floor, and every source tapers. The user has answered open questions 1 and 4, and the head taper constant is no longer marked provisional.
+
+## User answers 2026-11-13
+
+1. **Which structures take water in:** all keep-out sites (emitters, Wall Engine forecourts, Weather Lung ring), as the rule is written, "for now, and we will see the results". Revisit at T2R-25 with pictures.
+2. **Wading:** raise the swim entry so shallow rivers are walked (around chest depth, ~1.0-1.2 m; exact value set in T2R-20 against the controller). Applies to all water, including ocean and lake shores. T2R-20 adds this to its scope and to `inland_swim_smoke_gpu_test` (wade pose walks, deep pose swims).
+3. **Shape clamps:** keep for now; the lead reviews each against real rivers in T2R-25 and brings proposals.
+4. **Intake look:** the procedural placeholder is fine; final art later as a model.
+Still open: the keep-out distance (after T2R-19's table) and the head taper length (after T2R-21's pictures). Ponds with no mapped inlet staying without an outlet (question 7) was not asked; treat as accepted unless T2R-25 shows it matters.
