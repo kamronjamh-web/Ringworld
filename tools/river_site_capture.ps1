@@ -7,6 +7,7 @@
   Profile: one isolated profile, .godot\test_runs\appdata_<Label>, reused across runs (the user's preference files and, on first use, a copy of the shader and Vulkan caches).
   The world folder is emptied before every run. Takes the GPU queue itself (tools/gpu_queue.ps1 -Wrap). The stills and the index (-Index, default index.json) go to -Out; the console log to -Out\console_<index name>.log.
   Exit code: 0 when the script printed RIVER_SITE_CAPTURE=PASS.
+  -Clouds keep leaves the saved cloud quality on (the player's view); -Counters prints the proxy sector and geometry node counts after each still. A view's "variants" are described in the script header.
 #>
 param(
   [Parameter(Mandatory = $true)][string]$Places,
@@ -19,6 +20,8 @@ param(
   [int]$ViewTimeout = 150,
   [int]$TimeoutSeconds = 3300,
   [string]$ProjectName = "RingworldTechDemo",
+  [ValidateSet("off", "keep")][string]$Clouds = "off",
+  [switch]$Counters,
   [switch]$NoPrune,
   [switch]$InQueue
 )
@@ -29,7 +32,7 @@ New-Item -ItemType Directory -Force $Out | Out-Null
 $Out = (Resolve-Path $Out).Path
 
 if (-not $InQueue) {
-  $inner = "& '$PSCommandPath' -InQueue -Places '$Places' -Out '$Out' -Seed $Seed -Size $Size -Label $Label -Index $Index -ArrivalTimeout $ArrivalTimeout -ViewTimeout $ViewTimeout -TimeoutSeconds $TimeoutSeconds -ProjectName $ProjectName" + $(if ($NoPrune) { " -NoPrune" } else { "" })
+  $inner = "& '$PSCommandPath' -InQueue -Places '$Places' -Out '$Out' -Seed $Seed -Size $Size -Label $Label -Index $Index -ArrivalTimeout $ArrivalTimeout -ViewTimeout $ViewTimeout -TimeoutSeconds $TimeoutSeconds -ProjectName $ProjectName -Clouds $Clouds" + $(if ($Counters) { " -Counters" } else { "" }) + $(if ($NoPrune) { " -NoPrune" } else { "" })
   & (Join-Path $project "tools\gpu_queue.ps1") -Label $Label -Wrap $inner
   exit $LASTEXITCODE
 }
@@ -60,7 +63,7 @@ if (-not ("RiverSiteCapture.Power" -as [type])) {
 }
 $log = Join-Path $Out ("console_" + [IO.Path]::GetFileNameWithoutExtension($Index) + ".log")
 $godotArgs = @("--path", "`"$project`"", "--resolution", "2560x1440", "--position", "0,0", "--script", "`"$script`"", "--",
-  "--seed=$Seed", "--out=`"$Out`"", "--places=`"$Places`"", "--size=$Size", "--index=$Index", "--arrival-timeout=$ArrivalTimeout", "--view-timeout=$ViewTimeout")
+  "--seed=$Seed", "--out=`"$Out`"", "--places=`"$Places`"", "--size=$Size", "--index=$Index", "--arrival-timeout=$ArrivalTimeout", "--view-timeout=$ViewTimeout", "--clouds=$Clouds", "--counters=$(if ($Counters) { 1 } else { 0 })")
 $oldAppData = $env:APPDATA
 $oldPreload = $env:RINGWORLD_PDA_DISABLE_PRELOAD
 $env:APPDATA = $isoRoot

@@ -6,6 +6,11 @@ extends SceneTree
 ##   --seed=N (876374626)   --rivers=0|1 (1)   --out=<absolute dir> (required)   --places=<absolute json file> (required)   --size=1600x900 (saved size)
 ##   --arrival-timeout=240 --view-timeout=150   seconds to wait for streaming to go idle at a place and after each view change (the still is taken either way; index.json records "idle")
 ##   --index=index.json   name of the index file (so several runs can share one folder)
+##   --clouds=off|keep (off)   keep leaves the saved cloud quality on: the view a player has with default settings
+##   --counters=0|1 (0)   prints, after each still, the proxy sector node counts per level and the geometry nodes under the world (the engine gives each such node a block of the
+##                        shader instance-uniform buffer), and at an idle timeout what is still busy
+## a view may carry "variants": extra stills <name>_<tag>_<variant>.png after the plain one. "clouds": the saved cloud quality; "watermask": the water SSR debug view, so water
+## surfaces draw black; "nosunshadow": the sun shadow map off (the water surface casts into it); "levels": one flat colour per proxy level (2 m red, 4 m orange, 8 m yellow, 16 m green, 32 m cyan, 64 m blue, coarser magenta), seen through the water.
 ## places file: [{"name": "d1_stem9943", "caption": "...", "around_km": 23735.336, "across_km": 208.712, "ground_m": 398 (optional: probed when absent),
 ##                "views": [{"tag": "top600", "lift_m": 600, "yaw": 0, "pitch": -89}, ...]}]
 ## Prints RIVER_SITE_CAPTURE=PASS|FAIL and writes index.json beside the stills.
@@ -21,6 +26,9 @@ var _game: Node
 var _failure := ""
 var _out := ""
 var _label: Label
+var _saved_cloud_quality := 0
+var _saved_sun_shadows := true
+const LEVEL_COLORS := {"Lod1Terrain2m": Color(1, 0, 0), "Lod2Terrain4m": Color(1, 0.5, 0), "Lod3Terrain8m": Color(1, 1, 0), "Lod4Terrain16m": Color(0, 1, 0), "Lod5Terrain32m": Color(0, 1, 1), "Lod6Terrain64m": Color(0, 0, 1)}
 
 
 func _initialize() -> void:
@@ -54,6 +62,95 @@ func _wait_idle(timeout_s: float, stable_frames: int) -> Dictionary:
 		else:
 			stable = 0
 	return {"idle": false, "seconds": (Time.get_ticks_msec() - start) * 0.001}
+
+
+func _proxy_levels() -> Array:
+	var levels: Array = []
+	for child in _game.get_children():
+		if child.has_method("SetDebugColor") and child.get("CreatedSectorNodeCount") != null:
+			levels.append(child)
+	return levels
+
+
+## Diagnostic variants of a still (see the header). `on` applies, false restores.
+func _apply_variant(variant: String, on: bool) -> float:
+	match variant:
+		"clouds":
+			var clouds := _game.get_node_or_null("RingVolumetricClouds")
+			if clouds != null:
+				clouds.call("SetQuality", _saved_cloud_quality if on else 0)
+			return 12.0 if on else 3.0
+		"watermask":
+			var quality := _game.get_node_or_null("GraphicsQuality")
+			if quality != null:
+				quality.set("WaterSsrDebugMode", 2 if on else 0)
+				quality.call("ApplyWaterTuning")
+			return 1.5
+		"levels":
+			for level in _proxy_levels():
+				level.call("SetDebugColor", on, LEVEL_COLORS.get(String(level.name), Color(1, 0, 1)))
+			return 1.5
+		"nosunshadow":
+			var shadows := _game.get_node_or_null("GraphicsQuality")
+			if shadows != null:
+				if on:
+					_saved_sun_shadows = bool(shadows.get("RequestedSunShadowsEnabled"))
+				shadows.call("SetShadowTuningOverride", "Enabled", false if on else _saved_sun_shadows)
+			return 3.0
+	return 0.0
+
+
+func _print_counters(where: String) -> void:
+	var total_nodes := 0
+	var lines: Array = []
+	for level in _proxy_levels():
+		var nodes := 0
+		var stack: Array = [level]
+		while not stack.is_empty():
+			var node: Node = stack.pop_back()
+			if node is GeometryInstance3D and node != level:
+				nodes += 1
+			for child in node.get_children():
+				stack.append(child)
+		total_nodes += nodes
+		lines.append("%s active=%d warm=%d pooled=%d created=%d nodes=%d busy=%s" % [level.name, int(level.get("ActiveSectorCount")), int(level.get("WarmSectorCount")), int(level.get("PooledSectorCount")),
+			int(level.get("CreatedSectorNodeCount")), nodes, str(bool(level.get("StreamingActive")) and (int(level.get("ActiveWorkerSlots")) > 0 or int(level.get("PendingUploadCount")) > 0 or bool(level.get("CoordinatorBuildRequested"))))])
+	# A geometry node holds a block of the instance-uniform buffer from the first time it has an instance shader parameter until it is freed; the engine lists those parameters as properties.
+	var by_owner := {}
+	var all_geometry := 0
+	var all_holders := 0
+	for child in _game.get_children():
+		var count := 0
+		var holders := 0
+		var stack: Array = [child]
+		while not stack.is_empty():
+			var node: Node = stack.pop_back()
+			if node is GeometryInstance3D:
+				count += 1
+				for property in node.get_property_list():
+					if String(property["name"]).begins_with("instance_shader_parameters/"):
+						holders += 1
+						break
+			for grandchild in node.get_children():
+				stack.append(grandchild)
+		all_geometry += count
+		all_holders += holders
+		if count >= 20:
+			by_owner[String(child.name)] = "%d/%d" % [holders, count]
+	print("RIVER_SITE_CAPTURE counters at %s: proxy sector nodes=%d, geometry nodes under the world=%d, with instance shader parameters=%d (buffer holds %d blocks), by owner (with/all)=%s, builds_idle=%s, fps=%.0f" % [where, total_nodes, all_geometry, all_holders,
+		int(ProjectSettings.get_setting("rendering/limits/global_shader_variables/buffer_size", 65536)) / 16, str(by_owner), str(COMMON.builds_idle(_game)), Performance.get_monitor(Performance.TIME_FPS)])
+	for line in lines:
+		print("RIVER_SITE_CAPTURE counters   " + line)
+	var surface := _game.get_node_or_null("Terrain3DGameplay")
+	var grass := _game.get_node_or_null("StandingGrass")
+	var trees := _game.get_node_or_null("BiomeDecorations")
+	var global_lod := _game.get_node_or_null("GlobalTerrainLod3")
+	var coordinator := _game.get_node_or_null("TerrainLodCoordinator")
+	print("RIVER_SITE_CAPTURE counters   pending: surface=%s grass builds=%s uploads=%s tree tiles=%s global segments=%s mesh memory pressure=%s" % [
+		str((surface.call("GetSurfaceDiagnostics") as Dictionary).get("streaming", {})) if surface != null else "-",
+		str(grass.get("PendingGrassTileBuildCount")) if grass != null else "-", str(grass.get("PendingGrassUploadCount")) if grass != null else "-",
+		str(trees.get("VegetationPendingTiles")) if trees != null else "-", str(global_lod.get("PendingInitialSegmentCount")) if global_lod != null else "-",
+		str(coordinator.get("MeshMemoryPressureActive")) if coordinator != null else "-"])
 
 
 func _hide_hud() -> void:
@@ -154,8 +251,11 @@ func _run() -> void:
 	# Cloud quality Off: no volumetric clouds, no mesh cloud shell and no rain curtains, so a top-down still from above the cloud base shows the ground.
 	# (Switching only the volumetric renderer off hands the sky to the far cloud shell, which then covers the view.)
 	var weather_layer := _game.get_node_or_null("RingVolumetricClouds")
+	var counters := String(_args.get("counters", "0")) == "1"
 	if weather_layer != null and weather_layer.has_method("SetQuality"):
-		weather_layer.call("SetQuality", 0)
+		_saved_cloud_quality = int(weather_layer.get("Quality"))
+		if String(_args.get("clouds", "off")) != "keep":
+			weather_layer.call("SetQuality", 0)
 	_hide_hud()
 	_make_label()
 
@@ -186,6 +286,8 @@ func _run() -> void:
 		var weather: Dictionary = LANDSCAPE.pin_weather(_game, [{"name": name, "around_m": around, "across_m": across}])
 		record["weather"] = {"error": weather["error"]} if weather.has("error") else {"cloud_time": weather.get("cloud_time", NAN), "searched": weather.get("searched", 0)}
 		print("RIVER_SITE_CAPTURE place=%s ground=%.1f idle=%s after %.0f s sun=%.1f weather=%s" % [name, ground, idle["idle"], idle["seconds"], float(record["sun_elevation_deg"]), str(record["weather"])])
+		if counters:
+			_print_counters("arrival at " + name)
 		for view_variant in views:
 			var view: Dictionary = view_variant
 			var tag := str(view["tag"])
@@ -210,6 +312,19 @@ func _run() -> void:
 				failed += 1
 			(record["views"] as Array).append({"tag": tag, "file": file, "lift_m": lift, "yaw": yaw, "pitch": pitch, "idle": view_idle, "altitude_above_terrain_m": float(explorer.get("CurrentAltitudeAboveTerrainMeters"))})
 			print("RIVER_SITE_CAPTURE still=%s idle=%s after %.0f s" % [file, view_idle["idle"], view_idle["seconds"]])
+			for variant_value in view.get("variants", []):
+				var variant := str(variant_value)
+				await COMMON.settle(self, _apply_variant(variant, true))
+				await RenderingServer.frame_post_draw
+				var variant_image := root.get_texture().get_image()
+				variant_image.resize(save_size.x, save_size.y, Image.INTERPOLATE_LANCZOS)
+				var variant_file := "%s_%s_%s.png" % [name, tag, variant]
+				if variant_image.save_png(_out.path_join(variant_file)) != OK:
+					failed += 1
+				await COMMON.settle(self, _apply_variant(variant, false))
+				print("RIVER_SITE_CAPTURE still=%s" % variant_file)
+			if counters:
+				_print_counters(file)
 		index.append(record)
 		var out_file := FileAccess.open(_out.path_join(String(_args.get("index", "index.json"))), FileAccess.WRITE)
 		if out_file != null:
