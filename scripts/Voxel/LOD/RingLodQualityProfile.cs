@@ -27,8 +27,8 @@ public partial class RingLodQualityProfile : Resource
     [ExportGroup("Phase C Screen-Space Selection")]
     [Export] public bool UseScreenSpaceError { get; set; } = true;
     [Export(PropertyHint.Range, "0.5,8.0,0.1")] public float TargetPixelError { get; set; } = 3.0f;
-    // Altitude release tolerance as a multiple of TargetPixelError: a fine level stops once the next coarser level is within factor x TargetPixelError at the nearest ground. 2.5 is the chain invariant.
-    [Export(PropertyHint.Range, "2.5,8.0,0.1")] public float AltitudeErrorFactor { get; set; } = 2.5f;
+    // Altitude release tolerance as a multiple of TargetPixelError: a fine level stops once the next coarser level is within factor x TargetPixelError at the nearest ground. The user chose 6 on 2026-11-13 (T2R-18 sweep); 2.5 would keep the chain invariant everywhere.
+    [Export(PropertyHint.Range, "2.5,8.0,0.1")] public float AltitudeErrorFactor { get; set; } = 6.0f;
     [Export(PropertyHint.Range, "0.05,0.4,0.01")] public float TransitionFraction { get; set; } = 0.18f;
     [Export(PropertyHint.Range, "0.25,8.0,0.05")] public float UploadBudgetMilliseconds { get; set; } = 2.0f;
 

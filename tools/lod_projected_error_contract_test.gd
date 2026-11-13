@@ -2,7 +2,7 @@ extends SceneTree
 
 # Headless projected-error contract for the terrain proxy chain on the Certified ring
 # (docs/terrain-altitude-lod-coverage-plan.md). For Low, Medium, High and Very High,
-# every visible proxy tier must stay within 2.5x the target pixel error, and the global
+# every visible proxy tier must stay within 2.5x (6x for the first tier after levels released on purpose by AltitudeErrorFactor) the target pixel error, and the global
 # backdrop within 5x, at 0.5, 2, 8, 16, 23 and 60 km altitude.
 
 const SCENE_PATH := "res://scenes/VoxelRingIntegrationTest.tscn"
@@ -25,7 +25,7 @@ func _init() -> void:
 		root.free()
 		quit(2)
 		return
-	# --factor=<k> overrides the profiles' altitude error factor (5 must report violations: the check can fail).
+	# --factor=<k> overrides the profiles' altitude error factor (8 must report violations against the profiles' 6: the check can fail).
 	for raw in OS.get_cmdline_user_args():
 		if String(raw).begins_with("--factor="):
 			coordinator.set("ContractAltitudeErrorFactorOverride", float(String(raw).substr(9)))

@@ -88,6 +88,9 @@ public partial class TerrainAltitudeLodProbe : RefCounted
         float projectionScale = size.Y / (2.0f * Mathf.Tan(Mathf.DegToRad(camera.Fov) * 0.5f));
         float e = Mathf.Max(0.5f, _lod.CurrentTargetPixelError);
         float proxyLimit = 2.5f * e * 1.01f;
+        // A tier that owns ground because finer levels were released on purpose by the altitude error rule
+        // (AltitudeErrorFactor, T2R-18) is held to that factor instead of the strict 2.5.
+        float releasedLimit = Mathf.Max(2.5f, _lod.CurrentAltitudeErrorFactor) * e * 1.01f;
         float backdropLimit = 5.0f * e * 1.01f;
         double circumference = _grid.GetCanonicalRingCircumferenceMeters64();
         double width = _global.RingWidthMeters;
@@ -124,9 +127,10 @@ public partial class TerrainAltitudeLodProbe : RefCounted
                 hits++;
 
                 RingTerrainProxySector? owner = null;
+                bool finerReleased = false;
                 for (int i = 0; i < levels.Count; i++)
                 {
-                    if (!levels[i].StreamingActive) continue;
+                    if (!levels[i].StreamingActive) { finerReleased = true; continue; }
                     if (levels[i].FadeOutEndMeters >= distance) { owner = levels[i]; break; }
                 }
 
@@ -148,11 +152,12 @@ public partial class TerrainAltitudeLodProbe : RefCounted
                 tierHits[key] = (int)tierHits.GetValueOrDefault(key, 0) + 1;
                 float error = owner.SampleSpacingMeters * projectionScale / distance;
                 if (error > worstEps) { worstEps = error; worstEpsTier = key; }
-                if (error > proxyLimit)
+                float limit = finerReleased ? releasedLimit : proxyLimit;
+                if (error > limit)
                 {
                     epsViolations++;
                     if (samples.Count < 6)
-                        samples.Add($"proxy {key} eps={error:0.0}px d={distance:0} limit={proxyLimit:0.0}");
+                        samples.Add($"proxy {key} eps={error:0.0}px d={distance:0} limit={limit:0.0}");
                 }
 
                 bool covered = false;

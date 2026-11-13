@@ -662,7 +662,7 @@ public partial class RingTerrainLodCoordinator : Node
         widthMeters = _grid?.RingAcrossWidthMeters ?? 0.0;
     }
 
-    /// <summary>Test hook: when above 0, RunProjectedErrorContract uses this altitude error factor instead of each profile's.</summary>
+    /// <summary>Test hook: when above 0, RunProjectedErrorContract releases levels with this factor instead of each profile's, while still checking against the profile's own factor (so a larger one must fail).</summary>
     public float ContractAltitudeErrorFactorOverride { get; set; }
 
     private double _contractRingCircumference;
@@ -732,9 +732,10 @@ public partial class RingTerrainLodCoordinator : Node
             List<string> violations = RingTerrainLodChainPlanner.EvaluateContract(
                 tiers, _voxelFadeEnd, backdropSpacing, projectionScale, profile.TargetPixelError,
                 ContractAltitudeErrorFactorOverride > 0.0f ? ContractAltitudeErrorFactorOverride : profile.AltitudeErrorFactor,
+                profile.AltitudeErrorFactor,
                 altitudes, out string summary);
             report.AppendLine(string.Create(System.Globalization.CultureInfo.InvariantCulture,
-                $"{profile.DisplayName}: e={profile.TargetPixelError:0.00} tiers={tiers.Count} terminal={(tiers.Count > 0 ? tiers[^1].Label : "-")} far={(tiers.Count > 0 ? tiers[^1].FarHandoffMeters : 0.0f):0}m global={plan.AroundSegments}x{plan.AcrossSegments} edge={backdropSpacing:0}m violations={violations.Count}{summary}"));
+                $"{profile.DisplayName}: e={profile.TargetPixelError:0.00} k={profile.AltitudeErrorFactor:0.0} firstRelease={(tiers.Count > 1 ? RingTerrainLodChainPlanner.ErrorRuleKeepRatio * tiers[1].SpacingMeters * projectionScale / (profile.AltitudeErrorFactor * Mathf.Max(0.5f, profile.TargetPixelError)) : 0.0f):0}m({(tiers.Count > 0 ? tiers[0].Label : "-")}) tiers={tiers.Count} terminal={(tiers.Count > 0 ? tiers[^1].Label : "-")} far={(tiers.Count > 0 ? tiers[^1].FarHandoffMeters : 0.0f):0}m global={plan.AroundSegments}x{plan.AcrossSegments} edge={backdropSpacing:0}m violations={violations.Count}{summary}"));
             foreach (string violation in violations)
                 violationLines.Add($"{profile.DisplayName}: {violation}");
         }
@@ -1382,7 +1383,8 @@ public partial class RingTerrainLodCoordinator : Node
         // Error rule (T2R-18): level of spacing 2 m under a 4 m next level, 2560x1440 at 80 degrees, e = 1.25.
         float scale = RingTerrainLodChainPlanner.ProjectionScale(1440.0f, 80.0f);
         string releaseText = "";
-        foreach (float factor in new[] { 2.5f, 5.0f })
+        Require(new RingLodQualityProfile().AltitudeErrorFactor == 6.0f, "default AltitudeErrorFactor must be 6 (user decision 2026-11-13)");
+        foreach (float factor in new[] { 2.5f, 5.0f, 6.0f })
         {
             float h = 4.0f * scale / (factor * 1.25f);
             Require(RingTerrainLodChainPlanner.IsLevelNeededForError(4.0f, scale, 1.25f, factor, 0.0f, true), $"k={factor}: needed at altitude 0");
@@ -1407,6 +1409,18 @@ public partial class RingTerrainLodCoordinator : Node
             Require(errorFlips == 2, $"k={factor}: expected one return and one release over a +-50 m sweep, saw {errorFlips}");
             releaseText += $" k{factor:0.0}:release={h * 1.2f:0}m,return={h * 1.1f:0}m";
         }
+        // Contract model (EvaluateContract): the first tier after a deliberate release is held to the chosen
+        // factor, not the strict 2.5. A release factor above the checked one must still report it.
+        float scale1080 = RingTerrainLodChainPlanner.ProjectionScale(1080.0f, 80.0f);
+        var chain = new List<RingTerrainLodChainPlanner.ChainTier>();
+        for (int spacing = 2; spacing <= 64; spacing *= 2)
+            chain.Add(new RingTerrainLodChainPlanner.ChainTier($"{spacing}m", spacing, spacing * scale1080 / 1.25f));
+        var altitudeProbe = new[] { 320.0f };
+        // 2 m level at 320 m: k=6 keeps it (kept to 412 m); k=8 releases it (309 m) and the 4 m tier then sees 8.0 px > 6 x 1.25.
+        List<string> kept = RingTerrainLodChainPlanner.EvaluateContract(chain, 100.0f, 1000.0f, scale1080, 1.25f, 6.0f, 6.0f, altitudeProbe, out _);
+        List<string> tooLoose = RingTerrainLodChainPlanner.EvaluateContract(chain, 100.0f, 1000.0f, scale1080, 1.25f, 8.0f, 6.0f, altitudeProbe, out _);
+        Require(!kept.Exists(v => v.Contains("tier 4m")), "k=6 must keep the 2 m level at 320 m");
+        Require(tooLoose.Exists(v => v.Contains("tier 4m")), "releasing with k=8 must exceed the checked factor 6");
         // A disabled intermediate level is skipped when the next spacing is taken; the last level has none.
         bool[] enabled = { true, false, true, true };
         Require(RingTerrainLodChainPlanner.NextCoarserEnabledIndex(enabled, 0, 4) == 2, "disabled level must be skipped");

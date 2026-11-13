@@ -193,6 +193,11 @@ internal static class RingTerrainLodChainPlanner
     /// <summary>
     /// Evaluates the projected-error invariant for a configured tier chain and its
     /// backdrop at each altitude. Returns one message per violation.
+    /// Error limit per tier: a tier keeps the strict chain limit (ProxyErrorFactor x e). The one
+    /// exception is the first active tier after levels that were released on purpose by the
+    /// altitude error rule (AltitudeErrorFactor, T2R-18): it now covers the ground from the viewer's
+    /// height, so its limit is the chosen limitFactor x e. Raising the release factor above
+    /// limitFactor therefore still reports violations.
     /// </summary>
     public static List<string> EvaluateContract(
         IReadOnlyList<ChainTier> tiers,
@@ -201,6 +206,7 @@ internal static class RingTerrainLodChainPlanner
         float projectionScale,
         float targetPixelError,
         float altitudeErrorFactor,
+        float limitFactor,
         ReadOnlySpan<float> altitudes,
         out string summary)
     {
@@ -224,6 +230,7 @@ internal static class RingTerrainLodChainPlanner
             int activeCount = 0;
             float near = firstNearMeters;
             float lastFar = firstNearMeters;
+            bool afterErrorRelease = false;
             for (int i = 0; i < tiers.Count; i++)
             {
                 ChainTier tier = tiers[i];
@@ -239,12 +246,15 @@ internal static class RingTerrainLodChainPlanner
                         worstProxy = error;
                         worstLabel = tier.Label;
                     }
-                    if (error > proxyLimit)
+                    float limit = afterErrorRelease ? Mathf.Max(proxyLimit, limitFactor * e * 1.001f) : proxyLimit;
+                    afterErrorRelease = false;
+                    if (error > limit)
                     {
                         violations.Add(string.Format(CultureInfo.InvariantCulture,
-                            "h={0:0}m tier {1}: error {2:0.00}px > {3:0.00}px", altitude, tier.Label, error, proxyLimit));
+                            "h={0:0}m tier {1}: error {2:0.00}px > {3:0.00}px", altitude, tier.Label, error, limit));
                     }
                 }
+                if (!needed && tier.FarHandoffMeters > altitude) afterErrorRelease = true;
                 if (needed || tier.FarHandoffMeters <= altitude) near = tier.FarHandoffMeters; // an error-released tier leaves the ground to the next one
                 lastFar = tier.FarHandoffMeters;
             }
