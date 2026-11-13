@@ -106,6 +106,7 @@ public partial class RiverCarveInvariantsTest : RefCounted
             Mouths();
             FarPoints();
             Cost();
+            Heads();
             SharedTables();
             Pictures();
         }
@@ -1438,6 +1439,167 @@ public partial class RiverCarveInvariantsTest : RefCounted
         Detail(FormattableString.Invariant($"natural height sample on the same points: {naturalCost:F3} us; the operator near a river adds {near / naturalCost:P0}"));
         Detail(FormattableString.Invariant($"operator cost (one thread, best of 5, indicative): within 150 m of a centreline {near:F3} us per sample ({nearPoints.Count} points), Near but beyond 300 m {shoulder:F3} us ({shoulderPoints.Count}), elsewhere {far:F3} us ({elsewhere.Count}); gate +{NearCostGateMicroseconds:F1} us near rivers, +0.03 us elsewhere"));
         Check(near <= NearCostGateMicroseconds, FormattableString.Invariant($"the operator costs {near:F3} us per sample near rivers (limit {NearCostGateMicroseconds:F1})"));
+    }
+
+    // ------------------------------------------------------------------ heads (T2R-21)
+
+    /// <summary>
+    /// T2R-21 (RS4): the tapered heads of source stems. The channel law at a growing discharge: 0 at s = 0, the span's values from T = min(1,500 m, length) on, no decrease along the
+    /// way (apart from the 200 m blend into a narrower second span, counted apart), speed never above the span's, wet width within max(1 m, 10 %) of the tapered width at T / 10 and T / 2,
+    /// no NaN on a 1 m lattice over the first 100 m, the operator cost on head sections. The control switches the taper off (the first line must then fail).
+    /// </summary>
+    private void Heads()
+    {
+        List<int> heads = Enumerable.Range(0, _net.Stems.Length).Where(i => _net.IsSource(i) && _net.Curves[i].Length >= 100d).OrderBy(i => RiverHash.Mix(Seed, i, 74)).Take(200).ToList();
+        Check(heads.Count >= 50, $"too few source stems: {heads.Count}");
+        RiverSpanTable table = _net.SpanTable!;
+
+        int ZeroAndFull(out int total)
+        {
+            int bad = 0; total = 0;
+            foreach (int stem in heads)
+            {
+                double len = _net.Curves[stem].Length, t = Math.Min(RiverHydraulics.HeadTaperMeters, len);
+                _net.ChannelAt(stem, 0d, out RiverChannel c0);
+                total++;
+                if (c0.HalfWidth * 2d > 1e-6 || c0.Depth > 1e-6) bad++;
+                var after = new List<double> { t };
+                if (t + 137d < len) after.Add(t + 137d);
+                foreach (double s in after)
+                {
+                    _net.ChannelAt(stem, s, out RiverChannel on);
+                    double saved = _net.HeadTaperOverride;
+                    _net.HeadTaperOverride = 0d;
+                    _net.ChannelAt(stem, s, out RiverChannel off);
+                    _net.HeadTaperOverride = saved;
+                    total++;
+                    if (Math.Abs(on.HalfWidth - off.HalfWidth) > 1e-9 || Math.Abs(on.Depth - off.Depth) > 1e-9 || Math.Abs(on.BankWidth - off.BankWidth) > 1e-9 || Math.Abs(on.Floodplain - off.Floodplain) > 1e-9) bad++;
+                }
+            }
+            return bad;
+        }
+
+        int zeroBad = ZeroAndFull(out int zeroTotal);
+        Check(zeroBad == 0, $"heads: s = 0 is not a point or the section beyond T differs from the taper-off values on {zeroBad}/{zeroTotal} checks");
+        _net.HeadTaperOverride = 0d;
+        int controlBad = ZeroAndFull(out _);
+        _net.HeadTaperOverride = -1d;
+        Check(controlBad > 0, "heads: the negative control (taper off) did not fail the point-at-zero check");
+        Detail($"heads: {heads.Count} source stems; point at s = 0 and full section at T: {zeroBad}/{zeroTotal} bad; taper-off control fails {controlBad} checks");
+
+        long monotonePairs = 0, monotoneBad = 0, blendDrops = 0, speedChecks = 0, speedBad = 0;
+        double worstSpeedRatio = 0d;
+        foreach (int stem in heads)
+        {
+            double len = _net.Curves[stem].Length, t = Math.Min(RiverHydraulics.HeadTaperMeters, len);
+            double prevA = 0d, prevD = 0d;
+            bool prevBlend = false;
+            for (double s = 0d; s <= t + 1e-9; s += 10d)
+            {
+                double ss = Math.Min(s, len);
+                _net.ChannelAt(stem, ss, out RiverChannel c);
+                int i = c.Span;
+                bool blend = i > table.ReachFirst[_net.Stems[stem].ReachStart] && ss < table.Spans[i].SStart + RiverHydraulics.BlendMeters;
+                if (s > 0d)
+                {
+                    monotonePairs++;
+                    bool dropped = c.HalfWidth < prevA - 1e-9 || c.Depth < prevD - 1e-9;
+                    if (dropped) { if (blend || prevBlend) blendDrops++; else monotoneBad++; }
+                }
+                prevA = c.HalfWidth; prevD = c.Depth; prevBlend = blend;
+                if (!blend && ss < t && ss > 0d && i >= 0)
+                {
+                    double x = ss / t, wi = 2d * table.HalfWidth[i], di = table.Depth[i], ui = table.Speed[i];
+                    double qt = ui * wi * di * Math.Pow(x, 5d / 3d), ut = qt / (2d * c.HalfWidth * c.Depth);
+                    speedChecks++;
+                    double ratio = ut / ui;
+                    worstSpeedRatio = Math.Max(worstSpeedRatio, ratio);
+                    if (ratio > 1d + 1e-6) speedBad++;
+                }
+            }
+        }
+        Check(monotoneBad == 0, $"heads: width or depth decreases along the taper outside a span blend on {monotoneBad}/{monotonePairs} steps");
+        Check(speedBad == 0, $"heads: the tapered speed exceeds the span's on {speedBad}/{speedChecks} points");
+        Detail($"heads: monotone along [0, T] every 10 m: {monotoneBad} bad of {monotonePairs} steps, {blendDrops} decreases inside a 200 m blend into a narrower span (apart); speed Q_t / (w d) at most {worstSpeedRatio:F6} of the span's over {speedChecks} points");
+
+        using TerrainGenerationHeightModel model = NewModel();
+        using TerrainGenerationHeightModel natural = new(_recipe, false);
+        // The carve's wet edge lies outside the mapped half width (the bank slope meets the water level); the order's bar is read against the untapered section's own ratio, measured the same way beyond T.
+        var refRatios = new List<double>();
+        foreach (int stem in heads.Where(h => _net.Curves[h].Length > RiverHydraulics.HeadTaperMeters + 300d))
+        {
+            double s = RiverHydraulics.HeadTaperMeters + 200d;
+            _net.CentreFrame(stem, s, out double around, out double across, out double nx, out double ny);
+            if (natural.CalculateHeight(around, across) < 2d) continue;
+            _net.ChannelAt(stem, s, out RiverChannel c);
+            double ext = c.HalfWidth + c.BankWidth + 10d;
+            int wet = 0;
+            for (double x = -ext; x <= ext + 1e-9; x += 0.25)
+                if (Real(model, around + x * nx, across + x * ny, 0d).Wet) wet++;
+            refRatios.Add(wet * 0.25 / (2d * c.HalfWidth));
+        }
+        refRatios.Sort();
+        double edgeRatio = refRatios.Count > 0 ? refRatios[refRatios.Count / 2] : 1d;
+        if (refRatios.Count > 0) Detail(FormattableString.Invariant($"heads: reference, wet width / mapped width at T + 200 m (no taper) on {refRatios.Count} heads: p10 {refRatios[refRatios.Count / 10]:F3}, median {refRatios[refRatios.Count / 2]:F3}, p90 {refRatios[refRatios.Count * 9 / 10]:F3}"));
+
+        long wetChecks = 0, wetBad = 0;
+        var wetExamples = new List<string>();
+        foreach (int stem in heads)
+        {
+            double len = _net.Curves[stem].Length, t = Math.Min(RiverHydraulics.HeadTaperMeters, len);
+            foreach (double s in new[] { t / 10d, t / 2d })
+            {
+                _net.CentreFrame(stem, s, out double around, out double across, out double nx, out double ny);
+                if (natural.CalculateHeight(around, across) < 2d) continue;
+                _net.ChannelAt(stem, s, out RiverChannel c);
+                double ext = c.HalfWidth + c.BankWidth + 10d;
+                int wet = 0;
+                for (double x = -ext; x <= ext + 1e-9; x += 0.25)
+                    if (Real(model, around + x * nx, across + x * ny, 0d).Wet) wet++;
+                double wetWidth = wet * 0.25, w = 2d * c.HalfWidth * edgeRatio;
+                wetChecks++;
+                if (Math.Abs(wetWidth - w) > Math.Max(1d, 0.1 * w)) { wetBad++; if (wetExamples.Count < 12) wetExamples.Add(FormattableString.Invariant($"stem {stem} s {s:F0} of {len:F0}: wet {wetWidth:F2} m, tapered {w:F2} m (mapped width times the edge ratio), depth {c.Depth:F2} m, kind at centre {Real(model, around, across, 0d).Kind}")); }
+            }
+        }
+        Check(wetChecks >= 100 && wetBad <= 0.05 * wetChecks, $"heads: the wet width differs from the tapered width by more than max(1 m, 10 %) on {wetBad}/{wetChecks} sections");
+        Detail($"heads: wet width within max(1 m, 10 %) of the tapered width times the edge ratio {edgeRatio:F3} at T / 10 and T / 2 on {wetChecks - wetBad}/{wetChecks} sections" + (wetExamples.Count > 0 ? "; misses: " + string.Join(" | ", wetExamples) : ""));
+
+        long nan = 0, lattice = 0;
+        foreach (int stem in heads.Where(h => _net.Curves[h].Length >= 100d).Take(50))
+            for (int s = 0; s <= 100; s++)
+            {
+                _net.CentreFrame(stem, s, out double around, out double across, out double nx, out double ny);
+                for (int x = -30; x <= 30; x++)
+                {
+                    TerrainGenerationHeightModel.Diagnostics d = model.SampleDiagnostics(around + x * nx, across + x * ny, 0d);
+                    lattice++;
+                    if (double.IsNaN(d.Height) || double.IsInfinity(d.Height) || double.IsNaN(d.RiverCorridorWeight)) nan++;
+                }
+            }
+        Check(nan == 0, $"heads: {nan} NaN or infinite samples on the 1 m lattice over the first 100 m");
+        Detail($"heads: {lattice} lattice samples over the first 100 m of 50 heads, {nan} NaN");
+
+        // Cost on head sections: points within 150 m of the centreline over the first 1,500 m, one thread.
+        var op = new RiverCarveOperator(_graph);
+        var pts = new List<(double, double, double)>();
+        for (int k = 0; k < heads.Count && pts.Count < 20000; k++)
+            for (int j = 0; j < 100; j++)
+            {
+                int stem = heads[k];
+                double s = RiverHash.Unit(Seed, k, j, 75) * Math.Min(RiverHydraulics.HeadTaperMeters, _net.Curves[stem].Length), x = (RiverHash.Unit(Seed, k, j, 76) * 2 - 1) * 150d;
+                _net.CentreFrame(stem, s, out double around, out double across, out double nx, out double ny);
+                pts.Add((around + x * nx, across + x * ny, natural.CalculateHeight(around + x * nx, across + x * ny)));
+            }
+        double best = double.MaxValue, sink = 0d;
+        for (int pass = 0; pass < 5; pass++)
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            foreach ((double a, double c, double g) in pts) sink += op.Evaluate(a, c, g, 0d).Height;
+            best = Math.Min(best, clock.Elapsed.TotalMilliseconds * 1000d / pts.Count);
+        }
+        if (double.IsNaN(sink)) Fail("heads: cost loop produced NaN");
+        Detail(FormattableString.Invariant($"heads: operator cost within 150 m of a head centreline over its first 1,500 m {best:F3} us per sample ({pts.Count} points; gate +{NearCostGateMicroseconds:F1} us)"));
+        Check(best <= NearCostGateMicroseconds, FormattableString.Invariant($"heads: the operator costs {best:F3} us per sample on head sections (limit {NearCostGateMicroseconds:F1})"));
     }
 
     // ------------------------------------------------------------------ pictures (optional)

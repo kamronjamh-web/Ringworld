@@ -8,8 +8,8 @@ using RingworldTechDemo.Terrain.Generation;
 
 namespace RingworldTechDemo.Terrain.Hydrology;
 
-/// <summary>How a stem ends (S5). StripEnd (a strip's end column) and Dead (reaches no outlet; never expected) exist for tools and tests.</summary>
-public enum RiverTerminal : byte { Sea, Lake, Confluence, Lung, StripEnd, Dead, Intake }
+/// <summary>How a stem ends (S5). StripEnd (a strip's end column) and Dead (reaches no outlet; never expected) exist for tools and tests. Intake and Cut exist only with the site removal options of T2R-23 (Cut: a river that joined a river that was removed at a site).</summary>
+public enum RiverTerminal : byte { Sea, Lake, Confluence, Lung, StripEnd, Dead, Intake, Cut }
 
 /// <summary>A maximal chain of channel cells (S5): at each confluence it continues up the incoming branch with the larger area.</summary>
 public struct RiverStem
@@ -216,8 +216,30 @@ public sealed class RiverNetwork
                 slope += (table.ValleySlope[up] - slope) * (1 - t);
             }
         }
+        double taper = HeadTaperOverride >= 0d ? HeadTaperOverride : RiverHydraulics.HeadTaperMeters;
+        if (taper > 0d && s < taper && IsSource(stem))
+        {
+            double t = Math.Min(taper, Curves[stem].Length);
+            if (s < t)
+            {
+                // RS4: the span's law at a discharge growing as x^(5/3): depth x^(2/3), width x^(5/9), speed x^(4/9). Bank, edge and floodplain follow through the same statics as RiverSpanTable.Create.
+                double x = Math.Max(0d, s) / t;
+                depth *= x <= 0d ? 0d : Math.Cbrt(x * x);
+                a *= x <= 0d ? 0d : Math.Pow(x, 5d / 9d);
+                double w = 2d * a;
+                b = RiverHydraulics.BankWidth(w);
+                edge = RiverHydraulics.EdgeDepth(depth);
+                flood = RiverHydraulics.FloodplainWidth(w, Math.Max(table.Spans[i].Sh, 1e-4f), ValleyWidth);
+            }
+        }
         channel = new RiverChannel(channel.Reach, a, b, depth, edge, flood, slope, channel.MeanderAmplitude, channel.MeanderWavelength, i);
     }
+
+    /// <summary>T2R-21: test hook for the head taper length (negative: use <see cref="RiverHydraulics.HeadTaperMeters"/>; 0 switches the taper off).</summary>
+    internal double HeadTaperOverride = -1d;
+
+    /// <summary>True when the stem starts at a source: its first reach has no upstream lake (lake outlets, in-lake stems and overflow outlets are not sources).</summary>
+    public bool IsSource(int stem) => Reaches[Stems[stem].ReachStart].UpstreamLake < 0;
 
     /// <summary>Half width and bank width of the path section at s (the reach values blended as before spans existed): the level build and the confluence tails use these, so the stored profile and the displayed level do not depend on the spans.</summary>
     public void PathGeometry(int stem, double s, out double a, out double b)
@@ -448,6 +470,8 @@ public sealed class RiverBuildOptions
     public bool LakeChannels { get; init; } = true;
     /// <summary>T2R-8b: the in-lake stem of a chain of marked cells starts at its first deep cell (lowest sample 2 m under the lake level); the shallower cells before it are plain channel cells of the river that enters. False starts it at the entry cell (the work order's literal item 3: 12 % of the ends then stand on ground above the lake level, and inlet counts equal the T2R-8 graph's).</summary>
     public bool DeepEntries { get; init; } = true;
+    /// <summary>T2R-23 (RS2): which rivers a site removes. None in production (Part A only measures it; the report tool sets it together with <see cref="DrainageBakeOptions.SiteIntakes"/>).</summary>
+    public RiverSiteRemovalRule SiteRemoval { get; init; } = RiverSiteRemovalRule.None;
     public int Workers { get; init; } = 4;
     /// <summary>Keep the level stations on the network (tests and reports).</summary>
     public bool KeepStations { get; init; }
@@ -472,6 +496,10 @@ public sealed record RiverBuildReport
     public int TerminalDead { get; init; }
     /// <summary>T2R-19: stems that end at a site intake cell (always 0 with the option off).</summary>
     public int TerminalIntake { get; init; }
+    /// <summary>T2R-23: stems that end where the river they joined was removed (rule Branch), and what the removal took (zero with the option off).</summary>
+    public int TerminalCut { get; init; }
+    public int RemovedStems { get; init; }
+    public int RemovedCells { get; init; }
     public double[] Q { get; init; } = Array.Empty<double>();
     public double[] Gradient { get; init; } = Array.Empty<double>();
     public double[] Depth { get; init; } = Array.Empty<double>();
@@ -517,7 +545,7 @@ public sealed record RiverBuildReport
         return string.Join("\n", new[]
         {
             FormattableString.Invariant($"rivers: threshold {ThresholdKm2:F0} km^2, channel cells {ChannelCells}, stems {Stems}, reaches {Reaches}, nodes {Nodes}, knots {Knots}, stations {Stations}, length {LengthKm:F0} km"),
-            $"terminals: sea {TerminalSea}, lake {TerminalLake}, confluence {TerminalConfluence}, lung {TerminalLung}, strip end {TerminalStripEnd}, dead {TerminalDead}" + (TerminalIntake > 0 ? $", intake {TerminalIntake}" : ""),
+            $"terminals: sea {TerminalSea}, lake {TerminalLake}, confluence {TerminalConfluence}, lung {TerminalLung}, strip end {TerminalStripEnd}, dead {TerminalDead}" + (TerminalIntake > 0 ? $", intake {TerminalIntake}" : "") + (TerminalCut > 0 ? $", cut {TerminalCut}" : "") + (RemovedStems > 0 ? $" (site removal took {RemovedStems} stems, {RemovedCells} cells)" : ""),
             "hydraulics p10/p50/p90 over reach length: Q " + P(Q) + " m3/s, S " + P(Gradient) + ", d " + P(Depth) + " m, w " + P(Width) + " m, U " + P(Speed) + " m/s",
             FormattableString.Invariant($"class share by length: calm {ClassShare.ElementAtOrDefault(0):P1}, swift {ClassShare.ElementAtOrDefault(1):P1}, fierce {ClassShare.ElementAtOrDefault(2):P1}, torrent {ClassShare.ElementAtOrDefault(3):P1}"),
             FormattableString.Invariant($"lake channels: {LakeChannelCells} marked cells ({LakeLeads} outlet leads), {InLakeStems} stems start inside a lake, in-lake length {InLakeKm:F1} km, cut over 40 m on {InLakeCutOver40Share:P2} of it (largest {InLakeCutMax:F1} m)"),
@@ -551,36 +579,48 @@ public static class RiverGraphBuilder
         public double OriginAround, OriginAcross;
     }
 
-    public static RiverNetwork Build(DrainageField f, DrainageGrid grid, TerrainGenerationParameters p, RiverBuildOptions options, CancellationToken cancellation,
-        out RiverBuildReport report)
+    /// <summary>The arrays of a <see cref="DrainageField"/> that step 1 and 2 of <see cref="Build"/> read, so that the channel and chain finding runs without a grid (T2R-23).</summary>
+    internal sealed class ChainField
     {
-        var clock = Stopwatch.StartNew();
-        DrainageGridSpec spec = grid.Spec;
+        public required DrainageDomain Domain;
+        public required int[] Down, Area, LakeId;
+        public required DrainageCellKind[] Kind, Terminal;
+        public required bool[] Visited;
+        /// <summary>Lowest sample per cell and the level of each lake (read only with lake channels).</summary>
+        public float[] Lowest = Array.Empty<float>(), LakeLevel = Array.Empty<float>();
+        public required double CellArea;
+    }
+
+    internal sealed class ChainResult
+    {
+        public required bool[] Channel, LakeChannel, LakeMarked, DeepCell;
+        public required int ChannelCells, LakeChannelCells, LakeLeads;
+        public required int[] MainUp;
+        public required List<int[]> Chains;
+        /// <summary>Per stem: how it ends, the lake or receiving stem id, the receiving stem and its node index; the stems by terminal.</summary>
+        public required RiverTerminal[] Terminals;
+        public required int[] TerminalIds, ReceiverStems, ReceiverNodeIndices, TerminalCounts;
+    }
+
+    /// <summary>
+    /// Steps 1 and 2 of <see cref="Build"/>: channel cells, lake channels, the main upstream neighbour of each cell and the stems (chains of cells, sorted by last cell then head cell).
+    /// <paramref name="removed"/> (T2R-23): cells that are not channel cells; <paramref name="excludeIntakeTerminal"/>: cells whose water ends at a site are not channel cells. Both are off in production.
+    /// </summary>
+    internal static ChainResult FindChains(ChainField f, double threshold, bool lakeChannels, bool deepEntries, bool[]? removed, bool excludeIntakeTerminal)
+    {
         DrainageDomain d = f.Domain;
-        int n = f.Count, width = f.Width;
-        long seed = p.Seed;
-        double density = p.HasRivers ? p.GetExtensionField("river_density") : 1d;
-        double meander = p.HasRivers ? p.GetExtensionField("meander_strength") : 1d;
-        double valley = p.HasRivers ? p.GetExtensionField("river_valley_width") : 1d;
-        double depthScale = p.HasRivers ? p.GetExtensionField("channel_depth") : 1d;
-        double ferocity = p.HasRivers ? p.GetExtensionField("river_ferocity") : 1d;
-        double threshold = options.ThresholdKm2 ?? 100d / density;
-        double cellArea = f.CellAreaKm2;
-        double circumference = spec.CircumferenceMeters;
-        double widthMeters = spec.Rows * spec.AcrossStepMeters;
-
-        int[] down = f.Down.ToArray(), area = f.AreaCells.ToArray(), lakeId = f.LakeId.ToArray();
-        double[] accumulated = f.RunoffAccumulation.ToArray();
-        float[] filled = f.UnperturbedFilled.ToArray();
-        DrainageCellKind[] kind = f.Kind.ToArray(), terminalKind = f.Terminal.ToArray();
-        bool[] visited = f.Visited.ToArray();
-
+        int n = f.Down.Length;
+        int[] down = f.Down, area = f.Area, lakeId = f.LakeId;
+        DrainageCellKind[] kind = f.Kind, terminalKind = f.Terminal;
+        bool[] visited = f.Visited;
+        double cellArea = f.CellArea;
         // 1. Channel cells and the main upstream neighbour of each.
         var channel = new bool[n];
         int channelCells = 0;
         for (int c = 0; c < n; c++)
         {
-            channel[c] = kind[c] == DrainageCellKind.Land && visited[c] && lakeId[c] < 0 && down[c] >= 0 && area[c] * cellArea >= threshold - 1e-9 && terminalKind[c] != DrainageCellKind.Barrier;
+            channel[c] = kind[c] == DrainageCellKind.Land && visited[c] && lakeId[c] < 0 && down[c] >= 0 && area[c] * cellArea >= threshold - 1e-9 && terminalKind[c] != DrainageCellKind.Barrier
+                && (removed == null || !removed[c]) && !(excludeIntakeTerminal && terminalKind[c] == DrainageCellKind.Intake); // T2R-23: the removal rules (both off by default)
             if (channel[c]) channelCells++;
         }
         // T2R-8b items 1 and 2: lake channel cells, the flooded cells on the flow path from each inlet to the lake's exit or pit (and an outlet lead where no inlet reaches the exit).
@@ -588,10 +628,10 @@ public static class RiverGraphBuilder
         var lakeMarked = new bool[n]; // every marked cell: the in-lake stems and the approach cells before their first deep cell
         var deepCell = new bool[n]; // marked cells whose lowest sample stands 2 m under the lake level
         int lakeChannelCells = 0, lakeLeads = 0;
-        if (options.LakeChannels)
+        if (lakeChannels)
         {
-            float[] lowestSample = f.Lowest.ToArray();
-            DrainageLake[] lakeRecords = f.Lakes.ToArray();
+            float[] lowestSample = f.Lowest;
+            float[] lakeLevel = f.LakeLevel;
             var provisionalUp = new int[n];
             Array.Fill(provisionalUp, -1);
             for (int c = 0; c < n; c++)
@@ -655,7 +695,7 @@ public static class RiverGraphBuilder
                 {
                     lead.Add(cur);
                     int lake = lakeId[cur];
-                    if (lowestSample[cur] <= Math.Floor(lakeRecords[lake].Level) - 2d) { found = true; break; }
+                    if (lowestSample[cur] <= Math.Floor(lakeLevel[lake]) - 2d) { found = true; break; }
                     d.GetNeighbors(cur, nbr);
                     int up = -1;
                     for (int dir = 0; dir < 8; dir++)
@@ -674,24 +714,24 @@ public static class RiverGraphBuilder
             // A flooded cell is deep when its lowest sample stands 2 m under the lake level (the routing noise floods shallow rim cells whose ground is dry). The in-lake stem starts at the first deep cell of a
             // chain (items 1 and 3), so every inlet ends and every outlet starts in water the terrain shows; the shallow cells before it are approach cells, plain channel cells of the river that enters.
             // A chain with no deep cell at all is taken whole.
-            bool Deep(int cell) => lowestSample[cell] <= Math.Floor(lakeRecords[lakeId[cell]].Level) - 2d;
+            bool Deep(int cell) => lowestSample[cell] <= Math.Floor(lakeLevel[lakeId[cell]]) - 2d;
             for (int c = 0; c < n; c++) deepCell[c] = lakeMarked[c] && Deep(c);
-            if (!options.DeepEntries) Array.Copy(lakeMarked, lakeChannel, n);
-            for (int c = 0; c < n && options.DeepEntries; c++)
+            if (!deepEntries) Array.Copy(lakeMarked, lakeChannel, n);
+            for (int c = 0; c < n && deepEntries; c++)
             {
                 if (!lakeMarked[c]) continue;
                 bool anyDeep = false;
                 for (int cur = c; cur >= 0 && lakeMarked[cur] && !anyDeep; cur = down[cur]) anyDeep = Deep(cur);
                 if (!anyDeep) lakeChannel[c] = true;
             }
-            for (int c = 0; c < n && options.DeepEntries; c++)
+            for (int c = 0; c < n && deepEntries; c++)
             {
                 if (!lakeMarked[c] || !Deep(c)) continue;
                 for (int cur = c; cur >= 0 && lakeMarked[cur] && !lakeChannel[cur]; cur = down[cur]) lakeChannel[cur] = true;
             }
             // Where two chains meet in the shallow zone (a shared approach cell: two marked cells, or a marked cell and a river, flow into it) the shallow cells stay part of the in-lake stems, so the
             // inlets that meet there stay inlets of the lake (the inlet counts equal the T2R-8 graph's); a run that reaches its deep cell alone is trimmed.
-            if (options.DeepEntries)
+            if (deepEntries)
             {
                 Span<int> nbs = stackalloc int[8];
                 var stack = new Stack<int>();
@@ -748,39 +788,115 @@ public static class RiverGraphBuilder
             chains.Add(chain.ToArray());
         }
         chains.Sort((a, b) => a[^1] != b[^1] ? a[^1].CompareTo(b[^1]) : a[0].CompareTo(b[0]));
+        // How each stem ends (S5), with the receiving stem and node of a confluence.
         int stemCount = chains.Count;
-        var tmp = new StemTmp[stemCount];
+        var terminals = new RiverTerminal[stemCount];
+        var terminalIds = new int[stemCount];
+        var receiverStems = new int[stemCount];
+        var receiverNodes = new int[stemCount];
+        Array.Fill(terminalIds, -1);
+        Array.Fill(receiverStems, -1);
         var cellStem = new int[n];
         var cellIndex = new int[n];
         Array.Fill(cellStem, -1);
         for (int i = 0; i < stemCount; i++)
-        {
-            tmp[i] = new StemTmp { Cells = chains[i] };
             for (int k = 0; k < chains[i].Length; k++) { cellStem[chains[i][k]] = i; cellIndex[chains[i][k]] = k; }
-        }
-        var report0 = new int[7];
+        var counts = new int[8];
         for (int i = 0; i < stemCount; i++)
         {
-            StemTmp s = tmp[i];
-            int last = s.Cells[^1], next = down[last];
+            int last = chains[i][^1], next = down[last];
             if (channel[next])
             {
-                s.Terminal = RiverTerminal.Confluence; s.ReceiverStem = cellStem[next]; s.TerminalId = s.ReceiverStem; s.ReceiverNodeIndex = cellIndex[next];
+                terminals[i] = RiverTerminal.Confluence; receiverStems[i] = cellStem[next]; terminalIds[i] = receiverStems[i]; receiverNodes[i] = cellIndex[next];
                 // A river that enters an in-lake stem whose entry cell is shallow (the chain was kept whole where chains meet) joins it at the first deep cell, so its end stands in water the terrain shows.
-                if (options.DeepEntries && cellIndex[next] == 0 && lakeChannel[next])
+                if (deepEntries && cellIndex[next] == 0 && lakeChannel[next])
                 {
-                    int[] rc0 = tmp[s.ReceiverStem].Cells;
-                    for (int k = 0; k < rc0.Length; k++) if (deepCell[rc0[k]]) { s.ReceiverNodeIndex = k; break; }
+                    int[] rc0 = chains[receiverStems[i]];
+                    for (int k = 0; k < rc0.Length; k++) if (deepCell[rc0[k]]) { receiverNodes[i] = k; break; }
                 }
             }
-            else if (lakeId[next] >= 0) { s.Terminal = RiverTerminal.Lake; s.TerminalId = lakeId[next]; }
-            else if (kind[next] == DrainageCellKind.Ocean) s.Terminal = RiverTerminal.Sea;
-            else if (kind[next] == DrainageCellKind.Lung) s.Terminal = RiverTerminal.Lung;
-            else if (kind[next] == DrainageCellKind.StripOutlet) s.Terminal = RiverTerminal.StripEnd;
-            else if (kind[next] == DrainageCellKind.Intake) s.Terminal = RiverTerminal.Intake;
-            else s.Terminal = RiverTerminal.Dead;
-            report0[(int)s.Terminal]++;
+            else if (lakeId[next] >= 0) { terminals[i] = RiverTerminal.Lake; terminalIds[i] = lakeId[next]; }
+            else if (kind[next] == DrainageCellKind.Ocean) terminals[i] = RiverTerminal.Sea;
+            else if (kind[next] == DrainageCellKind.Lung) terminals[i] = RiverTerminal.Lung;
+            else if (kind[next] == DrainageCellKind.StripOutlet) terminals[i] = RiverTerminal.StripEnd;
+            else if (kind[next] == DrainageCellKind.Intake) terminals[i] = RiverTerminal.Intake;
+            else if (removed != null && removed[next]) terminals[i] = RiverTerminal.Cut; // T2R-23, rule Branch: it joined a river that was removed
+            else terminals[i] = RiverTerminal.Dead;
+            counts[(int)terminals[i]]++;
         }
+        return new ChainResult
+        {
+            Channel = channel, LakeChannel = lakeChannel, LakeMarked = lakeMarked, DeepCell = deepCell, ChannelCells = channelCells, LakeChannelCells = lakeChannelCells, LakeLeads = lakeLeads, MainUp = mainUp, Chains = chains,
+            Terminals = terminals, TerminalIds = terminalIds, ReceiverStems = receiverStems, ReceiverNodeIndices = receiverNodes, TerminalCounts = counts,
+        };
+    }
+
+    /// <summary>T2R-23: the channel finding under the site removal rule. Catchment: one pass without the cells whose water ends at a site. Branch: pass 1 finds the chains, <see cref="RiverSiteRemoval.Mark"/> marks the removed ones, pass 2 runs without their cells.</summary>
+    internal static ChainResult FindChannels(ChainField cf, double threshold, RiverBuildOptions options, bool[]? siteDrainedCell, out RiverSiteRemovalStats stats, out bool[]? removedCells)
+    {
+        stats = default;
+        removedCells = null;
+        ChainResult result;
+        switch (options.SiteRemoval)
+        {
+            case RiverSiteRemovalRule.Catchment:
+                result = FindChains(cf, threshold, options.LakeChannels, options.DeepEntries, null, true);
+                break;
+            case RiverSiteRemovalRule.Branch:
+            {
+                ChainResult first = FindChains(cf, threshold, options.LakeChannels, options.DeepEntries, null, false);
+                removedCells = RiverSiteRemoval.Mark(first.Chains, cf.Down, cf.Kind, cf.Terminal, siteDrainedCell, out stats);
+                result = FindChains(cf, threshold, options.LakeChannels, options.DeepEntries, removedCells, false);
+                break;
+            }
+            default:
+                return FindChains(cf, threshold, options.LakeChannels, options.DeepEntries, null, false);
+        }
+        if (result.TerminalCounts[(int)RiverTerminal.Intake] > 0) throw new InvalidOperationException("site removal left " + result.TerminalCounts[(int)RiverTerminal.Intake] + " stems that end at a site");
+        return result;
+    }
+
+    public static RiverNetwork Build(DrainageField f, DrainageGrid grid, TerrainGenerationParameters p, RiverBuildOptions options, CancellationToken cancellation,
+        out RiverBuildReport report)
+    {
+        var clock = Stopwatch.StartNew();
+        DrainageGridSpec spec = grid.Spec;
+        DrainageDomain d = f.Domain;
+        int n = f.Count, width = f.Width;
+        long seed = p.Seed;
+        double density = p.HasRivers ? p.GetExtensionField("river_density") : 1d;
+        double meander = p.HasRivers ? p.GetExtensionField("meander_strength") : 1d;
+        double valley = p.HasRivers ? p.GetExtensionField("river_valley_width") : 1d;
+        double depthScale = p.HasRivers ? p.GetExtensionField("channel_depth") : 1d;
+        double ferocity = p.HasRivers ? p.GetExtensionField("river_ferocity") : 1d;
+        double threshold = options.ThresholdKm2 ?? 100d / density;
+        double cellArea = f.CellAreaKm2;
+        double circumference = spec.CircumferenceMeters;
+        double widthMeters = spec.Rows * spec.AcrossStepMeters;
+
+        int[] down = f.Down.ToArray(), area = f.AreaCells.ToArray(), lakeId = f.LakeId.ToArray();
+        double[] accumulated = f.RunoffAccumulation.ToArray();
+        float[] filled = f.UnperturbedFilled.ToArray();
+        DrainageCellKind[] kind = f.Kind.ToArray(), terminalKind = f.Terminal.ToArray();
+        bool[] visited = f.Visited.ToArray();
+
+        var chainField = new ChainField
+        {
+            Domain = d, Down = down, Area = area, LakeId = lakeId, Kind = kind, Terminal = terminalKind, Visited = visited, CellArea = cellArea,
+            Lowest = options.LakeChannels ? f.Lowest.ToArray() : Array.Empty<float>(),
+            LakeLevel = options.LakeChannels ? f.Lakes.ToArray().Select(l => l.Level).ToArray() : Array.Empty<float>(),
+        };
+        bool[]? siteDrainedCell = options.SiteRemoval == RiverSiteRemovalRule.None ? null : RiverSiteRemoval.SiteDrainedCells(f);
+        ChainResult chainResult = FindChannels(chainField, threshold, options, siteDrainedCell, out RiverSiteRemovalStats removal, out bool[]? removedCells);
+        bool[] channel = chainResult.Channel, lakeChannel = chainResult.LakeChannel, deepCell = chainResult.DeepCell;
+        int channelCells = chainResult.ChannelCells, lakeChannelCells = chainResult.LakeChannelCells, lakeLeads = chainResult.LakeLeads;
+        int[] mainUp = chainResult.MainUp;
+        List<int[]> chains = chainResult.Chains;
+        int stemCount = chains.Count;
+        var tmp = new StemTmp[stemCount];
+        for (int i = 0; i < stemCount; i++)
+            tmp[i] = new StemTmp { Cells = chains[i], Terminal = chainResult.Terminals[i], TerminalId = chainResult.TerminalIds[i], ReceiverStem = chainResult.ReceiverStems[i], ReceiverNodeIndex = chainResult.ReceiverNodeIndices[i] };
+        int[] report0 = chainResult.TerminalCounts;
 
         // 3. Reach splits (a cell that receives a tributary starts a reach) and the hydraulics of each reach from the grid.
         var reachStartCell = new bool[n];
@@ -928,7 +1044,7 @@ public static class RiverGraphBuilder
             {
                 StemTmp s = tmp[si];
                 maxNodeShift = Math.Max(maxNodeShift, RiverWander.ClampShift(s.X, s.Y, s.OX, s.OY));
-                if (options.BarrierGuard) { (int movedNodes, double movedMax) = GuardBarriers(s, kind, spec, width, f.Height); guardMoved += movedNodes; guardMax = Math.Max(guardMax, movedMax); }
+                if (options.BarrierGuard) { (int movedNodes, double movedMax) = GuardBarriers(s, kind, spec, width, f.Height, s.Terminal == RiverTerminal.Cut); guardMoved += movedNodes; guardMax = Math.Max(guardMax, movedMax); }
                 int nodes = s.X.Length;
                 double originAround = s.OriginAround, originAcross = s.OriginAcross;
                 // Quantise to decimetres (the stored form) and clamp across the rim.
@@ -1032,7 +1148,7 @@ public static class RiverGraphBuilder
         {
             ThresholdKm2 = threshold, ChannelCells = channelCells, Stems = stemCount, Reaches = reaches.Length, Nodes = totalNodes, LengthKm = lengthKm,
             TerminalSea = report0[(int)RiverTerminal.Sea], TerminalLake = report0[(int)RiverTerminal.Lake], TerminalConfluence = report0[(int)RiverTerminal.Confluence],
-            TerminalLung = report0[(int)RiverTerminal.Lung], TerminalStripEnd = report0[(int)RiverTerminal.StripEnd], TerminalDead = report0[(int)RiverTerminal.Dead], TerminalIntake = report0[(int)RiverTerminal.Intake],
+            TerminalLung = report0[(int)RiverTerminal.Lung], TerminalStripEnd = report0[(int)RiverTerminal.StripEnd], TerminalDead = report0[(int)RiverTerminal.Dead], TerminalIntake = report0[(int)RiverTerminal.Intake], TerminalCut = report0[(int)RiverTerminal.Cut], RemovedStems = removal.RemovedStems, RemovedCells = removal.RemovedCells,
             LakeChannelCells = lakeChannelCells, LakeLeads = lakeLeads, InLakeStems = inLakeStems, InLakeKm = inLakeKm,
             CentrelineSeconds = centrelineSeconds, MaxWanderMeters = maxWander, MaxMeanderMeters = maxMeander, MaxNodeShiftMeters = maxNodeShift, MaxSmoothMeters = maxSmooth, SnappedNodes = snapped, GuardMovedNodes = guardMoved, GuardMaxMeters = guardMax,
         };
@@ -1099,9 +1215,10 @@ public static class RiverGraphBuilder
     /// plus the meander (at most 100 m, applied at query time) never enters one. Offending samples push the node under them (and half of each neighbour) away from the nearest barrier cell; the last
     /// node (a junction or the end in water) never moves. Fixed order and fixed passes, so it is deterministic. Returns the number of nodes moved and the largest total move.
     /// </summary>
-    private static (int Moved, double MaxMove) GuardBarriers(StemTmp s, DrainageCellKind[] kind, DrainageGridSpec spec, int width, int rows)
+    private static (int Moved, double MaxMove) GuardBarriers(StemTmp s, DrainageCellKind[] kind, DrainageGridSpec spec, int width, int rows, bool lastMovable = false)
     {
         int n = s.X.Length;
+        int movable = lastMovable ? n : n - 1; // T2R-23: the end node of a Cut stem is neither a junction nor in water, so it may move
         if (n < 2) return (0, 0);
         double stepA = spec.AroundStepMeters, stepC = spec.AcrossStepMeters, circumference = spec.CircumferenceMeters, m = BarrierClearanceMeters;
         var startX = (double[])s.X.Clone();
@@ -1154,13 +1271,13 @@ public static class RiverGraphBuilder
                     any = true;
                     foreach ((int node, double w) in new[] { (k, 1d), (k - 1, 0.5), (k + 1, 0.5) })
                     {
-                        if (node < 0 || node >= n - 1) continue;
+                        if (node < 0 || node >= movable) continue;
                         if (Math.Abs(px * w) > Math.Abs(dxs[node])) dxs[node] = px * w;
                         if (Math.Abs(py * w) > Math.Abs(dys[node])) dys[node] = py * w;
                     }
                 }
             if (!any) break;
-            for (int k = 0; k < n - 1; k++) { if (dxs[k] != 0 || dys[k] != 0) moved[k] = true; s.X[k] += dxs[k]; s.Y[k] += dys[k]; }
+            for (int k = 0; k < movable; k++) { if (dxs[k] != 0 || dys[k] != 0) moved[k] = true; s.X[k] += dxs[k]; s.Y[k] += dys[k]; }
         }
         _ = circumference;
         int count = 0;

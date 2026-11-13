@@ -27,6 +27,8 @@ public static class RiverHydraulics
     public const double WanderAmplitudeMeters = 250.0;
     public const double MeanderAmplitudeCapMeters = 100.0;
     public const double BlendMeters = 200.0;
+    /// <summary>T2R-21 (RS4): a source stem grows from a point to its mapped section over this length. Provisional until the user has seen the head pictures.</summary>
+    public const double HeadTaperMeters = 1500.0;
 
     public static double Smoothstep(double e0, double e1, double x)
     {

@@ -527,6 +527,24 @@ public partial class DrainageBakeReportTool
                     sb.AppendLine(FormattableString.Invariant($"  stem {h.Stem} head (around {h.AroundKm:F3} km, across {h.AcrossKm:F3} km) w {h.Width:F1} m d {h.Depth:F1} m Q {h.Q:F1} m3/s, length {net.Curves[h.Stem].Length / 1000d:F1} km"));
             }
             sb.AppendLine(FormattableString.Invariant($"heads: {sources} stems start at the channel threshold (a source), {outlets} at a lake outlet, {inLake} inside a lake (drowned channels and outlet leads); at the source Q p10/p50/p90 {Three(headQ, "F1")} m3/s, width {Three(headWidth, "F1")} m, depth {Three(headDepth, "F2")} m"));
+            // T2R-21: the median source (by the discharge at the source) through ChannelAt, which holds the head taper.
+            {
+                var order = new List<(double Q, int Stem)>();
+                for (int i = 0; i < stemCount; i++)
+                    if (!(i < net.InLakeEnd.Length && net.InLakeEnd[i] > 0d) && net.IsSource(i)) order.Add((table.Spans[table.ReachFirst[net.Stems[i].ReachStart]].Q, i));
+                if (order.Count > 0)
+                {
+                    order.Sort((x, y) => x.Q != y.Q ? x.Q.CompareTo(y.Q) : x.Stem.CompareTo(y.Stem));
+                    int med = order[order.Count / 2].Stem;
+                    var parts = new List<string>();
+                    foreach (double s in new[] { 0d, 150d, 750d, 1500d })
+                    {
+                        net.ChannelAt(med, Math.Min(s, net.Curves[med].Length), out RiverChannel c);
+                        parts.Add(FormattableString.Invariant($"{s:F0} m: w {2d * c.HalfWidth:F1} m d {c.Depth:F2} m"));
+                    }
+                    sb.AppendLine(FormattableString.Invariant($"head taper (T {RiverHydraulics.HeadTaperMeters:F0} m, provisional) of the median source (stem {med}, length {net.Curves[med].Length:F0} m): {string.Join("; ", parts)}"));
+                }
+            }
             double total = 0, under055 = 0, under115 = 0, under8 = 0, under3 = 0, oldFloor = 0, underDepth12 = 0;
             var widths = new List<(double, double)>(); var depths = new List<(double, double)>();
             for (int i = 0; i < table.Count; i++)

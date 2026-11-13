@@ -86,7 +86,7 @@ public partial class RiverFarWaterFractionTest : RefCounted
             var clock = Stopwatch.StartNew();
             _narrowGraph = RiverTestGraphs.Strip(_recipe, _settings, StripStart, NarrowStripKm, Math.Clamp(System.Environment.ProcessorCount / 2, 2, 6), 0x1234UL);
             RiverNetwork net = _narrowGraph.Network;
-            for (int stem = 0; stem < net.Stems.Length; stem++)
+                for (int stem = 0; stem < net.Stems.Length; stem++)
             {
                 RiverStemCurve curve = net.Curves[stem];
                 int n = 0;
@@ -357,6 +357,30 @@ public partial class RiverFarWaterFractionTest : RefCounted
             }
             if (spacing <= 32) SwapNarrow();
         }
+        // T2R-21: conservation on windows that contain a head (the first 1,500 m of a source stem, whose width and depth the taper changes along the piece).
+        foreach (int spacing in new[] { 8, 32, 256 })
+        {
+            if (spacing <= 32) SwapNarrow();
+            RiverNetwork net = _graph.Network;
+            int stem = Enumerable.Range(0, net.Stems.Length).Where(i => net.IsSource(i) && net.Curves[i].Length >= 1500d).OrderBy(i => RiverHash.Mix(Seed, i, 77)).FirstOrDefault(-1);
+            Check(stem >= 0, "no source stem of 1,500 m on the strip");
+            if (stem >= 0)
+            {
+                double footprint = RiverFootprint.ToMeters(RiverFootprint.ForProxySpacing(spacing)), s = 300d;
+                RiverStemCurve curve = net.Curves[stem];
+                curve.Eval(s, out double x0, out double y0, out double tx, out double ty);
+                net.ChannelAt(stem, s, out RiverChannel ch);
+                double d = net.Meander(stem, s, in ch), pa = curve.OriginAround + x0 - d * ty, pc = curve.OriginAcross + y0 + d * tx;
+                double aroundOrigin = Math.Round((pa - 0.5 * n * spacing) / spacing) * spacing, acrossOrigin = Math.Round((pc - 0.5 * n * spacing) / spacing) * spacing;
+                bool any = _graph.SplatLineArea(aroundOrigin, acrossOrigin, spacing, n, n, footprint, values);
+                double sum = 0d;
+                foreach (float v in values) sum += (double)v * spacing * spacing;
+                double reference = ReferenceSplatArea(aroundOrigin, acrossOrigin, spacing, n, footprint);
+                Detail($"head window {spacing} m (stem {stem}, 300 m from the head): {(any ? "covered" : "empty")}, lattice area {sum:F0} m2 against {reference:F0} m2 ({(reference > 0 ? 100 * (sum - reference) / reference : 0):+0.00;-0.00} %)");
+                Check(reference > 0d && Within(sum, reference, 0.05), $"head window at {spacing} m holds {sum:F0} m2 against the channel area {reference:F0} m2 (5 %)");
+            }
+            if (spacing <= 32) SwapNarrow();
+        }
         SwapNarrow();
         // Owner rule (S13.2): a piece adds coverage exactly when w < 2 spacings; UsesProxyLine(4) is true (T2R-20 lifted the 8 m minimum). Per spacing, a lattice around a piece just wide enough to own: the owners add nothing, and the
         // difference to the same lattice with no owners is the area of the segments that own.
@@ -368,8 +392,12 @@ public partial class RiverFarWaterFractionTest : RefCounted
                 Check(wrong == 0, $"the owner rule at {spacing} m disagrees with w < 2 spacings on {wrong} samples");
                 var owner = default((double Around, double Across, double Width, double DAround, double DAcross, double HalfWidth, double DStep));
                 bool found = false;
-                foreach (var w in _walk)
-                    if (2d * w.HalfWidth >= RiverCarveOperator.OwnerWidthPerFootprint * spacing && (!found || w.Width < owner.Width)) { owner = w; found = true; }
+                // T2R-21: the owner is on a reach whose width is steady over 200 m each way (2 % of it), not on the tapering part of a head, where a piece straddles the owning width.
+                for (int wi = 100; wi + 100 < _walk.Count; wi++)
+                {
+                    var w = _walk[wi];
+                    if (2d * w.HalfWidth >= RiverCarveOperator.OwnerWidthPerFootprint * spacing && (!found || w.Width < owner.Width) && Math.Abs(_walk[wi - 100].Width - w.Width) < 0.02 * w.Width && Math.Abs(_walk[wi + 100].Width - w.Width) < 0.02 * w.Width) { owner = w; found = true; }
+                }
                 if (!found) { Detail($"owner rule at {spacing} m: no river on the strip is 2 spacings wide ({RiverCarveOperator.OwnerWidthPerFootprint * spacing:F0} m), skipped"); continue; }
                 double aroundOrigin = Math.Round((owner.DAround - 0.5 * n * spacing) / spacing) * spacing, acrossOrigin = Math.Round((owner.DAcross - 0.5 * n * spacing) / spacing) * spacing;
                 var all = new float[n * n];
@@ -380,7 +408,7 @@ public partial class RiverFarWaterFractionTest : RefCounted
                 double wideRef = ReferenceSplatArea(aroundOrigin, acrossOrigin, spacing, n, RiverFootprint.Far) - ReferenceSplatArea(aroundOrigin, acrossOrigin, spacing, n, spacing);
                 Detail($"owner rule at {spacing} m: {narrow:F0} m2 with owners of {RiverCarveOperator.OwnerWidthPerFootprint * spacing:F0} m and wider, {every:F0} m2 without; the owning segments hold {wideRef:F0} m2 (width {owner.Width:F1} m)");
                 double narrowRef = ReferenceSplatArea(aroundOrigin, acrossOrigin, spacing, n, spacing);
-                Check(wideRef > 0d && Within(narrow, narrowRef, 0.05) && every - narrow >= 0.5 * wideRef, $"the {spacing} m owner rule: valley-only lattice {narrow:F0} m2 against {narrowRef:F0} m2 of channel area, owners hold {every - narrow:F0} m2 against {wideRef:F0} m2 (the lattice clamps at 1)");
+                Check(wideRef > 0d && (narrowRef > 0d ? Within(narrow, narrowRef, 0.05) : narrow < 1d) && every - narrow >= 0.5 * wideRef, $"the {spacing} m owner rule: valley-only lattice {narrow:F0} m2 against {narrowRef:F0} m2 of channel area, owners hold {every - narrow:F0} m2 against {wideRef:F0} m2 (the lattice clamps at 1)");
             }
             Check(!RiverFootprint.UsesProxyLine(2) && RiverFootprint.UsesProxyLine(4) && RiverFootprint.UsesProxyLine(8) && RiverFootprint.UsesProxyLine(64) && RiverFootprint.UsesProxyLine(8192), "UsesProxyLine(4) is not true, UsesProxyLine(2) is not false, or a level from 4 m does not carry coverage");
             // At 512 m and coarser every piece adds: ValleyOnly is true for any width at the far footprint (the conservation sums above use it).

@@ -18,6 +18,8 @@ public struct DrainageBasinInfo
 {
     /// <summary>True: inflow is below the evaporation of the full surface; the basin holds balance lakes below its spill and a dry floor. False: it spills (today's lake).</summary>
     public bool Closed;
+    /// <summary>T2R-23 (RS2): the basin spills into a site (its exit is an Intake cell), so it holds no lake and passes its whole inflow on. Never set with the site option off.</summary>
+    public bool SiteDrained;
     /// <summary>floor of the raw spill level.</summary>
     public float SpillLevel;
     /// <summary>The lowest Level among the basin's lakes, or its lowest cell height when it holds none (a dry pan).</summary>
@@ -350,12 +352,17 @@ public static class DrainageLakeBalance
             float floorZ = (float)Math.Floor(z);
             double evapFull = 0;
             for (int i = 0; i < forest && h[cells[i]] < floorZ; i++) evapFull += eCell[i];
-            double outflow = Math.Max(0d, total - evapFull);
-            info.Closed = false; info.Outflow = outflow; info.Evaporation = total - outflow; info.Lakes = 1; info.FloorLevel = basin.MinHeight;
-            int temp = run.Lakes.Count, minCell = int.MaxValue;
-            run.Lakes.Add(basin with { Id = temp, Level = z, RawLevel = z, Basin = k, Closed = false, Inflow = total, Evaporation = total - outflow });
-            foreach (int cell in cells) { run.LakeTemp[cell] = temp; if (cell < minCell) minCell = cell; }
-            run.LakeMinCell.Add(minCell);
+            // T2R-23 (RS2): a basin that spills into a site holds no lake (no record, no wet cells, no evaporation) and passes its whole inflow to the exit. Only Intake cells exist with the site option, so nothing changes without it.
+            bool siteDrained = d.Kind[exit] == DrainageCellKind.Intake;
+            double outflow = siteDrained ? total : Math.Max(0d, total - evapFull);
+            info.Closed = false; info.SiteDrained = siteDrained; info.Outflow = outflow; info.Evaporation = total - outflow; info.Lakes = siteDrained ? 0 : 1; info.FloorLevel = basin.MinHeight;
+            if (!siteDrained)
+            {
+                int temp = run.Lakes.Count, minCell = int.MaxValue;
+                run.Lakes.Add(basin with { Id = temp, Level = z, RawLevel = z, Basin = k, Closed = false, Inflow = total, Evaporation = total - outflow });
+                foreach (int cell in cells) { run.LakeTemp[cell] = temp; if (cell < minCell) minCell = cell; }
+                run.LakeMinCell.Add(minCell);
+            }
             // Inside values as today: along the old links, in reverse flood order, within the basin.
             var keys = new int[n];
             var order = (int[])cells.Clone();

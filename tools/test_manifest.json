@@ -4843,7 +4843,7 @@
         "hydrology"
       ],
       "marker": "DRAINAGE_SITE_INTAKE",
-      "expected_s": 20,
+      "expected_s": 30,
       "timeout_s": 180
     },
     "river_danger_test": {

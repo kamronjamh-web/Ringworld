@@ -42,6 +42,16 @@ public static class RiverMapWriter
             }
         }
 
+        public void Rect(double cx, double cy, int half, (byte R, byte G, byte B) c)
+        {
+            for (int y = Math.Max(0, (int)cy - half); y <= Math.Min(H - 1, (int)cy + half); y++)
+            for (int x = Math.Max(0, (int)cx - half); x <= Math.Min(W - 1, (int)cx + half); x++)
+            {
+                int i = (y * W + x) * 3;
+                Rgb[i] = c.R; Rgb[i + 1] = c.G; Rgb[i + 2] = c.B;
+            }
+        }
+
         public void Line(double x0, double y0, double x1, double y1, double radius, (byte R, byte G, byte B) c)
         {
             double len = Math.Max(Math.Abs(x1 - x0), Math.Abs(y1 - y0));
@@ -211,8 +221,11 @@ public static class RiverMapWriter
         return (cropPath, closePath);
     }
 
+    /// <summary>T2R-23 Part A, report tool only: what the removal rule took. <paramref name="Reference"/> is the build without the rule (its stems whose head and last cell are not in the rule build are drawn thin grey), <paramref name="Net"/> the rule build (its Cut ends are drawn as small squares), <paramref name="SiteDrainedCells"/> the cells of basins that spill into a site (light grey).</summary>
+    public sealed record RemovalOverlay(RiverNetwork Reference, RiverNetwork Net, bool[]? SiteDrainedCells);
+
     /// <summary>T2R-19: a window of <paramref name="widthKm"/> x <paramref name="heightKm"/> centred on a ring position with the production curves (barrier cells violet, intake cells orange), <paramref name="pixelsPerKm"/> pixels per km.</summary>
-    public static string WriteWindow(DrainageField f, DrainageGrid grid, RiverNetwork net, string path, double centreAroundMeters, double centreAcrossMeters, double widthKm, double heightKm, double pixelsPerKm)
+    public static string WriteWindow(DrainageField f, DrainageGrid grid, RiverNetwork net, string path, double centreAroundMeters, double centreAcrossMeters, double widthKm, double heightKm, double pixelsPerKm, RemovalOverlay? overlay = null)
     {
         DrainageGridSpec spec = grid.Spec;
         int winW = (int)Math.Round(widthKm * 1000d / f.AroundStepMeters), winH = (int)Math.Round(heightKm * 1000d / f.AcrossStepMeters);
@@ -222,7 +235,35 @@ public static class RiverMapWriter
         Canvas window = Base(f, firstColumn, winW, winH, zoom, firstRow);
         double origin = (spec.ColumnStart + firstColumn) * f.AroundStepMeters;
         var view = new RiverNetworkView(net, spec, origin, firstRow * f.AcrossStepMeters);
+        if (overlay != null)
+        {
+            if (overlay.SiteDrainedCells != null)
+                for (int row = firstRow; row < firstRow + winH; row++)
+                for (int col = firstColumn; col < firstColumn + winW; col++)
+                {
+                    if (!overlay.SiteDrainedCells[row * f.Width + col]) continue;
+                    for (int py = (int)Math.Floor((row - firstRow) * zoom); py < (int)Math.Ceiling((row - firstRow + 1) * zoom) && py < window.H; py++)
+                    for (int px = (int)Math.Floor((col - firstColumn) * zoom); px < (int)Math.Ceiling((col - firstColumn + 1) * zoom) && px < window.W; px++)
+                    {
+                        int i = (py * window.W + px) * 3;
+                        window.Rgb[i] = (byte)((window.Rgb[i] + 2 * 215) / 3); window.Rgb[i + 1] = (byte)((window.Rgb[i + 1] + 2 * 215) / 3); window.Rgb[i + 2] = (byte)((window.Rgb[i + 2] + 2 * 215) / 3);
+                    }
+                }
+            var kept = new HashSet<(int, int)>();
+            foreach (RiverStem st in overlay.Net.Stems) kept.Add((st.HeadCell, st.LastCell));
+            var removedStems = new List<int>();
+            for (int i = 0; i < overlay.Reference.Stems.Length; i++) if (!kept.Contains((overlay.Reference.Stems[i].HeadCell, overlay.Reference.Stems[i].LastCell))) removedStems.Add(i);
+            new RiverNetworkView(overlay.Reference, spec, origin, firstRow * f.AcrossStepMeters).DrawStems(window, zoom / spec.AroundStepMeters, removedStems, 1.2, (150, 150, 150));
+        }
         view.Draw(window, zoom / spec.AroundStepMeters, ClassColors, 1d, null);
+        if (overlay != null)
+            for (int i = 0; i < overlay.Net.Stems.Length; i++)
+            {
+                if (overlay.Net.Stems[i].Terminal != RiverTerminal.Cut) continue;
+                view.EndPoint(i, zoom / spec.AroundStepMeters, out double x, out double y);
+                window.Rect(x, y, 5, (255, 255, 255));
+                window.Rect(x, y, 3, (220, 30, 30));
+            }
         Save(window, path);
         return path;
     }
@@ -249,6 +290,32 @@ public static class RiverMapWriter
         private readonly DrainageGridSpec _spec;
         private readonly double _origin, _acrossOrigin;
         public RiverNetworkView(RiverNetwork net, DrainageGridSpec spec, double origin, double acrossOrigin) { _net = net; _spec = spec; _origin = origin; _acrossOrigin = acrossOrigin; }
+
+        /// <summary>Report tool only (T2R-23): the given stems as thin lines of one colour.</summary>
+        public void DrawStems(Canvas canvas, double perMeter, List<int> stems, double radius, (byte R, byte G, byte B) color)
+        {
+            double lo = -60 * perMeter, hiX = canvas.W + 60 * perMeter, hiY = canvas.H + 60 * perMeter;
+            foreach (int stem in stems)
+            {
+                double end = _net.MetricsEnd[stem], px = double.NaN, py = double.NaN;
+                for (double s = 0; s <= end + 1e-6; s += 10d)
+                {
+                    _net.Centre(stem, Math.Min(s, end), out double around, out double across, out _, out _);
+                    double x = _net.WrapAround(around - _origin) * perMeter, y = (across - _acrossOrigin) * perMeter;
+                    if (x > _net.CircumferenceM * perMeter / 2) x -= _net.CircumferenceM * perMeter;
+                    if (!double.IsNaN(px) && x >= lo && x <= hiX && y >= lo && y <= hiY) canvas.Line(px, py, x, y, radius, color);
+                    px = x; py = y;
+                }
+            }
+        }
+
+        /// <summary>The end of a stem's centreline in canvas pixels.</summary>
+        public void EndPoint(int stem, double perMeter, out double x, out double y)
+        {
+            _net.Centre(stem, _net.MetricsEnd[stem], out double around, out double across, out _, out _);
+            x = _net.WrapAround(around - _origin) * perMeter; y = (across - _acrossOrigin) * perMeter;
+            if (x > _net.CircumferenceM * perMeter / 2) x -= _net.CircumferenceM * perMeter;
+        }
 
         public void Draw(Canvas canvas, double perMeter, (byte R, byte G, byte B)[] colors, double thicknessScale, Func<int, double, RiverMapColor>? colorAt = null)
         {
