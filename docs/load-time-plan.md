@@ -759,3 +759,8 @@ These are still open from L1 and L2 and sit on the critical path of every load o
 
 1. **May the shared cache also hold the terrain proxy samples and tree tiles of the arrival area?** A repeated seed would then load almost like a reload. The size is unmeasured: a played world's proxy cache is about 500 MB, a fresh load writes far less, and it would need its own cap. Default: no. The cache holds only the 20 MB per recipe you approved.
 2. **Should L1-2 and L2-2 join this batch?** They are small and save about 1.7 s on every load and about 3 s on the first load of a new world. Recommended: yes, straight after L2-3a.
+
+### User answers on L2-3 (2026-11-12)
+
+- **Shared cache scope:** the user chose to include the arrival-area data. L2-3f also caches the arrival-area proxy samples and tree tiles per recipe, so a repeated seed loads almost like a reload. Measure their size first, then propose a per-recipe cap and a total cap with eviction. Generation 1 must stay identical, and stale entries are keyed out by the same identity as the 20 MB part.
+- **L1-2 and L2-2:** they join this batch, straight after L2-3a.
