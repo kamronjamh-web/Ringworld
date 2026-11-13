@@ -257,6 +257,8 @@ Each phase reports before and after from the L0 runner. `claude-lead` designs wh
 | L4 | Caches and first run | L4-1 recipe-keyed machine cache for the terrain summary and river graph. L4-2 pipeline pre-warm pass if L0 shows the need. L4-3 global terrain cache only if still needed. | Cache budget code, hydrology store, warm-up | Second same-seed world skips both builds; cache budget respected; first-run hitch numbers | L0, user answer 4 |
 | L5 | Menu-time work | L5-1 scene preload on the New World screen. L5-2 speculative river bake. L5-3 budgets for the live-menu path. | Start menu, launcher, loading owner | Menu frame times; cancel and settings-change paths; no leaked loads | L1 to L2, user answer 3 |
 
+**Amended 2026-11-12:** the L2-3 cell above is superseded. "L2-3 work orders" at the end of this file holds the current orders. It also takes in L3-1 (as L2-3d-3) and the terrain summary and river graph part of L4-1 (as L2-3f).
+
 **Success criteria (desktop, warm caches, proposed):** reload at most 13 s after L2 and 10 s after L3; new world without rivers at most 15 s; new world with rivers at most 25 s. Laptop targets are set after L0-3.
 
 ## 6. Risks
@@ -337,6 +339,423 @@ Output: `.godot/audit_baseline/DESKTOP-RAVA9C1/load/after_l2b/`.
 - The benchmark's `-Shot` captures 10 s after entry. Add a capture on the first revealed frame; that is the frame a look check must compare.
 - Not checked: the menu path (`menu_warm_stall_probe`), the laptop, VSync on.
 
+These four items, the 30 fps loading cap and the shared cache are written out as work orders in "L2-3 work orders" at the end of this file.
+
 ## User answer (2026-11-12): visible-first gate (L2-3d)
 
 "Yes, out of view only." At entry, the arrival view must look final. Terrain outside the view (behind and to the sides) may sharpen over the next few seconds. The benchmark first-frame capture must prove the arrival view matches the serial or gated first frame.
+
+## L2-3 work orders (2026-11-12)
+
+Written by Fable (acting Lead) from the `after_l2b` logs and a reading of the code. Nothing was run for this section, because the user was at the computer. Items under "Read from code" are unmeasured until L2-3m reports them. The layout follows `docs/work-orders/terrain-vegetation/TEMPLATE.md`. "Lead" is the Lead role of AGENTS.md.
+
+### Phase facts
+
+**Measured** (`after_l2b`, median of 3, RTX 4070, VSync off, uncapped; ms from the start of the load):
+
+| Mark | Reload | New | New-rivers |
+|---|---|---|---|
+| Attach ends | 5 764 | 5 631 | 20 765 |
+| `surface_ready` (terrain stage ends) | 11 663 | 11 333 | 25 989 |
+| `owner_ready:BiomeDecorations` (tree templates) | 13 964 | 13 462 | 28 748 |
+| `global_terrain_ready` | 16 610 | 21 143 | 38 823 |
+| `streaming_settled` (proxy gate) | 20 625 | 29 700 | 46 808 |
+| Total | 21 132 | 30 263 | 47 352 |
+| Proxy gate after `global_terrain_ready` | 4.0 s | 8.6 s | 8.0 s |
+| Proxy gate after `surface_ready` | 9.0 s | 18.4 s | 20.8 s |
+
+- **The limit on proxy work.** The reveal also waits for the whole global terrain: `RingTerrainGlobalLod.StartupComplete` needs the morph snapshot of all 128 segments. So 3a, 3b and the proxy part of 3d together cannot save more than the row "Proxy gate after `global_terrain_ready`" (4.0 / 8.6 / 8.0 s). More than that needs a load that does not wait for the whole global terrain (L2-3d-3).
+- **Noise.** The three runs spread 1.2 s (reload), 0.6 s (new) and 0.2 s (new-rivers). Treat under 1.5 s on reload and under 1 s on the other two as noise.
+- The loading screen drew 2 939 to 2 968 frames per load (about 100 fps). No run logged mesh memory pressure. The reload log applies the graphics preset twice (5.7 s and 11.7 s) and builds macro shadows five times.
+
+**Read from code (unmeasured):**
+
+- **F1. A level's build is cancelled when its finer level installs a sector.**
+  - Each level polls every `StreamingUpdateIntervalSeconds`: 0.25 s at 2 m, up to 3.0 s at 32 km (`ServiceStreaming`, RingTerrainProxySector.cs:938).
+  - With a build in flight, the poll calls `StartStreamingUpdate` directly (:1505 to :1512). A changed `finerCoverageRevision` fails the "nothing changed" test (:1558 to :1566), and the code then cancels the build (:1608 to :1613).
+  - Every installed sector raises the finer level's revision (:5890). The finest level watches the Terrain3D coverage revision in the same way.
+  - On the restart, staged uploads are discarded and requeued (:1700 to :1703), and every lane makes a new sampler copy (:3441).
+  - The worker output does not depend on the finer level: `BuildRawBatch` gets no coverage masks (:1842) and the install reads the latest mask (:5875). The comment at :1647 says a provider revision must never cause sampling or uploads.
+  - If this happens during a load, the 15 levels finish one after another. That would explain why 16 workers were no faster than 8.
+- **F2. The terminal level is built twice.** When the global terrain becomes ready, `UpdateTerminalGlobalMorphTarget` (RingTerrainLodCoordinator.cs:733) gives the morph snapshot to the coarsest active level. `SetGlobalMorphTarget` (:1132) then cancels its build, clears its staged uploads and forces a rebuild of every sector (`InvalidateMorphTargetGeometry`, :1168). The sector cache key contains the snapshot hash (:3554), so the first build's cache files are not read again. The proxy gate waits for this rebuild.
+- **F3. `ApplyRuntimeLodConfiguration` resets every level's window sentinels** (:7493 to :7497), so the next poll takes the cancel path of F1. It runs on every preset application, altitude plan change and viewport or FOV change. On a reload the unchanged preset is applied a second time at 11.7 s (RingWorldSaveManager.cs:1062).
+- **F4. The loading boost does not cover build starts.** `MaxBuildStartsPerFrame` is 1 and `MaxBuildStartMillisecondsPerFrame` is 2 ms with or without `LoadingScreenBoost` (coordinator :94, :1293).
+- **F5. The ocean publish is outside the install budget.** `ApplyCompletedBatchCore` budgets the sector loop and then calls `UpdateSharedFftOceanCoverage` and `NotifyOceanReplacementDependents`, once per level per frame that installed anything (:5914 to :5919; also :5999 and :6034). The notify makes the next coarser level recompute the ocean replacement masks of all its active sectors (`RefreshOceanReplacementFromFiner`, :2705), whether or not the installed sectors hold water.
+- **F6. The sector disk cache stores samples, not meshes** (:3408 to :3431). A cache hit still assembles the sector. The copy of slot 1 holds 503 MB of sector cache in 15 key folders against a 512 MiB budget, so writes may be refused and a trim may run during the load.
+- **F7. Trees are not gated.** `RingBiomeDecorationLayer.StartupComplete` (Startup.cs:18) is true once templates and impostors exist. The first tile pass runs on after that, 2 builds at a time (`MaximumVegetationTileBuildsInFlight`), with 1.5 ms of uploads per frame. A reload reads tiles from the world's `lod_cache/vegetation` (23 MB in slot 1); a new world generates them. `PrepareVegetationRenderPlan` reruns after every 8 changed tiles and has no budget (TreeStreaming.cs:766 to :772).
+- **F8. Workers.** Global segments use cores/2 (at most 8; RingTerrainGlobalLod.cs:207), proxies under boost cores/4 (at most 8), trees 2, plus Terrain3D generation. Each pool is sized alone.
+- **F9. Machine cache.** `RingGeneratedLodCacheBudget.ResolveBudgetRoot` already accepts a folder named `ring_cache`. The real profile's `user://ring_cache` holds 520 MB (sector caches from launches without a world, and old summaries). That is above the 512 MiB budget, and nothing trims it while a world is active.
+- **F10. In flight: T2R-12b** (uncommitted in this working tree). It edits `BuildRawSector`, `SectorBuildScratch` and the uniform block of RingTerrainProxySector.cs, and adds the river line splat counter to RingProxyBuildCounters.cs (`AddRiverLineSplat`; `riverLineSplat` in `Snapshot`). The splat runs once per built sector of the 256 m and coarser levels on river worlds, including sectors that are dropped later. Its own limits are 200 ms per load and 10 ms per call.
+
+### Rules for every order
+
+- **Measurement.** `tools/load_time_benchmark.ps1 -Scenario reload,new,new-rivers -Label loadbench` (warm caches, VSync off).
+  - During an order: `-Runs 1` on the scenario the change aims at.
+  - At the end: `-Runs 3` on all three scenarios, once, against the last accepted baseline.
+  - Report the totals, the marks of the Phase facts table, loading frame p95, and post-entry p50 / p95 / max. State the noise.
+  - The user may be at the computer. Ask the primary before any GPU run.
+- **No visible look change.** The entry frame (L2-3m) is compared with the baseline entry frame with `tools/media/ffmpeg_tools.ps1 compare`. The heatmap shows cloud noise only. Where an order names it, the sector content hash is equal too.
+- **Generation 1 identical.** `world_generation_fingerprint_test` passes unchanged. No cache version, record layout or cache file name changes.
+- **Menu path.** The warm world behind the start menu keeps today's budgets and worker counts. `menu_warm_stall_probe` is not worse.
+- **No menu entries.** Loading budgets and debug flags are not tunables.
+- **Tests.** `tools/run_tests.ps1 -Tests <list> -Label load` (`-DryRun` first). A new test gets a manifest entry and must fail on the old code. The primary runs `-Suite gate` at the commit point. No order commits.
+- **Stop rule.** Budgets are in watchdog periods (55 min) and build-plus-test attempts. When a budget runs out, or the order's own stop condition is met, stop and report in at most 15 lines: what worked, what failed, and the one next step.
+
+### Order, gain and parallelism
+
+Ordered by expected gain per effort, within the dependencies. Savings are estimates for the RTX 4070 at VSync off, given as reload / new / new-rivers.
+
+| # | Order | Role | Size | Depends on | Estimated saving |
+|---|---|---|---|---|---|
+| 1 | L2-3m Measuring additions | implementer | S | T2R-12b committed (for the baseline) | 0. Every later order is judged with it. |
+| 2 | L2-3a Proxy build throughput | Lead (design, S), then implementer (M) | M | L2-3m, T2R-12b committed | 1.5 to 3.5 / 3 to 8 / 3 to 7.5 s. Upper end if F1 holds, lower end if only F2 holds. |
+| 3 | L2-3f Shared recipe cache | implementer | M | L2-3m | Repeated recipe only. Reload 0. New: 0 now, 3 to 4 s once 3a is in. New-rivers: 15 s now, up to 20 s once 3a is in. First load of a recipe: 0. |
+| 4 | L2-3b Install cost and ocean publish | implementer | M | L2-3m; after 3a (same file) | 0 to 2 s on each. Loading frame p95 from 48 ms to under 35 ms. Install frames after entry and in travel at about a third of today's cost. |
+| 5 | L2-3c Trees | implementer | S to M | L2-3m | 0 s; may add up to 1 s on new worlds. Post-entry p95 on new worlds from 14.1 and 16.4 ms to about 11 ms. |
+| 6 | L2-3d Visible-first gate | Lead (design, M), then two implementer orders (M each) | L | 3a, 3b, 3c | 2 to 4 / 5 to 9 / 7 to 12 s if the design finds that the arrival frame does not need the whole global terrain. Otherwise 0 to 2 s. |
+| 7 | L2-3e 30 fps cap and one loading budget | implementer | M | 3b; best after 3d | VSync off: 0 within 1 s before 3d, 1.5 to 2.5 s after it. VSync on: unmeasured. |
+
+- 3f and 3c touch other files than 3a and 3b and may run alongside them. 3a and 3b share RingTerrainProxySector.cs and run one after the other.
+- 3e moves up to directly after 3a if the VSync-on baseline of L2-3m is more than 2 s slower than VSync off.
+- Estimated end state for the first load of a recipe: reload 13.5 to 15.5 s, new 14.5 to 16.5 s, new-rivers 29 to 31 s (15 s of it the river bake). A repeated recipe with rivers: 14 to 16 s.
+
+### L2-3m. Measuring additions
+
+ROLE: implementer
+SIZE: S
+DEPENDS ON: none for the code. The baseline of item 6 is taken after T2R-12b is committed.
+
+OBJECTIVE
+The benchmark shows where proxy and tree time goes per level, captures the entry frame, and can prove that the installed terrain is unchanged.
+
+CONTEXT / ROOT CAUSE
+- The 23 s proxy time, the 74 % ocean share and the entry pictures were measured by hand. F1 to F3 cannot be told apart without per-level numbers.
+- The benchmark's `-Shot` captures 10 s after entry. The user's rule is about the entry frame.
+
+FILES/SYMBOLS
+- tools/load_time_benchmark.gd, tools/load_time_benchmark.ps1.
+- RingTerrainLodCoordinator.cs (new `GetStreamingDiagnostics`), a new partial file RingTerrainProxySector.LoadDiagnostics.cs, `RingLoadTimeline.Mark`.
+- `RingBiomeDecorationLayer.VegetationPendingTiles`, `VegetationPendingRenderUploads`, `VegetationTilesGenerated`, `VegetationDiskCacheHits` (read only).
+
+REQUIRED CHANGES
+1. `run.json` gains `streaming`, per proxy level: label, spacing, sectors built, installed, dropped stale, dropped not desired, batches completed, batches cancelled by cause (finer revision, window move, morph target, configuration), cache hits, cache writes, worker ms (total and largest batch), upload ms, time of the first build start and of the last install. It also gains the whole `RingProxyBuildCounters.Snapshot()`.
+2. Marks: `proxy_level_settled:<label>` (last install before the gate) and `trees_settled` (first frame with no pending tree tiles and no pending tree uploads), also when it falls after entry. `run.json` gains tree tiles pending at entry, generated, and read from disk.
+3. `run.json` gains, for the load and for the seconds after entry, the cost of the scopes "Terrain proxy install", "Terrain proxy install ocean publish", "Terrain proxy coverage mask atlas", "Terrain proxy build start (inclusive)" and "Trees install": total, p95 per frame, largest frame.
+4. `--entry-shot=<dir>`: `entry.png` on the first frame after the loading layer is gone, and `entry_plus20.png` 20 s later from the same pose with no input. `--freeze-clocks` holds the sun and the cloud simulation at fixed values from attach, so that frames of different runs can be compared.
+5. `--sector-hash` (debug flag): per level, an order-independent hash of the installed set (coordinate plus vertex, normal, colour and UV2 bytes; the slot payload bytes for slot sectors), at the gate and 20 s after entry.
+6. Baseline `l23_base` under `.godot/audit_baseline/<machine>/load/`: three runs per scenario with items 1 to 5, and one `-VSync on` run per scenario.
+
+DO-NOT-CHANGE CONSTRAINTS
+- The rules above. With the new flags off, the install path does no added work and the totals stay within noise of `after_l2b`.
+- File rule for T2R-12b: in RingTerrainProxySector.cs only the one-line counter increments at the cancel sites and the hash hook at install. Nothing in RingProxyBuildCounters.cs. Make these edits after T2R-12b is committed, unless the primary decides otherwise.
+
+VALIDATION STEPS
+1. Two runs of one scenario give equal sector hashes on every level.
+2. `entry.png` against `entry_plus20.png` of the same run: report the heatmap. With today's gate it should show cloud noise only. Anything else is a finding for 3c and 3d.
+3. `.\tools\run_tests.ps1 -Tests world_loading_startup_contract,world_loading_smoke_test -Label load`.
+4. Send the user the entry frame of each scenario.
+
+STOP RULE
+3 periods or 4 attempts.
+
+ESCALATION CONDITIONS
+- The hashes of two runs of the same build differ. Say which levels, and drop item 5.
+- The clocks cannot be frozen so that two runs match. Report what still moves.
+- The entry frame is too dark to judge terrain.
+
+### L2-3a. Proxy build throughput
+
+ROLE: Lead (design, S), then implementer (M)
+SIZE: M
+DEPENDS ON: L2-3m baseline; T2R-12b committed
+
+OBJECTIVE
+During a load the proxy levels build side by side and each sector is built once. The proxy gate closes within 1 s of `global_terrain_ready`.
+
+CONTEXT / ROOT CAUSE
+- F1 to F4, F6, F8. Measured: the gate closes 4.0 / 8.6 / 8.0 s after the global terrain is ready, and 16 workers were no faster than 8.
+- F1 and F2 both fit the measurements. The L2-3m numbers decide which one holds, or both.
+
+FILES/SYMBOLS
+- RingTerrainProxySector.cs: `QueueStreamingUpdate` (:1501), `StartStreamingUpdate` (:1515), `InvalidateMorphTargetGeometry` (:1168), `ApplyCompletedBatchCore` (:5727), `ApplyRuntimeLodConfiguration` (:7449).
+- RingTerrainLodCoordinator.cs: `EffectiveConcurrentWorkerBuilds` (:77), `UpdateTerminalGlobalMorphTarget` (:733), `StartPendingWorkers` (:1258).
+- RingTerrainGlobalLod.cs:207 (segment workers); RingWorldSaveManager.cs:1062 and RingGraphicsQualityController.cs:449 (preset application).
+
+REQUIRED CHANGES
+1. **Lead.** Read the `streaming` block of the three scenarios. Write a design note under this order: which of F1 to F4 the numbers confirm, and which of items 2 to 8 are in. An item is in only when its trigger is met.
+2. **Keep the build when only the finer level changed (F1).** Trigger: batches cancelled for "finer revision" on three or more levels, or sectors built exceed sectors installed by more than 10 % on any level. In `StartStreamingUpdate`, when a build is in flight and the desired set, the edit version and the force flag are unchanged, apply the coverage and ocean replacement masks (the block at :1636) and return without `Cancel()`.
+3. **Keep finished work across a restart (F1, F3).** Trigger: dropped-stale sectors still above 5 % of installed after item 2. Staged sectors that are still desired and were sampled with the current edit version, parent spacing and morph target stay staged. Only the rest is requeued. The Lead specifies the version check.
+4. **Build the terminal level once (F2).** Trigger: the terminal level's `proxy_level_settled` is the last one and falls after `global_terrain_ready`. While `LoadingScreenBoost` is set and the global terrain is still building, the level that will receive the morph snapshot does not start. When the snapshot arrives, it builds with the proxy share and the idle global share of workers. If that single build still takes more than 2 s, report the number: the remaining fix is per-segment readiness in L2-3d-3.
+5. **A preset application that changes nothing does nothing (F3).** On a reload there is one `graphics_preset_applied` mark, no sentinel reset and no extra macro shadow build.
+6. **Build starts under boost (F4).** Trigger: a level waits more than 0.5 s between request and start, or `DeferredBuildStartCount` grows during the load. Up to 4 starts and 6 ms per frame while `LoadingScreenBoost` is set.
+7. **One worker budget for the load (F8).** Trigger: after items 2 to 4 the proxies use all their workers for most of the load. Cores/2 in total (at most 16). Global segments take at most half while they build, proxies the rest, and each side takes the other's share when it goes idle.
+8. **Reload cache report (F6).** Cache hits per level, refused writes, and whether a trim ran during the load. Fix only what is free: stale key folders are trimmed first. No cache format change.
+
+T2R-12b (F10)
+- Start after T2R-12b is committed. Do not edit `BuildRawSector`, `SectorBuildScratch`, the `UV2.y` payload or the river line uniform. The splat stays one call per built sector.
+- Report `riverLineSplat` (calls, total ms, largest call) before and after on new-rivers. The call count falls with the number of sectors built and never rises. T2R-12b's limits stay: 200 ms per load and 10 ms per call. Under F2 the terminal level's splats run twice today; item 4 removes the second run.
+- The new-rivers baseline is `l23_base`, taken after T2R-12b, not `after_l2b`.
+
+DO-NOT-CHANGE CONSTRAINTS
+- The rules above. The sector hash of every level equals the baseline at the gate and 20 s after entry, in all three scenarios.
+- The gate (`StreamingSettledForReveal`), its dwell and its timeout.
+- Items 4, 6 and 7 act only while `LoadingScreenBoost` is set. Items 2, 3 and 5 also act in gameplay: the final terrain is the same and sectors arrive sooner.
+- `global_terrain_ready` is not later than the baseline by more than 1 s.
+- `LodSectorCacheVersion`, `LodSectorCacheRiverVersion`, the record layout and the cache definition.
+
+VALIDATION STEPS
+1. New headless test `proxy_streaming_restart_contract_test`: a finer revision change during a build does not cancel it, and the masks are applied; a window move does cancel; staged sectors survive a restart only with equal inputs.
+2. `.\tools\run_tests.ps1 -Tests proxy_streaming_restart_contract_test,lod_build_start_scheduling_test,proxy_sample_cache_dedupe_contract_test,proxy_seam_geometry_contract_test,proxy_partial_coverage_test,lod_radial_morph_contract_test,ocean_replacement_ownership_contract_test,world_generation_fingerprint_test -Label load`.
+3. `.\tools\run_tests.ps1 -Tests proxy_gpu_sector_parity_test,shadow_compose_identity_gpu_test,river_lod_consistency_gpu_test,terrain_altitude_lod_flight_test,world_loading_smoke_test -Label load`, then `menu_warm_stall_probe`.
+4. Benchmark as in the rules, with `--entry-shot`, `--freeze-clocks` and `--sector-hash`. Report the per-level table before and after.
+
+STOP RULE
+Design: 1 period. Implementer: 5 periods or 7 attempts. Stop early when the gate closes within 1 s of `global_terrain_ready` in all three scenarios: the proxies are then off the critical path.
+
+ESCALATION CONDITIONS
+- The numbers confirm none of F1 to F4 (no cancelled batches, workers busy throughout). Report the per-level timeline and do not guess.
+- A sector hash differs, or a seam or parity test fails after one fix.
+- A coverage hole or double water during a load or in the flight test.
+- The splat exceeds its limits, or `global_terrain_ready` slips by more than 1 s.
+- The menu path gets worse.
+- Item 3 needs a sector version to mean more than the three inputs named.
+
+### L2-3f. Shared recipe cache
+
+ROLE: implementer
+SIZE: M
+DEPENDS ON: L2-3m (benchmark switch). May run alongside 3a.
+
+OBJECTIVE
+A second world with the same recipe on this machine reads the terrain summary and the river graph from a shared cache instead of building them.
+
+CONTEXT / ROOT CAUSE
+- Plan 3.8 and user answer 4 (about 20 MB per recipe, inside the 512 MB budget).
+- Measured build times: terrain summary 3.9 s (new) and 4.9 s (new-rivers), from `minmax_queued` to `minmax_ready`; river graph 15.2 s.
+- Both files live in the world's own folder today. F9: the shared root exists and is already over budget.
+
+FILES/SYMBOLS
+- RingTerrainGlobalLod.cs: `ResolveHeightPyramidCachePath` (:734) and the load and save around :500 to :560.
+- scripts/Terrain/Hydrology/RiverGraphStore.cs: `TryLoad` (:169), `Bake` (:185), `Write` (:206).
+- RingGeneratedLodCacheBudget.cs; tools/load_time_benchmark.ps1.
+
+REQUIRED CHANGES
+1. Shared folder `user://ring_cache/recipes/`. File names and formats stay as they are. The summary name already holds the generator version, seed, terrain hash, ring size and cell size. The river graph keeps its identity check.
+2. Read order: the world's own file, then the shared file. A shared hit is verified like a world file and then copied into the world on the worker, so a later reload never depends on the shared cache.
+3. After a build: write the world file as today, then the shared file (temp file, then move).
+4. Budget: the shared root is registered with the existing budget code (512 MiB, trim to 75 %) when a load starts, and hits are touched. A root that is over budget is trimmed before the first write, oldest first. A write is not refused because old sector files fill the root.
+5. The details of `minmax_ready` and `river_graph_ready` say `source=world`, `shared` or `generated`.
+6. Benchmark: `-RecipeCache cold|warm`, default cold (the `recipes` folder of the isolated profile is emptied before each run). Every summary states the mode.
+
+DO-NOT-CHANGE CONSTRAINTS
+- The rules above. The bytes of the summary and of the graph are equal with and without the shared cache.
+- Sector samples and tree tiles stay per world (user question 1).
+- RiverGraph.cs, RiverFootprint.cs and RiverCarveOperator.cs are not touched (T2R-12b). `HydrologyVersions` and the bake identity are not touched.
+
+VALIDATION STEPS
+1. Extend `river_graph_cache_test`: a second world with the same inputs loads once from the shared folder, bakes nothing and holds equal bytes; a change of any identity field is a miss; a damaged shared file is rebuilt without an error.
+2. The same three cases for the summary, in `global_terrain_preparation_contract_test` or a new `recipe_cache_contract_test`.
+3. `.\tools\run_tests.ps1 -Tests river_graph_cache_test,global_terrain_preparation_contract_test,world_generation_contract_test,world_generation_fingerprint_test,world_loading_save_contract -Label load`.
+4. Benchmark new and new-rivers: `-RecipeCache cold` equals the baseline within noise; `-RecipeCache warm` shows the saving.
+
+STOP RULE
+4 periods or 6 attempts.
+
+ESCALATION CONDITIONS
+- The name or identity of a file does not cover an input that changes its content. Do not share that file; report the input.
+- The shared root cannot be trimmed below its budget.
+- A reload reads the shared file instead of the world's own.
+- The copy into the world costs more than 100 ms.
+
+### L2-3b. Install cost and ocean publish
+
+ROLE: implementer
+SIZE: M
+DEPENDS ON: L2-3m; after 3a (same file)
+
+OBJECTIVE
+An install frame costs the sector uploads plus at most one ocean publish per level, and the publish does nothing when no water changed.
+
+CONTEXT / ROOT CAUSE
+- F5. Measured: "install ocean publish" is 74 % of install time; install frames have a median of 21 ms and a p95 of 46 ms.
+- Measured: 27 ms spikes in the coverage mask atlas and in build starts.
+- This order is what lets terrain stream after entry without hitches (3d), and it helps travel.
+
+FILES/SYMBOLS
+- RingTerrainProxySector.cs: the publish sites (:5914, :5999, :6034), `NotifyOceanReplacementDependents` (:2696), `RefreshOceanReplacementFromFiner` (:2705), `UpdateSharedFftOceanCoverage` (:6767), the coverage block (:1636).
+- RingTerrainLodCoordinator.cs: `_Process` (:351).
+
+REQUIRED CHANGES
+1. The three publish sites mark the level dirty. The coordinator publishes after its level loop and before `StartPendingWorkers`, finest level first, once per level per frame. A level without a coordinator publishes at the end of its own `ServiceStreaming`.
+2. A level notifies its dependent only when its visible ocean set changed: a water sector was installed, removed, hidden or shown, or an ocean mask changed. Dry installs notify nobody.
+3. Measure after items 1 and 2. Only if the publish is still above 20 % of install time during a load: while `LoadingScreenBoost` is set, publish when a level goes idle and once in `PrepareReveal`.
+4. The 27 ms spikes: report the scopes "coverage mask atlas" and "build start (inclusive)" per level. Fix one cause if it is above 10 % of main-thread install time. Otherwise report it and leave it.
+
+DO-NOT-CHANGE CONSTRAINTS
+- The rules above. Mask contents are equal.
+- Ocean ownership: coarser water is restored before a fine sector is hidden; the atlas is uploaded before the frame renders; no frame shows a water hole or double water.
+
+VALIDATION STEPS
+1. `.\tools\run_tests.ps1 -Tests ocean_replacement_ownership_contract_test,fft_ocean_coverage_contract_test,water_fft_distant_ocean_contract_test,proxy_partial_coverage_test -Label load`.
+2. `.\tools\run_tests.ps1 -Tests water_fft_lod_ownership_visual_test,water_fft_lod_seam_gpu_test,shadow_compose_identity_gpu_test,inland_water_render_gpu_test -Label load`.
+3. Benchmark as in the rules: publish share of install time, loading frame p95, post-entry frames.
+4. One coastal flight before and after (perf-capture skill) for the travel frames, with `flicker` on the capture.
+
+STOP RULE
+4 periods or 6 attempts. Stop when the publish is under 20 % of install time and the loading frame p95 is under 35 ms.
+
+ESCALATION CONDITIONS
+- A frame with a water hole or double water.
+- A contract test fails after one fix.
+- The publish share stays above 40 %. Report what remains.
+
+### L2-3c. Trees
+
+ROLE: implementer
+SIZE: S to M
+DEPENDS ON: L2-3m. May run alongside 3a and 3b.
+
+OBJECTIVE
+The trees of the arrival area are placed before the reveal, and tree work after entry stays inside its budget.
+
+CONTEXT / ROOT CAUSE
+- F7. Post-entry p95 is 14.1 ms (new) and 16.4 ms (new-rivers) against 9.7 ms on a reload. Trees are the suspect; it is not confirmed.
+- Plan 3.12 lists the trees around the arrival point as required before entry. The gate does not check them today, and shorter loads will leave more of them unplaced at entry.
+
+FILES/SYMBOLS
+- RingBiomeDecorationLayer.TreeStreaming.cs: `StartVegetationTileBuilds` (:470), `CompleteTileStreaming` (:536), `ServiceVegetationRenderUpdates` (:763).
+- RingBiomeDecorationLayer.Startup.cs; RingWorldLoadingBridge.cs: `StreamingSettledForReveal` (:685).
+
+REQUIRED CHANGES
+1. Confirm with L2-3m: tiles pending at entry, `trees_settled`, and "Trees install" per frame after entry. If the trees are settled before entry and the p95 gap has another cause, stop and report the scope that owns the gap.
+2. Gate: the loading-screen path waits for no pending tree tiles and no pending tree uploads inside the settle check, with a 10 s timeout and the marks `trees_settled` and `trees_settle_timeout`. The menu path keeps skipping trees.
+3. While the loading screen is opaque, tile builds in flight rise to cores/8 (2 to 6).
+4. After entry: find the part of "Trees install" that exceeds 1.5 ms and slice it or do it once per batch. Candidates: `PrepareVegetationRenderPlan` after every 8 tiles, `RefreshGpuTreeResidentSources` per finished tile, the sampler copy per tile start.
+
+DO-NOT-CHANGE CONSTRAINTS
+- The rules above. Tree positions, variants and tile bytes; `VegetationDiskCacheVersion`.
+- The trees of the entry frame equal those 20 s later.
+
+VALIDATION STEPS
+1. `.\tools\run_tests.ps1 -Tests tree_streaming_contract_test,world_loading_startup_contract,menu_warm_world_lifecycle_test -Label load`.
+2. `.\tools\run_tests.ps1 -Tests world_loading_smoke_test,tree_lod_dither_gpu_test -Label load`.
+3. Benchmark as in the rules.
+
+STOP RULE
+3 periods or 5 attempts. Stop when the post-entry p95 of new and new-rivers is within 1.5 ms of the reload's.
+
+ESCALATION CONDITIONS
+- The gate adds more than 1.5 s to any scenario after item 3.
+- Trees appear between the entry frame and 20 s later.
+- Tile bytes differ.
+
+### L2-3d. Visible-first gate
+
+ROLE: Lead (design, M), then implementer (two orders, M each)
+SIZE: L
+DEPENDS ON: 3a, 3b, 3c; user answers "Lazy distant segments: yes" and "Yes, out of view only"
+
+OBJECTIVE
+The reveal waits only for what the arrival view shows. Terrain and trees outside the view, and global terrain the first frame does not need, finish after entry at gameplay budgets. The arrival view looks final.
+
+CONTEXT / ROOT CAUSE
+- After 3a the load waits for the whole global terrain: 10.6 / 11.6 / 13.4 s after it is queued. Plan 3.7 and L3-1 already propose to enter on the near segments.
+- T2R-12b's review found that `ring_terrain_global` draws no pixel in the fly-out and the proxy levels cover the screen out to 6 500 to 8 000 km. If that also holds at the arrival pose, the global terrain matters to the first frame only through what is built from it.
+- Without 3b, terrain that streams after entry is costly: with L2-1 alone the post-entry p95 was 45 to 48 ms on new worlds and the largest frame 70 to 77 ms.
+
+PARTS
+- **L2-3d-1 (Lead design).** A design section under this order, with evidence:
+  1. What draws the arrival frame. A debug-colour capture per proxy level and for the global terrain at the arrival pose of the three scenarios (the proxy shader has `debug_color_enabled`).
+  2. What else in the frame depends on the global terrain: the terminal level's morph target (F2), macro shadows, the cloud and planet shadow snapshots, the hull roof, the height source of the coverage tests. For each: needed complete, needed near only, or not needed.
+  3. The view rule. Proposal: sectors and tree tiles that intersect the horizontal view wedge (arrival yaw, half the horizontal field of view plus 20 degrees on each side), plus everything within 4 km all round (`TerrainShadowCoverageMeters`: the near ground and the shadow casters).
+  4. Build order: in-view first in `CompareSectorPriority` and in the tree request queue.
+  5. Gate: `ArrivalViewSettled` per level (every desired in-view sector installed, none staged) in place of `StreamingSettled`, and the tree gate of 3c narrowed in the same way.
+  6. After entry: the boost ends, and the rest installs at gameplay budgets.
+  7. Global terrain: segments nearest first; which segments the gate needs; whether the terminal level can take its morph target per segment.
+- **L2-3d-2 (implementer).** Proxy levels and trees, as designed.
+- **L2-3d-3 (implementer).** Global terrain, as designed. This replaces L3-1. It is dropped if step 2 finds that the first frame needs the whole global terrain.
+
+DO-NOT-CHANGE CONSTRAINTS
+- The rules above. Inside the arrival view: the entry frame equals the frame 20 s later (same run, clocks frozen) and the gated baseline entry frame, cloud noise only.
+- The sector hash of every level 20 s after entry equals the baseline.
+- Post-entry p95 is at most 1.5 ms above the gated baseline, and the largest frame is at most 45 ms.
+- The gate timeout stays. The menu path is unchanged.
+
+VALIDATION STEPS
+1. The two entry-frame comparisons and the hashes, in all three scenarios.
+2. A turn-around clip: 360 degrees in 4 s from the entry frame, as mp4 and sheet, sent to the user. It shows the approved sharpening outside the view; the user confirms the margin of the view rule on it.
+3. The test lists of 3a, 3b and 3c, plus `global_terrain_preparation_contract_test` and `terrain_altitude_lod_flight_test`.
+4. Benchmark as in the rules.
+
+STOP RULE
+Design: 2 periods. Each implementer order: 5 periods or 7 attempts.
+
+ESCALATION CONDITIONS
+- A difference inside the arrival view other than cloud noise after two fixes.
+- Post-entry p95 worse by more than 1.5 ms.
+- The design finds that the first frame needs the whole global terrain. Report before building anything; only the saving of L2-3d-2 remains.
+- Plain hull, a hole or missing water anywhere in the turn-around clip.
+
+### L2-3e. 30 fps cap and one loading budget
+
+ROLE: implementer
+SIZE: M
+DEPENDS ON: 3b. Best after 3d (see the order table).
+
+OBJECTIVE
+While the loading screen is opaque the game runs at 30 fps and spends most of each frame on loading work. Normal frame pacing returns with the first world frame.
+
+CONTEXT / ROOT CAUSE
+- User answer 5: "30 fps until the world is finished loading." Plan 3.5 (old L2-3 and L1-5).
+- Today the benchmark load is uncapped (about 100 fps), and the per-frame limits are sized for gameplay: one build start, one global segment publish, 1 to 4 activated children, 8 ms of activation, 3 ms or 4 units for the hull and for resources, 1.5 ms of far weather, Terrain3D upload and collision at gameplay budgets.
+- A cap alone would slow every step that is limited per frame. The cap and the budget go in together.
+
+FILES/SYMBOLS
+- scripts/Loading/ring_world_loading.gd: `begin` (:109), `wait_for_world` (:382), `fail`, `_cancel_and_return`.
+- RingWorldLoadingBridge.cs (:44, `EndLoadingScreenBoost`); a new scripts/Loading/RingLoadingBudget.cs.
+- Owners: RingTerrainLodCoordinator (:75 to :79, :94), RingTerrainGlobalLod (`MaxSegmentRebuildsPerFrame` :133, hull and occluder slices), RingWorldLoadingResources, RingScaledFarViewport (weather slice), RingTerrain3DGameplay (upload and collision), RingBiomeDecorationLayer (`ServiceStartupResources`, uploads).
+
+REQUIRED CHANGES
+1. Cap: `Engine.max_fps = 30` from `begin` on the loading-screen path. The previous value is restored in `PrepareReveal` and on every fail and cancel path. Never in menu (background) mode. The report records both values. PdaDebugChatPanel.cs:172 saves and restores `Engine.MaxFps` in the same way; the two must not overwrite each other's saved value.
+2. `RingLoadingBudget`: active between `PrepareWorld` and `PrepareReveal` on the loading-screen path only. A frame has 24 ms of loading work. Each owner keeps its gameplay slice as a floor and may work on while the frame's pool is not used up. Count limits (starts, publishes, units, children per frame) are lifted while it is active; time is the only limit.
+3. The owners listed above read it. It replaces `LoadingScreenUploadMilliseconds` and `LoadingScreenUploadsPerFrame`.
+4. Progress bar stage fractions from the measured stage times (old L1-5).
+
+DO-NOT-CHANGE CONSTRAINTS
+- The rules above. Menu path values. Gameplay values from the first frame after `PrepareReveal`.
+- No cap is left behind after a failed or cancelled load.
+
+VALIDATION STEPS
+1. `.\tools\run_tests.ps1 -Tests world_loading_lifecycle_test,world_loading_startup_contract,loading_presentation_settings_smoke_test,menu_warm_world_lifecycle_test -Label load`, then `world_loading_smoke_test` and `menu_warm_stall_probe`.
+2. Benchmark at VSync off and at VSync on, three scenarios. Pass: no scenario is slower than its baseline beyond noise at VSync off; VSync on is equal or faster; the loading frame p50 is near 33 ms and the p95 at most 45 ms; `max_fps` after entry equals the value before the load.
+3. A 10 s clip of the loading screen for the user.
+
+STOP RULE
+4 periods or 6 attempts.
+
+ESCALATION CONDITIONS
+- A scenario is slower at VSync off after two tuning passes of the pool. Report which owner is short.
+- The loading frame p95 is above 50 ms.
+- The cap survives a cancel.
+- The loading animation stutters visibly.
+
+### Phase acceptance
+
+- A three-scenario `-Runs 3` table against `l23_base` after each order, and one at VSync on at the end.
+- The entry-frame comparisons and sector hashes each order names.
+- `-Suite gate` at each commit point, and `menu_warm_stall_probe`.
+- Laptop: one baseline and one final run per scenario. It is unmeasured so far, and the worker shares use core counts.
+- One results paragraph per finished order in this file, with the medians.
+
+### Not in this phase
+
+These are still open from L1 and L2 and sit on the critical path of every load or every new world:
+
+- **L1-2 Scene load and resource warm-up at the same time.** The warm-up (1.7 s) still starts when the scene load ends (3.2 s). About 1.7 s on every load. Size S.
+- **L2-2 Terrain summary on several workers.** 3.9 s (new) and 4.9 s (new-rivers) pass before the global terrain can be queued. About 3 s on the first load of a recipe once 3a is in. Size S to M.
+- The river bake itself (15.2 s) belongs to the T2 owner.
+
+### Questions for the user
+
+1. **May the shared cache also hold the terrain proxy samples and tree tiles of the arrival area?** A repeated seed would then load almost like a reload. The size is unmeasured: a played world's proxy cache is about 500 MB, a fresh load writes far less, and it would need its own cap. Default: no. The cache holds only the 20 MB per recipe you approved.
+2. **Should L1-2 and L2-2 join this batch?** They are small and save about 1.7 s on every load and about 3 s on the first load of a new world. Recommended: yes, straight after L2-3a.
