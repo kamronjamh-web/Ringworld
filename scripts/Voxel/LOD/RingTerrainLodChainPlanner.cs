@@ -139,6 +139,42 @@ internal static class RingTerrainLodChainPlanner
             ? altitudeMeters <= farHandoffMeters * DeactivateAltitudeRatio
             : altitudeMeters < farHandoffMeters * ActivateAltitudeRatio;
 
+    // Error rule margins are tighter than the visibility rule: a late return shows the
+    // coarser level for a moment, never a hole.
+    public const float ErrorRuleKeepRatio = 1.20f;
+    public const float ErrorRuleReturnRatio = 1.10f;
+
+    /// <summary>
+    /// A level is still needed while the next coarser enabled level, at the nearest ground,
+    /// is outside factor x targetPixelError: altitude above h = spacing x scale / (factor x e).
+    /// Hysteresis ErrorRuleKeepRatio (active) and ErrorRuleReturnRatio (inactive). A factor
+    /// under 2.5 is outside the preset range; the perf probe uses a tiny one to switch the rule off.
+    /// </summary>
+    public static bool IsLevelNeededForError(
+        float nextCoarserSpacing,
+        float projectionScale,
+        float targetPixelError,
+        float factor,
+        float altitudeMeters,
+        bool currentlyActive)
+    {
+        float h = nextCoarserSpacing * projectionScale
+            / (Mathf.Max(0.01f, factor) * Mathf.Max(0.5f, targetPixelError));
+        return currentlyActive
+            ? altitudeMeters <= h * ErrorRuleKeepRatio
+            : altitudeMeters < h * ErrorRuleReturnRatio;
+    }
+
+    /// <summary>Index of the next coarser level that is enabled and inside the chain, or -1 when <paramref name="index"/> is the last one.</summary>
+    public static int NextCoarserEnabledIndex(ReadOnlySpan<bool> enabled, int index, int configuredCount)
+    {
+        for (int j = index + 1; j < configuredCount && j < enabled.Length; j++)
+        {
+            if (enabled[j]) return j;
+        }
+        return -1;
+    }
+
     /// <summary>
     /// Horizontal reach of a tier whose slant reach is <paramref name="farHandoffMeters"/>
     /// for a viewer <paramref name="altitudeMeters"/> above sea level, assuming terrain
@@ -164,6 +200,7 @@ internal static class RingTerrainLodChainPlanner
         float backdropSpacingMeters,
         float projectionScale,
         float targetPixelError,
+        float altitudeErrorFactor,
         ReadOnlySpan<float> altitudes,
         out string summary)
     {
@@ -190,7 +227,10 @@ internal static class RingTerrainLodChainPlanner
             for (int i = 0; i < tiers.Count; i++)
             {
                 ChainTier tier = tiers[i];
-                if (tier.FarHandoffMeters > altitude)
+                float nextSpacing = i + 1 < tiers.Count ? tiers[i + 1].SpacingMeters : 0.0f;
+                bool needed = i + 1 >= tiers.Count || IsLevelNeededForError(
+                    nextSpacing, projectionScale, targetPixelError, altitudeErrorFactor, altitude, true);
+                if (tier.FarHandoffMeters > altitude && needed)
                 {
                     activeCount++;
                     float error = ProjectedErrorPixels(tier.SpacingMeters, projectionScale, near, altitude);
@@ -205,7 +245,7 @@ internal static class RingTerrainLodChainPlanner
                             "h={0:0}m tier {1}: error {2:0.00}px > {3:0.00}px", altitude, tier.Label, error, proxyLimit));
                     }
                 }
-                near = tier.FarHandoffMeters;
+                if (needed || tier.FarHandoffMeters <= altitude) near = tier.FarHandoffMeters; // an error-released tier leaves the ground to the next one
                 lastFar = tier.FarHandoffMeters;
             }
             float backdropError = ProjectedErrorPixels(backdropSpacingMeters, projectionScale, lastFar, altitude);

@@ -252,6 +252,12 @@ public partial class RingTerrainLodCoordinator : Node
     public bool HighAltitudeProxySuspended => _altitudeSuppressedLevelCount > 0;
     public float CurrentViewerAltitudeAboveTerrainMeters { get; private set; }
     public float CurrentTargetPixelError => _currentProfile?.TargetPixelError ?? 0.0f;
+    /// <summary>Altitude error factor of the active profile (T2R-18); the setter is for the perf probe and tests.</summary>
+    public float CurrentAltitudeErrorFactor
+    {
+        get => _currentProfile?.AltitudeErrorFactor ?? RingTerrainLodChainPlanner.ProxyErrorFactor;
+        set { if (_currentProfile != null) _currentProfile.AltitudeErrorFactor = value; }
+    }
 
     public void ConfigureMegaRegionalExtension()
     {
@@ -448,10 +454,20 @@ public partial class RingTerrainLodCoordinator : Node
         int signature = 17;
         int suppressed = 0;
         float altitude = CurrentViewerAltitudeAboveTerrainMeters;
+        int configuredCount = ResolveConfiguredLevelCount();
+        float errorFactor = _currentProfile?.AltitudeErrorFactor ?? RingTerrainLodChainPlanner.ProxyErrorFactor;
+        float targetPixelError = _currentProfile?.TargetPixelError ?? 3.0f;
         for (int i = 0; i < _levels.Count; i++)
         {
             float far = GetRuntimeBand(i).Y;
             bool next = RingTerrainLodChainPlanner.IsLevelActiveAtAltitude(far, altitude, _altitudeActive[i]);
+            // Error rule: the level also goes once the next coarser enabled level in the chain
+            // is within tolerance at the nearest ground. The last level in the chain is always needed.
+            int coarser = RingTerrainLodChainPlanner.NextCoarserEnabledIndex(_enabledScratch, i, configuredCount);
+            bool errorNeeded = coarser < 0 || RingTerrainLodChainPlanner.IsLevelNeededForError(
+                _levels[coarser].SampleSpacingMeters, _projectionScale, targetPixelError,
+                errorFactor, altitude, _altitudeActive[i]);
+            next = next && errorNeeded;
             _altitudeActive[i] = next;
             if (!next) suppressed++;
             signature = signature * 31 + (next ? 1 : 0);
@@ -461,7 +477,7 @@ public partial class RingTerrainLodCoordinator : Node
         if (signature == _altitudePlanSignature) return;
         _altitudePlanSignature = signature;
         ConfigureVoxelTransition(_voxelFadeStart, _voxelFadeEnd);
-        GD.Print($"Altitude LOD plan at {altitude:0}m: {_levels.Count - suppressed}/{_levels.Count} proxy levels streaming.");
+        GD.Print($"Altitude LOD plan at {altitude:0}m (error factor {errorFactor:0.0}): {_levels.Count - suppressed}/{_levels.Count} proxy levels streaming.");
     }
 
     private void EnsureAltitudeStateCapacity()
@@ -646,6 +662,9 @@ public partial class RingTerrainLodCoordinator : Node
         widthMeters = _grid?.RingAcrossWidthMeters ?? 0.0;
     }
 
+    /// <summary>Test hook: when above 0, RunProjectedErrorContract uses this altitude error factor instead of each profile's.</summary>
+    public float ContractAltitudeErrorFactorOverride { get; set; }
+
     private double _contractRingCircumference;
     private double _contractRingWidth;
 
@@ -712,6 +731,7 @@ public partial class RingTerrainLodCoordinator : Node
                 circumferenceMeters, widthMeters, plan.AroundSegments, plan.AcrossSegments);
             List<string> violations = RingTerrainLodChainPlanner.EvaluateContract(
                 tiers, _voxelFadeEnd, backdropSpacing, projectionScale, profile.TargetPixelError,
+                ContractAltitudeErrorFactorOverride > 0.0f ? ContractAltitudeErrorFactorOverride : profile.AltitudeErrorFactor,
                 altitudes, out string summary);
             report.AppendLine(string.Create(System.Globalization.CultureInfo.InvariantCulture,
                 $"{profile.DisplayName}: e={profile.TargetPixelError:0.00} tiers={tiers.Count} terminal={(tiers.Count > 0 ? tiers[^1].Label : "-")} far={(tiers.Count > 0 ? tiers[^1].FarHandoffMeters : 0.0f):0}m global={plan.AroundSegments}x{plan.AcrossSegments} edge={backdropSpacing:0}m violations={violations.Count}{summary}"));
@@ -1358,12 +1378,53 @@ public partial class RingTerrainLodCoordinator : Node
             state = next;
         }
         Require(flips == 2, $"expected exactly one activation and one release, saw {flips} flips");
+
+        // Error rule (T2R-18): level of spacing 2 m under a 4 m next level, 2560x1440 at 80 degrees, e = 1.25.
+        float scale = RingTerrainLodChainPlanner.ProjectionScale(1440.0f, 80.0f);
+        string releaseText = "";
+        foreach (float factor in new[] { 2.5f, 5.0f })
+        {
+            float h = 4.0f * scale / (factor * 1.25f);
+            Require(RingTerrainLodChainPlanner.IsLevelNeededForError(4.0f, scale, 1.25f, factor, 0.0f, true), $"k={factor}: needed at altitude 0");
+            Require(RingTerrainLodChainPlanner.IsLevelNeededForError(4.0f, scale, 1.25f, factor, h * 1.19f, true), $"k={factor}: kept below 1.20h");
+            Require(!RingTerrainLodChainPlanner.IsLevelNeededForError(4.0f, scale, 1.25f, factor, h * 1.21f, true), $"k={factor}: released above 1.20h");
+            Require(!RingTerrainLodChainPlanner.IsLevelNeededForError(4.0f, scale, 1.25f, factor, h * 1.11f, false), $"k={factor}: stays released above 1.10h");
+            Require(RingTerrainLodChainPlanner.IsLevelNeededForError(4.0f, scale, 1.25f, factor, h * 1.09f, false), $"k={factor}: returns below 1.10h");
+            bool needed = false; // starts released, high above the thresholds
+            int errorFlips = 0;
+            for (float altitude = h * 1.2f + 50.0f; altitude >= h * 1.1f - 50.0f; altitude -= 5.0f)
+            {
+                bool next = RingTerrainLodChainPlanner.IsLevelNeededForError(4.0f, scale, 1.25f, factor, altitude, needed);
+                if (next != needed) errorFlips++;
+                needed = next;
+            }
+            for (float altitude = h * 1.1f - 50.0f; altitude <= h * 1.2f + 50.0f; altitude += 5.0f)
+            {
+                bool next = RingTerrainLodChainPlanner.IsLevelNeededForError(4.0f, scale, 1.25f, factor, altitude, needed);
+                if (next != needed) errorFlips++;
+                needed = next;
+            }
+            Require(errorFlips == 2, $"k={factor}: expected one return and one release over a +-50 m sweep, saw {errorFlips}");
+            releaseText += $" k{factor:0.0}:release={h * 1.2f:0}m,return={h * 1.1f:0}m";
+        }
+        // A disabled intermediate level is skipped when the next spacing is taken; the last level has none.
+        bool[] enabled = { true, false, true, true };
+        Require(RingTerrainLodChainPlanner.NextCoarserEnabledIndex(enabled, 0, 4) == 2, "disabled level must be skipped");
+        Require(RingTerrainLodChainPlanner.NextCoarserEnabledIndex(enabled, 2, 3) == -1, "last level in the chain has no coarser level");
+        Require(RingTerrainLodChainPlanner.NextCoarserEnabledIndex(enabled, 3, 4) == -1, "last level has no coarser level");
+        // The visibility rule wins where it is stricter: with the 4x spacing left by a disabled level, 1.20h is beyond 1.40 x far.
+        float farOf2m = RingTerrainLodChainPlanner.ScreenSpaceBand(2.0f, scale, 1.25f, 0.18f).Y;
+        bool gapNeeded = RingTerrainLodChainPlanner.IsLevelNeededForError(8.0f, scale, 1.25f, 2.5f, farOf2m * 1.45f, true);
+        bool gapVisible = RingTerrainLodChainPlanner.IsLevelActiveAtAltitude(farOf2m, farOf2m * 1.45f, true);
+        Require(gapNeeded && !gapVisible, "visibility rule must release where the error rule would still keep the level");
+        // Factor 0.01 (the probe's off switch) never releases within the ring height.
+        Require(RingTerrainLodChainPlanner.IsLevelNeededForError(4.0f, scale, 1.25f, 0.01f, 60000.0f, true), "tiny factor must keep every level");
         // Window trim: untouched below the terrain ceiling, sqrt(f^2 - c^2) above it.
         Require(Mathf.IsEqualApprox(RingTerrainLodChainPlanner.TrimmedHorizontalReach(far, 4000.0f), far), "no trim below ceiling");
         float trimmed = RingTerrainLodChainPlanner.TrimmedHorizontalReach(far, RingTerrainLodChainPlanner.TerrainCeilingMeters + 6000.0f);
         Require(Mathf.IsEqualApprox(trimmed, 8000.0f), $"expected 8000 reach, got {trimmed}");
         Require(RingTerrainLodChainPlanner.TrimmedHorizontalReach(far, 40000.0f) == 0.0f, "fully clear level has no reach");
-        return $"hysteresis=ok flips={flips}, trim=ok";
+        return $"hysteresis=ok flips={flips}, trim=ok, error rule=ok{releaseText}";
     }
 
     /// <summary>Verifies fair build-start ordering and slot planning without a scene.</summary>

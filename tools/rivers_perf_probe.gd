@@ -7,12 +7,14 @@ extends SceneTree
 ## GC counts and allocation, draw calls, primitives and a per-level water census. Before every window the Live Tuning drawer is forced closed and the pose is
 ## checked (and restored when it drifted), because stray keyboard or mouse input once opened the drawer and moved the view; each window carries "valid" and "invalid_reasons".
 ##   --rivers=0|1 (1)   --seed=N (1337)   --out=<absolute dir> (required; result.json and stills go here)
-##   --around=m --across=m --lift=m --yaw=deg --pitch=deg   pose; the defaults are the river-mouth spot of the 2026-11-12 play test (ARC 23410.5 km, ACROSS 192.4 km, 600 m up)
+##   --around=m --across=m --lift=m (or --altitude=m) --yaw=deg --pitch=deg   pose; the defaults are the river-mouth spot of the 2026-11-12 play test (ARC 23410.5 km, ACROSS 192.4 km, 600 m up)
 ##   --target-height=1440   3D render height. The window is asked for 2560x1440; when the desktop gives less, the 3D scale is raised so the 3D buffers have this height (0 = leave)
 ##   --still-seconds=60 --window=20   wait after settle, and the length of each timed window
 ##   --cases=base,base_repeat   any of: base, base_repeat, drawer_open, lod_hud_on, ssr_off, refraction_off, coarse_water_hidden (16 m and coarser), inland_replacement_off (T2R-12d A/B: every level draws its inland water under finer levels, as before), water_hidden, proxies_hidden
 ##   --stills=1          nine stills at the pose after the windows (eight headings at pitch -35, one at -85)
 ##   --level-stills=1    instead of the windows: top-down stills with the water of one proxy level at a time (lv_*.png, 1280x720)
+##   --altitude-error-factor=k   sets the active LOD profile's AltitudeErrorFactor after boot (T2R-18; 0.01 = error rule off, the behaviour before T2R-18)
+##   --sweep=1 --altitudes=600,1500,3000,8000 --factors=0.01,2.5,3.5,5   instead of the windows: per altitude and factor, the levels streaming, GPU ms and primitives (pose pitch, then nadir) and a 1280x720 1:1 nadir crop
 ##   --ablate=1          instead of the windows: hide one proxy level or node group at a time (GPU cost of each), then stop one top-level node at a time (allocation source)
 ## Prints RIVERS_PERF_PROBE_PROBE=PASS|FAIL.
 
@@ -299,6 +301,53 @@ func _alloc_rate(seconds: float) -> Dictionary:
 		"gc_pause_ms": float(after["total_gc_pause_ms"]) - float(before["total_gc_pause_ms"]), "fps": frames / elapsed}
 
 
+## T2R-18: for each altitude (m above the ground at the pose) and altitude error factor, the proxy levels that stream, GPU ms and primitives at the pose pitch and at the nadir, and a
+## 1280x720 crop of the nadir view at 1:1 (sweep_<altitude>_k<factor>.png). Every combination waits for the streaming to settle first.
+func _sweep(explorer: Node, around: float, ground: float, across: float, yaw: float, pitch: float, rids: Dictionary) -> void:
+	var coordinator := _game.get_node("TerrainLodCoordinator")
+	var altitudes := String(_args.get("altitudes", "600,1500,3000,8000")).split(",")
+	var factors := String(_args.get("factors", "0.01,2.5,3.5,5")).split(",")
+	var rows: Array = []
+	for altitude_text in altitudes:
+		var altitude := float(altitude_text)
+		var vertical := ground + altitude
+		for factor_text in factors:
+			var factor := float(factor_text)
+			coordinator.set("CurrentAltitudeErrorFactor", factor)
+			explorer.call("TeleportToCanonicalMeters", around, vertical, across, yaw, pitch, true)
+			var started := Time.get_ticks_msec()
+			await COMMON.settle(self, 3.0)
+			var idle: Dictionary = await _wait_idle(300.0, 90)
+			await COMMON.settle(self, 3.0)
+			var row := {"altitude": altitude, "factor": factor, "idle": idle["idle"], "settle_s": (Time.get_ticks_msec() - started) * 0.001}
+			var note: Dictionary = await _guard(explorer, around, vertical, across, yaw, pitch)
+			var window: Dictionary = await _sample(float(_args.get("window", "8")), rids)
+			row["pose"] = _compact(window)
+			var on: Array = []
+			for entry in _census():
+				if bool(entry["streaming"]) and int(entry["visible"]) > 0:
+					on.append(int(entry["spacing"]))
+			row["levels_on"] = on
+			row["census"] = _census()
+			row["altitude_above_terrain"] = float(coordinator.get("CurrentViewerAltitudeAboveTerrainMeters"))
+			explorer.call("TeleportToCanonicalMeters", around, vertical, across, yaw, -85.0, true)
+			await COMMON.settle(self, 3.0)
+			var nadir_note: Dictionary = await _guard(explorer, around, vertical, across, yaw, -85.0)
+			var nadir: Dictionary = await _sample(float(_args.get("window", "8")), rids)
+			row["nadir"] = _compact(nadir)
+			await RenderingServer.frame_post_draw
+			var image := root.get_texture().get_image()
+			var crop := Rect2i((image.get_width() - 1280) / 2, (image.get_height() - 720) / 2, 1280, 720)
+			image.get_region(crop).save_png(_out.path_join("sweep_%d_k%s.png" % [int(altitude), String(factor_text)]))
+			row["note"] = {"pose": note.get("drift_m"), "nadir": nadir_note.get("drift_m")}
+			rows.append(row)
+			_result["sweep"] = rows
+			_write()
+			print("RIVERS_PERF_PROBE sweep alt=%d k=%s on=%s gpu=%.2f prims=%.0f nadir_gpu=%.2f nadir_prims=%.0f idle=%s" % [int(altitude), factor_text, str(on), row["pose"]["gpu_root_p50"], row["pose"]["prims"],
+				row["nadir"]["gpu_root_p50"], row["nadir"]["prims"], idle["idle"]])
+			explorer.call("TeleportToCanonicalMeters", around, vertical, across, yaw, pitch, true)
+
+
 func _ablate(rids: Dictionary) -> void:
 	var out := {}
 	var far_meshes := 0
@@ -551,9 +600,11 @@ func _run() -> void:
 	# ---- pose
 	var around := float(_args.get("around", "23410500"))
 	var across := float(_args.get("across", "192400"))
-	var lift := float(_args.get("lift", "600"))
+	var lift := float(_args.get("altitude", _args.get("lift", "600")))
 	var yaw := float(_args.get("yaw", "0"))
 	var pitch := float(_args.get("pitch", "-15"))
+	if _args.has("altitude-error-factor"):
+		_game.get_node("TerrainLodCoordinator").set("CurrentAltitudeErrorFactor", float(_args["altitude-error-factor"]))
 	explorer.call("TeleportToCanonicalMeters", around, 3000.0, across, yaw, pitch, true)
 	await COMMON.settle(self, 3.0)
 	var probe_alt := float(explorer.get("CurrentAltitudeAboveTerrainMeters"))
@@ -599,6 +650,18 @@ func _run() -> void:
 		_timing.call("End")
 		await _shutdown()
 		print("RIVERS_PERF_PROBE=PASS level stills")
+		quit(0)
+		return
+
+	if String(_args.get("sweep", "0")) == "1":
+		_result["windows"] = []
+		var idle_sweep: Dictionary = await _wait_idle(240.0, 120)
+		_result["settle"] = idle_sweep
+		await COMMON.settle(self, float(_args.get("still-seconds", "20")))
+		await _sweep(explorer, around, ground, across, yaw, pitch, rids)
+		_timing.call("End")
+		await _shutdown()
+		print("RIVERS_PERF_PROBE=PASS sweep")
 		quit(0)
 		return
 

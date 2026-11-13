@@ -25,6 +25,10 @@ func _init() -> void:
 		root.free()
 		quit(2)
 		return
+	# --factor=<k> overrides the profiles' altitude error factor (5 must report violations: the check can fail).
+	for raw in OS.get_cmdline_user_args():
+		if String(raw).begins_with("--factor="):
+			coordinator.set("ContractAltitudeErrorFactorOverride", float(String(raw).substr(9)))
 	var result: Dictionary = coordinator.call(
 		"RunProjectedErrorContract",
 		CERTIFIED_CIRCUMFERENCE_M, CERTIFIED_WIDTH_M, 1080.0, 80.0,
