@@ -202,7 +202,7 @@ public partial class InlandWaterSamplerTest : RefCounted
 
     private void Mouths()
     {
-        int sea = 0, river = 0, ocean = 0;
+        int sea = 0, river = 0, ocean = 0, flankOcean = 0, floodedFlank = 0;
         double lowestRiverLevel = double.MaxValue;
         foreach (int i in Enumerable.Range(0, _net.Stems.Length).Where(i => _net.Stems[i].Terminal == RiverTerminal.Sea).OrderBy(i => RiverHash.Mix(Seed, i, 93)))
         {
@@ -213,6 +213,15 @@ public partial class InlandWaterSamplerTest : RefCounted
             sea++;
             for (double s = length - 600; s <= length; s += 25)
             {
+                // T2R-7d (S13.1): beside the channel no Ocean sample stands on natural ground at or above 0 (the carve never takes a flank below sea level).
+                _net.CentreFrame(i, s, out double ca, out double cz, out double nx, out double ny);
+                for (double x = -300d; x <= 300d; x += 6d)
+                {
+                    long fa = Even(ca + x * nx); int fz = (int)Even(cz + x * ny);
+                    if (_sampler.GetTerrainSample(fa, fz).WaterKind != SurfaceWaterKind.Ocean) continue;
+                    flankOcean++;
+                    if (_model.SampleNaturalDiagnostics(fa, fz).Height >= 0d) { floodedFlank++; Check(false, $"mouth stem {i} s {s} x {x}: an Ocean sample on natural ground at or above 0 ({fa}, {fz})"); }
+                }
                 _net.Centre(i, s, out double around, out double across, out _, out _);
                 long a = Even(around); int z = (int)Even(across);
                 TerrainSample sample = _sampler.GetTerrainSample(a, z);
@@ -233,7 +242,7 @@ public partial class InlandWaterSamplerTest : RefCounted
             if (sea == 12) break;
         }
         Check(sea >= 1, "the strip has no usable sea-terminal stem to check a river mouth");
-        Detail($"mouths: {sea} sea stems, {river} River and {ocean} Ocean samples in their last 600 m, lowest River level {lowestRiverLevel:F3}");
+        Detail($"mouths: {sea} sea stems, {river} River and {ocean} Ocean samples in their last 600 m, lowest River level {lowestRiverLevel:F3}; flank Ocean samples within 300 m {flankOcean}, on natural ground at or above 0: {floodedFlank}");
     }
 
     // ------------------------------------------------------------------ edits

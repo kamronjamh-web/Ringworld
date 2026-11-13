@@ -70,6 +70,12 @@ public sealed class RiverCarveOperator
     /// <summary>Test hook for the lake-held fill comparison: false makes the operator ignore lakes altogether (the T2R-7 state).</summary>
     internal bool LakeOperator { get; init; } = true;
 
+    /// <summary>Test hook for the river-mouth measurement (T2R-7d): false takes the plain minimum of the ground and the valley bound in place of the rounded one.</summary>
+    internal bool ValleyRounding { get; init; } = true;
+
+    /// <summary>Test hook for the negative control (S13.1): false removes the sea clamp, so the valley bound may take ground that is at or above sea level below 0.</summary>
+    internal bool SeaClamp { get; init; } = true;
+
     public RiverCarveOperator(RiverGraph graph)
     {
         _graph = graph ?? throw new ArgumentNullException(nameof(graph));
@@ -543,11 +549,13 @@ public sealed class RiverCarveOperator
             if (core) { if (pieceHi < hiCore) hiCore = pieceHi; }
             else
             {
-                double clamped = SmoothMin(g, pieceHi, round);
+                double clamped = ValleyRounding ? SmoothMin(g, pieceHi, round) : Math.Min(g, pieceHi);
                 if (clamped < valley) valley = clamped;
             }
             if (pieceLo > lo) lo = pieceLo;
         }
+        // Sea clamp (S13.1, T2R-7d): outside a core nothing that stands at or above sea level is taken below it; the rounded valley bound dips up to 1 m under its level near the coast.
+        if (SeaClamp) valley = Math.Max(valley, Math.Min(g, 0d));
         // Combination (S7, T2R-7): valley bounds clamp the ground from above, every lower bound (bank, levee) then lifts it, and a channel core caps the result, so a channel
         // always beats another reach's levee or valley and the highest lower bound beats a lower reach's valley (a bend beside a lower reach must not cut this reach's bank).
         // The plug (S8): a lower bound on the dry ring that closes gaps between samples, so that at P = 0 the ground stands at least Level + f and the wet region never reaches the ring line.

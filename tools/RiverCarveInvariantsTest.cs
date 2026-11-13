@@ -103,6 +103,7 @@ public partial class RiverCarveInvariantsTest : RefCounted
             Paths();
             MeanderSlope();
             Footprints();
+            Mouths();
             FarPoints();
             Cost();
             SharedTables();
@@ -1128,6 +1129,81 @@ public partial class RiverCarveInvariantsTest : RefCounted
         Check(deeper <= (pairs - joinPairs) * 0.005, $"a coarser footprint is deeper on {deeper}/{pairs - joinPairs} reach sections");
         Check(joinDeeper <= joinPairs * 0.05, $"a coarser footprint is deeper on {joinDeeper}/{joinPairs} confluence sections (limit 5 %)");
         Check(crossings > 100 && missing <= crossings * 0.005, $"lattice crossings without a wet vertex: {missing}/{crossings}");
+    }
+
+    // ------------------------------------------------------------------ river mouths (T2R-7d, S13.1)
+
+    /// <summary>
+    /// Every Sea-terminal stem of the strip graph, sections every 25 m over the last 3 km, samples every 2 m to +-300 m, footprints 0, 16 and 64. A flooded flank is a sample whose natural
+    /// ground is at or above 0, whose height is below 0 and that is not River. Counted with the sea clamp (must be 0), without it (negative control) and without it and without the rounding of the
+    /// valley bound (F40). The clamp must change no sample whose unclamped height is at or above 0.
+    /// </summary>
+    private void Mouths()
+    {
+        int[] stems = Enumerable.Range(0, _net.Stems.Length).Where(i => _net.Stems[i].Terminal == RiverTerminal.Sea).ToArray();
+        double[] footprints = { 0d, 16d, 64d };
+        long[] clampOn = new long[3], clampOff = new long[3], noRound = new long[3], samples = new long[3];
+        double[] deepOff = new double[3], deepNoRound = new double[3], deepOn = new double[3];
+        long changedAbove = 0, changedTotal = 0;
+        var worst = new List<(double Depth, int Stem, double S, double Around, double Across, double Fp, double G, double Off)>();
+        var locker = new object();
+        var on = new RiverCarveOperator(_graph);
+        var off = new RiverCarveOperator(_graph) { SeaClamp = false };
+        var offFlat = new RiverCarveOperator(_graph) { SeaClamp = false, ValleyRounding = false };
+        Parallel.For(0, _workers, new ParallelOptions { MaxDegreeOfParallelism = _workers }, w =>
+        {
+            using TerrainGenerationHeightModel natural = new(_recipe, false);
+            long[] lOn = new long[3], lOff = new long[3], lFlat = new long[3], lN = new long[3];
+            double[] dOff = new double[3], dFlat = new double[3], dOn = new double[3];
+            long cAbove = 0, cTotal = 0;
+            var lw = new List<(double, int, double, double, double, double, double, double)>();
+            for (int si = w; si < stems.Length; si += _workers)
+            {
+                int stem = stems[si];
+                double length = _net.Curves[stem].Length;
+                for (double s = Math.Max(0d, length - 3000d); s <= length; s += 25d)
+                {
+                    _net.CentreFrame(stem, s, out double around, out double across, out double nx, out double ny);
+                    for (double x = -300d; x <= 300d; x += 2d)
+                    {
+                        double a = around + x * nx, c = across + x * ny;
+                        double g = natural.CalculateHeight(a, c);
+                        for (int f = 0; f < 3; f++)
+                        {
+                            RiverOperatorResult rOn = on.Evaluate(a, c, g, footprints[f]), rOff = off.Evaluate(a, c, g, footprints[f]), rFlat = offFlat.Evaluate(a, c, g, footprints[f]);
+                            lN[f]++;
+                            if (g >= 0d)
+                            {
+                                if (rOn.Height < 0d && rOn.Kind != InlandWaterKind.River) { lOn[f]++; dOn[f] = Math.Max(dOn[f], -rOn.Height); }
+                                if (rOff.Height < 0d && rOff.Kind != InlandWaterKind.River)
+                                {
+                                    lOff[f]++; dOff[f] = Math.Max(dOff[f], -rOff.Height);
+                                    lw.Add((-rOff.Height, stem, s, a, c, footprints[f], g, rOff.Height));
+                                }
+                                if (rFlat.Height < 0d && rFlat.Kind != InlandWaterKind.River) { lFlat[f]++; dFlat[f] = Math.Max(dFlat[f], -rFlat.Height); }
+                            }
+                            if (rOn.Height != rOff.Height) { cTotal++; if (rOff.Height >= 0d && Math.Abs(rOn.Height - rOff.Height) > 1e-9) cAbove++; }
+                        }
+                    }
+                }
+            }
+            lock (locker)
+            {
+                for (int f = 0; f < 3; f++) { clampOn[f] += lOn[f]; clampOff[f] += lOff[f]; noRound[f] += lFlat[f]; samples[f] += lN[f]; deepOff[f] = Math.Max(deepOff[f], dOff[f]); deepNoRound[f] = Math.Max(deepNoRound[f], dFlat[f]); deepOn[f] = Math.Max(deepOn[f], dOn[f]); }
+                changedAbove += cAbove; changedTotal += cTotal;
+                foreach (var t in lw) worst.Add(t);
+            }
+        });
+        Detail($"mouths: {stems.Length} Sea stems");
+        for (int f = 0; f < 3; f++)
+            Detail(FormattableString.Invariant($"mouths fp {footprints[f]:F0}: {samples[f]} samples, flooded flanks: clamp off {clampOff[f]} (deepest {deepOff[f]:F2} m), clamp off and ValleyRounding off {noRound[f]} (deepest {deepNoRound[f]:F2} m), clamp on {clampOn[f]} (deepest {deepOn[f]:F2} m)"));
+        foreach (var t in worst.OrderByDescending(x => x.Depth).GroupBy(x => x.Stem).Select(g => g.First()).Take(3))
+            Detail(FormattableString.Invariant($"mouths worst (clamp off): stem {t.Stem} s {t.S:F0} around {t.Around:F1} across {t.Across:F1} fp {t.Fp:F0}: ground {t.G:F2} m, height {t.Off:F2} m"));
+        Detail($"mouths: the clamp changed {changedTotal} samples, {changedAbove} of them with an unclamped height at or above 0");
+        Check(stems.Length > 0 && samples[0] > 0, "mouths: no Sea stem on the strip");
+        Check(clampOn.Sum() == 0, $"mouths: flooded flank samples with the sea clamp: {clampOn[0]}/{clampOn[1]}/{clampOn[2]} at footprints 0/16/64 (hard limit 0)");
+        Check(clampOff.Sum() > 0, "mouths: negative control: no flooded flank with SeaClamp = false");
+        Check(changedAbove == 0, $"mouths: the clamp changed {changedAbove} samples whose unclamped height is at or above 0");
     }
 
     // ------------------------------------------------------------------ points far from rivers and sites
