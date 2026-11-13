@@ -1,19 +1,20 @@
 # T2 rules. River ends, heads, the minimum river and emitter intakes: work orders (2026-11-13)
 
 Parent: docs/work-orders/terrain-vegetation/T2.md. This file holds the rule orders that follow the T2R-6c and T2R-17 investigations and the user's answers of 2026-11-13. It is a separate file because T2.md was being edited while it was written.
-Prerequisite reading: T2.md Phase rules, facts F39 to F50, Spec S5 to S8b and S13, and the Review notes "T2R-6c and T2R-17 results (lead, 2026-11-13)"; docs/work-orders/terrain-vegetation/T3.md Spec E1 to E6; TEMPLATE.md; `.claude/skills/poi-asset-import/SKILL.md` (T2R-24 only).
+Prerequisite reading: T2.md Phase rules, facts F39 to F50, Spec S5 to S8b and S13, and the Review notes "T2R-6c and T2R-17 results (lead, 2026-11-13)"; docs/work-orders/terrain-vegetation/T3.md Spec E1 to E6; TEMPLATE.md.
 Status: written by the temporary lead (Fable) on 2026-11-13. Work orders only: no code was changed and nothing was run.
-Depends on: T2R-12c and T2R-12d (in flight) and commit point C2b, except T2R-19, which can start at once.
+Revised by the temporary lead on 2026-11-13, after T2R-19 (commit 2f48fcb) and the user's decision "sites remove water instead of taking it in" (end of this file): T2R-23 and Spec RS2 are rewritten, T2R-24 and Spec RS5 are dropped, facts R15 to R21 and questions RQ1 to RQ5 are added, and the execution order is updated. No code was changed and nothing was run for the revision.
+Depends on: T2R-12c and T2R-12d and commit point C2b, except T2R-19 (done) and T2R-23 Part A, which change nothing in production.
 Freeze: none by itself; part of the "rivers" freeze with T3.
 
-Ids in this file: orders T2R-19 to T2R-25 (free in T2.md when this was written), facts R1 to R14, unverified RU1 to RU4, spec RS1 to RS5. T2.md's F, S and D numbers are cited as they are.
+Ids in this file: orders T2R-19 to T2R-25 (free in T2.md when this was written; T2R-24 is dropped and its id is not reused), facts R1 to R21, unverified RU1 to RU4, spec RS1 to RS5 (RS5 is dropped), questions RQ1 to RQ5. T2.md's F, S and D numbers are cited as they are.
 
 ## User decisions (2026-11-13)
 
 1. **Dead ends.** Build rule (vi), overflow rivers, together with (c'), the outlet into a passing river. (T2R-22.)
 2. **Heads.** Taper them, rule (iv), starting with about 1.5 km. The user sees a picture before the length is final. (T2R-21.)
 3. **The D6 minimum river** (8 m wide, 1.2 m deep). Lift it. Small rivers get their true section and become wadeable. (T2R-20.)
-4. **Emitters.** Option (A): a site takes in the water that runs towards it, and a river that reaches a site ends at a small built intake structure. The narrower keep-out (E) is measured first, so that fewer rivers are cut off. (T2R-19, T2R-23, T2R-24.)
+4. **Emitters.** Option (A): a site takes in the water that runs towards it, and a river that reaches a site ends at a small built intake structure. The narrower keep-out (E) is measured first, so that fewer rivers are cut off. (T2R-19, T2R-23, T2R-24.) **Superseded on 2026-11-13**, after T2R-19's table, by "User decision 2026-11-13: sites remove water instead of taking it in" at the end of this file: a site removes the water that reaches it, nothing is built there, T2R-23 is rewritten and T2R-24 is dropped.
 
 The realism rule of 2026-11-13 applies to every order here: no floor, minimum, widening or boost. Where an existing clamp is touched or left in place, it is listed under "Open questions for the user".
 
@@ -24,7 +25,7 @@ The Phase rules of T2.md apply unchanged (executors, production first, construct
 - **One builder at a time.** These orders edit the bake, the builder and the operator. Serialise C# edits and builds with T2R-12c, T2R-12d and T2R-18.
 - **Versions.** Every order that changes bake output bumps `HydrologyVersions.DrainageAlgorithm` by one; every order that changes operator output bumps `CarveOperator` by one. A graph file is never rebaked while it is valid, and its validity is the version, so a shared bump would let a test profile keep a stale graph between two orders. The saving is made where it costs something: the user's world is rebuilt once, at commit point C2c, after the whole batch.
 - **Generation 1.** Every change sits behind `water.rivers`. `world_generation_fingerprint_test` must pass unchanged in every order.
-- **No menu entries.** Bake and carve rules are not live tunables, and the intake structure follows haze, shadows and lighting like every POI. No recipe field is added in this batch.
+- **No menu entries.** Bake and carve rules are not live tunables. No recipe field is added in this batch.
 
 ## Facts
 
@@ -39,14 +40,30 @@ Read from the source on 2026-11-13 (working tree on `b55b76d` with T2R-12c in pr
 - R5. The outlet of a lake is the first stem whose first reach has the lake as `UpstreamLake`, is not Dead and whose last cell is not a flooded cell of that lake (`RiverGraph.Build`, RiverGraph.cs:418-427). The outlet hold reads the same field (RiverLevel.cs:332, :350; RiverCarveOperator.cs:624). None of them reads `RiverLake.Basin`, so a closed lake with an outlet needs no new record.
 - R6. `drainage_graph_test` has synthetic closed basins with saddles and pans (tools/DrainageGraphTest.cs:200, :258-261) and checks that Dead stems end at a dry pan (:936-945).
 
-**Site intakes and the keep-out (T2R-19, T2R-23, T2R-24)**
+**Site intakes and the keep-out (T2R-19; read before the removal decision, see R15 to R21 for the state after it)**
 
 - R7. `DrainageBarriers.Rasterise` (scripts/Terrain/Hydrology/DrainageBarriers.cs:18-62). The clearance is `CorridorRadiusMeters` 300 + `LateralCapMeters` 350 + half a cell diagonal (about 707 m), added to the influence radius of every emitter site, to the Wall Engine stadium and to the Weather Lung rectangle. The grid does not record which structure a barrier cell belongs to.
 - R8. The Weather Lung rectangle is kind Lung, an outlet, but the same function surrounds it with barrier cells. Nothing can route into it today (D2: "an isolated receiving body with no synthetic inflow"). The Lung is therefore a precedent for the idea, not for the code.
 - R9. Barrier cells are blocked in `DrainageDomain.GetNeighbors` and `NeighborIndex` (DrainageDomain.cs:44-77); outlets are Ocean, Lung and StripOutlet (`IsOutlet`, :42). The flood starts from the outlets at their own height (`DrainageConditioning.Flood`, DrainageConditioning.cs:192-235). Routing noise is added to Land cells only (`DrainageBake.BuildRoute`, DrainageBake.cs:142-161).
 - R10. The barrier guard (`GuardBarriers`, RiverGraphBuilder.cs:1099-1166) keeps every sample of the node curve 105 m from barrier cells, so the meander (at most 100 m) never enters one. The last node of a stem never moves. `drainage_graph_test` checks that no point of a displaced centreline lies in a barrier cell or closer than influence radius + 300 m to an emitter site (tools/DrainageGraphTest.cs:1040-1057).
-- R11. **Derived, not measured.** A point outside every barrier cell is at least influence radius + 650 m from the site centre. With the guard of R10 the centreline keeps that distance, and the carve reaches 300 m from it (the fade end). The 350 m lateral-cap term of the clearance was written before the guard existed and now seems to be counted twice. If so, a keep-out of 300 m plus half a diagonal needs no change to the builder or the operator. T2R-19 measures it.
+- R11. **Derived, not measured.** A point outside every barrier cell is at least influence radius + 650 m from the site centre. With the guard of R10 the centreline keeps that distance, and the carve reaches 300 m from it (the fade end). The 350 m lateral-cap term of the clearance was written before the guard existed and now seems to be counted twice. If so, a keep-out of 300 m plus half a diagonal needs no change to the builder or the operator. T2R-19 measures it. **After T2R-19:** neither confirmed nor refuted, because the end nodes of Intake stems hid the answer (R17). T2R-23 Part A measures it again without those stems.
 - R12. Dangerous water is already excluded near sites: a span within 1,500 m of an emitter disc, a Wall Engine stadium or the Lung footprint that would be fierce or torrent becomes a landing (`RiverExclusions.SiteMarginMeters`, scripts/Terrain/Hydrology/RiverSpanBuilder.cs:16). A river that arrives at an intake is calm or swift.
+
+**Site removal (T2R-23).** Read on 2026-11-13 from the working tree on `90392b9` with T2R-20 in progress (`DrainageAlgorithm` 7, `CarveOperator` 8, `GraphFormat` 4).
+
+- R15. T2R-19 is in the tree (commit 2f48fcb), off by default. `DrainageCellKind.Intake` (DrainageDomain.cs:7) is an outlet (`IsOutlet`, :42) and is not blocked. `DrainageBarriers.MarkIntakes` (DrainageBarriers.cs:80) turns every Barrier cell with a Land or StripOutlet 8-neighbour into Intake, so no Land cell touches a Barrier cell. Sea cells inside a keep-out are Barrier cells too (`Mark`, :105, protects only Lung cells). Options: `DrainageBakeOptions.SiteIntakes` and `KeepOutMeters` (DrainageBake.cs:18, :20). The builder gives a stem whose next cell is an Intake cell `RiverTerminal.Intake` (RiverGraphBuilder.cs:780); `Continues` and the lead rule treat Intake like the sea (:610, :650); the guard already treats Intake cells as barrier cells (:1115). The production callers pass no options (RiverGraphStore.cs:250-252, DrainagePreviewBridge.cs:44), so the option defaults are the production rule.
+- R16. **Measured by T2R-19** (tables: `.godot/test_runs/t2r19_tables.md`; seeds 876374626 / 1337 / 4242; whole ring; keep-out 650, 300 and 0 m).
+  - Lakes above keep-out ground: 735 / 755 / 705 with the option off, 0 at every keep-out.
+  - Stems that end at an edge cell: 227, 224, 226 / 225, 219, 212 / 223, 215, 207 (keep-out 650, 300, 0). That is 3.9 to 4.5 % of river ends. Discharge p50 76 to 101 m^3/s, p90 342 to 526 m^3/s; width p50 50 to 59 m, p90 164 to 194 m, largest 351 to 391 m. They end at 128 to 154 of 595 emitter sites, 0 to 4 at the Lung, none at a Wall Engine.
+  - The count does not follow the keep-out: 300 against 0 differs by -2 to +8 stems per ring.
+  - Lakes that spill straight into an edge cell: 85 to 105 per ring (94 / 94 / 93 at 300).
+  - Runoff that leaves at sites: 1.9 to 2.8 % of the ring's runoff; the mass error stays at or below 5.4e-14.
+  - Flooded share of land at 300: 8.34 / 9.43 / 9.26 % (option off: 8.62 / 9.65 / 9.46 %). River length at 300: 0.5 to 0.7 % less than with the option off. Keep-out cells at 300: about 4 % fewer than at 650.
+- R17. **The R10 escalation of T2R-19 and its cause.** The end node of a stem that is not a confluence is the node of the cell after its last cell (`endCell = down[last]`, RiverGraphBuilder.cs:880, :898). For an Intake stem that is the lowest sample of an Intake cell, anywhere inside a keep-out cell, and the guard never moves a last node (:1157). So Intake stems ran 542 to 1,216 m into influence shapes, and 533 to 652 centreline samples per ring lay closer than influence radius + 300 m at keep-out 300. With the last 1,500 m of Intake stems left out, the samples closer than influence radius + 300 m were 0 / 21 / 0 at 650, 10 / 2 / 0 at 300 (one stem each) and 17 / 70 / 26 at 0 (4 to 6 stems). The stems behind those remaining samples were not named. **Derived, not measured:** a last node in a Land cell is at least influence radius + keep-out from the site, and the meander is not tapered at a stem end that is not a confluence (`Meander`, :321). At keep-out 300 a stem that ends in a lake or the sea in a cell beside the keep-out can therefore come up to 100 m inside the bar, with no Intake stem involved.
+- R18. `RiverGraphFormat` rejects a terminal above `Dead` (RiverGraphFormat.cs:212), so no graph file can hold an Intake stem. Readers of the terminal: the level build gives a receiving level and a tail only to Sea, Lake and Confluence (RiverLevel.cs:381, :478-486); the outlet rule and the outlet hold exclude only Dead (RiverGraph.cs:423, RiverLevel.cs:332, :350, RiverCarveOperator.cs:624); `MetricsEnd` (RiverGraphBuilder.cs:94).
+- R19. A lake's id in the graph is its id in the field (`RiverGraph.Build`, RiverGraph.cs:354-391: records and runs are filled through `f.LakeId`). Taking a lake out after the bake would mean remapping every id; not creating it in the balance needs nothing downstream. A spilling basin becomes a lake in one place, the spilling branch of `DrainageLakeBalance.Resolve` (DrainageLakeBalance.cs:347-379), which is handed the exit cell (`exit`, the flood parent of the basin's first cell).
+- R20. **Site shapes are large.** An emitter's influence radius is its skirt: 3,000 m around a pad of 350 m, 6,000 m around 1,000 m for the main emitter, more where a site is raised (EmitterSiteRecipe.cs:158-187, EmitterSiteBuilder.cs:204). A Wall Engine's is 8,400 m around a forecourt line of 20 km (ClimateMachineRecipe.cs:84, :106). The Weather Lung's bound lies 6,000 m beyond its lip (WeatherLungRecipe.cs:88-113). The site shaper runs after the river operator (S7 "Model") and blends the ground towards the site with a weight that reaches 0 at the influence radius (EmitterSiteTerrainShaper.cs:147). The keep-out is added to these radii: today the nearest stem node is 866 to 887 m from an emitter disc (T2R-17), about 3.9 km from the centre of a regular emitter.
+- R21. Site checks that exist: `drainage_graph_test` tests that no centreline point lies in a Barrier cell (Intake cells are not tested) and that none is closer than influence radius + 300 m to an **emitter** site (tools/DrainageGraphTest.cs:1040-1062); Wall Engines and the Lung are covered only through their Barrier cells. The Dead check is at :936-945 and the end-of-chain check at :951. RU1 stands: no check of water or plug bands against site shapes was found.
 
 **The D6 minimum and the heads (T2R-20, T2R-21)**
 
@@ -56,7 +73,7 @@ Read from the source on 2026-11-13 (working tree on `b55b76d` with T2R-12c in pr
 **Unverified (check before relying on them)**
 
 - RU1. S8 names a bake check that no plug band reaches a site influence disc. No such check was found in the bake; the source has the centreline check of R10 and the clearance lines of the `--terminals` report. T2R-19 reports what exists.
-- RU2. How many rivers end at an intake, and how much of the ring's runoff leaves that way. Today 24 to 36 dammed lakes per ring are ones a mapped river ends in; the number after the dams are gone is only known after a bake (T2R-19).
+- RU2. How many rivers end at an intake, and how much of the ring's runoff leaves that way. Today 24 to 36 dammed lakes per ring are ones a mapped river ends in; the number after the dams are gone is only known after a bake (T2R-19). **Answered by T2R-19: R16.** Still unknown, and measured by T2R-23 Part A: the length of those rivers, how many tributaries they have, and how many lakes lie beside a keep-out without spilling into it.
 - RU3. How the class shares of T3 Spec E3 move when the floors go (T2R-20 prints them).
 - RU4. The cost of the taper in `ChannelAt`, which is on the operator's hot path (T2R-21 measures it against the 3.0 us tripwire).
 
@@ -64,23 +81,27 @@ Read from the source on 2026-11-13 (working tree on `b55b76d` with T2R-12c in pr
 
 | WO | Role | Size | Depends on | Can run alongside |
 |---|---|---|---|---|
-| T2R-19 Site intakes in the bake behind an option; the keep-out measurement | implementer | M | none | T2R-12c, T2R-12d, T2R-18 (serialise builds) |
-| T2R-20 The D6 minimum lifted | implementer | M | T2R-12c, C2b | - |
-| T2R-21 Tapered heads | implementer | M | T2R-20 | T2R-22 Part A (serialise builds) |
-| T2R-22 Overflow rivers and the outlet into a passing river | implementer | L (two parts) | C2b | T2R-21, T2R-24 (serialise builds) |
-| T2R-23 Site intakes switched on | implementer | M | T2R-19, the user's keep-out answer, T2R-22 | T2R-21 |
-| T2R-24 The intake structure: sites, streaming and a placeholder | implementer | M | T2R-23 | T2R-25 preparation |
-| T2R-25 Rules review | claude-lead | S | T2R-20 to T2R-24 | T3 work |
+| T2R-19 Site intakes in the bake behind an option; the keep-out measurement | implementer | M | none | **done** (commit 2f48fcb; R15 to R17) |
+| T2R-20 The D6 minimum lifted | implementer | M | T2R-12c, C2b | T2R-23 Part A (serialise builds) |
+| T2R-21 Tapered heads | implementer | M | T2R-20 | T2R-22 Part A, T2R-23 Part A (serialise builds) |
+| T2R-22 Overflow rivers and the outlet into a passing river | implementer | L (two parts) | C2b; T2R-23 Part A merged first (both edit `DrainageLakeBalance.Resolve`) | T2R-21 (serialise builds) |
+| T2R-23 Part A. Site removal behind options; the measurement | implementer | M | T2R-19 | T2R-20, T2R-21 (serialise builds) |
+| T2R-23 Part B. Site removal in production | implementer | M | Part A, T2R-22, the user's answers to RQ1 and RQ2 | T2R-21's pictures, T2R-25 preparation |
+| T2R-24 The intake structure | - | - | - | **dropped** (user decision 2026-11-13) |
+| T2R-25 Rules review | claude-lead | S | T2R-20 to T2R-23 | T3 work |
 
-**Execution order relative to the play-test orders.**
+**Execution order relative to the play-test orders** (revised 2026-11-13 for the removal decision).
 
-1. **Now, beside T2R-12c and T2R-12d:** T2R-19. Its option is off by default, so no bake output, no version and no picture of T2R-12c or T2R-12d changes. T2R-18 as planned (GPU numbers after T2R-12d).
-2. **C2b** (gate suite and commit after T2R-12d). Nothing below lands before it: every later order changes the rivers of the play-test world, and the before and after pairs of T2R-12c and T2R-12d must show the same rivers.
-3. **T2R-20, then T2R-21.** They are short, T2R-21 needs T2R-20 (RS4), and the head picture goes to the user early because its answer can come while the rest is built.
-4. **T2R-22.** The largest and riskiest order; Part A has a review checkpoint.
-5. **T2R-23**, once the user has answered the keep-out question from T2R-19's table, **then T2R-24.**
-6. **T2R-25, then C2c** (gate suite and commit; suggested). The user's play-test world is created again here, once.
-7. T2R-14 and T2R-16 as in T2.md, after C2c.
+1. **Done:** T2R-19 (commit 2f48fcb). Its tables are in `.godot/test_runs/t2r19_tables.md`; its option is still off by default.
+2. **C2b** (gate suite and commit after T2R-12d). Nothing that changes the rivers of the play-test world lands before it: the before and after pairs of T2R-12c and T2R-12d must show the same rivers. T2R-23 Part A is not bound by this (step 4).
+3. **T2R-20, then T2R-21.** They are short, T2R-21 needs T2R-20 (RS4), and the head picture goes to the user early because its answer can come while the rest is built. (T2R-20 was in the working tree, uncommitted, when this order was revised.)
+4. **T2R-23 Part A, beside step 3 or straight after it.** Like T2R-19 it sits behind options that are off by default, so no bake output, no version and no picture changes. Serialise the C# builds: it shares `RiverGraphBuilder.cs` with T2R-21 (T2R-21 edits `ChannelAt`, Part A edits steps 1 and 2 of `Build`), and with T2R-20 only `tools/test_manifest.json` and one line of `tools/DrainageBakeReportTool.SiteIntakes.cs`. Its table and map crops go to the user at once, so that the answers to RQ1 and RQ2 can come while T2R-22 is built.
+5. **T2R-22**, after T2R-23 Part A is merged (both edit `DrainageLakeBalance.Resolve`; Part A's branch is dead code with the options off, so T2R-22's reference hashes do not move). The largest and riskiest order; its Part A has a review checkpoint.
+6. **T2R-23 Part B**, once T2R-22 is in and the user has answered RQ1 and RQ2.
+7. **T2R-25, then C2c** (gate suite and commit; suggested). The user's play-test world is created again here, once.
+8. T2R-14 and T2R-16 as in T2.md, after C2c.
+
+If the builder is busy, T2R-23 Part A can instead run straight before Part B. The only cost is that the user's two answers come later.
 
 T2R-18 has no interaction with this file beyond the shared GPU.
 
@@ -92,10 +113,11 @@ T2R-18 has no interaction with this file beyond the shared GPU.
 | T2R-20 | +1 | +1 | - | path sections, stored landing factors; the channel section |
 | T2R-21 | - | +1 | - | `ChannelAt` only; no rebake |
 | T2R-22 | +1 | - | - | links, accumulation, stems |
-| T2R-23 | +1 | - | +1 | cell kinds, lakes, stems; the new terminal value |
-| T2R-24 | - | - | - | reads the graph |
+| T2R-23 Part A | - | - | - | options off by default |
+| T2R-23 Part B | +1 | - | - with rule C, +1 with rule L | keep-out, edge cells, lakes and stems; rule L stores the terminal `Cut` (RQ2) |
+| T2R-24 | | | | dropped |
 
-Expected at C2c: 9, 9 and 5. A rebake of a rivers world takes about 10 s plus the river build; its proxy caches then rebuild through the definition hash.
+Expected at C2c: 9, 9 and 4 (rule C) or 5 (rule L). The operator is not edited by T2R-23: the carve changes because the graph does, and `DrainageAlgorithm` covers that. A rebake of a rivers world takes about 10 s plus the river build; its proxy caches then rebuild through the definition hash.
 
 ## Work orders
 
@@ -333,130 +355,130 @@ ESCALATION CONDITIONS
 - The (c') outlet shows a level break of more than 1 m between the lake and the passing river that the tail rule does not turn into chutes. Report the lake; do not write a new level rule.
 - The resident graph exceeds 32 MiB.
 
-### T2R-23. Site intakes switched on
+### T2R-23. Sites remove the water that reaches them
+
+Rewritten on 2026-11-13 for the user's decision "sites remove water instead of taking it in". The order "Site intakes switched on" that stood here is withdrawn; nothing of it was built. Spec RS2.
 
 ROLE: implementer
-SIZE: M
-DEPENDS ON: T2R-19, the user's answer on the keep-out, T2R-22.
+SIZE: L (two parts; a user checkpoint after Part A)
+DEPENDS ON: Part A: T2R-19 (done). Part B: Part A, T2R-22, and the user's answers to RQ1 (keep-out) and RQ2 (tributaries).
 
 OBJECTIVE
-The game's bake treats the edge of every site keep-out as an outlet, at the keep-out the user chose. No lake stands above site ground and no plug holds water on a cell line beside a site. A river that reaches a keep-out ends there as a stem with terminal Intake, at a point the structure of T2R-24 can stand on.
+A river whose water runs into a site is not on the map, from its source down. A lake that would spill into a site is not there. Rivers and lakes may lie right beside a site's keep-out. No lake stands above site ground, no river ends at a site, and nothing is built at a site. Part A builds the rule behind options and measures, on three seeds, how many rivers, lakes and kilometres go. Part B switches it on.
 
 CONTEXT / ROOT CAUSE
-- User decision 4 and the table of T2R-19.
-- T2R-19 left out the end node, the guard, the level, the file and the checks.
+- The user's decision of 2026-11-13 (end of this file). It supersedes decision 4.
+- T2R-19 (R15, R16): with the keep-out edge as an outlet, every dammed lake goes (705 to 755 per ring) and 207 to 227 stems per ring end at a site. The user wants neither those river ends nor structures for them: the rivers go instead.
+- R17: the R10 escalation of T2R-19 came from the end nodes of Intake stems. Those stems are no longer stored.
+- R19: the simplest way to remove a lake is not to create it in the balance.
+- The user's rule leaves two things open that change the map: the keep-out (RQ1) and what happens to the tributaries of a removed river (RQ2). Part A measures both readings before the play-test world changes.
 
 FILES/SYMBOLS
-- scripts/Terrain/Hydrology/DrainageBake.cs (the defaults of `SiteIntakes` and `KeepOutMeters`); DrainageBarriers.cs (the constants and the summary text); RiverGraphBuilder.cs (the end node of an Intake stem, `GuardBarriers` :1099, `MetricsEnd` :96); RiverLevel.cs (no tail for Intake); RiverGraphFormat.cs (:212, the terminal range); RiverMapWriter.cs and DrainageMapWriter.cs (an intake mark); HydrologyVersions.cs.
-- tools/DrainageGraphTest.cs (:936-951, :1040-1057); tools/RiverCarveInvariantsTest.cs (the plug escalation at :675); tools/DrainageSiteIntakeTest.cs; tools/DrainageBakeReportTool.Terminals.cs.
+- Part A: scripts/Terrain/Hydrology/DrainageLakeBalance.cs (`DrainageBasinInfo`, the spilling branch of `Resolve` :347-379, `Run`); DrainageRouting.cs (`DrainageRouted`); DrainageBakeReport.cs; RiverGraphBuilder.cs (`RiverTerminal`, `RiverBuildOptions` :428, `RiverBuildReport`, steps 1 and 2 of `Build` :578-783, `GuardBarriers` :1102); RiverMapWriter.cs (`WriteWindow`). New: scripts/Terrain/Hydrology/RiverSiteRemoval.cs.
+- tools/DrainageBakeReportTool.cs and DrainageBakeReportTool.SiteIntakes.cs (the T2R-19 section becomes the site removal section; a `--site-removal=<branch|catchment>` argument); tools/DrainageSiteIntakeTest.cs.
+- Part B: DrainageBake.cs (the option defaults); DrainageBarriers.cs (`DefaultKeepOutMeters`, `LateralCapMeters`, the summary text); RiverGraphFormat.cs (:212, rule L only); DrainageMapWriter.cs; HydrologyVersions.cs. Read only: RiverGraphStore.cs:250-252 and DrainagePreviewBridge.cs:44, which pass no options and so pick the defaults up.
+- tools/DrainageGraphTest.cs (:936-951, :1040-1062); tools/RiverCarveInvariantsTest.cs (:675 and a new site part); tools/DrainageBakeReportTool.Terminals.cs; tools/test_manifest.json.
 
 REQUIRED CHANGES
-1. `SiteIntakes` is true by default, and `KeepOutMeters` is the chosen value. If it is not 650, `DrainageBarriers.LateralCapMeters` and the D2 text change with it.
-2. The end of an Intake stem (RS2 "Stem end"): the end node keeps the guard's clearance from every Barrier and Intake cell, the guard treats Intake cells as barrier cells, and for these stems the end node is placed before the guard runs so that the guard does not need to move it.
-3. Level: an Intake stem has no tail and no receiving level. Its profile runs to the end as it is.
-4. `RiverGraphFormat`: the terminal byte accepts Intake. `GraphFormat` + 1.
-5. Maps: an Intake end is drawn as a small square in the Lung colour; the legend says "Square: a river taken in by a site".
-6. Report: the lines of RS2 "Report" are always printed.
-7. `DrainageAlgorithm` + 1.
+Part A: the rule behind options, and the measurement. Production is unchanged.
+1. **Site-drained basins** (RS2 "Lakes"). `DrainageBasinInfo.SiteDrained`. In the spilling branch of `Resolve`, a basin whose `exit` is an Intake cell creates no lake: no lake record and no `LakeTemp`; the inside accumulation along the old links runs as today; the whole inflow (`total`, with no evaporation taken off) and the whole area go to `exit`. Its info is `Closed = false`, `Lakes = 0`, `Evaporation = 0`, `Outflow = total`. Intake cells exist only with `SiteIntakes`, so nothing changes with the option off. `DrainageRouted` and the bake report gain the number of site-drained basins and the runoff that arrives at Intake cells.
+2. **`RiverSiteRemoval`** (new file). `enum RiverSiteRemovalRule { None, Branch, Catchment }` and the marking of RS2 "Rivers", written as a function of arrays (the chains, `down`, the cell kinds, `Terminal`, `BasinId` and the `SiteDrained` flags) so that the test calls it without a grid. `RiverBuildOptions.SiteRemoval`, default `None`.
+3. **Builder.** Steps 1 and 2 of `Build` (channel cells, lake marks, main links, chains, terminals) become one `internal static` method that takes the field and a mask of removed cells. It needs no grid, so it can run twice and the test can run it on a synthetic field.
+   - `Catchment`: one pass. A cell with `Terminal == Intake` is not a channel cell.
+   - `Branch`: pass 1 with an empty mask gives the chains and their terminals; `RiverSiteRemoval` marks the cells of the removed chains; pass 2 runs with that mask and is the result. A chain of pass 2 whose next cell is a removed cell gets the new terminal `RiverTerminal.Cut` (appended after `Intake`).
+   - With either rule no chain of the result has terminal `Intake`. The builder throws if one has.
+   - The end node of a Cut stem is the node of its next cell, placed as a Dead stem's is today. It is neither a junction nor in water, so the guard may move it (`GuardBarriers` skips every last node today, :1157). No other stem's last node becomes movable.
+   - `RiverBuildReport` carries, for the report tool: the removed chains (head cell, last cell, cell count, discharge at the last cell, and the reason: ends at a site, inlet of a site-drained basin, or drains to a site), the Cut stems, and the lakes that lost their outlet river (RS2 "What rule L leaves").
+4. **Report tool.** `--site-removal=<branch|catchment>` sets `SiteIntakes` in the bake and the rule in the build; `--keep-out=<m>` as before. The section prints the lines of RS2 "Measurement table". The length of a removed river is read from a build with the rule off on the same field (the chains are the same), matched by head cell. `RiverMapWriter.WriteWindow` draws, for the report tool only, removed rivers as thin grey lines, the cells of a site-drained basin in light grey and a Cut end as a small square.
+5. **The measurement.** Three seeds (876374626, 1337, 4242), whole ring, GPU source, `--no-levels`: keep-out 300 with `branch`, keep-out 300 with `catchment`, keep-out 0 with `branch`, and one reference run per seed with the rule off. Twelve runs. One table per seed, written to `.godot/test_runs/t2r23_tables.md` and into the hand-back.
+6. **Map crops for the user.** `--window` at site 435 (ARC 23,206.5 km, ACROSS 183.5 km) and at site 441 (ARC 23,520 km, ACROSS 186 km), seed 876374626, keep-out 300: rule off, `branch` and `catchment`. Six pictures, sent with the table.
+
+Checkpoint: hand back the tables, the crops and the fixture results. The lead reviews them, and the primary takes RQ1 and RQ2 to the user. Part B does not start before both are answered.
+
+Part B: the rule in production.
+7. **Defaults.** `SiteIntakes` is true. `DefaultKeepOutMeters` is the user's value; at 300 it is `CorridorRadiusMeters` alone, and `LateralCapMeters` leaves the clearance (the guard covers the meander, R11). The user's rule becomes the builder's rule. The rule that was not chosen is deleted with its report column and its test case, and `RiverSiteRemovalRule` goes with it. `RiverBuildOptions.SiteRemoval` becomes a bool that is true by default; like the other switches of `RiverBuildOptions` it exists for the report tool, which needs one build without removal on the same field to measure what was removed. Without edge cells (generation 1 has none) the rule removes nothing.
+8. **Rule L only:** `RiverGraphFormat` accepts `Cut` and still rejects `Intake` (:212); `GraphFormat` + 1. A Cut stem has no tail and no receiving level, and a Cut stem that starts at a lake keeps the outlet hold; the level code already does both for a terminal it does not name (R18). Confirm it; do not add a rule. **Rule C only:** `RiverTerminal.Cut` is deleted and `GraphFormat` is unchanged.
+9. **Names and text.** `DrainageCellKind.Intake`, `MarkIntakes` and `SiteIntakes` keep their names (committed tests and reports use them). Their summaries say what they now are: the edge cell of a keep-out, where water leaves the map, with nothing built there. `RiverTerminal.Intake` stays as a value the builder uses between its passes and never stores. The D2 text in `DrainageBarriers` follows the new keep-out.
+10. **Maps** (production): a removed river has no mark, because it is not there. The edge cells keep their colour in the drainage map. Rule L: a Cut end is a small square, and the legend says "Square: a river that ends where the river it joined was removed at a site".
+11. **Reports.** The bake report and the `--terminals` report always print the lines of RS2 "Report". For rule L the `--terminals` table of T2R-6c gains the rows "(g) a cut end" and "(h) a spilling lake whose outlet river was removed".
+12. **Versions and rebake.** Part A: none. Part B: `DrainageAlgorithm` + 1; `GraphFormat` + 1 with rule L only; `CarveOperator` unchanged (the operator is not edited). Every rivers world rebakes on its next load (about 10 s plus the river build), and test profiles drop their stale graph through the version. The user's play-test world is rebuilt once, at C2c.
 
 DO-NOT-CHANGE CONSTRAINTS
 - Generation 1 worlds must stay identical: `world_generation_fingerprint_test` must pass unchanged. The site registries, the site shaper and the site identity are not touched.
-- The operator is not edited. The S8 plug stays for the gaps between samples.
-- The centreline rule of R10 holds at the chosen keep-out with its bar unchanged (influence radius + 300 m).
-- No river is led around a site by a new rule, and none is shortened, tapered or faded before its intake in this order.
-- `E0` is not recalibrated here, whatever the flooded share does.
+- Part A: with the options at their defaults the bake and the graph are bit-equal to before (`DownHash`, the graph file bytes, every existing test result). No version changes. T2R-22's reference hashes do not move.
+- The operator is not edited and never queries sites. A removed river or lake leaves nothing in the graph: no bed, no bank, no valley bound, no dry-floor run, no plug.
+- The fill arithmetic of S8b and T2R-22 is not touched, apart from the one branch of step 1. Closed basins, overflow lakes and overflow rivers are not removed, shortened or re-routed.
+- R10 keeps its bar (influence radius + 300 m) and the guard keeps its clearance (105 m). Neither is weakened to make a number pass.
+- No floor, minimum, widening or boost. No river is kept alive past a site, none is led round a site by a new rule, no Cut end is tapered, faded or shortened in this order, and no river below a site is topped up for the water the site removed. `E0` is not recalibrated here.
+- A lake that lies beside a keep-out without spilling into it is not removed (RQ4).
 
 VALIDATION STEPS
-1. `drainage_site_intake_test` gains a strip part (CPU strip with sites, seed 1337):
-   - no lake has a ring cell of kind Intake or Barrier whose lowest sample is below the lake level (hard limit 0; the check fails with the option off);
-   - every Intake stem's end point and every sample of its curve keep 105 m from Barrier and Intake cells and influence radius + 300 m from every site;
-   - no stem is Dead because of a site;
-   - a file round trip keeps the terminal.
-2. `drainage_graph_test`: "every channel ends in ..." adds "or an intake"; the centreline check at :1040 passes; the mass balance counts the intake outflow.
-3. `river_carve_invariants_test`: the line "ESCALATION (T2R-8): a plug of ..." no longer prints, and the largest plug on the strips is at most 5 m **(starting value)**.
-4. `.\tools\run_tests.ps1 -Tests drainage_site_intake_test,drainage_graph_test,river_carve_invariants_test,river_danger_test,river_graph_cache_test,world_generation_fingerprint_test -Label rivers` (`-DryRun` first).
-5. Whole-ring `--terminals` reports on the three seeds: lakes above barrier ground 0 (were 705 to 754); the table of T2R-19 at the chosen keep-out is reproduced; flooded share and channel length printed against the reports of T2R-22.
-6. For the user: stills of places e1, e2 and e3 of T2R-17 again (sites 441, 435 and 496; `tools/river_site_capture.ps1`, the existing places file, no 8 km view). Captures under `.godot/captures/landscape/t2r/intakes/`; delete raw frames; `tools/prune_test_output.ps1 -Apply`.
+1. `drainage_site_intake_test` (existing manifest entry; headless, synthetic domains through `BakeDomain`), new cases:
+   - a depression against the block whose lowest rim cell is an edge cell and whose inflow exceeds its evaporation: with the option on it holds no lake cell, its basin is `SiteDrained`, its cells have terminal Intake, and R on the exit cell equals the runoff of everything that drains to it within 1e-9 (no evaporation taken). With the option off a lake stands there: the check can fail;
+   - the same depression with too little inflow to spill: it keeps its balance lake and is not `SiteDrained`;
+   - a valley that runs on to the sea on the far side of the block: R on each of its cells equals the hand-computed runoff of the far side alone;
+   - the mass balance closes with the site term (relative error at most 1e-9);
+   - the chain method of required change 3 with `RiverSiteRemoval`, on one hand-built field: a trunk T that ends at an edge cell, a tributary t1 of T, a tributary t2 of t1, a stem V that joins T inside a site-drained basin, a lake A on T with an inlet i1, and a stem U that reaches the sea. `Branch`: T and V are removed, t1 is Cut, t2 still joins t1, i1 ends in lake A, A has no outlet, U is unchanged. `Catchment`: T, V, t1, t2 and i1 are removed, no stem is Cut, lake A stays, U is unchanged. With `None` nothing is removed and T has terminal Intake: the check can fail.
+   Manifest: `expected_s` of `drainage_site_intake_test` from 20 to 30. No new entry: no new test file is added. Run `tools/testing/validate_manifest.ps1` after the edit.
+2. Part A: `.\tools\run_tests.ps1 -Tests drainage_site_intake_test,drainage_graph_test,river_graph_cache_test,world_generation_fingerprint_test -Label rivers` (`-DryRun` first). `drainage_graph_test` and `river_graph_cache_test` pass unchanged: that is the "defaults are bit-equal" check.
+3. Part A: the twelve runs through `drainage_bake_report` (gpu-local; one at a time). Evidence under `.godot/audit_baseline/<machine>/t2r/bake/<stamp>_t2r23_s<seed>_k<keep-out>_<rule>/`. Cross-check against T2R-19 at the same seed and keep-out: the site-drained basins equal its "lakes that spill straight into an intake cell" (94 / 94 / 93 at 300; 85 / 93 / 88 at 0); the removed chains that end at a site are at least its "stems ending at an intake" (224 / 219 / 215 at 300), the surplus being chains that start in the bed of a removed lake. Print both. Run `tools/prune_test_output.ps1 -Apply`.
+4. Part B, `drainage_graph_test` on both strips (they have sites):
+   - no stem has terminal Intake; no channel cell's `down` is an edge cell; no channel cell lies in a site-drained basin; rule C: no channel cell has `Terminal == Intake`;
+   - rule L: the end-of-chain check (:951) adds `Cut`; every Cut stem's last cell has `Terminal == Intake`, and its next cell is Land, dry and not a channel cell; a file round trip keeps the terminal;
+   - the Dead check (:936) is unchanged: a Cut end is not Dead;
+   - no lake has a wet cell whose `down` is an edge cell, and no lake's level is above the lowest sample of an edge cell beside it (hard limit 0; the second fails with the option off, where the Barrier cells that touch land stand in for the edge cells);
+   - the centreline check (:1040-1062) passes with its bar unchanged. It now counts Intake cells as barrier cells and tests the Wall Engine stadiums and the Lung bound with the same bar (R21);
+   - the mass balance counts the site term.
+5. Part B, `river_carve_invariants_test`: the line "ESCALATION (T2R-8): a plug of ..." no longer prints, and the largest plug on the strips is at most 5 m **(starting value)**. New site part, which is the check RU1 did not find: on a 50 m lattice over every site shape of the strips, no sample has kind River or Lake. Negative control: one fabricated flooded cell beside a shape, with the ground under the level across the shape's edge, must be found.
+6. Part B: `.\tools\run_tests.ps1 -Tests drainage_site_intake_test,drainage_graph_test,drainage_overflow_test,river_carve_invariants_test,river_danger_test,river_graph_cache_test,inland_water_sampler_test,world_generation_fingerprint_test -Label rivers`; `.\tools\run_tests.ps1 -Tests inland_swim_smoke_gpu_test,inland_water_render_gpu_test -Label landscape_gpu` (`-DryRun` first). The gate suite is the primary's, at C2c.
+7. Part B: whole-ring `--terminals` reports on the three seeds. Lakes above keep-out ground: 0 (were 705 to 755). Centreline samples closer than influence radius + 300 m to a site shape: 0. The Part A table at the chosen keep-out and rule is reproduced on the tree with T2R-22. The flooded share, the channel length, the Dead stems, the overflow lines and the spans inside an exclusion zone are printed against the reports of T2R-22.
+8. Part B, for the user: stills of places e1, e2 and e3 of T2R-17 again (sites 441, 435 and 496); the valley of the largest removed river within 350 km of the play-test spot, top down from 600 m and from eye height; rule L: one Cut end, top down from 600 m and from its bank. Use `tools/river_site_capture.ps1` with a places file in the existing format; no 8 km view. Captures under `.godot/captures/landscape/t2r/site_removal/`; delete raw frames; `tools/prune_test_output.ps1 -Apply`.
 
 STOP RULE
-5 periods or 6 attempts.
+Part A: 3 periods or 4 attempts. Part B: 4 periods or 5 attempts.
 
 ESCALATION CONDITIONS
-- The end-node rule cannot keep the clearance on some stem. Report the stems with their cells; do not weaken the guard.
-- A lake still stands above site ground, or a straight bank is still visible in an after picture. Report the lake and the cells.
-- The numbers differ from T2R-19's table by more than 5 % at the same keep-out.
-- The flooded share leaves 6 to 10 %. Report it; the primary decides on `E0`.
+Part A:
+- With the options off, anything differs from before.
+- The site-drained basins differ from T2R-19's count at the same seed and keep-out. Report both numbers and the cause.
+- At keep-out 300 with removal on, any centreline sample is closer than influence radius + 300 m to a site shape. Report every such stem with its terminal, its cells and the cause (R17). Do not move the guard, the bar or an end node. The lead's fallback is a keep-out of 400 m (the corridor plus the meander cap), which holds for an end node by construction.
+- A lake stands above the ground of an edge cell.
+- Removed rivers are more than 8 % of a ring's river length, or more than 5 % of a ring's runoff leaves at sites **(starting values; T2R-19 measured 1.9 to 2.8 %)**. Report it prominently.
+- The flooded share of land leaves the 6 to 10 % band of S8b. Report it; do not touch `E0`.
+- Not an escalation, but always reported at the top of the hand-back, because RQ2 depends on it: the Cut ends per ring with their widths, and the lakes that lost their outlet river.
 
-### T2R-24. The intake structure: sites, streaming and a placeholder
+Part B:
+- A number of the Part A table moves by more than 5 % at the same keep-out and rule. Report it with the cause (T2R-22 is the expected one).
+- A check of T2R-22 fails after the switch: `drainage_overflow_test`, the (c') check, or more than 5 Dead stems on a ring.
+- A stem with terminal Intake reaches the graph, or a River or Lake sample lies inside a site shape.
+- A still shows a straight bank, a river stub at a site, water on site ground, or a bed or a bank line where a river was removed. Report the place and the cells.
+- The user asks for Cut ends to be tapered or for the dry bed of a removed river to be kept. Both are new rules (RQ2, RQ3) and a follow-up order.
 
-ROLE: implementer
-SIZE: M
-DEPENDS ON: T2R-23. Spec RS5.
+### T2R-24. The intake structure: dropped
 
-OBJECTIVE
-Where a river ends at a site keep-out, a built intake stands across the end of its channel: a front wall with ports and a deck over the round end, sized from the river's section. In this order it is a procedural placeholder in the shared POI material. Final art comes later through the poi-asset-import conventions.
+**Dropped by the user's decision of 2026-11-13** ("sites remove water instead of taking it in"): no river ends at a site, so nothing is built there. The id is not reused.
 
-CONTEXT / ROOT CAUSE
-- User decision 4: rivers end at a small built intake structure.
-- Without it an Intake stem ends in a round pool on open ground, which is the dead end the batch removes.
-- **Placeholder, not art.** No GLB exists. The placeholder is a generated mesh, so nothing goes through the import pipeline, but it follows the same material and registration rules (skill poi-asset-import, sections 3 and 4): one ShaderMaterial on `res://materials/ring_poi_architecture.gdshader`, `RingPoiHaze.RegisterTree`, `PoiBaseAmbientOcclusion.Apply`. The final asset replaces the mesh builder, not the site list or the streamer.
-
-FILES/SYMBOLS
-- New: scripts/poi/Intakes/RiverIntakeSites.cs (the list, from the graph), RiverIntakeMesh.cs (the placeholder mesh and its collision shapes), RiverIntakeStreamer.cs (slots near the player; the pattern of scripts/poi/Projectors/AtmosphereProjectorStreamer.cs and `EmitterPoiStreamerCore`).
-- The game scene that holds the other streamers (one node, `AutoBind` and `LoadSavedDefaults` as the pattern has them).
-- New tests: tools/RiverIntakeSitesTest.cs and tools/river_intake_sites_test.gd; tools/river_intake_gpu_test.gd.
-
-REQUIRED CHANGES
-1. `RiverIntakeSites.Build(RiverGraph)`: one site per stem with terminal Intake, in stem order: the end point of the displaced centreline, the downstream tangent, the level, and the half width, bank width and depth of `ChannelAt` at the end. Empty without a graph or without Intake stems. Immutable.
-2. `RiverIntakeMesh.Build(site)`: the envelope of RS5. One surface, one material, under 600 triangles. Collision: box shapes for the wall, the deck and the wings.
-3. `RiverIntakeStreamer`: 8 slots, the nearest sites within 6 km, threaded build, a slot is only a transform, a mesh and visibility. It registers haze and base ambient occlusion on build. No stand-in beyond 6 km, no setting, no menu entry.
-4. The structure does not change the terrain, the water or the graph.
-
-DO-NOT-CHANGE CONSTRAINTS
-- Generation 1 worlds must stay identical: `world_generation_fingerprint_test` must pass unchanged. A world without `water.rivers` creates no intake and no node cost.
-- No per-POI haze, shadow or lighting switch. No forked shader.
-- No hydrology version changes.
-- At most 0.05 ms of sustained main-thread work with all slots idle.
-
-VALIDATION STEPS
-1. New `river_intake_sites_test` (headless, the strip graph of `drainage_site_intake_test`):
-   - one site per Intake stem; each lies within 1 m of the stem's end and keeps the clearances of T2R-23;
-   - the list is the same for two builds and two worker counts;
-   - the deck footprint covers the end cap: on a 1 m lattice, every wet River sample of the operator beyond the stem's end lies under the deck;
-   - the material's shader path equals `res://materials/ring_poi_architecture.gdshader` (`PoiMaterialParams.IsPoiShader`);
-   - a generation-1 sampler gives an empty list.
-   Manifest: `"river_intake_sites_test": {"kind": "test", "mode": "headless", "tier": "gate", "tags": ["poi", "water", "hydrology"], "marker": "RIVER_INTAKE_SITES", "expected_s": 30, "timeout_s": 240}`.
-2. New `river_intake_gpu_test` (gpu, the landscape harness with `--generation=1 --review-features=water.rivers`): teleports to the widest and the narrowest intake of the harness world, waits for the slot, and checks that the structure is visible, that no River water pixel shows beyond the wall in a top-down view, and that the player can stand on the deck. Manifest: `"river_intake_gpu_test": {"kind": "test", "mode": "gpu", "tier": "extended", "tags": ["poi", "water", "hydrology"], "marker": "RIVER_INTAKE_GPU", "expected_s": 120, "timeout_s": 600, "user_args": "--generation=1 --review-features=water.rivers"}`.
-3. `.\tools\run_tests.ps1 -Tests river_intake_sites_test,poi_haze_registry_test,world_generation_fingerprint_test -Label rivers`; `.\tools\run_tests.ps1 -Tests river_intake_gpu_test,poi_haze_gpu_test -Label landscape_gpu` (`-DryRun` first). Check the tags against `tools/testing/validate_manifest.ps1`.
-4. For the user: the two intakes of step 2, each from 150 m at eye height looking downstream and from 600 m top down, at noon, and one at dusk. The structure must take haze and cloud shadow like the ground beside it. Captures under `.godot/captures/landscape/t2r/intakes/`; delete raw frames; `tools/prune_test_output.ps1 -Apply`.
-
-STOP RULE
-5 periods or 6 attempts.
-
-ESCALATION CONDITIONS
-- The harness world has no Intake stem. Report it; the primary picks a seed or a place.
-- The player's collision does not act on generated shapes. Report how the projector towers do it; do not write a second collision path.
-- Water shows through or beyond the structure, or the terrain cuts through the deck. Report the section; do not edit the operator.
-- The widest intake of a ring is so long that the placeholder reads as a dam. Send the picture; the look is the user's call.
+Not built, and not to be built from the earlier text of this order: `scripts/poi/Intakes/` (`RiverIntakeSites`, `RiverIntakeMesh`, `RiverIntakeStreamer`), `river_intake_sites_test`, `river_intake_gpu_test` and their manifest entries, and Spec RS5. None of it was started: the tree holds no file and no manifest entry of that name (checked 2026-11-13). Open question 3 and user answer 4 (the placeholder look) are closed with it. The earlier text is in the history of this file (commit 24d44bd).
 
 ### T2R-25. Rules review
 
 ROLE: claude-lead
 SIZE: S
-DEPENDS ON: T2R-20 to T2R-24.
+DEPENDS ON: T2R-20 to T2R-23 (T2R-24 is dropped).
 
 OBJECTIVE
 The before and after numbers of the batch on three seeds, the pictures at the places of T2R-6c and T2R-17, and a list of what is still open, so the primary can run the gate suite and commit (C2c).
 
 REQUIRED CHANGES
-1. Whole-ring `--terminals` reports on seeds 876374626, 1337 and 4242 on the finished tree. One table with the T2R-6c classes before and after, the smallest sections, the heads line, the overflow lines and the intake lines.
+1. Whole-ring `--terminals` reports on seeds 876374626, 1337 and 4242 on the finished tree. One table with the T2R-6c classes before and after, the smallest sections, the heads line, the overflow lines and the site removal lines (RS2 "Report").
 2. **Fine-area balance, rule (i), measured again.** The share of river ends in a closed lake that shows under half the area its rivers need. It was 1.5 to 2.0 % before the batch. Ask the user only if it is above 3 %.
-3. Review each order's diff against its constraints, in particular: the fill arithmetic of T2R-22, the absence of any minimum in T2R-20 and T2R-21, the clearances of T2R-23.
+3. Review each order's diff against its constraints, in particular: the fill arithmetic of T2R-22, the absence of any minimum in T2R-20 and T2R-21, and the site rules of T2R-23 (nothing of a removed river or lake left in the graph, no water inside a site shape, R10's bar and the guard unchanged, the rule that was not chosen deleted).
 4. Stills: d1 to d6 and e1 to e3 once more on the finished tree, at most five in the report.
-5. Write the results as a "Rules review" section at the end of this file, with the open questions that remain. Propose the text for T2.md and T3.md listed under "Notes for T3 and T4"; the primary applies it.
+5. **Site removal revisited with pictures** (user answer 1: all structures "for now"; RQ2 to RQ4): what was removed per ring, what rule L or rule C left behind, the lakes beside a keep-out that stayed, and whether Wall Engines and the Lung should keep the same rule. Bring it to the user as a proposal, not as a change.
+6. Write the results as a "Rules review" section at the end of this file, with the open questions that remain. Propose the text for T2.md and T3.md listed under "Notes for T3 and T4"; the primary applies it.
 
 VALIDATION STEPS
-- `.\tools\run_tests.ps1 -Tests drainage_graph_test,drainage_overflow_test,drainage_site_intake_test,river_carve_invariants_test,river_danger_test,river_intake_sites_test -Label rivers`. The gate suite is the primary's, at C2c.
+- `.\tools\run_tests.ps1 -Tests drainage_graph_test,drainage_overflow_test,drainage_site_intake_test,river_carve_invariants_test,river_danger_test -Label rivers`. The gate suite is the primary's, at C2c.
 - `tools/prune_test_output.ps1 -Apply`.
 
 STOP RULE
@@ -484,17 +506,60 @@ ESCALATION CONDITIONS
 - **Report.** Overflow lakes; full pools without a lake; total hand-over and its share of the discharge that stems bring to closed lakes; overflow rivers (stems and km); saddle redirects and their runoff; overflows below the channel threshold; Dead stems after overflow; (c') joins.
 - **Look.** About 300 to 400 end-ponds per ring become lakes with a river out, the same number of short rivers appear between the lakes of one basin, and the lakes that receive the surplus are finally reached by the rivers that fill them.
 
-### RS2. Site intakes and the keep-out (T2R-19, T2R-23)
+### RS2. Sites remove the water that reaches them (T2R-19, T2R-23)
 
-**Decision.** The outer ring of every site keep-out is an outlet. Water that runs towards a site leaves the surface there. One rule for every barrier kind (emitter discs, Wall Engine stadiums, the Weather Lung ring), because the grid does not tell them apart (R7).
+Rewritten on 2026-11-13. The former RS2 ("Site intakes and the keep-out") made the keep-out edge an outlet and ended rivers there at a structure. The outlets stay. The river ends and the structure do not.
 
-- **Intake cells.** After the barriers are rasterised, every Barrier cell with a geometric 8-neighbour of kind Land or StripOutlet becomes `Intake`. No Land cell then touches a Barrier cell. Interior barrier cells stay blocked. Lung cells are unchanged.
-- **Flood and routing.** An Intake cell is an outlet at the height of its lowest sample, without routing noise. The flood starts from it as from the sea. A depression beside a site fills at most to that height, so no lake stands above the ground of a keep-out cell, and the Barrier cap of S8 (T2R-5c) has nothing left to act on there. Cells that drain to an Intake cell have terminal Intake.
-- **Stem end.** A stem whose next cell is an Intake cell has terminal `Intake`. Its end node lies on the segment from the last land cell's node towards the Intake cell's lowest sample, at the last point that keeps 105 m from every Barrier and Intake cell rectangle; if the last land node is already inside that distance, the end node is that node moved out along the same line. The guard treats Intake cells as barrier cells. The end therefore lies on ground where rivers may run today, at least influence radius + keep-out + 105 m from the site centre. No tail; the level profile runs to the end.
-- **Keep-out.** `clearance = KeepOutMeters + half a cell diagonal`. 650 m is today's rule. 300 m is the corridor radius alone (R11: expected to need no other change). 0 m would need the carve to fade out at the influence disc; it is measured for size only and not built without a design order.
-- **Measurement table** (T2R-19; per seed, one column per keep-out and one for today's rule): barrier cells; intake cells; stems ending at an intake (count, share of all river ends; discharge p50, p90 and sum; width p50, p90 and max); sites with at least one such stem (of 601) and Wall Engine and Lung ends counted apart by nearest structure; lakes that spill straight into an intake cell; share of the ring's runoff that leaves through intakes, the sea and closed basins; channel length; stems ending in the sea; lakes and the flooded share of land; lakes above keep-out ground (must be 0 with intakes on); points of a centreline closer than influence radius + 300 m to a site (must be 0).
-- **Report** (always, from T2R-23): intake cells; Intake stems and their discharge; the runoff share through intakes; lakes above keep-out ground.
-- **For T3.** No fade-out of the flow before an intake. The exclusions of E4 already make the last 1,500 m calm or swift (R12).
+**Decision** (user, 2026-11-13). Water that reaches a site leaves the map there. A river that runs into a site is not mapped, from its source down. A lake that would spill into a site is not there. Rivers and lakes may lie beside a site. One rule for emitter discs, Wall Engine stadiums and the Weather Lung ring (user answer 1 carries over).
+
+- **Terms.** A **site shape** is the influence shape of a structure: the emitter disc, the Wall Engine stadium, the Lung bound (R20). The **keep-out** is `KeepOutMeters` beyond it. A **keep-out cell** is a cell whose centre is closer to a site shape than the keep-out plus half a cell diagonal (kind Barrier, R7); every point within the keep-out of a shape lies in one. An **edge cell** is a keep-out cell with a geometric 8-neighbour of kind Land or StripOutlet (kind `Intake` in the code, R15). No Land cell touches any other keep-out cell. Sea cells inside a keep-out are keep-out cells.
+- **Edge cells** are outlets at the height of their lowest sample, without routing noise, and the flood starts from them as from the sea (T2R-19). A depression beside a site fills at most to that height. So no lake stands above keep-out ground, and the Barrier cap of S8 has nothing left to act on there.
+
+**What "intersects" means.**
+- **A river intersects a site** when its water runs into an edge cell: the `down` link of one of its cells is an edge cell. This is a statement about the flow on the 1 km grid, not about the drawn line, for two reasons. Water cannot be routed across site ground, so a centreline never crosses a keep-out and a test on the drawn line would never be true. And the grid is where a river's course is decided: a river that the grid sends into an edge cell has no other course. The price is the grid's resolution. The keep-out cells reach up to one cell diagonal (1.4 km) beyond the keep-out line, so a river whose true course would pass just outside the line can be removed. A river that passes a site through Land cells does not intersect it, however near it runs.
+- **A lake intersects a site** when it would spill into an edge cell: it is the lake of a basin that spills and whose exit cell is an edge cell (a **site-drained basin**). Such a lake would stand against the keep-out and pour into it. A lake that lies beside an edge cell and spills somewhere else, or does not spill, does not intersect: its level is at or below the edge cell's ground, its shore is natural ground, and it stays (RQ4).
+- The site shape itself is never tested against water by the rule. It is tested by the checks: no River or Lake sample may lie inside a site shape (T2R-23 validation 5).
+
+**Keep-out: 300 m proposed** (RQ1; today 650 m).
+- 300 m is how far a river's carve reaches from its centreline (the corridor radius, the operator's fade end). The guard keeps the node curve 105 m from keep-out cells and the meander is at most 100 m, so the centreline stays 305 m from a site shape. The edge of a river's valley can then touch the edge of a site's shaped ground, and neither changes the other. Nothing changes in the builder, the operator or the site shaper, and R10's bar holds as it is written.
+- Nearer than that puts the river on site-shaped ground: the channel (up to 200 m half width), the bank, the floodplain and the valley side would lie inside the shape, where the site shaper re-forms the ground after the river operator has run, so water level and ground would disagree. That is a design order across the guard, the operator and the site shaper (which is part of the site identity), with a `CarveOperator` bump.
+- It would gain little. T2R-19 counted 224 / 219 / 215 rivers into sites at 300 and 226 / 212 / 207 at 0 (R16). In distance, 0 instead of 300 moves a river from 3.3 km to 3.0 km from the centre of a regular emitter, because the site shape itself is 3 km (R20).
+- Against today's 650 m, 300 m brings rivers 350 m nearer and frees about 4 % of the keep-out cells.
+- **Consequences.** R10: bar unchanged (influence radius + 300 m), now tested for all three kinds of structure. R11: the 350 m lateral cap leaves the clearance; the guard already covers the meander. The guard itself is unchanged; it already treats edge cells as barrier cells. End nodes are not guarded (R17): if Part A finds a stem inside the bar at 300, the fallback is 400 m (corridor plus meander cap), not a weaker bar. R12: the 1,500 m exclusion zone is unchanged; more river length now lies inside it, so somewhat more spans become landings (printed in Part B).
+
+**Lakes (bake).** A site-drained basin holds no lake: no lake record and no wet cells. Its cells keep the links of the flood, as the cells of a depression under 2 m do, and its whole inflow goes to the exit cell. No evaporation is taken, because there is no water surface. A closed basin beside a site keeps its balance lakes. A removed lake has no outgoing river by its definition: its only way out is into the site. Its incoming rivers are removed by the river rule below.
+
+**Rivers (builder).** The builder first finds its stems as today. A stem is the chain that follows the larger catchment upstream at every confluence (S5), so "the river" is the main course and what joins it is a tributary. The user's rule has two readings, and RQ2 chooses between them.
+- **Rule L, "branch"** (the user's wording). Removed whole, from its head cell to its last cell: (1) a stem whose next cell is an edge cell; (2) a stem whose last cell or next cell lies in a site-drained basin, which is an incoming river of a removed lake. Nothing else is removed. The builder then builds again without the removed cells. A stem that joined a removed stem ends at its own last cell with terminal **Cut**: it stays, as the user asked ("rivers flowing into that branch upstream stay"), and it ends on dry ground where the river it joined used to run. Its own tributaries are untouched. A removed stem that began in a lake (a lake's drowned channel and its outlet river are one stem, T2R-8b) is removed from that lake down; the lake and its inlets stay, the inlets end in the lake, and the lake has no outlet river.
+- **Rule C, "catchment"** (the alternative). A cell whose water ends at a site (`Terminal == Intake`) is not a channel cell. Every mapped river that drains into a site goes, with all its tributaries, and no stem is Cut. A lake further up that drains towards a site stays, without rivers.
+- Under both rules a river whose mouth lies inside a keep-out is removed like any other, since the sea cells there are keep-out cells.
+
+**What rule L leaves** (Part A counts both). Cut ends: a river that stops on dry ground at its full width, some kilometres before a site. And spilling lakes with an inlet river and no outlet river. Both are ends of the kind T2R-22 removes elsewhere (classes (b), (f) and (c) of T2R-6c). Rule C leaves neither and removes more river length.
+
+**Terrain.** A removed river or lake is not in the graph, so the operator does nothing there and the ground is the natural ground, as in a world without rivers. The valley the land has stays. It has no bed, no banks, no floodplain, no cut through rises and no water. The bed of a removed lake is a dry hollow at least 2 m deep. It is plain land, not the dry floor of a closed basin: no dry run, no flag for T4. A dry riverbed, the carve without the water, is not built (RQ3).
+
+**Mass balance.** `sum of r over land = sea + Lung + strip ends + sites + evaporation in basins`. "Sites" is the accumulated runoff that arrives at edge cells, the whole inflow of site-drained basins included. Nothing is added and nothing is scaled. Rain on keep-out cells is not counted, as today (they are not land). The bake and its balance are the same under rule L and rule C; the rules differ only in what is drawn. Under rule L a kept tributary carries its water to its Cut end, and from there on that water is part of the site term.
+
+**Rivers below a site.** There is no rule and no resizing step. R on a cell is the runoff of the cells that drain to it, and water that left at a site is not among them. Today the barrier turns that water round the site. After T2R-23 a river below a site carries only its own catchment: its section is the law of RS3 for that discharge, with no floor, and where the catchment is under the channel threshold there is no mapped river until the threshold is reached. Everything that is removed ends at a site, so nothing that is removed has a receiving river, and no river on the map loses a tributary while keeping its water in the balance.
+
+**Overflow rivers (T2R-22).** An overflow lies inside a closed basin, and a closed basin never drains to a site (its cells have terminal Basin). So neither rule removes an overflow lake or an overflow river, and removal creates none. (c'): a lake whose exit flows into a river that is removed gets no drowned channel through its exit, because the second pass finds no channel cell there; the lake's channel ends one cell short, as at a pit (R4). What does change is the ground T2R-22 was measured on. With the keep-out at 300 m and the edge cells as outlets, valleys that the barrier closed now drain, so the closed basins, the overflows and the Dead stems near sites differ. T2R-22's reference hashes are taken before Part B and are not expected to hold after it; Part B prints T2R-22's report lines again.
+
+**Measurement table** (T2R-23 Part A; per seed; columns: rule off at 650, `branch` at 300, `catchment` at 300, `branch` at 0):
+- keep-out cells and edge cells;
+- site-drained basins: count, cells, the inflow they pass on, and what share of the reference run's lakes and flooded cells they were;
+- lakes with a wet cell beside an edge cell that stay: count, and the smallest distance from such a wet cell to a site shape;
+- removed rivers: stems, km and share of the river length, by reason; discharge at the end p50, p90 and sum; width p50, p90 and largest (the law of RS3);
+- sites with at least one removed river, with Wall Engines and the Lung counted apart;
+- rule L: Cut ends (count; discharge and width p50, p90 and largest; distance along the removed river from the Cut end to the edge cell p50 and p90) and lakes that lost their outlet river (count; inflow p50 and largest);
+- rule C: the stems and km it removes beyond rule L;
+- rivers left: stems and km; river ends by class (the rows of T2R-6c plus Cut);
+- runoff shares: sites, the sea, closed basins, the Lung and strip ends; the mass error;
+- lakes; the flooded share of land; lakes above keep-out ground (must be 0);
+- centreline samples closer than influence radius + 300 m to a site shape (must be 0 at 300), the stems they lie on, the smallest clearance; guard: nodes moved and the largest move.
+
+**Report** (always, from Part B): edge cells; site-drained basins; removed rivers (count, km); Cut ends (rule L); the runoff share that leaves at sites; lakes above keep-out ground.
+
+**For T3.** No river ends at a site, so E5 needs no rule for one. Rule L: `RiverTerminal.Cut` is a river end with no receiving water. The exclusions of E4 are unchanged (R12).
 
 ### RS3. The channel law without floors (T2R-20)
 
@@ -522,33 +587,26 @@ Everything else in S6, E2 and E3 is unchanged. D6 then reads: "Plan 3.2 relation
 - **For T3.** On a source stem the speed factor `x^(4/9)` replaces the 200 m fade-in of E5. Lake outlet stems keep theirs.
 - **Provisional:** T and the exponent, until the user has seen the pictures of T2R-21.
 
-### RS5. The intake structure (T2R-24)
+### RS5. The intake structure (T2R-24): dropped
 
-**Decision.** A built object in the POI family that covers the end of an Intake stem. Frame: origin at the stem's end on the displaced centreline, x downstream along the tangent, y to the left bank, z up; `a`, `b`, `d` and `L` are the half width, bank width, depth and level at the end.
-
-- **Front wall** at `x = 0`, across the channel, from `y = -(a + b)` to `a + b`, from 0.5 m under the bed (`L - d - 0.5`) to 1.5 m above the level. Dark recessed ports on the upstream face between the bed and the level.
-- **Deck** at the wall's crest over the half disc of radius `a + b + 2` beyond the wall: it covers the channel's round end, so no water shows behind the wall.
-- **Wing walls** from both ends of the front wall 6 m upstream into the banks, falling to the bank top.
-- The dimensions of the wall, the deck margin and the wings are design dimensions of a built object. Its width is the river's.
-- **Material and registration:** the shared POI shader, haze and base ambient occlusion as every POI. It takes cloud shadows and lighting with no switch of its own.
-- **Streaming:** 8 slots within 6 km. Beyond that the river is a tint and the structure is not drawn.
-- **Final art** (not in this batch): a modular GLB under `assets/poi/river_intake/` (a centre bay and a wing, repeated across the width), brought in with the poi-asset-import skill: import settings before the first import, materials converted to the shared shader, collision under `collision/`, the streamer unchanged.
+Dropped with T2R-24 by the user's decision of 2026-11-13. Nothing is built at a site for a river. The earlier text is in the history of this file (commit 24d44bd).
 
 ## Notes for T3 and T4 (for the primary to apply; not edited from here)
 
-- **T2.md S8b**, "Stems and terminals" and "For later phases": a closed lake can have an outlet (RS1). T3 receives closed lakes with inlets and, where they overflow, an outlet. D6 and S6 lose the floors (RS3). D2 gains the Intake outlet and, if chosen, the new keep-out (RS2). The "Order and parallelism" table and Phase acceptance item 8 gain T2R-19 to T2R-25 and C2c.
+- **T2.md S8b**, "Stems and terminals" and "For later phases": a closed lake can have an outlet (RS1). T3 receives closed lakes with inlets and, where they overflow, an outlet. D6 and S6 lose the floors (RS3). The "Order and parallelism" table and Phase acceptance item 8 gain T2R-19 to T2R-25 (T2R-24 dropped) and C2c.
+- **T2.md D2 and S8** (revised 2026-11-13 for RS2): the keep-out is the corridor radius alone (300 m proposed, RQ1) plus half a cell diagonal; its edge cells are outlets where water leaves the map; a river that runs into one is not mapped and a basin that spills into one holds no lake. S8 "Barrier cap": no lake stands above keep-out ground any more, and the site rule it names (no water and no plug band on a site shape) is checked by `river_carve_invariants_test` (T2R-23 validation 5). F45 and F49 then describe the state before T2R-23.
 - **T3.md Spec E2**: `d = channel_depth Kd Q^0.4` without `max(1.2, ...)`; width without the 8 m floor. The T3R-3 constraint "T2's floors" and the `river_danger_test` bars "8 to 400 m, at least 1.2 m" become "(0, 400], above 0". The E3 rows are re-recorded from T2R-20's report.
-- **T3.md Spec E5** (T3R-4 is not built yet): the head factor of RS4 on source stems; no fade-out before an intake; a new terminal `RiverTerminal.Intake`; the outlet rules of a spilling lake apply to an overflow lake.
+- **T3.md Spec E5** (T3R-4 is not built yet): the head factor of RS4 on source stems; the outlet rules of a spilling lake apply to an overflow lake. No river ends at a site, so there is no intake terminal and no rule for one. With rule L of RS2 there is a new terminal `RiverTerminal.Cut`, a river end with no receiving water; with rule C there is none.
 - **T3.md Spec E6**: wading is "depth above 0 and below the swim entry depth". With RS3 there is now mapped river in that band.
-- **T4**: overflow rivers cross dry basin floor, as channels already could (S8b). No new query.
+- **T4**: overflow rivers cross dry basin floor, as channels already could (S8b). No new query. The valley of a removed river and the bed of a removed lake are plain land with no flag (RS2 "Terrain").
 
 ## Open questions for the user
 
 No minimum, floor, widening or boost is proposed anywhere in this file.
 
-1. **Keep-out (after T2R-19's table).** Which width: 650 m (today), 300 m, or a design order for 0 m? The table also shows how much of the ring's river water ends at sites. If that share is large, is it still what you want?
-2. **Which structures take water in.** The rule as written applies to emitter sites, Wall Engine forecourts and the Weather Lung alike, because the same straight banks stand at all three. Should the Wall Engines and the Lung get the same intake, or be left as they are until you have seen the emitters?
-3. **The intake's look.** The placeholder is a front wall with ports and a deck over the river's end, as wide as the river. Wide rivers give long structures: T2R-19 prints the widths. Is that the right idea, and do you supply the final model or should a later order build it? Beyond 6 km the structure is not drawn. Is that acceptable?
+1. **Keep-out (after T2R-19's table).** Which width: 650 m (today), 300 m, or a design order for 0 m? The table also shows how much of the ring's river water ends at sites. If that share is large, is it still what you want? **Closed 2026-11-13: replaced by RQ1 below.**
+2. **Which structures take water in.** The rule as written applies to emitter sites, Wall Engine forecourts and the Weather Lung alike, because the same straight banks stand at all three. Should the Wall Engines and the Lung get the same intake, or be left as they are until you have seen the emitters? **Answered (user answer 1); the answer carries over to the removal rule (RQ5).**
+3. **The intake's look.** The placeholder is a front wall with ports and a deck over the river's end, as wide as the river. Wide rivers give long structures: T2R-19 prints the widths. Is that the right idea, and do you supply the final model or should a later order build it? Beyond 6 km the structure is not drawn. Is that acceptable? **Closed 2026-11-13: no structure is built (T2R-24 dropped).**
 4. **Head taper (after T2R-21's pictures).** Is 1.5 km right, and does the head read as a spring? Longer makes it gentler; shorter makes it blunter.
 5. **Wading.** With D6 lifted, water between 0.55 and 1.15 m deep still switches the controller to swimming, with the feet on the bed. Leave that, or raise the swim entry depth so such rivers are walked? That would also change ocean and lake shores.
 6. **Existing clamps that stay.** None of them makes water where there is none, but each is a limit on a river's shape: bank width at least 2 m and at most 12 m; floodplain at least 10 m and at most 120 m beyond the bank; meander wavelength at least 300 m; meander amplitude at a quarter for streams under 14 m; river width at most 400 m with the depth raised to carry the discharge (T3 calibration); gradient at least 1e-4. Should any of them go?
@@ -556,9 +614,25 @@ No minimum, floor, widening or boost is proposed anywhere in this file.
 
 Not asked, only reported: the flooded share of land will move when the dammed lakes go (they are 4.5 % of the lake area on the play-test seed); `E0` is left alone unless the share leaves 6 to 10 %. Zero to two rivers per ring will still end on a dry pan because their water really evaporates there.
 
+### After the removal decision (2026-11-13)
+
+For the rewritten T2R-23 and RS2. No minimum, floor, widening or boost is proposed in any of them. RQ1 and RQ2 are needed before T2R-23 Part B; Part A brings the numbers and the map crops for both.
+
+- **RQ1. Keep-out: is 300 m near enough?** Proposed: 300 m, which is how far a river's carve reaches. The edge of a river's valley can then touch the edge of a site's shaped ground and neither changes the other. A river then passes no nearer than about 3.3 km from the centre of a regular emitter (6.3 km for the main emitter, 8.7 km from a Wall Engine's forecourt line), because the site's own shaped ground reaches 3 km (6 km, 8.4 km). Today the nearest is about 3.9 km. A true 0 gives 3.0 km, saves no rivers (T2R-19: -2 to +8 per ring) and needs a design order across the guard, the operator and the site shaper. If you want a river visibly next to the pad, that is a different piece of work, rivers on a site's skirt: say so and the lead scopes it.
+- **RQ2. Tributaries of a removed river.** Your rule keeps them. They then end where they met the removed river: on dry ground, at full width, some kilometres before the site. A lake on a removed river likewise keeps its inlets and loses its outlet. Both are ends of the kind the overflow work (T2R-22) removes elsewhere. Part A counts them and shows them on map crops. The choices:
+  - (L) as you said: tributaries stay and end there;
+  - (C) everything that drains into a site goes: no such ends, more river length removed;
+  - (L with a taper) tributaries stay and dwindle to nothing over their last stretch, the mirror of the head taper. A look choice that shows less water and adds none; a follow-up order.
+  The lead will recommend on the numbers: C if rule L leaves hundreds of such ends per ring, L if it leaves few.
+- **RQ3. Dry valleys.** Where a river is removed the ground is left natural: the valley the land has, with no bed and no banks. The alternative is a dry riverbed (the carved channel without water), which reads as a river that was drained; it needs operator work, a ground material from T4 and a `CarveOperator` bump. Natural ground is treated as accepted unless you say otherwise.
+- **RQ4. Lakes beside a site.** A lake that would spill into a site is removed. A lake that only lies against a keep-out and spills somewhere else, or not at all, stays: its level is not above site ground and its shore is natural. Part A counts them. Removing those too would also remove outlet rivers that flow away from the site, and the rivers below would then either carry water with no visible source or lose it. Keeping them is treated as accepted unless you say otherwise.
+- **RQ5. Which structures** (not a new question). User answer 1 carries over: emitters, Wall Engine forecourts and the Weather Lung ring all remove water by the same rule, "for now". T2R-25 revisits it with pictures.
+
+Reported, not asked: about 2 to 3 % of a ring's runoff leaves at sites (T2R-19), and rivers below a site are smaller than today because they no longer carry the water the barrier used to turn round it. Nothing is topped up. The removal test is made on the 1 km grid, so a river whose true course would pass up to 1.4 km outside the keep-out line can be removed (RS2).
+
 ## Phase acceptance (additions to T2.md)
 
-9. The rule orders of 2026-11-13 are done: T2R-19 to T2R-24 pass their validation, including `drainage_overflow_test`, `drainage_site_intake_test` and `river_intake_sites_test` (headless). T2R-25 has reported: on three seeds no river ends in a full pool without an outlet, no lake stands above keep-out ground, no section has a floor, and every source tapers. The user has answered open questions 1 and 4, and the head taper constant is no longer marked provisional.
+9. The rule orders of 2026-11-13 are done: T2R-19 to T2R-23 pass their validation, including `drainage_overflow_test` and `drainage_site_intake_test` (headless); T2R-24 is dropped. T2R-25 has reported: on three seeds no river ends in a full pool without an outlet, no lake stands above keep-out ground, no river ends at a site and no River or Lake sample lies inside a site shape, no section has a floor, and every source tapers. The user has answered open question 4, RQ1 and RQ2, and the head taper constant is no longer marked provisional.
 
 ## User answers 2026-11-13
 
@@ -575,6 +649,14 @@ After the T2R-19 table (all ~705-755 dammed lakes per ring go at any keep-out; ~
 - A river whose path intersects a site is removed, **whole river branch** from its source down. Rivers flowing into that branch upstream stay unless they also hit the site.
 - A lake that intersects a site is removed together with its incoming and outgoing rivers.
 - **No intake structures**: T2R-24 is dropped. T2R-23 is to be rewritten by the lead for the removal rule (what happens to the removed water in the balance, how valleys look without the river, how the T2R-19 option code is reused or retired, and the R10/R11 guard checks with the smaller keep-out).
+
+**Done by the lead on 2026-11-13.** Where each point is answered:
+- The rule and its terms ("intersects" for a river and for a lake, the keep-out of 300 m and its consequences for the guard, R10, R11 and R12): Spec RS2. The order: T2R-23, in two parts with a user checkpoint.
+- The removed water: it leaves the balance at the site as a fourth outlet term; nothing downstream carries it and nothing is topped up (RS2 "Mass balance", "Rivers below a site").
+- The valleys: natural ground, uncarved, no dry bed (RS2 "Terrain", RQ3).
+- Overflow rivers: untouched by removal (RS2 "Overflow rivers").
+- T2R-19's code: the bake part is reused whole (edge cells as outlets, `KeepOutMeters`, the guard on edge cells) and becomes the default. `RiverTerminal.Intake` stays as a value the builder uses and never stores. Not built from the withdrawn order: the end node rule for Intake stems, Intake in the graph file, the intake mark on the maps. The intake stem width lines of the T2R-19 report go.
+- Two readings of "rivers flowing into that branch upstream stay" exist and change the map; Part A measures both (RQ2).
 
 ## Water look and instance-slot follow-ups (lead investigation 2026-11-13; run after T2R-12d)
 
