@@ -170,6 +170,23 @@ public partial class RingTerrainProxySector : MeshInstance3D
 
     public int ActiveSectorCount => _active.Count - _warmUntil.Count;
     public int PooledSectorCount => _pool.Count;
+    /// <summary>
+    /// Proxy nodes (terrain node, opaque shadow caster, water child, water caster, all levels) that hold a 16-slot block of the
+    /// global shader-uniform buffer. Godot gives the block to a geometry instance on its first instance shader parameter and takes
+    /// it back only when the instance is freed, so these are freed rather than hidden; failed allocations never recover.
+    /// </summary>
+    public static int InstanceBlockHolderCount => Volatile.Read(ref _instanceBlockHolders);
+    private static int _instanceBlockHolders;
+    /// <summary>Pooled sector nodes kept per level; the rest are freed on recycle so their blocks return to the buffer.</summary>
+    private const int MaximumPooledSectorNodes = 32;
+    private static void FreeProxyInstance(Node parent, Node? instance)
+    {
+        if (instance == null) return;
+        // Detach first: the name is free again at once and the engine frees the instance (and its uniform block) at end of frame.
+        parent.RemoveChild(instance);
+        instance.QueueFree();
+        Interlocked.Decrement(ref _instanceBlockHolders);
+    }
     public int WarmSectorCount => _warmUntil.Count;
     public long EstimatedWarmMeshBytes { get; private set; }
     public int CreatedSectorNodeCount { get; private set; }
@@ -6246,7 +6263,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
         _installedMeshNodes.Remove(node);
         _installedLocalPositions.Remove(node);
         node.Mesh = null;
-        _pool.Enqueue(node);
+        if (_pool.Count >= MaximumPooledSectorNodes) FreeProxyInstance(this, node);
+        else _pool.Enqueue(node);
     }
 
     private void ReleasePartialCoverageSource(RingTerrainSectorCoordinate coordinate)
@@ -6288,6 +6306,12 @@ public partial class RingTerrainProxySector : MeshInstance3D
     {
         const string shadowCasterName = "OpaqueShadowCaster";
         MeshInstance3D? shadowCaster = visualNode.GetNodeOrNull<MeshInstance3D>(shadowCasterName);
+        if (shadowCaster != null && !enabled)
+        {
+            // A sector that stops casting (or is recycled) gives its caster, and the uniform block it holds, back.
+            FreeProxyInstance(visualNode, shadowCaster);
+            return;
+        }
         if (shadowCaster == null && enabled)
         {
             shadowCaster = new MeshInstance3D
@@ -6296,6 +6320,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 CastShadow = ShadowCastingSetting.ShadowsOnly
             };
             visualNode.AddChild(shadowCaster);
+            Interlocked.Increment(ref _instanceBlockHolders);
         }
 
         if (shadowCaster == null) return;
@@ -6528,7 +6553,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
     private MeshInstance3D AcquireNode()
     {
         if (_pool.Count > 0) { ReusedSectorNodeCount++; return _pool.Dequeue(); }
-        var node = new MeshInstance3D(); AddChild(node); CreatedSectorNodeCount++; return node;
+        var node = new MeshInstance3D(); AddChild(node); CreatedSectorNodeCount++; Interlocked.Increment(ref _instanceBlockHolders); return node;
     }
 
     private void CreateMaterial()

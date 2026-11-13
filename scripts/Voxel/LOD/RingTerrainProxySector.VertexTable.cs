@@ -830,6 +830,7 @@ public partial class RingTerrainProxySector
         // Ocean surfaces never cast shadows (the ocean material is shadows_disabled), so the child casts none either.
         child = new MeshInstance3D { Name = OceanSurfaceName, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
         node.AddChild(child);
+        Interlocked.Increment(ref _instanceBlockHolders);
         _oceanChildren[node] = child;
         return child;
     }
@@ -853,6 +854,12 @@ public partial class RingTerrainProxySector
             if (!active) return;
             caster = new MeshInstance3D { Name = OceanShadowCasterName, CastShadow = GeometryInstance3D.ShadowCastingSetting.ShadowsOnly };
             child.AddChild(caster);
+            Interlocked.Increment(ref _instanceBlockHolders);
+        }
+        else if (!active)
+        {
+            FreeProxyInstance(child, caster);
+            return;
         }
         caster.Mesh = active ? child.Mesh : null;
         caster.MaterialOverride = active ? _opaqueShadowMaterial : null;
@@ -870,14 +877,11 @@ public partial class RingTerrainProxySector
 
     private void ClearOceanChild(MeshInstance3D node)
     {
-        if (!_oceanChildren.TryGetValue(node, out MeshInstance3D? child)) return;
-        child.Mesh = null;
-        child.MaterialOverride = null;
-        child.CustomAabb = default;
-        child.ExtraCullMargin = 0.0f;
+        if (!_oceanChildren.Remove(node, out MeshInstance3D? child)) return;
+        // No water here any more: free the water child (its caster goes with it) instead of hiding it; it is recreated on demand.
         _oceanChildReach.Remove(child);
-        child.Visible = false;
-        child.SetInstanceShaderParameter(ProxySlotName, -1);
+        if (child.GetNodeOrNull<MeshInstance3D>(OceanShadowCasterName) != null) Interlocked.Decrement(ref _instanceBlockHolders);
+        FreeProxyInstance(node, child);
     }
 
     /// <summary>Mirrors an ocean-shader instance parameter onto the node's OceanSurface child (no-op for mesh-installed nodes).</summary>

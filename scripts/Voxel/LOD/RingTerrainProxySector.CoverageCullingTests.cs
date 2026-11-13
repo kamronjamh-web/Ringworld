@@ -90,9 +90,12 @@ public partial class RingTerrainProxySector
                 || _opaqueShadowMaterial.GetShaderParameter("morph_end_meters").AsSingle() != FadeOutEndMeters)
                 throw new InvalidOperationException("Persistent terrain caster lost production geomorph configuration.");
             SetTerrainShadowCasting(false);
-            if (shadowCaster.CastShadow != ShadowCastingSetting.Off || shadowCaster.Visible)
+            // A caster that stops casting is freed (it holds a uniform block), not hidden; re-enabling recreates it.
+            if (node.GetNodeOrNull<MeshInstance3D>("OpaqueShadowCaster") != null || !shadowCaster.IsQueuedForDeletion())
                 throw new InvalidOperationException("Disabling terrain shadows left the persistent caster active.");
             SetTerrainShadowCasting(true);
+            if (node.GetNodeOrNull<MeshInstance3D>("OpaqueShadowCaster") is not { Visible: true })
+                throw new InvalidOperationException("Re-enabling terrain shadows did not recreate the opaque caster.");
 
             // A second candidate in the same process frame must remain queued: one mesh
             // rebuild per frame is the culling path's scene-thread budget.

@@ -687,6 +687,14 @@ function Get-Verdict($Spec, $Proc, [bool]$TimedOut, [double]$TimeoutS) {
         $e = Get-FirstErrorLine $lines
         if ($e) { $v.detail = "$($v.detail) | $e" }
     }
+    # Engine instance-uniform overflow: a run whose log carries it never passes (failed allocations do not recover, so
+    # instance parameters silently stop working for later nodes), whatever marker or exit code it printed.
+    if ($v.status -in @('pass', 'captured', 'skip') -or ($v.status -eq 'fixed')) {
+        $overflow = $lines | Where-Object { $_ -match 'Too many instances using shader instance variables' } | Select-Object -First 1
+        if ($overflow) {
+            $v.status = 'fail'; $v.detail = "instance-uniform buffer overflow (raise rendering/limits/global_shader_variables/buffer_size or free instance holders): $overflow"
+        }
+    }
     # Known failures: a matching failure is known-fail; a known-fail test that passes is fixed.
     if ($v.status -in @('fail', 'crash', 'error')) {
         $text = ($lines -join "`n")

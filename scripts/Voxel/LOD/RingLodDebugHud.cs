@@ -122,6 +122,8 @@ public partial class RingLodDebugHud : CanvasLayer
             text.Append($"\nProxy memory: {FormatBytes(_coordinator.EstimatedActiveMeshBytes)} active + {FormatBytes(_coordinator.EstimatedPendingMeshBytes)} staged");
             foreach (RingTerrainProxySector level in _coordinator.Levels)
                 text.Append('\n').Append(FormatLod(level.LodLabel, level, _verbose));
+            int blockCapacity = (int)ProjectSettings.GetSetting("rendering/limits/global_shader_variables/buffer_size", 65536) / 16;
+            text.Append($"\nInstance-uniform blocks: proxy {RingTerrainProxySector.InstanceBlockHolderCount} held of {blockCapacity} in the buffer (other systems also draw from it)");
         }
         if (_globalLod != null)
             text.Append($"\nGlobal HLOD: {_globalLod.ActiveSegmentCount} segments | dirty queue {_globalLod.PendingSegmentRebuildCount} | min/max {_globalLod.MinMaxLevelCount} levels/{_globalLod.MinMaxCellCount} cells | memory {FormatBytes(_globalLod.EstimatedSummaryBytes + _globalLod.EstimatedGlobalMeshBytes)} | last edit {_globalLod.LastDirtyMinMaxCellCount} base cells, {_globalLod.LastSegmentRebuildCount} segments in {_globalLod.LastSegmentRebuildMilliseconds:0.00}ms");
