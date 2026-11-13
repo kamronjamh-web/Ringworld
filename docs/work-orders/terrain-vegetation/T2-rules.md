@@ -567,3 +567,11 @@ Not asked, only reported: the flooded share of land will move when the dammed la
 3. **Shape clamps:** keep for now; the lead reviews each against real rivers in T2R-25 and brings proposals.
 4. **Intake look:** the procedural placeholder is fine; final art later as a model.
 Still open: the keep-out distance (after T2R-19's table) and the head taper length (after T2R-21's pictures). Ponds with no mapped inlet staying without an outlet (question 7) was not asked; treat as accepted unless T2R-25 shows it matters.
+
+## User decision 2026-11-13: sites remove water instead of taking it in (supersedes the T2R-23/T2R-24 direction)
+
+After the T2R-19 table (all ~705-755 dammed lakes per ring go at any keep-out; ~210-230 rivers per ring would end at intakes), the user chose a simpler rule:
+- Rivers may run close to a site (the keep-out shrinks; the lead proposes the distance, near 0).
+- A river whose path intersects a site is removed, **whole river branch** from its source down. Rivers flowing into that branch upstream stay unless they also hit the site.
+- A lake that intersects a site is removed together with its incoming and outgoing rivers.
+- **No intake structures**: T2R-24 is dropped. T2R-23 is to be rewritten by the lead for the removal rule (what happens to the removed water in the balance, how valleys look without the river, how the T2R-19 option code is reused or retired, and the R10/R11 guard checks with the smaller keep-out).
