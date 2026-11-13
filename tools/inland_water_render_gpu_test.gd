@@ -28,6 +28,13 @@ const PATCH_HALF_PX := 24
 const REPLACEMENT_MIN_PATCH_WATER := 200
 const REPLACEMENT_RESIDUE_LIMIT := 0.02
 const REPLACEMENT_HOLE_LIMIT := 0.01
+# Water look follow-up (see _check_river_colour): the river centre patch at two heights.
+const COLOUR_HEIGHTS_M := [300.0, 500.0]
+const COLOUR_PATCH_HALF_PX := 6
+# Haze over the extra 200 m and the water SSR range (450 m) account for ~0.1; the cream-versus-teal split it replaces was 0.25.
+const COLOUR_MAX_DELTA := 0.12
+const COLOUR_MIN_WIDTH_M := 12.0
+const COLOUR_MAX_WIDTH_M := 90.0
 
 var booted := {}
 var finished := false
@@ -81,6 +88,7 @@ func _run() -> void:
 		await _check_water_pose(game, key, points[key])
 	for key in ["lake", "river"]:
 		await _check_replacement(game, key, points[key])
+	await _check_river_colour(game, probe, points)
 	var shots: Dictionary = probe.call("FindShots", game, points)
 	for key in ["river", "lake"]:
 		var shot_name: String = "river_bank_top" if key == "river" else "lake_shore_top"
@@ -253,6 +261,10 @@ func _check_replacement(game: Node, key: String, p: Dictionary) -> void:
 	if not levels.has(16):
 		failures.append("%s: no 16 m proxy level in the scene" % tag)
 		return
+	# A river narrower than 2 spacings is carried by this level as coverage only (T2R-12c); water no longer shadows its bed, so its (absent) water leaves no trace to check.
+	if key == "river" and float(p.get("width", 0.0)) < 32.0:
+		print("%s %s: the river is %.1f m wide, under 2 spacings of the 16 m level; this level holds it as coverage only, check skipped" % [MARKER, tag, float(p.get("width", 0.0))])
+		return
 	var finer_spacing := 0
 	for spacing in levels:
 		if int(spacing) < 16 and int(spacing) > finer_spacing:
@@ -314,6 +326,40 @@ func _check_replacement(game: Node, key: String, p: Dictionary) -> void:
 		if case[0] == "beyond" and float(only16_patch) < 0.5 * float(off_patch):
 			failures.append("%s beyond: the 16 m level draws only %d of %d water pixels beyond the replacement distance" % [tag, only16_patch, off_patch])
 	_set_levels_visible(levels, all_spacings)
+
+
+## Water look follow-up (docs/work-orders/terrain-vegetation/T2-rules.md): the colour of a river's centre does not depend on the camera height. Before the follow-up a river looked teal under
+## ~400 m (the water mesh shadowed its own bed inside the sun shadow map) and cream above (clear-ocean extinction showed the sand bed). From 300 m and from 500 m straight above the widest
+## river reach, the mean colour of the centre patch must agree within COLOUR_MAX_DELTA per channel (sRGB 0..1).
+func _check_river_colour(game: Node, probe: RefCounted, points: Dictionary) -> void:
+	var river: Dictionary = probe.call("FindRiverByWidth", game, COLOUR_MIN_WIDTH_M, COLOUR_MAX_WIDTH_M)
+	if not bool(river.get("ok", false)):
+		print("%s river colour: no river %.0f to %.0f m wide with a deep pool; check skipped (%s)" % [MARKER, COLOUR_MIN_WIDTH_M, COLOUR_MAX_WIDTH_M, str(river.get("error", ""))])
+		return
+	var width := float(river["width"])
+	var means: Array = []
+	for height in COLOUR_HEIGHTS_M:
+		var info: Dictionary = await HARNESS.go_pose(self, game, _pose_for("river_colour", river, height, -90.0), "noon")
+		if info.has("error"):
+			failures.append("river colour %.0f m: %s" % [height, str(info["error"])])
+			return
+		var image := await _grab()
+		var sum := Vector3.ZERO
+		var count := 0
+		for y in range(image.get_height() / 2 - COLOUR_PATCH_HALF_PX, image.get_height() / 2 + COLOUR_PATCH_HALF_PX):
+			for x in range(image.get_width() / 2 - COLOUR_PATCH_HALF_PX, image.get_width() / 2 + COLOUR_PATCH_HALF_PX):
+				var c := image.get_pixel(x, y)
+				sum += Vector3(c.r, c.g, c.b)
+				count += 1
+		means.append(sum / float(count))
+		_save_capture(image, "inland_river_colour_%d.png" % int(height))
+	var a: Vector3 = means[0]
+	var b: Vector3 = means[1]
+	var delta := maxf(absf(a.x - b.x), maxf(absf(a.y - b.y), absf(a.z - b.z)))
+	print("%s river colour (%.1f m wide): centre patch %.0f m = (%.3f, %.3f, %.3f), %.0f m = (%.3f, %.3f, %.3f), max channel difference %.3f (limit %.2f)" % [
+		MARKER, width, COLOUR_HEIGHTS_M[0], a.x, a.y, a.z, COLOUR_HEIGHTS_M[1], b.x, b.y, b.z, delta, COLOUR_MAX_DELTA])
+	if delta > COLOUR_MAX_DELTA:
+		failures.append("river colour: the centre patch differs by %.3f between %.0f m and %.0f m above (limit %.2f)" % [delta, COLOUR_HEIGHTS_M[0], COLOUR_HEIGHTS_M[1], COLOUR_MAX_DELTA])
 
 
 ## Rec. 709 luminance of the 3x3 block around (x, y), sRGB 0..1.

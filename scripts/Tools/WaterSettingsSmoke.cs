@@ -170,7 +170,9 @@ public partial class WaterSettingsSmoke : RefCounted
         bool setVariation = settings.SetOverride(graphics, fft, "WaterSwellVariation", .31f)
             && settings.SetOverride(graphics, fft, "WaterFoamPatchiness", .47f)
             && settings.SetOverride(graphics, fft, "WaterDistantFoamVisibility", .58f)
-            && settings.SetOverride(graphics, fft, "WaterDetailFilteringStrength", 1.72f);
+            && settings.SetOverride(graphics, fft, "WaterDetailFilteringStrength", 1.72f)
+            && settings.SetOverride(graphics, fft, "WaterRiverVisibilityMeters", 3.5f)
+            && settings.SetOverride(graphics, fft, "WaterLakeVisibilityMeters", 9f);
         bool setSsr = settings.SetOverride(graphics, fft, "WaterSsrEnabled", true)
             && settings.SetOverride(graphics, fft, "WaterSsrStrength", .73f)
             && settings.SetOverride(graphics, fft, "WaterSsrCoarseSteps", 19)
@@ -198,6 +200,8 @@ public partial class WaterSettingsSmoke : RefCounted
             && Math.Abs(scaledFarMaterial.GetShaderParameter("distant_foam_visibility").AsSingle() - .58f) < .001f
             && Math.Abs(scaledFarMaterial.GetShaderParameter("detail_filtering_strength").AsSingle() - 1.72f) < .001f
             && scaledFarMaterial.GetShaderParameter("absorption_coefficients").AsVector3().IsEqualApprox(new Vector3(.36f, .14f, .04f))
+            && Math.Abs(nearMaterial.GetShaderParameter("river_visibility_meters").AsSingle() - 3.5f) < .001f
+            && Math.Abs(nearMaterial.GetShaderParameter("lake_visibility_meters").AsSingle() - 9f) < .001f
             && Math.Abs(nearMaterial.GetShaderParameter("shallow_inscatter_strength").AsSingle() - .71f) < .001f
             && Math.Abs(nearMaterial.GetShaderParameter("crest_transmission_strength").AsSingle() - .63f) < .001f
             && nearMaterial.GetShaderParameter("water_ssr_enabled").AsBool()

@@ -302,6 +302,25 @@ func _run() -> void:
 			if drawer_node != null and drawer_node.has_method("SetBenchmarkDrawerOpen"):
 				drawer_node.call("SetBenchmarkDrawerOpen", false)
 			_label.text = "%s   ARC %.3f km  ACROSS %.3f km   %.0f m above %.0f m   yaw %.0f pitch %.0f   seed %d" % [str(place.get("caption", name)), (around + offset_around) / 1000.0, (across + offset_across) / 1000.0, lift, ground, yaw, pitch, int(seed_value)]
+			if view.has("motion"):
+				# "motion": {"seconds": 10, "fps": 30, "to_lift_m": 600, "to_offset_around_m": 0, "to_offset_across_m": 60}: the camera moves linearly from the view to this pose, one teleport per frame (a flicker or
+				# fly-through review: every frame of the move is saved as <out>/<name>_<tag>_frames/frame%08d.png at 1280x720, the sequence tools/media/ffmpeg_tools.ps1 reads).
+				var motion: Dictionary = view["motion"]
+				var frames := maxi(2, int(float(motion.get("seconds", 10.0)) * float(motion.get("fps", 30.0))))
+				var to_lift := float(motion.get("to_lift_m", lift))
+				var to_around := float(motion.get("to_offset_around_m", offset_around))
+				var to_across := float(motion.get("to_offset_across_m", offset_across))
+				var frames_dir := _out.path_join("%s_%s_frames" % [name, tag])
+				DirAccess.make_dir_recursive_absolute(frames_dir)
+				print("RIVER_SITE_CAPTURE motion %s_%s: %d frames to %s" % [name, tag, frames + 1, frames_dir])
+				for i in frames + 1:
+					var u := float(i) / float(frames)
+					explorer.call("TeleportToCanonicalMeters", around + lerpf(offset_around, to_around, u), ground + lerpf(lift, to_lift, u), across + lerpf(offset_across, to_across, u), yaw, pitch, true)
+					await process_frame
+					await RenderingServer.frame_post_draw
+					var frame_image := root.get_texture().get_image()
+					frame_image.resize(1280, 720, Image.INTERPOLATE_BILINEAR)
+					frame_image.save_png(frames_dir.path_join("frame%08d.png" % i))
 			await COMMON.settle(self, 2.5)
 			await RenderingServer.frame_post_draw
 			var image := root.get_texture().get_image()

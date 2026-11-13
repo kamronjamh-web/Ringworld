@@ -258,6 +258,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
     private ShaderMaterial? _structuralEdgeWallMaterial;
     private ulong _lastWallHeightRangeRevision = ulong.MaxValue;
     private ShaderMaterial? _opaqueShadowMaterial;
+    private ShaderMaterial? _waterShadowDiscardMaterial;
     private MeshInstance3D? _structuralWallMesh;
     private Task<StructuralWallData>? _pendingStructuralWall;
     private StructuralWallRequest? _queuedStructuralWall;
@@ -6277,6 +6278,12 @@ public partial class RingTerrainProxySector : MeshInstance3D
         }
     }
 
+    private static ShaderMaterial? CreateWaterShadowDiscardMaterial()
+    {
+        Shader? shader = GD.Load<Shader>("res://materials/ring_water_shadow_discard.gdshader");
+        return shader == null ? null : new ShaderMaterial { Shader = shader };
+    }
+
     private void ConfigureOpaqueShadowCaster(MeshInstance3D visualNode, Mesh? mesh, bool enabled)
     {
         const string shadowCasterName = "OpaqueShadowCaster";
@@ -6312,7 +6319,18 @@ public partial class RingTerrainProxySector : MeshInstance3D
             ApplyVertexTableUniforms(_opaqueShadowMaterial, _vertexTable, _slotInstallActive);
         }
         shadowCaster.Mesh = enabled ? mesh : null;
-        shadowCaster.MaterialOverride = enabled ? _opaqueShadowMaterial : null;
+        shadowCaster.MaterialOverride = null;
+        if (enabled && mesh != null)
+        {
+            // Water surfaces of the mesh draw nothing into the sun shadow map (the water does not shadow its own bed); terrain surfaces use the opaque shadow material.
+            _waterShadowDiscardMaterial ??= CreateWaterShadowDiscardMaterial();
+            int surfaceCount = mesh.GetSurfaceCount();
+            for (int surface = 0; surface < surfaceCount; surface++)
+            {
+                bool water = _oceanMaterial != null && ReferenceEquals(mesh.SurfaceGetMaterial(surface), _oceanMaterial);
+                shadowCaster.SetSurfaceOverrideMaterial(surface, water && _waterShadowDiscardMaterial != null ? _waterShadowDiscardMaterial : _opaqueShadowMaterial);
+            }
+        }
         shadowCaster.CastShadow = enabled
             ? ShadowCastingSetting.ShadowsOnly
             : ShadowCastingSetting.Off;

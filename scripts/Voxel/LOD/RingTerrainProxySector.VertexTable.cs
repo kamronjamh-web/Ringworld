@@ -846,7 +846,8 @@ public partial class RingTerrainProxySector
     {
         if (!_oceanChildren.TryGetValue(visualNode, out MeshInstance3D? child)) return;
         MeshInstance3D? caster = child.GetNodeOrNull<MeshInstance3D>(OceanShadowCasterName);
-        bool active = enabled && child.Mesh != null && _opaqueShadowMaterial != null;
+        // Water no longer shadows its own bed: the ocean child gets no sun-shadow caster (an existing one is switched off).
+        bool active = false;
         if (caster == null)
         {
             if (!active) return;

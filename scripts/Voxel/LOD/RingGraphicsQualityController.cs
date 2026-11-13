@@ -144,6 +144,8 @@ public partial class RingGraphicsQualityController : Node
     [Export(PropertyHint.Range, "0,2,0.01")] public float WaterSpecularAaStrength { get; set; } = 0.85f;
     [Export(PropertyHint.Range, "0,0.08,0.001")] public float WaterRefractionStrength { get; set; } = 0.012f;
     [Export(PropertyHint.Range, "0.001,2,0.001")] public float WaterAbsorptionDensity { get; set; } = 0.11f;
+    [Export(PropertyHint.Range, "0.1,100,0.1")] public float WaterRiverVisibilityMeters { get; set; } = RingWaterModel.DefaultRiverVisibilityMeters;
+    [Export(PropertyHint.Range, "0.1,200,0.1")] public float WaterLakeVisibilityMeters { get; set; } = RingWaterModel.DefaultLakeVisibilityMeters;
     [Export] public Color WaterAbsorptionCoefficients { get; set; } = new(0.30f, 0.12f, 0.035f, 1.0f);
     [Export(PropertyHint.Range, "0,2,0.01")] public float WaterShallowInscatterStrength { get; set; } = 0.58f;
     [Export(PropertyHint.Range, "0,2,0.01")] public float WaterCrestTransmissionStrength { get; set; } = 0.95f;
@@ -699,7 +701,7 @@ public partial class RingGraphicsQualityController : Node
         WaterSsrMaxRayDistance, WaterSsrCameraDistance, WaterSsrDepthToleranceNear, WaterSsrRayBias, WaterSsrDepthToleranceFar,
         WaterSsrEdgeFade, WaterSsrRoughnessCutoff, WaterSsrDebugMode, WaterShoreFoamDepthMeters, WaterShoreFoamStrength, WaterBreakingFoamSlopeStart,
         WaterBreakingFoamSlopeEnd, WaterBreakingFoamStrength, WaterShallowTint, WaterDeepTint, WaterFoamColor,
-        WaterSwellVariation, WaterFoamPatchiness, WaterDistantFoamVisibility, WaterDetailFilteringStrength);
+        WaterSwellVariation, WaterFoamPatchiness, WaterDistantFoamVisibility, WaterDetailFilteringStrength, WaterRiverVisibilityMeters, WaterLakeVisibilityMeters);
 
     private readonly Godot.Collections.Dictionary _waterSsrOverrides = new();
 

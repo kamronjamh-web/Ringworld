@@ -43,6 +43,11 @@ public static partial class RingWaterModel
     public static float SpecularAaStrength { get; private set; } = 0.85f;
     public static float RefractionStrength { get; private set; } = 0.012f;
     public static float AbsorptionDensity { get; private set; } = 0.11f;
+    /// <summary>Inland clarity: the depth at which the bed contrast has fallen to 12 % (green channel) in a river and in a lake. The ocean uses <see cref="AbsorptionDensity"/>.</summary>
+    public const float DefaultRiverVisibilityMeters = 2.0f;
+    public const float DefaultLakeVisibilityMeters = 6.0f;
+    public static float RiverVisibilityMeters { get; private set; } = DefaultRiverVisibilityMeters;
+    public static float LakeVisibilityMeters { get; private set; } = DefaultLakeVisibilityMeters;
     public static Color AbsorptionCoefficients { get; private set; } = new(0.30f, 0.12f, 0.035f, 1.0f);
     public static float ShallowInscatterStrength { get; private set; } = 0.58f;
     public static float CrestTransmissionStrength { get; private set; } = 0.95f;
@@ -130,7 +135,9 @@ public static partial class RingWaterModel
         float swellVariation = 0.65f,
         float foamPatchiness = 0.65f,
         float distantFoamVisibility = 0.20f,
-        float detailFilteringStrength = 1.0f)
+        float detailFilteringStrength = 1.0f,
+        float riverVisibilityMeters = DefaultRiverVisibilityMeters,
+        float lakeVisibilityMeters = DefaultLakeVisibilityMeters)
     {
         WaveHeightMeters = Mathf.Clamp(waveHeightMeters, 0.0f, 10.0f);
         WaveLengthMeters = Mathf.Max(2.0f, waveLengthMeters);
@@ -180,6 +187,8 @@ public static partial class RingWaterModel
         FoamPatchiness = Mathf.Clamp(foamPatchiness, 0.0f, 1.0f);
         DistantFoamVisibility = Mathf.Clamp(distantFoamVisibility, 0.0f, 1.0f);
         DetailFilteringStrength = Mathf.Clamp(detailFilteringStrength, 0.0f, 2.0f);
+        RiverVisibilityMeters = Mathf.Clamp(riverVisibilityMeters, 0.1f, 100.0f);
+        LakeVisibilityMeters = Mathf.Clamp(lakeVisibilityMeters, 0.1f, 200.0f);
         ValidateWaveProfileDerivative();
         ApplyAll();
     }
@@ -250,6 +259,8 @@ public static partial class RingWaterModel
         material.SetShaderParameter("refraction_strength", RefractionStrength);
         material.SetShaderParameter("absorption_density", AbsorptionDensity / coordinateScale);
         material.SetShaderParameter("absorption_coefficients", new Vector3(AbsorptionCoefficients.R, AbsorptionCoefficients.G, AbsorptionCoefficients.B));
+        material.SetShaderParameter("river_visibility_meters", RiverVisibilityMeters * coordinateScale);
+        material.SetShaderParameter("lake_visibility_meters", LakeVisibilityMeters * coordinateScale);
         material.SetShaderParameter("shallow_inscatter_strength", ShallowInscatterStrength);
         material.SetShaderParameter("crest_transmission_strength", CrestTransmissionStrength);
         material.SetShaderParameter("shallow_alpha", ShallowAlpha);

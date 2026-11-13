@@ -167,6 +167,10 @@ uniform bool analytic_cloud_shadow_enabled = true;
 uniform bool ocean_replacement_coverage_enabled = false;
 uniform float ocean_replacement_distance_meters = 0.0;
 uniform bool inland_replacement_enabled = false;
+// Inland clarity (rivers kind 3, lakes kind 2; the ocean keeps absorption_density / absorption_coefficients). "Visibility" is the water depth, in scaled metres,
+// at which the bed contrast has fallen to 12 % (transmission exp(-2.12)) in the green channel; red and blue keep the ocean spectral ratio around it.
+uniform float river_visibility_meters = 2.0;
+uniform float lake_visibility_meters = 6.0;
 uniform sampler2D ocean_replacement_coverage_atlas : filter_nearest, repeat_disable;
 instance uniform vec4 ocean_replacement_coverage_rect = vec4(0.0, 0.0, 0.0, 0.0);
 // A separate atlas certifies a fine ocean proxy. It never represents terrain
@@ -512,7 +516,15 @@ void fragment() {
 	vec2 depth_contact = ring_water_depth_from_scene(scene_view_position, raw_scene_depth, surface_depth);
 	float water_thickness = depth_contact.x;
 	// RGB Beer-Lambert extinction: red is attenuated fastest and blue slowest.
-	vec3 scene_transmission_rgb = exp(-water_thickness * absorption_density * max(absorption_coefficients, vec3(0.001)));
+	// Inland water (kind 2 lake, 3 river; weight exactly 0 for the ocean) uses its own clarity: visibility V gives green extinction 2.12 / V, red and blue keep the ocean ratio.
+	float inland_weight = clamp((water_kind_profile - 1.05) / 0.95, 0.0, 1.0);
+	vec3 water_extinction = absorption_density * max(absorption_coefficients, vec3(0.001));
+	if (inland_weight > 0.0) {
+		float inland_visibility = max(mix(lake_visibility_meters, river_visibility_meters, clamp(water_kind_profile - 2.0, 0.0, 1.0)), 0.01);
+		vec3 inland_extinction = (2.12 / inland_visibility) * max(absorption_coefficients, vec3(0.001)) / max(absorption_coefficients.g, 0.001);
+		water_extinction = mix(water_extinction, inland_extinction, inland_weight);
+	}
+	vec3 scene_transmission_rgb = exp(-water_thickness * water_extinction);
 	float scene_transmission = dot(scene_transmission_rgb, vec3(0.2126, 0.7152, 0.0722));
 	float absorption = 1.0 - scene_transmission;
 	float fresnel = ring_water_schlick_fresnel(
@@ -526,7 +538,9 @@ void fragment() {
 	vec3 refracted_scene = textureLod(water_screen_texture, refracted_uv, ocean_roughness * 3.0).rgb;
 	vec3 seeded_tint = ring_vertex_color_to_linear(COLOR.rgb);
 	vec3 water_tint = mix(shallow_water_tint, deep_water_tint, absorption);
-	water_tint = mix(water_tint, seeded_tint, 0.20) * mix(night_tint, vec3(1.0), ring_day_factor);
+	// The seeded vertex colour is the River / Lake colour (T2R-13): ocean takes 20 % of it, inland water takes it as its body colour.
+	// The River / Lake colour is the water body colour at the ring sun; lit through ALBEDO at full strength it read pale cyan and made thin water brighter than its bed (the white bank band), so the albedo is 0.1 of it (picture-tuned: water reflects little diffuse light).
+	water_tint = mix(water_tint, seeded_tint * mix(1.0, 0.1, inland_weight), mix(0.20, 1.0, inland_weight)) * mix(night_tint, vec3(1.0), ring_day_factor);
 	float shore_foam = depth_contact.y * (1.0 - smoothstep(0.08, max(0.1, shore_foam_depth_meters), water_thickness)) * smoothstep(0.0, 0.08, water_thickness)
 		* shore_foam_strength
 		* ring_water_profile_shore_foam_scale(water_kind_profile);
@@ -575,7 +589,6 @@ void fragment() {
 	// Inland water (lakes, rivers; T2R-11b): the refracted scene is radiance the opaque pass has already lit, so its transmitted part is emitted (below) rather
 	// than lit a second time through ALBEDO. Under the ring sun (an 18 % grey albedo renders near white) that second lighting turned thin water over a sand bank
 	// white. The weight is exactly 0 for ocean vertices (kind 1), so the ocean keeps its composition; it ramps in where the interpolated kind runs from 1 to 2 (river mouths).
-	float inland_weight = clamp((water_kind_profile - 1.05) / 0.95, 0.0, 1.0);
 	vec3 inland_transmitted = vec3(0.0);
 	if (inland_weight > 0.0) {
 		inland_transmitted = refracted_scene * volume_transmission_rgb * inland_weight;
