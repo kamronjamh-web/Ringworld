@@ -166,6 +166,7 @@ uniform bool analytic_cloud_shadow_enabled = true;
 // shared FFT atlas, this remains valid when FFT is disabled or rebuilding.
 uniform bool ocean_replacement_coverage_enabled = false;
 uniform float ocean_replacement_distance_meters = 0.0;
+uniform bool inland_replacement_enabled = false;
 uniform sampler2D ocean_replacement_coverage_atlas : filter_nearest, repeat_disable;
 instance uniform vec4 ocean_replacement_coverage_rect = vec4(0.0, 0.0, 0.0, 0.0);
 // A separate atlas certifies a fine ocean proxy. It never represents terrain
@@ -342,14 +343,16 @@ void fragment() {
 	}
 	if (ocean_replacement_coverage_enabled && ocean_replacement_distance_meters > 0.0
 		&& distance_to_camera < ocean_replacement_distance_meters
-		&& water_kind_profile < 1.5
+		&& (water_kind_profile < 1.5 || inland_replacement_enabled)
 		&& ocean_replacement_coverage_rect.z > 0.0 && ocean_replacement_coverage_rect.w > 0.0) {
 		vec2 replacement_uv = ocean_replacement_coverage_rect.xy + proxy_coverage_uv * ocean_replacement_coverage_rect.zw;
 		vec2 replacement_texel = 0.5 / vec2(textureSize(ocean_replacement_coverage_atlas, 0));
 		replacement_uv = clamp(replacement_uv,
 			ocean_replacement_coverage_rect.xy + replacement_texel,
 			ocean_replacement_coverage_rect.xy + ocean_replacement_coverage_rect.zw - replacement_texel);
-		if (texture(ocean_replacement_coverage_atlas, replacement_uv).r > 0.5) discard;
+		// 255 full ocean, 100 "a finer level is present" (inland water only, S13.3).
+		float replacement_state = texture(ocean_replacement_coverage_atlas, replacement_uv).r;
+		if (replacement_state > (water_kind_profile < 1.5 ? 0.5 : 0.2)) discard;
 	}
 	if (fft_ocean_coverage_enabled && fft_ready && water_kind_profile < 1.5
 		&& distance(fft_source_world_position, camera_world_position) < fft_ocean_coverage_distance_meters - 2.0) {

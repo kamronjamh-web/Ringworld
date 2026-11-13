@@ -5,8 +5,10 @@ extends SceneTree
 ## proxies are hidden); the water shader still carries the haze, cloud-shadow and rain-ripple calls; and forced rain changes the water pixels near the camera (ripples).
 ## T2R-11b bank strip: thin water beside a river bank and a lake shore is not brighter than the bed under it (the white bank band); see _check_bank_strip. Review pictures (bank views, bed alone and
 ## an ocean shore of the same world) go to user://generated/captures/smoke/inland_*.png.
-## Capture mode (not a test): --capture-dir=<dir> [--shots=river_bank,lake_shore,confluence_300m,valley_2km] [--tag=<suffix>] writes the milestone pictures as <name><tag>.png and exits.
+## Capture mode (not a test): --capture-dir=<dir> [--shots=river_bank,lake_shore,confluence_300m,valley_2km,lake_600m,river_600m] [--tag=<suffix>] [--replacement=off] writes the milestone pictures as <name><tag>.png and exits.
 ## Also river_bank_top, lake_shore_top, ocean_shore_top and river_aerial; --variants-file=<json> adds parameter variants of every shot (see _capture_variants).
+## T2R-12d replacement (_check_replacement): the 16 m level's water alone is gone from a centre patch inside the finer level's replacement distance and present beyond it, and replacement leaves
+## no hole in the normal frame (patch water pixels within 1 % of the same frame with inland_replacement_enabled forced off).
 ## RUN: tools/run_tests.ps1 -Tests inland_water_render_gpu_test  (manifest user_args: --generation=1 --review-features=water.rivers). Prints INLAND_WATER_RENDER=PASS|FAIL.
 const HARNESS := preload("res://tools/landscape_harness_common.gd")
 const PROBE := preload("res://tools/InlandSwimProbe.cs")
@@ -21,6 +23,11 @@ const BANK_BAND_MIN_DEPTH_M := 0.03
 const BANK_BAND_MAX_DEPTH_M := 0.6
 const BANK_BAND_EXCESS_LIMIT := 0.10
 const BANK_MIN_SAMPLES := 4
+# T2R-12d replacement check (see _check_replacement).
+const PATCH_HALF_PX := 24
+const REPLACEMENT_MIN_PATCH_WATER := 200
+const REPLACEMENT_RESIDUE_LIMIT := 0.02
+const REPLACEMENT_HOLE_LIMIT := 0.01
 
 var booted := {}
 var finished := false
@@ -35,7 +42,9 @@ func _arg(name: String, fallback := "") -> String:
 	for arg in OS.get_cmdline_user_args():
 		if str(arg).begins_with("--%s=" % name):
 			return str(arg).substr(name.length() + 3)
-	return fallback
+	# The test runner passes no extra arguments: capture mode can be driven by INLAND_<NAME> (INLAND_CAPTURE_DIR, INLAND_SHOTS, INLAND_TAG, INLAND_REPLACEMENT).
+	var from_env := OS.get_environment("INLAND_" + name.to_upper().replace("-", "_"))
+	return from_env if not from_env.is_empty() else fallback
 
 
 func _run() -> void:
@@ -70,6 +79,8 @@ func _run() -> void:
 		return
 	for key in ["lake", "river"]:
 		await _check_water_pose(game, key, points[key])
+	for key in ["lake", "river"]:
+		await _check_replacement(game, key, points[key])
 	var shots: Dictionary = probe.call("FindShots", game, points)
 	for key in ["river", "lake"]:
 		var shot_name: String = "river_bank_top" if key == "river" else "lake_shore_top"
@@ -179,6 +190,129 @@ func _check_water_pose(game: Node, key: String, p: Dictionary) -> void:
 	print("%s %s all proxies vs none: %d changed pixels of %d" % [MARKER, key, all_count, all_mask.size()])
 	if all_count < MIN_LEVEL_PIXELS:
 		failures.append("%s: hiding every proxy changed only %d pixels (no water drawn at the pose)" % [key, all_count])
+	_set_levels_visible(levels, all_spacings)
+
+
+var _hide_material: ShaderMaterial
+
+
+## Hides the water of every level except the spacings in keep (the proxy sectors' water surface is hidden, terrain stays). Returns the nodes to hand to _restore_water.
+func _hide_water_except(levels: Dictionary, keep: Array) -> Array:
+	if _hide_material == null:
+		var hide_shader := Shader.new()
+		hide_shader.code = "shader_type spatial;
+render_mode unshaded;
+void vertex() { POSITION = vec4(2.0, 2.0, 2.0, 1.0); }
+"
+		_hide_material = ShaderMaterial.new()
+		_hide_material.shader = hide_shader
+	var hidden: Array = []
+	for spacing in levels:
+		if keep.has(spacing):
+			continue
+		for child in (levels[spacing] as Node).get_children():
+			if not (child is MeshInstance3D) or not String(child.name).begins_with("Sector_"):
+				continue
+			var node := child as MeshInstance3D
+			var ocean := node.get_node_or_null("OceanSurface") as MeshInstance3D
+			if ocean != null and ocean.visible:
+				ocean.visible = false
+				hidden.append([ocean, "child"])
+			elif node.mesh != null and node.mesh.get_surface_count() >= 2 and node.get_surface_override_material(1) == null:
+				node.set_surface_override_material(1, _hide_material)
+				hidden.append([node, "surface"])
+	return hidden
+
+
+func _restore_water(hidden: Array) -> void:
+	for entry in hidden:
+		var node: Variant = entry[0]
+		if not is_instance_valid(node):
+			continue
+		if str(entry[1]) == "child":
+			(node as MeshInstance3D).visible = true
+		else:
+			(node as MeshInstance3D).set_surface_override_material(1, null)
+
+
+func _patch_count(mask: PackedByteArray, width: int, height: int) -> int:
+	var total := 0
+	for y in range(height / 2 - PATCH_HALF_PX, height / 2 + PATCH_HALF_PX):
+		for x in range(width / 2 - PATCH_HALF_PX, width / 2 + PATCH_HALF_PX):
+			total += mask[y * width + x]
+	return total
+
+
+## T2R-12d (Spec S13.3): a coarse level's inland water is replaced where the next finer level is on screen. Looking straight down at the water point:
+## - inside the finer level's replacement distance the 16 m level's water alone leaves (almost) no water pixel in the centre patch (against the frame with all water hidden);
+## - beyond that distance the 16 m level's water alone still holds water there (the handoff returns it);
+## - in the normal frame the patch has the same water pixels as with the replacement forced off (inland_replacement_enabled false), within REPLACEMENT_HOLE_LIMIT (no holes).
+func _check_replacement(game: Node, key: String, p: Dictionary) -> void:
+	var tag := "%s replacement" % key
+	var levels := _proxy_levels(game)
+	if not levels.has(16):
+		failures.append("%s: no 16 m proxy level in the scene" % tag)
+		return
+	var finer_spacing := 0
+	for spacing in levels:
+		if int(spacing) < 16 and int(spacing) > finer_spacing:
+			finer_spacing = int(spacing)
+	if finer_spacing == 0:
+		failures.append("%s: no level finer than 16 m" % tag)
+		return
+	var finer: Node = levels[finer_spacing]
+	var start := float(finer.get("FadeOutStartMeters"))
+	var distance := (start + maxf(start + 1.0, float(finer.get("FadeOutEndMeters")))) * 0.5 - 2.0
+	if not bool(finer.get("EnableFarFade")):
+		failures.append("%s: the %d m level has no far fade; the replacement distance is unbounded" % [tag, finer_spacing])
+		return
+	print("%s %s: finer level %d m, replacement distance %.1f m" % [MARKER, tag, finer_spacing, distance])
+	var materials := _water_materials(game)
+	var all_spacings: Array = levels.keys()
+	# Near: 30 m above the water point; far: just beyond the replacement distance.
+	for case in [["inside", 30.0], ["beyond", distance + 40.0]]:
+		var info: Dictionary = await HARNESS.go_pose(self, game, _pose_for(key, p, float(case[1]), -90.0), "noon")
+		if info.has("error"):
+			failures.append("%s %s: %s" % [tag, case[0], str(info["error"])])
+			continue
+		var hidden := _hide_water_except(levels, [])
+		var dry := await _grab()
+		_restore_water(hidden)
+		var width := dry.get_width()
+		var height := dry.get_height()
+		var normal := await _grab()
+		var normal_patch := _patch_count(_changed_mask(normal, dry, WATER_PIXEL_DELTA), width, height)
+		for material in materials:
+			material.set_shader_parameter("inland_replacement_enabled", false)
+		var off := await _grab()
+		for material in materials:
+			material.set_shader_parameter("inland_replacement_enabled", true)
+		var off_patch := _patch_count(_changed_mask(off, dry, WATER_PIXEL_DELTA), width, height)
+		hidden = _hide_water_except(levels, [16])
+		var only16 := await _grab()
+		for material in materials:
+			material.set_shader_parameter("inland_replacement_enabled", false)
+		var only16_off := await _grab()
+		for material in materials:
+			material.set_shader_parameter("inland_replacement_enabled", true)
+		_restore_water(hidden)
+		var only16_patch := _patch_count(_changed_mask(only16, dry, WATER_PIXEL_DELTA), width, height)
+		var only16_off_patch := _patch_count(_changed_mask(only16_off, dry, WATER_PIXEL_DELTA), width, height)
+		print("%s %s %s (camera %.0f m up): patch water pixels normal %d, replacement off %d, 16 m water alone %d (replacement off: %d)" % [MARKER, tag, case[0], float(case[1]), normal_patch, off_patch, only16_patch, only16_off_patch])
+		if off_patch < REPLACEMENT_MIN_PATCH_WATER and key == "river" and case[0] == "beyond":
+			print("%s %s beyond: the river is under a pixel at this distance; the lake covers the handoff" % [MARKER, tag])
+			continue
+		if off_patch < REPLACEMENT_MIN_PATCH_WATER:
+			failures.append("%s %s: the centre patch holds only %d water pixels with the replacement off (not a water point)" % [tag, case[0], off_patch])
+			continue
+		if absf(float(normal_patch) - float(off_patch)) > REPLACEMENT_HOLE_LIMIT * float(off_patch):
+			failures.append("%s %s: patch water pixels %d with the replacement on, %d off (limit %.0f %%)" % [tag, case[0], normal_patch, off_patch, 100.0 * REPLACEMENT_HOLE_LIMIT])
+		if float(only16_off_patch) < 0.5 * float(off_patch):
+			failures.append("%s %s: control: the 16 m level alone draws only %d of %d water pixels with the replacement off (it does not hold this water)" % [tag, case[0], only16_off_patch, off_patch])
+		if case[0] == "inside" and float(only16_patch) > REPLACEMENT_RESIDUE_LIMIT * float(off_patch):
+			failures.append("%s inside: the 16 m level still draws %d water pixels inside the %d m level's replacement distance" % [tag, only16_patch, finer_spacing])
+		if case[0] == "beyond" and float(only16_patch) < 0.5 * float(off_patch):
+			failures.append("%s beyond: the 16 m level draws only %d of %d water pixels beyond the replacement distance" % [tag, only16_patch, off_patch])
 	_set_levels_visible(levels, all_spacings)
 
 
@@ -317,6 +451,9 @@ func _capture_shots(game: Node, probe: RefCounted, points: Dictionary, directory
 	var shots: Dictionary = probe.call("FindShots", game, points)
 	if not bool(shots.get("ok", false)):
 		print("%s shots error: %s" % [MARKER, str(shots.get("error", ""))])
+	# T2R-12d review shots: the lake and the river from 600 m (45 degrees down).
+	for key in ["lake", "river"]:
+		shots["%s_600m" % key] = _pose_for(key, points[key], 600.0, -45.0)
 	DirAccess.make_dir_recursive_absolute(directory)
 	var wanted := _arg("shots", "river_bank,lake_shore,confluence_300m,valley_2km").split(",")
 	var tag := _arg("tag")
@@ -331,6 +468,10 @@ func _capture_shots(game: Node, probe: RefCounted, points: Dictionary, directory
 		if info.has("error"):
 			print("%s shot %s pose error: %s" % [MARKER, shot_name, str(info["error"])])
 			continue
+		if _arg("replacement") == "off":
+			# T2R-12d before pictures: every level draws its inland water under the finer ones, as before.
+			for material in _water_materials(game):
+				material.set_shader_parameter("inland_replacement_enabled", false)
 		var image := await _grab()
 		var path := directory.path_join("%s%s.png" % [shot_name, tag])
 		image.save_png(path)

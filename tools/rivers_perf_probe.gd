@@ -10,7 +10,7 @@ extends SceneTree
 ##   --around=m --across=m --lift=m --yaw=deg --pitch=deg   pose; the defaults are the river-mouth spot of the 2026-11-12 play test (ARC 23410.5 km, ACROSS 192.4 km, 600 m up)
 ##   --target-height=1440   3D render height. The window is asked for 2560x1440; when the desktop gives less, the 3D scale is raised so the 3D buffers have this height (0 = leave)
 ##   --still-seconds=60 --window=20   wait after settle, and the length of each timed window
-##   --cases=base,base_repeat   any of: base, base_repeat, drawer_open, lod_hud_on, ssr_off, refraction_off, coarse_water_hidden (16 m and coarser), water_hidden, proxies_hidden
+##   --cases=base,base_repeat   any of: base, base_repeat, drawer_open, lod_hud_on, ssr_off, refraction_off, coarse_water_hidden (16 m and coarser), inland_replacement_off (T2R-12d A/B: every level draws its inland water under finer levels, as before), water_hidden, proxies_hidden
 ##   --stills=1          nine stills at the pose after the windows (eight headings at pitch -35, one at -85)
 ##   --level-stills=1    instead of the windows: top-down stills with the water of one proxy level at a time (lv_*.png, 1280x720)
 ##   --ablate=1          instead of the windows: hide one proxy level or node group at a time (GPU cost of each), then stop one top-level node at a time (allocation source)
@@ -179,6 +179,28 @@ func _hide_water(min_spacing: int) -> int:
 				_hidden.append([node, "surface"])
 				count += 1
 	return count
+
+
+## T2R-12d: per level, the inland and ocean replacement uniforms of its water material (read from the first sector that has one).
+func _replacement_report() -> Dictionary:
+	var report := {}
+	for level in _levels():
+		for child in level.get_children():
+			if not (child is MeshInstance3D) or not String(child.name).begins_with("Sector_"):
+				continue
+			var node := child as MeshInstance3D
+			var ocean := node.get_node_or_null("OceanSurface") as MeshInstance3D
+			var material: Material = null
+			if ocean != null and ocean.material_override != null:
+				material = ocean.material_override
+			elif node.mesh != null and node.mesh.get_surface_count() >= 2:
+				material = node.mesh.surface_get_material(1)
+			if material is ShaderMaterial:
+				var shader_material := material as ShaderMaterial
+				report[str(level.get("SampleSpacingMeters"))] = {"inland": shader_material.get_shader_parameter("inland_replacement_enabled"), "ocean": shader_material.get_shader_parameter("ocean_replacement_coverage_enabled"),
+					"distance": shader_material.get_shader_parameter("ocean_replacement_distance_meters")}
+				break
+	return report
 
 
 func _ocean_materials() -> Array:
@@ -632,12 +654,19 @@ func _run() -> void:
 				note["hidden_nodes"] = _hide_water(16)
 			"water_hidden":
 				note["hidden_nodes"] = _hide_water(0)
+			"inland_replacement_off":
+				for material in _ocean_materials():
+					(material as ShaderMaterial).set_shader_parameter("inland_replacement_enabled", false)
 			"proxies_hidden":
 				for level in _levels():
 					(level as Node3D).visible = false
 		await COMMON.settle(self, 2.0)
 		var window: Dictionary = await _sample(window_s, rids)
 		window["case"] = String(label)
+		window["replacement_uniforms"] = _replacement_report()
+		if String(_args.get("case-stills", "0")) == "1":
+			await RenderingServer.frame_post_draw
+			root.get_texture().get_image().save_png(_out.path_join("case_%s_%d.png" % [String(label), (_result["windows"] as Array).size()]))
 		_validate(window, note, around, vertical, across, yaw, pitch)
 		(_result["windows"] as Array).append(window)
 		print("RIVERS_PERF_PROBE case=%s fps=%.1f frame_p50=%.2f p95=%.2f max=%.2f gpu_root_p50=%.2f draws=%.0f valid=%s" % [label, window["fps"], window["frame_ms"]["p50"], window["frame_ms"]["p95"],
@@ -658,6 +687,9 @@ func _run() -> void:
 				graphics.call("ApplyWaterTuning")
 			"coarse_water_hidden", "water_hidden":
 				_restore_water()
+			"inland_replacement_off":
+				for material in _ocean_materials():
+					(material as ShaderMaterial).set_shader_parameter("inland_replacement_enabled", true)
 			"proxies_hidden":
 				for level in _levels():
 					(level as Node3D).visible = true

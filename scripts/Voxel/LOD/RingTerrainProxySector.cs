@@ -410,7 +410,9 @@ public partial class RingTerrainProxySector : MeshInstance3D
     // 32m voxel surface chunk; for all other LODs it is one quad of the
     // immediately finer mesh.  A covered bit means this mesh deliberately
     // omits the quad because the provider is already visibly complete.
-    private sealed record SurfaceCoverageMask(int ProxyQuadCells, int QuadsPerProviderCell, bool[] CoveredCells, byte[]? FftDeepWaterVertexDepths = null)
+    // PresentCells (ocean replacement masks of inland-water worlds only, S13.3) marks the cells
+    // under a visible finer sector; it is carried beside CoveredCells, never in it.
+    private sealed record SurfaceCoverageMask(int ProxyQuadCells, int QuadsPerProviderCell, bool[] CoveredCells, byte[]? FftDeepWaterVertexDepths = null, bool[]? PresentCells = null)
     {
         public bool CoversQuad(int x, int z)
         {
@@ -421,7 +423,9 @@ public partial class RingTerrainProxySector : MeshInstance3D
         public bool Matches(SurfaceCoverageMask? other)
             => other != null && ProxyQuadCells == other.ProxyQuadCells
                 && QuadsPerProviderCell == other.QuadsPerProviderCell
-                && CoveredCells.AsSpan().SequenceEqual(other.CoveredCells);
+                && CoveredCells.AsSpan().SequenceEqual(other.CoveredCells)
+                && (PresentCells == null ? other.PresentCells == null
+                    : other.PresentCells != null && PresentCells.AsSpan().SequenceEqual(other.PresentCells));
     }
     private sealed class OceanReplacementMaskScratch
     {
@@ -430,10 +434,14 @@ public partial class RingTerrainProxySector : MeshInstance3D
         public readonly HashSet<RingTerrainSectorCoordinate> FallbackParents = new();
         public readonly List<RingTerrainSectorCoordinate> Coordinates = new();
         public readonly List<bool[]> Pool = new();
+        public readonly Dictionary<RingTerrainSectorCoordinate, bool[]> PresentWork = new();
+        public readonly List<bool[]> PresentPool = new();
     }
+    // PresentSectors (S13.3): finer sectors installed, visible, not warming and holding a water mesh.
     private sealed record FinerOceanSnapshot(
         Dictionary<RingTerrainSectorCoordinate, SurfaceCoverageMask> Masks,
-        HashSet<RingTerrainSectorCoordinate> FullyWet);
+        HashSet<RingTerrainSectorCoordinate> FullyWet,
+        HashSet<RingTerrainSectorCoordinate>? PresentSectors = null);
 
     // Retained only for sectors which may receive a worthwhile partial mask.
     // Never read back a Godot mesh: these are the original upload arrays.
@@ -2684,13 +2692,14 @@ public partial class RingTerrainProxySector : MeshInstance3D
         int size, int spacing, double focusAround, double focusAcross, double viewerAltitude)
     {
         if (_finerCoverageLevel == null) return new Dictionary<RingTerrainSectorCoordinate, SurfaceCoverageMask>();
-        FinerOceanSnapshot snapshot = CaptureFinerOceanSnapshot(_finerCoverageLevel);
+        bool inlandWater = _grid?.TerrainSampler?.HasInlandWater == true;
+        FinerOceanSnapshot snapshot = CaptureFinerOceanSnapshot(_finerCoverageLevel, inlandWater);
         _oceanReplacementFinerSource = _finerCoverageLevel;
         _oceanReplacementFinerRevision = _finerCoverageLevel._coverageRevision;
         return BuildOceanReplacementMasks(snapshot, coordinates, size, spacing,
             _finerCoverageLevel.SectorSizeMeters, _finerCoverageLevel.RingWidthMeters,
             _finerCoverageLevel.ResolveAroundCircumferenceMeters(),
-            _oceanReplacementMaskScratch, _latestOceanReplacementMasks);
+            _oceanReplacementMaskScratch, _latestOceanReplacementMasks, inlandWater);
     }
 
     private void NotifyOceanReplacementDependents()
@@ -2720,12 +2729,15 @@ public partial class RingTerrainProxySector : MeshInstance3D
         FinerOceanSnapshot snapshot, IEnumerable<RingTerrainSectorCoordinate> coordinates,
         int size, int spacing, int fineSize, int ringWidth, double circumference,
         OceanReplacementMaskScratch? scratch = null,
-        IReadOnlyDictionary<RingTerrainSectorCoordinate, SurfaceCoverageMask>? previous = null)
+        IReadOnlyDictionary<RingTerrainSectorCoordinate, SurfaceCoverageMask>? previous = null,
+        bool inlandWater = false)
     {
         // With a scratch the per-coordinate cells are staged in reusable arrays and a
         // coordinate whose cells match its previous mask keeps that mask object.
+        // inlandWater (S13.3) also stages PresentCells: cells under a visible finer sector.
         List<RingTerrainSectorCoordinate> coordinateList;
         Dictionary<RingTerrainSectorCoordinate, bool[]> work;
+        Dictionary<RingTerrainSectorCoordinate, bool[]>? presentWork = null;
         Dictionary<RingTerrainSectorCoordinate, SurfaceCoverageMask> result;
         HashSet<RingTerrainSectorCoordinate> fallbackParents;
         if (scratch == null)
@@ -2739,6 +2751,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         {
             coordinateList = scratch.Coordinates; coordinateList.Clear(); coordinateList.AddRange(coordinates);
             work = scratch.Work; work.Clear();
+            scratch.PresentWork.Clear();
             result = scratch.Result; result.Clear();
             fallbackParents = scratch.FallbackParents; fallbackParents.Clear();
         }
@@ -2758,6 +2771,19 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 cellBuffer = scratch.Pool[slot];
             }
             work[coordinate] = cellBuffer;
+            if (inlandWater)
+            {
+                presentWork ??= scratch?.PresentWork ?? new Dictionary<RingTerrainSectorCoordinate, bool[]>();
+                if (scratch == null) presentWork[coordinate] = new bool[cellCount];
+                else
+                {
+                    int presentSlot = presentWork.Count;
+                    if (presentSlot == scratch.PresentPool.Count) scratch.PresentPool.Add(new bool[cellCount]);
+                    else if (scratch.PresentPool[presentSlot].Length != cellCount) scratch.PresentPool[presentSlot] = new bool[cellCount];
+                    else Array.Clear(scratch.PresentPool[presentSlot]);
+                    presentWork[coordinate] = scratch.PresentPool[presentSlot];
+                }
+            }
         }
         bool aligned = fineSize > 0 && size % fineSize == 0 && fineSize % spacing == 0;
         foreach (RingTerrainSectorCoordinate parent in work.Keys)
@@ -2797,6 +2823,17 @@ public partial class RingTerrainProxySector : MeshInstance3D
                     bits[(z0 + z) * coarseCells + x0 + x] = full;
                 }
             }
+            if (presentWork != null && snapshot.PresentSectors != null)
+                foreach (RingTerrainSectorCoordinate fineCoordinate in snapshot.PresentSectors)
+                {
+                    long parentAround = (long)Math.Floor(fineCoordinate.AroundSector * (double)fineSize / size);
+                    int parentAcross = (int)Math.Floor(fineCoordinate.AcrossSector * (double)fineSize / size);
+                    if (!presentWork.TryGetValue(new RingTerrainSectorCoordinate(parentAround, parentAcross), out bool[]? presentBits)) continue;
+                    int x0 = (int)((fineCoordinate.AroundSector * (long)fineSize - parentAround * (long)size) / spacing);
+                    int z0 = (fineCoordinate.AcrossSector * fineSize - parentAcross * size) / spacing;
+                    int span = fineSize / spacing;
+                    for (int z = 0; z < span; z++) Array.Fill(presentBits, true, (z0 + z) * coarseCells + x0, span);
+                }
         }
         foreach (RingTerrainSectorCoordinate coordinate in coordinateList)
         {
@@ -2817,25 +2854,60 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 // circles while the observer moves inside a coarse sector.
                 covered[index] = IsSnapshotOceanCovered(snapshot, a0, a1, z0, z1,
                     fineSize, ringWidth, circumference);
+                if (presentWork != null)
+                    presentWork[coordinate][index] = IsSnapshotPresent(snapshot, a0, a1, z0, z1,
+                        fineSize, ringWidth, circumference);
             }
         }
         foreach ((RingTerrainSectorCoordinate coordinate, bool[] covered) in work)
         {
             // Same outcome as SurfaceCoverageMask.Matches against the previous mask.
+            bool[]? present = presentWork?[coordinate];
             if (previous != null && previous.TryGetValue(coordinate, out SurfaceCoverageMask? old)
                 && old.ProxyQuadCells == coarseCells && old.QuadsPerProviderCell == 1
-                && old.CoveredCells.AsSpan().SequenceEqual(covered))
+                && old.CoveredCells.AsSpan().SequenceEqual(covered)
+                && (present == null ? old.PresentCells == null
+                    : old.PresentCells != null && old.PresentCells.AsSpan().SequenceEqual(present)))
                 result[coordinate] = old;
-            else result[coordinate] = new SurfaceCoverageMask(coarseCells, 1, scratch == null ? covered : (bool[])covered.Clone());
+            else result[coordinate] = new SurfaceCoverageMask(coarseCells, 1, scratch == null ? covered : (bool[])covered.Clone(),
+                PresentCells: present == null || scratch == null ? present : (bool[])present.Clone());
         }
         return result;
     }
 
-    private static FinerOceanSnapshot CaptureFinerOceanSnapshot(RingTerrainProxySector finer)
+    // S13.3: a coarse cell is present when every finer sector that overlaps it is installed, visible and holds water.
+    private static bool IsSnapshotPresent(FinerOceanSnapshot snapshot,
+        double aroundStart, double aroundEnd, double acrossStart, double acrossEnd,
+        int sectorSize, int ringWidth, double circumference)
+    {
+        if (snapshot.PresentSectors == null
+            || aroundEnd <= aroundStart || acrossEnd <= acrossStart || acrossStart < 0 || acrossEnd > ringWidth) return false;
+        long sectorLength = Math.Max(1L, (long)Math.Ceiling(circumference / sectorSize));
+        long aroundFirst = (long)Math.Floor(aroundStart / sectorSize);
+        long aroundLast = (long)Math.Floor((aroundEnd - 0.000001) / sectorSize);
+        int acrossFirst = (int)Math.Floor(acrossStart / sectorSize);
+        int acrossLast = (int)Math.Floor((acrossEnd - 0.000001) / sectorSize);
+        for (long aroundSector = aroundFirst; aroundSector <= aroundLast; aroundSector++)
+        for (int acrossSector = acrossFirst; acrossSector <= acrossLast; acrossSector++)
+        {
+            long wrapped = aroundSector % sectorLength;
+            if (wrapped < 0) wrapped += sectorLength;
+            if (!snapshot.PresentSectors.Contains(new RingTerrainSectorCoordinate(wrapped, acrossSector))) return false;
+        }
+        return true;
+    }
+
+    private static FinerOceanSnapshot CaptureFinerOceanSnapshot(RingTerrainProxySector finer, bool inlandWater = false)
     {
         var masks = new Dictionary<RingTerrainSectorCoordinate, SurfaceCoverageMask>();
         var fullyWet = new HashSet<RingTerrainSectorCoordinate>();
-        if (!finer.StreamingActive || finer._transitHidden) return new(masks, fullyWet);
+        HashSet<RingTerrainSectorCoordinate>? present = inlandWater ? new HashSet<RingTerrainSectorCoordinate>() : null;
+        if (!finer.StreamingActive || finer._transitHidden) return new(masks, fullyWet, present);
+        if (present != null)
+            foreach (RingTerrainSectorCoordinate coordinate in finer._activeWaterSectors)
+                if (!finer._warmUntil.ContainsKey(coordinate)
+                    && finer._active.TryGetValue(coordinate, out MeshInstance3D? waterNode) && waterNode.Visible)
+                    present.Add(coordinate);
         foreach ((RingTerrainSectorCoordinate coordinate, SurfaceCoverageMask mask) in finer._activeOceanSurfaceMasks)
         {
             if (finer._warmUntil.ContainsKey(coordinate)
@@ -2843,7 +2915,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             masks[coordinate] = mask;
             if (finer._activeFullyOceanSectors.Contains(coordinate)) fullyWet.Add(coordinate);
         }
-        return new(masks, fullyWet);
+        return new(masks, fullyWet, present);
     }
 
     private static bool IsSnapshotOceanCovered(FinerOceanSnapshot snapshot,
@@ -2897,7 +2969,11 @@ public partial class RingTerrainProxySector : MeshInstance3D
             for (int z = 0; z < tileSize; z++)
                 Array.Clear(_oceanReplacementAtlasBytes, (sy + z) * atlasSideBytes + sx, tileSize);
             for (int z = 0; z < tileSize; z++) for (int x = 0; x < tileSize; x++)
+            {
                 if (mask.CoveredCells[z * tileSize + x]) _oceanReplacementAtlasBytes[(sy + z) * atlasSideBytes + sx + x] = byte.MaxValue;
+                else if (mask.PresentCells != null && mask.PresentCells[z * tileSize + x])
+                    _oceanReplacementAtlasBytes[(sy + z) * atlasSideBytes + sx + x] = OceanReplacementPresentState;
+            }
             float atlasSize = tileSize * _coverageAtlasColumns;
             Vector4 oceanReplacementRect = new(sx / atlasSize, sy / atlasSize, tileSize / atlasSize, tileSize / atlasSize);
             node.SetInstanceShaderParameter("ocean_replacement_coverage_rect", oceanReplacementRect);
@@ -2913,6 +2989,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
         SetOceanReplacementCoverageEnabled(oceanReplacementFresh);
         SetOceanReplacementDistanceMeters(OceanReplacementDistanceMeters);
     }
+
+    private const byte OceanReplacementPresentState = 100;
 
     private void FlushOceanReplacementAtlas()
     {
@@ -6553,12 +6631,14 @@ public partial class RingTerrainProxySector : MeshInstance3D
     private static readonly StringName NearFadeEnabledName = "near_fade_enabled";
     private static readonly StringName RiverLineEnabledName = "river_line_enabled";
     private static readonly StringName OceanReplacementCoverageEnabledName = "ocean_replacement_coverage_enabled";
+    private static readonly StringName InlandReplacementEnabledName = "inland_replacement_enabled";
     private static readonly StringName OceanReplacementDistanceMetersName = "ocean_replacement_distance_meters";
     private bool? _uniformNearFadeEnabled;
     private bool? _uniformRiverLine;
     private RingWaterBodyColors.Snapshot? _uniformRiverTint;
     private float? _uniformFftCoverageDistance;
     private bool? _uniformOceanReplacementEnabled;
+    private bool? _uniformInlandReplacementEnabled;
     private float? _uniformOceanReplacementDistance;
     private bool? _uniformFftCoverageEnabled;
     private Texture2D? _uniformFftCoverageAtlas;
@@ -6589,7 +6669,15 @@ public partial class RingTerrainProxySector : MeshInstance3D
 
     private void SetOceanReplacementCoverageEnabled(bool enabled)
     {
-        if (_oceanMaterial == null || _uniformOceanReplacementEnabled == enabled) return;
+        if (_oceanMaterial == null) return;
+        // S13.3: inland water follows the replacement atlas whenever a finer coverage level exists.
+        bool inland = enabled && _finerCoverageLevel != null && _grid?.TerrainSampler?.HasInlandWater == true;
+        if (_uniformInlandReplacementEnabled != inland)
+        {
+            _oceanMaterial.SetShaderParameter(InlandReplacementEnabledName, inland);
+            _uniformInlandReplacementEnabled = inland;
+        }
+        if (_uniformOceanReplacementEnabled == enabled) return;
         _oceanMaterial.SetShaderParameter(OceanReplacementCoverageEnabledName, enabled);
         _uniformOceanReplacementEnabled = enabled;
     }
@@ -7218,6 +7306,36 @@ public partial class RingTerrainProxySector : MeshInstance3D
         };
         passed &= AssertRasterParity(new FinerOceanSnapshot(largeMasks, new HashSet<RingTerrainSectorCoordinate>()),
             new[] { new RingTerrainSectorCoordinate(largeParentAround, 0) }, 64, 32, 4, 64, 1_500_000_000.0);
+
+        // S13.3 presence: cells under a visible finer water sector are present, others are not, ocean
+        // cells keep their own bit, and without inland water the output carries no present cells.
+        var presentSectors = new HashSet<RingTerrainSectorCoordinate>(alignedMasks.Keys) { new RingTerrainSectorCoordinate(1, 1) };
+        var presentMasks = new Dictionary<RingTerrainSectorCoordinate, SurfaceCoverageMask>
+        {
+            [new RingTerrainSectorCoordinate(0, 0)] = FineMask(true),
+            [new RingTerrainSectorCoordinate(1, 0)] = FineMask(false),
+            [new RingTerrainSectorCoordinate(0, 1)] = FineMask(false),
+            [new RingTerrainSectorCoordinate(1, 1)] = FineMask(false)
+        };
+        var presentSnapshot = new FinerOceanSnapshot(presentMasks, new HashSet<RingTerrainSectorCoordinate>(), presentSectors);
+        var scratch = new OceanReplacementMaskScratch();
+        SurfaceCoverageMask presentAll = BuildOceanReplacementMasks(presentSnapshot, alignedParent, 64, 4, 32, 64, 128, scratch, null, true)[alignedParent[0]];
+        passed &= presentAll.PresentCells != null && presentAll.PresentCells.All(value => value)
+            && presentAll.CoveredCells[0] && !presentAll.CoveredCells[8];
+        presentSectors.Remove(new RingTerrainSectorCoordinate(0, 1)); // warming or missing
+        SurfaceCoverageMask presentPartial = BuildOceanReplacementMasks(presentSnapshot, alignedParent, 64, 4, 32, 64, 128, scratch, null, true)[alignedParent[0]];
+        passed &= presentPartial.PresentCells != null && presentPartial.PresentCells[0] && presentPartial.PresentCells[8 * 16 + 8]
+            && !presentPartial.PresentCells[8 * 16] && !presentPartial.PresentCells[15 * 16 + 7] && !presentPartial.Matches(presentAll);
+        // Fallback path (parent longer than the ring circumference): every overlapping finer sector must be present.
+        presentSectors.Add(new RingTerrainSectorCoordinate(0, 1));
+        SurfaceCoverageMask fallbackAll = BuildOceanReplacementMasks(presentSnapshot, alignedParent, 64, 4, 32, 64, 60.0, null, null, true)[alignedParent[0]];
+        presentSectors.Remove(new RingTerrainSectorCoordinate(1, 1));
+        SurfaceCoverageMask fallbackMissing = BuildOceanReplacementMasks(presentSnapshot, alignedParent, 64, 4, 32, 64, 60.0, null, null, true)[alignedParent[0]];
+        passed &= fallbackAll.PresentCells != null && fallbackAll.PresentCells.All(value => value)
+            && fallbackMissing.PresentCells != null && fallbackMissing.PresentCells[0] && !fallbackMissing.PresentCells[15 * 16 + 15];
+        // Without inland water the masks are exactly today's: no present cells, same ocean bits.
+        SurfaceCoverageMask noInland = BuildOceanReplacementMasks(presentSnapshot, alignedParent, 64, 4, 32, 64, 128, scratch)[alignedParent[0]];
+        passed &= noInland.PresentCells == null && noInland.CoveredCells.AsSpan().SequenceEqual(presentAll.CoveredCells);
         if (!passed) GD.PushError("OCEAN_REPLACEMENT_OWNERSHIP_CONTRACT=FAIL");
         else GD.Print("OCEAN_REPLACEMENT_OWNERSHIP_CONTRACT=PASS");
         return passed;
