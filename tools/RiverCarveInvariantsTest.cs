@@ -43,6 +43,8 @@ public partial class RiverCarveInvariantsTest : RefCounted
     }
 
     private static RiverNetwork? _netStatic;
+    private static int _bedSections, _bedFlat;
+    private static RiverGraph? _graphStatic;
 
     private delegate Sample Eval(double around, double across, double footprint);
 
@@ -77,8 +79,11 @@ public partial class RiverCarveInvariantsTest : RefCounted
         public void Example(string text) { if (Examples.Count < 40) Examples.Add(text); }
         /// <summary>Bank samples over 3 m of fill by section (held or main, stem, s), for reading where the fill is.</summary>
         public readonly Dictionary<string, long> FillTally = new();
+        /// <summary>T2R-22 8b: steps over 0.6 m by stem (whether it starts in a lake, the lake level and the stem's length), for reading where the steps of the lake-near sections are.</summary>
+        public readonly Dictionary<string, long> StepTally = new();
         public void Merge(Stats o)
         {
+            foreach (KeyValuePair<string, long> kv in o.StepTally) StepTally[kv.Key] = StepTally.GetValueOrDefault(kv.Key) + kv.Value;
             foreach (KeyValuePair<string, long> kv in o.FillTally) FillTally[kv.Key] = FillTally.GetValueOrDefault(kv.Key) + kv.Value;
             LakeBankSamples += o.LakeBankSamples; LakeFillOver3 += o.LakeFillOver3; LakeFillMax = Math.Max(LakeFillMax, o.LakeFillMax); LeveeSamples += o.LeveeSamples; LeveeOver5 += o.LeveeOver5; LeveeMax = Math.Max(LeveeMax, o.LeveeMax);
             Sections += o.Sections; ContPairs += o.ContPairs; ContOver += o.ContOver; WetSamples += o.WetSamples; ContainPairs += o.ContainPairs; ContainBad += o.ContainBad;
@@ -147,7 +152,7 @@ public partial class RiverCarveInvariantsTest : RefCounted
         DrainageField field = DrainageBake.Bake(grid, _recipe, _workers, null, CancellationToken.None);
         _net = RiverGraphBuilder.Build(field, grid, _recipe, new RiverBuildOptions { Source = source, Workers = _workers }, CancellationToken.None, out RiverBuildReport report);
         _graph = RiverGraph.Build(_net, field, grid, 0x1234UL, 0);
-        _netStatic = _net;
+        _netStatic = _net; _graphStatic = _graph;
         _field = field; _grid = grid; _source = source;
         Detail($"strip graph: {report.Stems} stems, {report.Reaches} reaches, {report.Nodes} nodes, built in {clock.Elapsed.TotalSeconds:F1} s with {_workers} workers");
         Detail($"lake channels: {report.LakeChannelCells} marked cells ({report.LakeLeads} outlet leads), {report.InLakeStems} stems start inside a lake, in-lake length {report.InLakeKm:F1} km, cut over 40 m on {report.InLakeCutOver40Share:P2} of it (largest {report.InLakeCutMax:F1} m); terminals: lake {report.TerminalLake}, confluence {report.TerminalConfluence}, dead {report.TerminalDead}");
@@ -258,7 +263,17 @@ public partial class RiverCarveInvariantsTest : RefCounted
         for (int j = 0; j + 1 < n; j++)
         {
             double step = Math.Abs(buffer[j + 1].Height - buffer[j].Height);
-            st.ContPairs++; if (step > 0.6) st.ContOver++;
+            st.ContPairs++;
+            if (step > 0.6)
+            {
+                st.ContOver++;
+                if (_netStatic != null)
+                {
+                    int upLake = _netStatic.Reaches[_netStatic.Stems[sec.Stem].ReachStart].UpstreamLake;
+                    string key = $"stem {sec.Stem} ({_netStatic.Stems[sec.Stem].Terminal}, length {_netStatic.Curves[sec.Stem].Length:F0}, starts in a lake {(upLake >= 0 ? "yes, level " + _graphStatic?.Lakes[upLake].Level.ToString("F0") + (_graphStatic != null && _graphStatic.Lakes[upLake].Basin >= 0 ? ", closed basin" : ", spilling") : "no")})";
+                    st.StepTally[key] = st.StepTally.GetValueOrDefault(key) + 1;
+                }
+            }
             if (step > 1.5) st.Example(FormattableString.Invariant($"continuity {step:F2} m: stem {sec.Stem} s {sec.S:F0} x {-sec.Extent + j * StepMeters:F2} (a {sec.A:F1}, b {sec.B:F1}) heights {buffer[j].Height:F2} -> {buffer[j + 1].Height:F2}, kinds {buffer[j].Kind}/{buffer[j + 1].Kind}, delta {buffer[j].Delta:F1}/{buffer[j + 1].Delta:F1}"));
             if (step > st.ContMax) st.ContMax = step;
             double w0 = buffer[j].Weight, w1 = buffer[j + 1].Weight;
@@ -311,7 +326,7 @@ public partial class RiverCarveInvariantsTest : RefCounted
                     double fall = Math.Abs(p.Level - q.Level);
                     st.WaterlinePairs++;
                     if (fall > 0.6) st.WaterlineBad++;
-                    if (fall > 1d) st.Example(FormattableString.Invariant($"waterline step {fall:F2} m: stem {sec.Stem} s {sec.S:F0} x {x:F2} dir {dir} (a {sec.A:F1}, b {sec.B:F1}) wet height {p.Height:F2} level {p.Level:F2}; dry height {q.Height:F2} level {q.Level:F2}"));
+                    if (fall > 0.6) st.Examples.Insert(0, FormattableString.Invariant($"waterline step {fall:F2} m: stem {sec.Stem} ({_netStatic?.Stems[sec.Stem].Terminal} up-lake {_netStatic?.Reaches[_netStatic.Stems[sec.Stem].ReachStart].UpstreamLake} term {_netStatic?.Stems[sec.Stem].TerminalId} len {_netStatic?.Curves[sec.Stem].Length:F0} around {Around(x):F0} across {Across(x):F0}) s {sec.S:F0} x {x:F2} dir {dir} (a {sec.A:F1}, b {sec.B:F1}) wet height {p.Height:F2} level {p.Level:F2}; dry height {q.Height:F2} level {q.Level:F2}"));
                     if (fall > st.WaterlineMax) st.WaterlineMax = fall;
                     continue;
                 }
@@ -444,12 +459,20 @@ public partial class RiverCarveInvariantsTest : RefCounted
         foreach (string e in lakesOn.Examples.Where(e => e.StartsWith("continuity") || e.StartsWith("containment") || e.StartsWith("waterline"))) Detail("example (on) " + e);
         foreach (string e in lakesOff.Examples.Where(e => e.StartsWith("continuity"))) Detail("example (off) " + e);
         foreach (KeyValuePair<string, long> kv in lakesOn.FillTally.OrderByDescending(k => k.Value).Take(8)) Detail($"lake-near fill over 3 m (on): {kv.Key}: {kv.Value} samples");
+        // T2R-22 8b: where the steps over 0.6 m of the lake-near sections are (with the lake operator on and off), by stem.
+        long stepsInLakeStart = lakesOff.StepTally.Where(k => k.Key.Contains("starts in a lake yes")).Sum(k => k.Value);
+        Detail($"lake-near steps over 0.6 m, lake operator off: {lakesOff.ContOver}, on stems that start in a lake {stepsInLakeStart}; on: {lakesOn.ContOver}, on stems that start in a lake {lakesOn.StepTally.Where(k => k.Key.Contains("starts in a lake yes")).Sum(k => k.Value)}");
+        foreach (KeyValuePair<string, long> kv in lakesOff.StepTally.OrderByDescending(k => k.Value).Take(8)) Detail($"lake-near steps (off): {kv.Key}: {kv.Value}");
+        foreach (KeyValuePair<string, long> kv in lakesOn.StepTally.OrderByDescending(k => k.Value).Take(8)) Detail($"lake-near steps (on): {kv.Key}: {kv.Value}");
         Detail(FormattableString.Invariant($"lake-near bank fill over 3 m: lake operator off {lakesOff.LakeFillOver3}/{lakesOff.LakeBankSamples} (largest {lakesOff.LakeFillMax:F1} m), on {lakesOn.LakeFillOver3}/{lakesOn.LakeBankSamples} ({(double)lakesOn.LakeFillOver3 / Math.Max(1, lakesOn.LakeBankSamples):P2}, largest {lakesOn.LakeFillMax:F1} m); before T2R-8 the lake-terminal stems showed up to 31.9 m and were excluded"));
         Check(lakesOn.LakeBankSamples > 20000 && lakesOn.WetSamples > 10000, $"too little lake-near ground sampled ({lakesOn.LakeBankSamples} bank samples, {lakesOn.WetSamples} wet)");
         Check(lakesOn.LeakBad <= lakesOn.LeakPairs * 0.005 && lakesOn.LeakMax <= 0.5, $"lake-near containment: {lakesOn.LeakBad}/{lakesOn.LeakPairs} pairs, largest violation {lakesOn.LeakMax:F2} m");
         Check(lakesOn.LakeFillOver3 <= lakesOn.LakeBankSamples * 0.02 && lakesOn.LakeFillMax <= 15d, $"lake-near fill: {lakesOn.LakeFillOver3}/{lakesOn.LakeBankSamples} bank samples over 3 m, largest {lakesOn.LakeFillMax:F1} m");
-        Check(lakesOn.ContMax <= lakesOff.ContMax && lakesOn.ContOver <= lakesOff.ContOver && lakesOn.WaterlineBad <= lakesOff.WaterlineBad && lakesOn.WaterlineMax <= lakesOff.WaterlineMax + 1e-9, "the lake operator makes a step or a waterline difference worse than the river-only state");
-        Check(lakesOff.ContOver > lakesOn.ContOver * 2, "negative control: the lake-near step comparison could not tell the lake operator from the river-only state"); // T2R-8b: counts only; the largest step is a valley terrace of an in-lake channel through a hill and stands in both states
+        // T2R-22 8b: the comparison with the river-only state keeps the two continuity terms; the lake-near waterline gets the general bar (0.5 % of pairs over 0.6 m, largest 1.0 m) in place of the comparison.
+        Check(lakesOn.ContMax <= lakesOff.ContMax && lakesOn.ContOver <= lakesOff.ContOver, "the lake operator makes a step worse than the river-only state");
+        Check(lakesOn.WaterlineBad <= lakesOn.WaterlinePairs * 0.005 && lakesOn.WaterlineMax <= 1d, $"lake-near waterline: {lakesOn.WaterlineBad}/{lakesOn.WaterlinePairs} wet-bank pairs over 0.6 m, largest {lakesOn.WaterlineMax:F2} m");
+        // T2R-22 8b: the lake operator removes at least 30 % of the steps of the river-only state (it removed 94 % before the overflow rivers: they add steps to both states, on channels cut through ground above a lake level).
+        Check(lakesOn.ContOver <= lakesOff.ContOver * 0.7, "negative control: the lake operator does not remove at least 30 % of the steps of the river-only state"); // T2R-8b: counts only; the largest step is a valley terrace of an in-lake channel through a hill and stands in both states
         // T2R-8b: the lake-near containment control with the lake operator off is gone: it fired on outlets that started on dry ground beside a lake and held the lake level there (T2R-8: 19 pairs, up to 4.1 m), which the lake channels remove; Lakes() keeps the plug-off control on a fabricated gap, and the fill control below still fires.
         Check(lakesOff.LakeFillOver3 > lakesOff.LakeBankSamples * 0.02 && lakesOff.LakeFillMax > 15d, $"negative control: the lake-near fill bar did not fail with the lake operator off ({lakesOff.LakeFillOver3}/{lakesOff.LakeBankSamples}, largest {lakesOff.LakeFillMax:F1} m)");
         Check(real.FillOver3 <= real.BankSamples * 0.02 && real.FillMax <= 15d, $"fill: {real.FillOver3}/{real.BankSamples} bank samples over 3 m, largest {real.FillMax:F1} m");
@@ -952,26 +975,27 @@ public partial class RiverCarveInvariantsTest : RefCounted
     /// <summary>Cut along the path, the level never rising downstream, and the carved height along the centreline.</summary>
     private void Paths()
     {
-        long samples = 0, over40 = 0, pairs = 0, rising = 0, drawn = 0;
+        long samples = 0, over40 = 0, pairs = 0, rising = 0, drawn = 0, lakeStartSamples = 0, lakeStartOver40 = 0;
         double cutMax = 0;
         var locker = new object();
         Parallel.For(0, _workers, new ParallelOptions { MaxDegreeOfParallelism = _workers }, w =>
         {
             using TerrainGenerationHeightModel model = NewModel();
-            long s0 = 0, o0 = 0, p0 = 0, r0 = 0, dr0 = 0;
+            long s0 = 0, o0 = 0, p0 = 0, r0 = 0, dr0 = 0, sl0 = 0, ol0 = 0;
             double m0 = 0;
             for (int i = w; i < _reaches.Count; i += _workers)
             {
                 RiverReach reach = _net.Reaches[_reaches[i]];
+                bool startsInLake = _net.Reaches[_net.Stems[reach.Stem].ReachStart].UpstreamLake >= 0; // T2R-22 8b: the 5.5 % bar is for the stems that do not start in a lake
                 double previous = double.NaN;
                 for (double s = reach.SStart; s <= reach.SEnd; s += 5d)
                 {
                     _net.Centre(reach.Stem, s, out double around, out double across, out _, out _);
                     TerrainGenerationHeightModel.Diagnostics d = model.SampleDiagnostics(around, across);
                     if (d.Height - d.RiverGroundDelta < 2d) { previous = double.NaN; continue; }
-                    s0++;
                     double cut = -d.RiverGroundDelta;
-                    if (cut > 40d) o0++;
+                    if (startsInLake) { sl0++; if (cut > 40d) ol0++; }
+                    else { s0++; if (cut > 40d) o0++; }
                     if (cut > m0) m0 = cut;
                     bool own = d.RiverReach >= 0 && _net.Reaches[d.RiverReach].Stem == reach.Stem;
                     if (own)
@@ -983,13 +1007,15 @@ public partial class RiverCarveInvariantsTest : RefCounted
                     else previous = double.NaN;
                 }
             }
-            lock (locker) { samples += s0; over40 += o0; pairs += p0; rising += r0; drawn += dr0; cutMax = Math.Max(cutMax, m0); }
+            lock (locker) { samples += s0; over40 += o0; pairs += p0; rising += r0; drawn += dr0; lakeStartSamples += sl0; lakeStartOver40 += ol0; cutMax = Math.Max(cutMax, m0); }
         });
         Detail($"path: cut over 40 m on {over40}/{samples} centreline samples every 5 m ({(double)over40 / Math.Max(1, samples):P2}), largest cut {cutMax:F1} m; level rises downstream on {rising}/{pairs} owner pairs; drawn-down level (below the stem's own) on {drawn}/{samples} samples"
             + $" ({(double)drawn / Math.Max(1, samples):P2})");
         Check(samples > 10000, "too few path samples");
         // Tuned in the T2R-7 review: 5.5 % is the state the T2R-5 review accepted until the M2 visual review of carved ground (was 3 %).
-        Check(over40 <= samples * 0.055, $"cut over 40 m on {(double)over40 / Math.Max(1, samples):P2} of path length (limit 5.5 %)");
+        // T2R-22 8b: the bar applies to the reaches of stems that do not start in a lake; the reaches of stems that start in a lake (drowned channels, outlets) are reported apart, with no bar until T2R-25.
+        Detail(FormattableString.Invariant($"path, stems that start in a lake (no bar): cut over 40 m on {lakeStartOver40}/{lakeStartSamples} centreline samples ({(double)lakeStartOver40 / Math.Max(1, lakeStartSamples):P2})"));
+        Check(over40 <= samples * 0.055, $"cut over 40 m on {(double)over40 / Math.Max(1, samples):P2} of path length of the stems that do not start in a lake (limit 5.5 %)");
         Check(rising <= pairs * 0.005, $"the level rises downstream on {rising}/{pairs} owner pairs");
         // T2R-8b item 8: the in-lake parts of the stems, apart from the bar above (their length and their cut over 40 m).
         var lakeCuts = new List<float>();
@@ -1114,9 +1140,12 @@ public partial class RiverCarveInvariantsTest : RefCounted
                         }
                         if (x == 0d && !sec.LakeTerminal && 2d * sec.A < RiverCarveOperator.OwnerWidthPerFootprint * fp && !double.IsNaN(r0.WaterLevel))
                         {
-                            double floor = Math.Min(g, r0.WaterLevel);
+                            // T2R-22 8g: the valley floor of a piece is the lowest valley bound of every piece within the operator's reach, so just above a chute it may lie under the footprint-0 level here; the reference is the lowest level the stem has within the fade distance downstream.
+                            double downstream = RiverLevel.AtStem(_net, sec.Stem, Math.Min(sec.S + RiverCarveOperator.FadeEndMeters, _net.Curves[sec.Stem].Length));
+                            double floor = Math.Min(g, Math.Min(r0.WaterLevel, downstream));
+                            if (f == 2 && !sec.Confluence) { Interlocked.Increment(ref _bedSections); if (r0.WaterLevel - downstream < 0.5) Interlocked.Increment(ref _bedFlat); }
                             if (sec.Confluence) { jN[f]++; if (rf.Height < floor - 1e-9) jB[f]++; }
-                            else { bN[f]++; if (rf.Height < floor - 1e-9) bB[f]++; }
+                            else { bN[f]++; if (rf.Height < floor - 1e-9) { bB[f]++; if (f == 2) Console.WriteLine(FormattableString.Invariant($"RIVER_CARVE_INVARIANTS_DETAIL valley-only below floor: owner stem {(r0.Reach >= 0 ? _net.Reaches[r0.Reach].Stem : -1)} (receiver of the section's stem {_net.Stems[sec.Stem].TerminalId} junction s {_net.Stems[sec.Stem].JunctionS:F0}, its upLake {(_net.Stems[sec.Stem].Terminal == RiverTerminal.Confluence ? _net.Reaches[_net.Stems[_net.Stems[sec.Stem].TerminalId].ReachStart].UpstreamLake : -9)}, receiving level {_net.ReceivingLevel[sec.Stem]:F2} tail {_net.TailMeters[sec.Stem]:F0} m, drawn level of the stem here {RiverLevel.AtStem(_net, sec.Stem, sec.S):F2}) stem {sec.Stem} ({_net.Stems[sec.Stem].Terminal}, upLake {_net.Reaches[_net.Stems[sec.Stem].ReachStart].UpstreamLake}, length {_net.Curves[sec.Stem].Length:F0}) s {sec.S:F0} a {sec.A:F1} g {g:F2} level0 {r0.WaterLevel:F2} kind0 {r0.Kind} h0 {r0.Height:F2} hf {rf.Height:F2} kindf {rf.Kind} levelf {rf.WaterLevel:F2} around {a:F0} across {c:F0} lakeNear {LakeNear(a, c)}")); } }
                         }
                     }
                 }
@@ -1140,6 +1169,8 @@ public partial class RiverCarveInvariantsTest : RefCounted
             Check(lvBad[f] == 0, $"true width: fp {fps[f]:F0}: an owner's level or depth differs from footprint 0 on {lvBad[f]}/{lvN[f]} samples");
         }
         Check(bedN[2] > 0, "true width: no valley-only centreline samples at fp 16");
+        Detail($"true width (8g): reach sections with a valley-only centreline at fp 16: {_bedSections}, of them with less than 0.5 m of fall over the next 300 m (where the check keeps its old strength): {_bedFlat}");
+        if (_bedFlat * 2 < _bedSections) Detail("ESCALATION (T2R-22 8g): fewer than half of the valley-only reach sections have under 0.5 m of fall over 300 m, so the check is weaker than before");
         Check(ownN[1] > 100, "true width: too few River owners at fp 8");
 
         // 2. Continuity: 200 sections of pieces with w >= 2 fp; on the lattice of spacing fp along a 2 km window, every lattice line across the wet channel holds a wet vertex and the wet

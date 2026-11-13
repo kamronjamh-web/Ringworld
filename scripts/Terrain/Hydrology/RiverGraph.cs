@@ -336,6 +336,32 @@ public sealed class RiverGraph
     // ------------------------------------------------------------------ build
 
     /// <summary>
+    /// T2R-22 (RS1 "Straits"): a stem that starts in lake <paramref name="upstreamLake"/>, ends as a confluence and whose receiving cell (the flow of its last cell) is a flooded cell of the same lake. It leaves the lake across a dry cell
+    /// between two patches of water and returns to it: neither an outlet nor an inlet, and held at the lake level to its end.
+    /// </summary>
+    internal static bool IsStrait(RiverStem st, int upstreamLake, DrainageField f)
+    {
+        if (upstreamLake < 0 || st.Terminal != RiverTerminal.Confluence || st.LastCell < 0) return false;
+        int next = f.Down[st.LastCell];
+        return next >= 0 && f.LakeId[next] == upstreamLake;
+    }
+
+    /// <summary>
+    /// T2R-22: a stem of lake <paramref name="upstreamLake"/> that ends in the lake's own water: a confluence that joins another stem of the same lake or whose receiving cell is a flooded cell of the lake (an in-lake merge, or a strait that
+    /// crosses a dry cell and returns), any other stem whose last cell is one. Such a stem is no outlet and is held at the lake level to its end. A confluence that joins a river of its own (also when its last cell, the exit cell, is flooded) leaves the lake.
+    /// </summary>
+    internal static bool EndsInLake(RiverNetwork net, RiverStem st, int upstreamLake, DrainageField f)
+    {
+        if (upstreamLake < 0 || st.LastCell < 0) return false;
+        if (st.Terminal == RiverTerminal.Confluence)
+        {
+            int next = f.Down[st.LastCell];
+            return net.Reaches[net.Stems[st.TerminalId].ReachStart].UpstreamLake == upstreamLake || (next >= 0 && f.LakeId[next] == upstreamLake);
+        }
+        return f.LakeId[st.LastCell] == upstreamLake;
+    }
+
+    /// <summary>
     /// Wraps a built network into the graph: lakes from the conditioned field (level floor(raw), cells, outlet stem and point, inlets), the runs and the index.
     /// <paramref name="inputIdentity"/> is the pre-graph identity (S12, T2R-9; 0 until then) and <paramref name="source"/> 0 for the CPU and 1 for the GPU source.
     /// </summary>
@@ -420,7 +446,7 @@ public sealed class RiverGraph
         {
             RiverStem st = net.Stems[i];
             int upstream = net.Reaches[st.ReachStart].UpstreamLake;
-            if (upstream >= 0 && st.Terminal != RiverTerminal.Dead && lakes[upstream].OutletStem < 0 && !(st.LastCell >= 0 && lakeId[st.LastCell] == upstream))
+            if (upstream >= 0 && st.Terminal != RiverTerminal.Dead && lakes[upstream].OutletStem < 0 && !EndsInLake(net, st, upstream, f))
             {
                 lakes[upstream].OutletStem = i;
                 lakes[upstream].OutletS = (float)RiverLevel.HeldEnd(net, lakeIndicator, i, upstream, false);

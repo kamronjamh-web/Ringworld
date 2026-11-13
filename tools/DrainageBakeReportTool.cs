@@ -315,6 +315,11 @@ public partial class DrainageBakeReportTool : RefCounted
         double[] depths = graph.Lakes.Select(l => (double)l.Depth).OrderBy(d => d).ToArray();
         string Pct(double q) => depths.Length == 0 ? "-" : depths[Math.Min(depths.Length - 1, (int)(q * depths.Length))].ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
         sb.AppendLine(FormattableString.Invariant($"lakes: count {graph.Lakes.Length}, flooded cells {lakeCells} ({lakeCells * cellArea:F0} km^2, {(double)lakeCells / Math.Max(1, landCells):P2} of land cells, {(double)lakeCells / Math.Max(1, field.Count):P2} of all cells), without an outlet river {noOutlet}; depth (level minus lowest cell) p50/p90/p99/max {Pct(0.5)}/{Pct(0.9)}/{Pct(0.99)}/{Pct(1)} m; over 100 m {graph.Lakes.Count(l => l.Depth > 100)}, over 500 m {graph.Lakes.Count(l => l.Depth > 500)}"));
+        // T2R-22: overflow rivers, the outlet stems of lakes of closed basins (before the order every one of these lakes had none).
+        int closedWithOutlet = 0;
+        double overflowKm = 0;
+        foreach (RiverLake l in graph.Lakes) if (l.Basin >= 0 && l.OutletStem >= 0) { closedWithOutlet++; overflowKm += net.Curves[l.OutletStem].Length / 1000d; }
+        sb.AppendLine(FormattableString.Invariant($"overflow rivers (T2R-22): {closedWithOutlet} lakes of closed basins have an outlet stem ({overflowKm:F0} km); of {graph.Lakes.Count(l => l.Basin >= 0)} lakes of closed basins, {graph.Lakes.Count(l => l.Basin >= 0 && l.OutletStem < 0)} have none"));
         long dryCells = graph.Basins.Sum(b => (long)b.DryCellCount);
         int dryBad = 0;
         var dryRng = new Random(5150);

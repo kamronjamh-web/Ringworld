@@ -51,6 +51,22 @@ public sealed record DrainageBakeReport
     /// <summary>Land cells that are not barriers: the denominator of the lake share.</summary>
     public int NonBarrierLandCells { get; init; }
 
+    // T2R-22: overflows of closed basins (RS1). Handover and inflow in runoff units.
+    public int OverflowLakes { get; init; }
+    public int OverflowPoolsNoLake { get; init; }
+    public double OverflowHandover { get; init; }
+    public double ClosedInflow { get; init; }
+    public int OverflowBelowThreshold { get; init; }
+    public int OverflowSills { get; init; }
+    public int OverflowRedirectsSamePool { get; init; }
+    public int OverflowRedirects { get; init; }
+    public double OverflowRedirectRunoff { get; init; }
+    public double OverflowRedirectRunoffMax { get; init; }
+    public int OverflowSharedSaddles { get; init; }
+    public string OverflowRedirectLargest { get; init; } = "";
+    public int OverflowCycles { get; init; }
+    public int OverflowUnreached { get; init; }
+
     public int LakeCount { get; init; }
     public int LakeWaterCells { get; init; }
     public int LakeFloodedCells { get; init; }
@@ -151,7 +167,25 @@ public sealed record DrainageBakeReport
         var spillingDepths = new List<double>();
         foreach (DrainageLake lake in r.Lakes) (lake.Closed ? closedDepths : spillingDepths).Add(lake.DepthMeters);
         int basinsClosed = 0, dryCells = 0;
-        foreach (DrainageBasinInfo basin in r.Basins) { if (basin.Closed) basinsClosed++; dryCells += basin.DryCells; }
+        double closedInflow = 0;
+        foreach (DrainageBasinInfo basin in r.Basins) { if (basin.Closed) { basinsClosed++; closedInflow += basin.Inflow; } dryCells += basin.DryCells; }
+        int overflowLakes = 0, overflowNoLake = 0, belowThreshold = 0, redirects = 0, sills = 0, samePool = 0, sharedSaddles = 0;
+        double handover = 0, redirectRunoff = 0, redirectRunoffMax = 0;
+        string redirectLargest = "";
+        foreach (DrainageOverflow o in r.Overflows)
+        {
+            if (o.HasLake) overflowLakes++; else overflowNoLake++;
+            handover += o.Handover;
+            if (o.BelowThreshold) belowThreshold++;
+            if (o.Sill) sills++;
+            if (o.SamePool) samePool++;
+            if (o.OtherPool)
+            {
+                redirects++; redirectRunoff += o.RedirectRunoff;
+                if (o.RedirectRunoff > redirectRunoffMax) { redirectRunoffMax = o.RedirectRunoff; redirectLargest = FormattableString.Invariant($"saddle cell col {o.SaddleCell % d.Width} row {o.SaddleCell / d.Width}, hand-over {o.Handover:F1}, pool {o.PoolCells} cells"); }
+            }
+            if (o.SharedSaddle) sharedSaddles++;
+        }
         var deepest = new StringBuilder();
         var byDepth = new List<DrainageLake>(r.Lakes);
         byDepth.Sort(static (a, b) => b.DepthMeters.CompareTo(a.DepthMeters));
@@ -192,6 +226,9 @@ public sealed record DrainageBakeReport
             BreachSearchSeconds = c.SearchSeconds, LakeSeconds = c.LakeSeconds, RoutingSeconds = routingSeconds,
             RouteDirectionsSeconds = r.DirectionsSeconds, RouteRepairSeconds = r.RepairSeconds, RouteAccumulationSeconds = r.AccumulationSeconds,
             LandCells = land, SeaCells = sea, BarrierCells = barrier, LungCells = lung, IntakeCells = intake, SiteDrainedBasins = siteBasins, SiteDrainedCells = siteCells, SiteDrainedInflow = siteInflow, SiteRunoff = siteRunoff, NonBarrierLandCells = nonBarrierLand,
+            OverflowLakes = overflowLakes, OverflowPoolsNoLake = overflowNoLake, OverflowHandover = handover, ClosedInflow = closedInflow, OverflowBelowThreshold = belowThreshold,
+            OverflowSills = sills, OverflowRedirectsSamePool = samePool, OverflowRedirects = redirects, OverflowRedirectRunoff = redirectRunoff, OverflowRedirectRunoffMax = redirectRunoffMax, OverflowSharedSaddles = sharedSaddles, OverflowRedirectLargest = redirectLargest,
+            OverflowCycles = r.OverflowCycles, OverflowUnreached = r.OverflowUnreached,
             LakeCount = r.Lakes.Length, LakeWaterCells = water, LakeFloodedCells = flooded,
             LakeShareOfLand = nonBarrierLand == 0 ? 0 : (double)water / nonBarrierLand,
             LakeDepthP50 = Percentile(lakeDepths, 0.5), LakeDepthMax = Percentile(lakeDepths, 1),
@@ -274,6 +311,7 @@ public sealed record DrainageBakeReport
         s.AppendLine(FormattableString.Invariant($"lakes: {LakeCount}, water cells {LakeWaterCells} ({LakeShareOfLand:P2} of non-barrier land), flooded cells {LakeFloodedCells}, depth p50 {LakeDepthP50:F1} m max {LakeDepthMax:F1} m; routing fill {RoutingFillBasins} basins / {RoutingFillCells} cells"));
         s.AppendLine(FormattableString.Invariant($"water balance: E0 {EvaporationE0:F1}, lambda {BalanceLambda:F3}; basins {BasinsClosed + BasinsSpilling} (closed {BasinsClosed}, spilling {BasinsSpilling}); lakes closed {LakesClosed}, spilling {LakesSpilling}; dry pans {DryPans}, multi-patch lakes {MultiPatchLakes}, multi-root spills {MultiRootSpills}, pits above spill {PitsAboveSpill}, basin crossings (legal) {BasinCrossings}; dry floor {DryCells} cells ({DryShareOfLand:P2} of land); balance {BalanceSeconds:F2} s"));
         s.AppendLine(FormattableString.Invariant($"lake depth (level minus lowest cell) all p50/p90/p99/max {LakeDepthP50:F1}/{LakeDepthP90:F1}/{LakeDepthP99:F1}/{LakeDepthMax:F1} m; closed {ClosedDepthP50:F1}/{ClosedDepthP90:F1}/{ClosedDepthP99:F1}/{ClosedDepthMax:F1} m; spilling {SpillingDepthP50:F1}/{SpillingDepthP90:F1}/{SpillingDepthP99:F1}/{SpillingDepthMax:F1} m"));
+        s.AppendLine(FormattableString.Invariant($"overflows (T2R-22): {OverflowLakes + OverflowPoolsNoLake} ({OverflowLakes} with a lake, {OverflowPoolsNoLake} full pools without a lake); hand-over {OverflowHandover:F1} ({OverflowHandover / Math.Max(1e-9, ClosedInflow):P2} of the inflow of closed basins, {ClosedInflow:F1}); below the channel threshold {OverflowBelowThreshold}; saddle cells that are the pool's sill {OverflowSills}, redirects within the same pool {OverflowRedirectsSamePool}, redirects into another pool {OverflowRedirects}, runoff moved {OverflowRedirectRunoff:F1} ({OverflowRedirectRunoff / Math.Max(1e-9, OverflowHandover):P3} of the hand-over, largest {OverflowRedirectRunoffMax:F1}); saddle cells shared by two overflows {OverflowSharedSaddles}; largest redirect: {OverflowRedirectLargest}; basins left as they were because of a cycle {OverflowCycles}; pool cells not reached {OverflowUnreached}"));
         s.AppendLine("deepest lakes: " + DeepestLakes);
         s.AppendLine("largest dry floors: " + LargestDryFloors);
         s.AppendLine(FormattableString.Invariant($"mass balance: runoff over land {TotalRunoff:F2}, to outlets {OutflowRunoff:F2}, evaporated in basins {EvaporatedRunoff:F2}, relative error {MassError:E2}"));

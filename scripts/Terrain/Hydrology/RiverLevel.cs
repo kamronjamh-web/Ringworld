@@ -181,6 +181,20 @@ public static class RiverLevel
         }
     }
 
+    /// <summary>T2R-22 8f: the fall that the cap of a lake-end join made in its receiver, p50 / p90 / max and the ten largest with position.</summary>
+    private static string LakeEndText(RiverNetwork net, List<(double Drop, int Receiver, int LakeStem, double S)> drops)
+    {
+        if (drops.Count == 0) return "none";
+        double[] d = drops.Select(x => x.Drop).OrderBy(x => x).ToArray();
+        var sb = new System.Text.StringBuilder(FormattableString.Invariant($"fall made in the receiver p50/p90/max {d[d.Length / 2]:F1}/{d[Math.Min(d.Length - 1, d.Length * 9 / 10)]:F1}/{d[^1]:F1} m; over 25 m: {d.Count(x => x > 25d)}; the ten largest:"));
+        foreach (var x in drops.OrderByDescending(x => x.Drop).Take(10))
+        {
+            net.Centre(x.Receiver, x.S, out double around, out double across, out _, out _);
+            sb.Append(FormattableString.Invariant($" [{x.Drop:F1} m, receiver stem {x.Receiver}, lake stem {x.LakeStem}, around {net.WrapAround(around) / 1000d:F3} km across {across / 1000d:F3} km]"));
+        }
+        return sb.ToString();
+    }
+
     /// <summary>
     /// T2R-8b: the arc length up to which a stem leaving (or running through) lake <paramref name="lake"/> holds its level. A stem that ends inside its lake (its last cell is a flooded cell of it) is
     /// held to its end; an outlet is held until its centreline, stepped every 10 m, leaves the lake's membership (the outlet point of the lake record). The bake, the graph records and the operator agree on it.
@@ -323,6 +337,8 @@ public static class RiverLevel
         var lakeLevels = f.Lakes.ToArray().Select(l => Math.Floor(l.Level)).ToArray();
         // T2R-8b item 5: where each stem's hold ends, from the stems and the indicator alone (the junctions of incoming stems are classified against it before the upstream-first pass).
         int[] fieldLake = f.LakeId.ToArray();
+        int lakeEndJoins = 0; // T2R-22 8f
+        var lakeEndDrops = new List<(double Drop, int Receiver, int LakeStem, double S)>();
         var heldEnd = new double[stemCount];
         Array.Fill(heldEnd, -1d);
         for (int i = 0; i < stemCount; i++)
@@ -330,7 +346,7 @@ public static class RiverLevel
             RiverStem st = net.Stems[i];
             int upLake = net.Reaches[st.ReachStart].UpstreamLake;
             if (upLake < 0 || st.Terminal == RiverTerminal.Dead) continue;
-            heldEnd[i] = HeldEnd(net, lakes, i, upLake, st.LastCell >= 0 && fieldLake[st.LastCell] == upLake);
+            heldEnd[i] = HeldEnd(net, lakes, i, upLake, RiverGraph.EndsInLake(net, st, upLake, f)); // T2R-22: a stem that ends in its lake's water, a strait included, is held to its end
         }
         var profile = new float[stemCount][];
         var running = new float[stemCount][];
@@ -355,12 +371,43 @@ public static class RiverLevel
             int ptr = 0;
             bool extraHeld = false;
             double plain = double.PositiveInfinity;
+            // T2R-22 8f: a stem that is lake water to its end joins at its lake's level. Its cap acts from the last station at or before the junction and stands BandLower + BandUpper over the lake level, so the receiver displays the lake level
+            // there and the lake stem's tail drop is 0. While the receiver holds, the T2R-8b rule stays as it is.
+            bool LakeEnd(int k)
+            {
+                int ul = net.Reaches[net.Stems[k].ReachStart].UpstreamLake;
+                return ul >= 0 && net.Stems[k].Terminal != RiverTerminal.Dead && heldEnd[k] >= net.Curves[k].Length - 1e-6 && endValue[k] <= lakeLevels[ul] + BandUpper + 1e-3;
+            }
+            double LakeCap(int k) => lakeLevels[net.Reaches[net.Stems[k].ReachStart].UpstreamLake] + BandLower + BandUpper;
+            double[]? early = null;
+            List<(int Stem, double S)>? earlyJoins = null;
+            if (inc != null)
+                foreach ((double js, int k) in inc)
+                {
+                    if (!LakeEnd(k)) continue;
+                    lakeEndJoins++;
+                    int jb = 0;
+                    while (jb + 1 < n && s[i][jb + 1] <= js) jb++;
+                    early ??= Enumerable.Repeat(double.PositiveInfinity, n).ToArray();
+                    early[jb] = Math.Min(early[jb], LakeCap(k));
+                    (earlyJoins ??= new()).Add((k, js));
+                }
             for (int j = 0; j < n; j++)
             {
+                if (early != null && !double.IsPositiveInfinity(early[j]) && !(holding && (s[i][j] < heldEnd[i] + ChuteMeters || heldEnd[i] >= net.Curves[i].Length - 1e-6)))
+                {
+                    if (!double.IsPositiveInfinity(m) && m > early[j] + 1e-9 && earlyJoins != null)
+                    {
+                        // The cap lowers the receiver here by m - cap + (BandLower + BandUpper): the fall to the lake level.
+                        double drop = m - (early[j] - BandLower - BandUpper);
+                        lock (lakeEndDrops) lakeEndDrops.Add((drop, i, earlyJoins[0].Stem, earlyJoins[0].S));
+                    }
+                    m = Math.Min(m, early[j]); plain = Math.Min(plain, early[j]);
+                }
                 while (inc != null && ptr < inc.Count && inc[ptr].S <= s[i][j])
                 {
                     // T2R-8b: while the stem holds, an incoming stem's end value is raised to the hold, or the outlet would drop by the depth of the inlet's last station as soon as the hold ends.
-                    double v = holding ? Math.Max(endValue[inc[ptr].Stem], hold) : endValue[inc[ptr].Stem];
+                    double v = holding ? Math.Max(endValue[inc[ptr].Stem], hold) : LakeEnd(inc[ptr].Stem) ? LakeCap(inc[ptr].Stem) : endValue[inc[ptr].Stem];
                     m = Math.Min(m, v); plain = Math.Min(plain, v); ptr++;
                 }
                 if (holding)
@@ -455,6 +502,7 @@ public static class RiverLevel
             Knots = net.Knots.Count, Stations = stations, CutP50 = Pct(0.5), CutP90 = Pct(0.9), CutMax = maxCut,
             CutOver40Share = total > 0 ? over40 / total : 0, CutOver15Share = total > 0 ? over15 / total : 0, FillShareOfLevel = stations > 0 ? fillStations / stations : 0,
             InLakeCutOver40Share = lakeTotal > 0 ? lakeOver40 / lakeTotal : 0, InLakeCutMax = lakeMax,
+            LakeEndJoins = lakeEndJoins, LakeEndLowered = lakeEndDrops.Count, LakeEndText = LakeEndText(net, lakeEndDrops),
             SampleSeconds = sampleSeconds, LevelSeconds = levelSeconds,
         };
     }
@@ -479,6 +527,9 @@ public static class RiverLevel
             {
                 case RiverTerminal.Sea: net.ReceivingLevel[i] = 0; net.TailMeters[i] = OutletTailMeters; break;
                 case RiverTerminal.Lake: net.ReceivingLevel[i] = lakeLevels[st.TerminalId]; net.TailMeters[i] = OutletTailMeters; break;
+                case RiverTerminal.Confluence when net.Reaches[st.ReachStart].UpstreamLake >= 0 && net.Reaches[net.Stems[st.TerminalId].ReachStart].UpstreamLake == net.Reaches[st.ReachStart].UpstreamLake:
+                    // T2R-22 8a: a stem of a lake that joins another stem of the same lake (an in-lake merge, or a strait that leaves the lake across a dry cell and returns) ends in that lake's water, whatever the receiving stem does at that point.
+                    net.ReceivingLevel[i] = lakeLevels[net.Reaches[st.ReachStart].UpstreamLake]; net.TailMeters[i] = OutletTailMeters; break;
                 case RiverTerminal.Confluence:
                 {
                     net.ReceivingLevel[i] = AtStem(net, st.TerminalId, st.JunctionS);

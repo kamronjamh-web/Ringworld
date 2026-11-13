@@ -427,6 +427,86 @@ public partial class DrainageBakeReportTool
             sb.AppendLine(FormattableString.Invariant($"drowned channels (T2R-8b): {stems} stems start inside a lake, {km:F0} km in the lake; natural ground on the centreline every 50 m ({ground.Length} stations): at or above the lake level on {(double)above / Math.Max(1, ground.Length):P1}, 2 m or more above on {(double)above2 / Math.Max(1, ground.Length):P1}, 10 m or more above on {(double)above10 / Math.Max(1, ground.Length):P1} (there the channel is a cut through ground the lake does not cover)"));
         }
 
+        // ------------------------------------------------------------------ lake outlets and the fine terrain (T2R-22 8c)
+        {
+            // Overflow outlets (lakes of closed basins) and spilling outlets apart: along each outlet, from its start to 3 km past its held part, every 5 m, the natural ground against the lake level and the cut (natural ground minus the carved height).
+            var points = new List<DrainagePoint>();
+            var owner = new List<int>(); // index into outlets
+            var outlets = new List<(int Lake, int Stem, bool Closed, int First, int Count)>();
+            for (int l = 0; l < graph.Lakes.Length; l++)
+            {
+                RiverLake lake = graph.Lakes[l];
+                if (lake.OutletStem < 0) continue;
+                double len = net.Curves[lake.OutletStem].Length, end = Math.Min(len, lake.OutletS + 3000d);
+                int first = points.Count;
+                for (double sArc = 0; sArc <= end; sArc += 5d)
+                {
+                    net.Centre(lake.OutletStem, sArc, out double a, out double c, out _, out _);
+                    points.Add(new DrainagePoint((long)Math.Floor(net.WrapAround(a) + 0.5) % circumference, Math.Clamp((int)Math.Floor(c + 0.5), 0, acrossMax)));
+                    owner.Add(outlets.Count);
+                }
+                outlets.Add((l, lake.OutletStem, lake.Basin >= 0, first, points.Count - first));
+            }
+            var ground = new float[points.Count];
+            if (points.Count > 0) source.SamplePoints(points.ToArray(), ground);
+            var csvOut = new StringBuilder("lake,stem,closed,level,held_m,length_m,max_ground_above_level_m,max_cut_m,max_cut_s,max_cut_around_km,max_cut_across_km\n");
+            foreach (bool closedClass in new[] { true, false })
+            {
+                var aboveMax = new List<double>(); var cutMax = new List<double>(); var cutHeld = new List<double>();
+                long samples = 0, over5 = 0, over15 = 0, over40 = 0;
+                int nOutlets = 0, groundOver5 = 0, groundOver15 = 0, groundOver40 = 0;
+                var worst = new List<(double Cut, string Text)>();
+                foreach ((int lakeIndex, int stem, bool closed, int first, int count) in outlets)
+                {
+                    if (closed != closedClass) continue;
+                    RiverLake lake = graph.Lakes[lakeIndex];
+                    nOutlets++;
+                    double mAbove = double.NegativeInfinity, mCut = 0, mCutHeld = 0, cutAtS = 0;
+                    for (int k = 0; k < count; k++)
+                    {
+                        double sArc = 5d * k;
+                        DrainagePoint pt = points[first + k];
+                        RiverOperatorResult r = op.Evaluate(pt.Around, pt.Across, ground[first + k], 0d);
+                        double cut = ground[first + k] - r.Height, above = ground[first + k] - lake.Level;
+                        samples++; if (cut > 5) over5++; if (cut > 15) over15++; if (cut > 40) over40++;
+                        if (above > mAbove) mAbove = above;
+                        if (cut > mCut) { mCut = cut; cutAtS = sArc; }
+                        if (sArc <= lake.OutletS && cut > mCutHeld) mCutHeld = cut;
+                    }
+                    aboveMax.Add(mAbove); cutMax.Add(mCut); cutHeld.Add(mCutHeld);
+                    if (mAbove > 5) groundOver5++; if (mAbove > 15) groundOver15++; if (mAbove > 40) groundOver40++;
+                    net.Centre(stem, cutAtS, out double ca, out double cc, out _, out _);
+                    double aroundKm = net.WrapAround(ca) / 1000d, acrossKm = cc / 1000d;
+                    string text = FormattableString.Invariant($"lake {lakeIndex} (level {lake.Level:F0} m, {lake.CellCount} cells) outlet stem {stem} (length {net.Curves[stem].Length:F0} m, held to {lake.OutletS:F0} m): largest cut {mCut:F1} m at s {cutAtS:F0} (around {aroundKm:F3} km, across {acrossKm:F3} km); natural ground above the lake level at most {mAbove:F1} m");
+                    worst.Add((mCut, text));
+                    csvOut.AppendLine(FormattableString.Invariant($"{lakeIndex},{stem},{(closed ? 1 : 0)},{lake.Level:F0},{lake.OutletS:F0},{net.Curves[stem].Length:F0},{mAbove:F2},{mCut:F2},{cutAtS:F0},{aroundKm:F3},{acrossKm:F3}"));
+                }
+                string Q(List<double> v) { if (v.Count == 0) return "-"; double[] o = v.OrderBy(x => x).ToArray(); return FormattableString.Invariant($"{o[o.Length / 10]:F1}/{o[o.Length / 2]:F1}/{o[o.Length * 9 / 10]:F1}/{o[^1]:F1}"); }
+                sb.AppendLine(FormattableString.Invariant($"outlets of {(closedClass ? "closed (overflow)" : "spilling")} lakes (T2R-22): {nOutlets}; {samples} samples every 5 m from the start to 3 km past the held part; natural ground above the lake level, largest per outlet, p10/p50/p90/max {Q(aboveMax)} m, outlets with ground over 5 m above {groundOver5}, over 15 m {groundOver15}, over 40 m {groundOver40}; samples cut over 5 m {(double)over5 / Math.Max(1, samples):P1}, over 15 m {(double)over15 / Math.Max(1, samples):P1}, over 40 m {(double)over40 / Math.Max(1, samples):P1}; largest cut per outlet p10/p50/p90/max {Q(cutMax)} m, in the held part {Q(cutHeld)} m"));
+                foreach ((double _, string text) in worst.OrderByDescending(x => x.Cut).Take(10)) sb.AppendLine("  " + text);
+            }
+            File.WriteAllText(Path.Combine(dir, "terminals_outlets.csv"), csvOut.ToString());
+            // Straits (RS1, T2R-22 8a): stems that leave a lake and return to it; neither outlet nor inlet.
+            int straits = 0, merges = 0;
+            for (int i = 0; i < stemCount; i++)
+                if (RiverGraph.IsStrait(net.Stems[i], net.Reaches[net.Stems[i].ReachStart].UpstreamLake, field))
+                {
+                    if (lakeId[net.Stems[i].LastCell] == net.Reaches[net.Stems[i].ReachStart].UpstreamLake) merges++; else straits++;
+                }
+            // T2R-22 8f: lake stems that still end in water more than 0.1 m above their lake (the receiver is another lake's held stem or a river the cap did not lower).
+            var aboveLake = new List<string>();
+            for (int i = 0; i < stemCount; i++)
+            {
+                int up = net.Reaches[net.Stems[i].ReachStart].UpstreamLake;
+                if (up < 0 || net.Stems[i].Terminal == RiverTerminal.Dead || double.IsNaN(net.ReceivingLevel[i])) continue;
+                if (net.ReceivingLevel[i] <= graph.Lakes[up].Level + 0.1) continue;
+                int recvLake = net.Stems[i].Terminal == RiverTerminal.Confluence ? net.Reaches[net.Stems[net.Stems[i].TerminalId].ReachStart].UpstreamLake : -1;
+                aboveLake.Add(FormattableString.Invariant($"stem {i} of lake {up} (level {graph.Lakes[up].Level:F0}) ends in water at {net.ReceivingLevel[i]:F2} m, {net.ReceivingLevel[i] - graph.Lakes[up].Level:F1} m above; receiver {(net.Stems[i].Terminal == RiverTerminal.Confluence ? "stem " + net.Stems[i].TerminalId + (recvLake >= 0 ? " of lake " + recvLake : " (a river)") : "lake " + net.Stems[i].TerminalId)}"));
+            }
+            sb.AppendLine($"lake stems that end in water more than 0.1 m above their lake (T2R-22 8f): {aboveLake.Count}" + (aboveLake.Count > 0 ? "; first: " + string.Join("; ", aboveLake.Take(8)) : ""));
+            sb.AppendLine($"straits (T2R-22): {straits} stems start in a lake, end as a confluence and return to the same lake across a dry cell; a further {merges} in-lake stems end on another stem of the lake in a flooded cell (in-lake merges, not straits)");
+        }
+
         // ------------------------------------------------------------------ dead stems
         {
             DrainageBalanceParameters balance = balanceParameters;

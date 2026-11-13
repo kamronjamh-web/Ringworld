@@ -729,7 +729,7 @@ public partial class DrainageGraphTest : RefCounted
         for (int i = 0; i < net.Stems.Length; i++)
         {
             int up = net.Reaches[net.Stems[i].ReachStart].UpstreamLake;
-            if (up >= 0 && net.Stems[i].Terminal != RiverTerminal.Dead && field.LakeId[net.Stems[i].LastCell] != up) outletCount[up]++; // T2R-8b item 6: a stem that ends inside its lake is an in-lake channel, not the outlet
+            if (up >= 0 && net.Stems[i].Terminal != RiverTerminal.Dead && !EndsInLake(net, field, i)) outletCount[up]++; // T2R-22 8a: a strait (leaves the lake and returns to it) is neither // T2R-8b item 6: a stem that ends inside its lake is an in-lake channel, not the outlet
         }
         int noOutlet = 0, multiOutlet = 0, outletMismatch = 0, inletBad = 0, inlets = 0, cellBad = 0;
         long lakeCells = 0;
@@ -753,11 +753,15 @@ public partial class DrainageGraphTest : RefCounted
                 // T2R-8b: a Terminal Lake stem of this lake, or a confluence stem that joins the held part of a stem that starts in it.
                 RiverStem ist = net.Stems[inlet.Stem];
                 bool ends = ist.Terminal == RiverTerminal.Lake ? ist.TerminalId == l : ist.Terminal == RiverTerminal.Confluence && net.Reaches[net.Stems[ist.TerminalId].ReachStart].UpstreamLake == l;
-                if (!onOrNext || !ends) inletBad++;
+                if (!onOrNext || !ends)
+                {
+                    inletBad++;
+                    if (inletBad == 1) Fail($"{label}: first bad inlet: lake {l} (level {lake.Level}, {lake.CellCount} cells, outlet stem {lake.OutletStem} held to {lake.OutletS:F0}), stem {inlet.Stem} ({ist.Terminal} {ist.TerminalId}, junction s {ist.JunctionS:F0}, length {net.Curves[inlet.Stem].Length:F0}, head cell {ist.HeadCell}, last cell {ist.LastCell}, upstream lake {net.Reaches[ist.ReachStart].UpstreamLake}), onOrNext {onOrNext}, ends {ends}, end node col {col} row {row}");
+                }
             }
         }
         // A lake without an outlet river spills into another lake, an outlet (sea, Weather Lung, strip end), a cell below the channel threshold, or (reported, not asserted) the middle of an existing channel.
-        int spillCascade = 0, spillOutlet = 0, spillSmall = 0, spillOther = 0, noSpill = 0;
+        int spillCascade = 0, spillOutlet = 0, spillSmall = 0, spillOther = 0, noSpill = 0, cPrime = 0;
         var spill = new int[graph.Lakes.Length];
         Array.Fill(spill, -1);
         ReadOnlySpan<int> down = field.Down;
@@ -774,10 +778,77 @@ public partial class DrainageGraphTest : RefCounted
             else if (field.LakeId[t] >= 0) spillCascade++;
             else if (field.Domain.IsOutlet(t)) spillOutlet++;
             else if (field.AreaCells[t] * field.CellAreaKm2 < thresholdKm2 - 1e-9 || field.Kind[t] == DrainageCellKind.Barrier) spillSmall++;
-            else spillOther++;
+            else
+            {
+                spillOther++;
+                // T2R-22 (c'): a spilling lake with an inlet river whose exit flows into a channel cell has an outlet stem or a drowned channel that ends there; none is left without.
+                if (!field.Lakes.Span[l].Closed && graph.Lakes[l].InletCount > 0) { cPrime++; if (cPrime <= 3) Fail($"{label}: (c') lake {l} (level {graph.Lakes[l].Level}, {graph.Lakes[l].CellCount} cells, {graph.Lakes[l].InletCount} inlets) spills into channel cell {t} (area {field.AreaCells[t]} km^2) and has no outlet stem"); }
+            }
         }
         Console.WriteLine($"DRAINAGE_GRAPH_DETAIL {label}: lakes {graph.Lakes.Length}, without an outlet river {noOutlet} (spill into another lake {spillCascade}, into an outlet {spillOutlet}, into a cell under the threshold {spillSmall}, no spill cell {noSpill}, into a channel cell with no stem head of its own {spillOther}), with several {multiOutlet}, inlets {inlets}, flooded cells {lakeCells}, runs {graph.Runs.Length}");
-        Check(multiOutlet == 0 && outletMismatch == 0, $"{label}: {multiOutlet} lakes have several outlets, {outletMismatch} outlet records differ from the reaches");
+        string several = "";
+        for (int l = 0; l < graph.Lakes.Length && multiOutlet > 0 && several.Length == 0; l++)
+        {
+            if (outletCount[l] < 2) continue;
+            var ids = new List<string>();
+            for (int i = 0; i < net.Stems.Length; i++)
+                if (net.Reaches[net.Stems[i].ReachStart].UpstreamLake == l && net.Stems[i].Terminal != RiverTerminal.Dead && !EndsInLake(net, field, i)) ids.Add($"stem {i} ({net.Stems[i].Terminal}, head cell {net.Stems[i].HeadCell}, last cell {net.Stems[i].LastCell})");
+            several = $" (first: lake {l}, basin {graph.Lakes[l].Basin}, {graph.Lakes[l].CellCount} cells, outlet record {graph.Lakes[l].OutletStem}; {string.Join("; ", ids)})";
+        }
+        Check(multiOutlet == 0 && outletMismatch == 0, $"{label}: {multiOutlet} lakes have several outlets, {outletMismatch} outlet records differ from the reaches{several}");
+        // T2R-22 8a: straits. Each is held at its lake's level along its whole length, is not the lake's outlet record and is not an inlet of any lake; the two cases found on the strips are named by head and last cell.
+        {
+            int straits = 0, strait0 = 0, straitBad = 0, straitRecord = 0;
+            for (int i = 0; i < net.Stems.Length; i++)
+            {
+                if (!Strait(net, field, i)) continue;
+                straits++;
+                int up = net.Reaches[net.Stems[i].ReachStart].UpstreamLake;
+                if (graph.Lakes[up].OutletStem == i) straitRecord++;
+                double len = net.Curves[i].Length;
+                for (double sArc = 0; sArc <= len && straitBad < 5; sArc += 10d)
+                    if (Math.Abs(RiverLevel.AtStem(net, i, sArc) - graph.Lakes[up].Level) > 0.01) { straitBad++; Fail($"{label}: strait stem {i} of lake {up} (level {graph.Lakes[up].Level}) is at {RiverLevel.AtStem(net, i, sArc):F3} m at s {sArc:F0} of {len:F0} (stored {RiverLevel.Stored(net, i, sArc):F3}, terminal {net.Stems[i].Terminal} into stem {net.Stems[i].TerminalId}, head {net.Stems[i].HeadCell} last {net.Stems[i].LastCell}, in-lake end {net.InLakeEnd[i]:F0})"); break; }
+                foreach (RiverInlet inlet in graph.Inlets) if (inlet.Stem == i) { strait0++; break; }
+            }
+            // T2R-22 8f: a stem that is lake water to its end and joins a receiver that no lake holds meets it at the lake's level, and its tail drop is 0.
+            int lakeJoins = 0, lakeJoinBad = 0;
+            for (int i = 0; i < net.Stems.Length; i++)
+            {
+                RiverStem st = net.Stems[i];
+                int up = net.Reaches[st.ReachStart].UpstreamLake;
+                if (up < 0 || st.Terminal != RiverTerminal.Confluence) continue;
+                double lakeLevel = graph.Lakes[up].Level, length = net.Curves[i].Length;
+                if (net.InLakeEnd[i] < length - 1e-6 || Math.Abs(RiverLevel.AtStem(net, i, length) - lakeLevel) > 0.01) continue; // not lake water to its end
+                if (net.Reaches[net.Stems[st.TerminalId].ReachStart].UpstreamLake >= 0) continue; // a receiver held by a lake keeps the T2R-8b rule
+                lakeJoins++;
+                double at = RiverLevel.AtStem(net, st.TerminalId, st.JunctionS);
+                if (Math.Abs(at - lakeLevel) > 0.01 || net.TailDrop[i] != 0d) { lakeJoinBad++; if (lakeJoinBad <= 3) Fail($"{label}: lake stem {i} (lake {up}, level {lakeLevel}) joins stem {st.TerminalId} at s {st.JunctionS:F0} where the receiver is at {at:F3} m; tail drop {net.TailDrop[i]:F3}"); }
+            }
+            Console.WriteLine($"DRAINAGE_GRAPH_DETAIL {label}: lake-end joins into a receiver no lake holds {lakeJoins}, off the lake level {lakeJoinBad}");
+            Console.WriteLine($"DRAINAGE_GRAPH_DETAIL {label}: straits {straits}");
+            Check(straitRecord == 0 && strait0 == 0, $"{label}: {straitRecord} straits are a lake's outlet record and {strait0} are an inlet");
+            (int Outlet, int OutletHead, int OutletLast, int Strait, int StraitHead, int StraitLast)[] cases = label switch
+            {
+                "strip_9804km" => new[] { (87, 33381, 32577, 97, 33783, 33782) },
+                "strip_seam" => new[] { (155, 125363, 124960, 150, 123762, 124162) },
+                _ => Array.Empty<(int, int, int, int, int, int)>(),
+            };
+            foreach (var c in cases)
+            {
+                int outlet = -1, strait = -1;
+                for (int i = 0; i < net.Stems.Length; i++)
+                {
+                    if (net.Stems[i].HeadCell == c.OutletHead && net.Stems[i].LastCell == c.OutletLast) outlet = i;
+                    if (net.Stems[i].HeadCell == c.StraitHead && net.Stems[i].LastCell == c.StraitLast) strait = i;
+                }
+                Check(outlet >= 0 && strait >= 0, $"{label}: the stems of the R27 case (head {c.OutletHead} last {c.OutletLast}, and head {c.StraitHead} last {c.StraitLast}) were not found (outlet {outlet}, strait {strait})");
+                if (outlet >= 0 && strait >= 0)
+                {
+                    int lake = net.Reaches[net.Stems[strait].ReachStart].UpstreamLake;
+                    Check(Strait(net, field, strait) && lake >= 0 && graph.Lakes[lake].OutletStem == outlet, $"{label}: the R27 case: stem {strait} should be a strait of lake {lake} whose outlet is stem {outlet} (record {(lake >= 0 ? graph.Lakes[lake].OutletStem : -1)})");
+                }
+            }
+        }
         Check(inletBad == 0, $"{label}: {inletBad} of {inlets} inlets are not on or next to their lake's cells");
         Check(cellBad == 0, $"{label}: {cellBad} lake records differ from the conditioned field (cell count or level)");
         LakeChannelChecks(label, net, graph, graph.Lakes, field, grid, options);
@@ -820,7 +891,7 @@ public partial class DrainageGraphTest : RefCounted
             var bad = new RiverGraph(graph.Network, graph.Lakes, graph.Inlets, graph.Runs, graph.Basins, overlapping.ToArray(), graph.RingColumns, graph.Rows, graph.InputIdentity, graph.Source, null);
             Check(!RiverGraphFormat.TryRead(RiverGraphFormat.Write(bad), null, out _, out _), $"{label}: negative control: a dry run over a lake run was accepted");
         }
-        Check(graph.ResidentBytes < 32L * 1024 * 1024, $"{label}: graph resident estimate {graph.ResidentBytes} is above 32 MB");
+        Check(graph.ResidentBytes < 44L * 1024 * 1024, $"{label}: graph resident estimate {graph.ResidentBytes} is above 44 MiB"); // T2R-22 review decision 5: an engineering tripwire (the largest whole-ring seed plus about 17 %), no longer 32 MiB
         Console.WriteLine($"DRAINAGE_GRAPH_DETAIL {label}: file {bytes.Length} bytes, resident {graph.ResidentBytes} bytes, hash {graph.IdentityHash:X16}");
     }
 
@@ -863,7 +934,7 @@ public partial class DrainageGraphTest : RefCounted
         {
             RiverStem st = net.Stems[i];
             int up = net.Reaches[st.ReachStart].UpstreamLake;
-            if (up >= 0 && st.Terminal != RiverTerminal.Dead && expectedOutlet[up] < 0 && lakeId[st.LastCell] != up) expectedOutlet[up] = i;
+            if (up >= 0 && st.Terminal != RiverTerminal.Dead && expectedOutlet[up] < 0 && !EndsInLake(net, field, i)) expectedOutlet[up] = i;
         }
         for (int i = 0; i < net.Stems.Length; i++)
         {
@@ -894,17 +965,50 @@ public partial class DrainageGraphTest : RefCounted
         // The inlet and outlet counts per lake equal those of the graph built without lake channels.
         RiverNetwork netOff = RiverGraphBuilder.Build(field, grid, DrainageGridTest.Recipe(), new RiverBuildOptions { Source = options.Source, Workers = options.Workers, LakeChannels = false }, CancellationToken.None, out _);
         RiverGraph graphOff = RiverGraph.Build(netOff, field, grid, 0x1234UL, 0);
-        int inletDiff = 0, outletDiff = 0;
+        int inletDiff = 0, outletDiff = 0, joinedPassing = 0;
+        // T2R-22 (c'): a lake whose exit flows into a channel cell has an outlet with lake channels (its drowned channel runs through the exit and joins the river there) and none without them; every other lake has the same outlet presence in both.
+        var spillTo = new int[lakes.Length];
+        Array.Fill(spillTo, -1);
+        for (int c = 0; c < field.Count; c++)
+        {
+            int id = field.LakeId[c];
+            if (id >= 0 && field.Down[c] >= 0 && field.LakeId[field.Down[c]] != id && spillTo[id] < 0) spillTo[id] = field.Down[c];
+        }
+        double thresholdKm2 = 100d / (DrainageGridTest.Recipe().HasRivers ? DrainageGridTest.Recipe().GetExtensionField("river_density") : 1d);
         for (int l = 0; l < lakes.Length; l++)
         {
+            bool passing = !field.Lakes.Span[l].Closed && spillTo[l] >= 0 && field.LakeId[spillTo[l]] < 0 && field.AreaCells[spillTo[l]] * field.CellAreaKm2 >= thresholdKm2 - 1e-9 && field.Kind[spillTo[l]] == DrainageCellKind.Land;
+            bool joined = passing && lakes[l].OutletStem >= 0 && graphOff.Lakes[l].OutletStem < 0;
+            if (joined) joinedPassing++;
             if (lakes[l].InletCount != graphOff.Lakes[l].InletCount) { inletDiff++; Console.WriteLine($"DRAINAGE_GRAPH_DETAIL {label}: lake {l} (cells {lakes[l].CellCount}, level {lakes[l].Level}): inlets {lakes[l].InletCount} vs {graphOff.Lakes[l].InletCount}, outlet {lakes[l].OutletStem} vs {graphOff.Lakes[l].OutletStem}"); }
-            if ((lakes[l].OutletStem >= 0) != (graphOff.Lakes[l].OutletStem >= 0)) { outletDiff++; Console.WriteLine($"DRAINAGE_GRAPH_DETAIL {label}: lake {l} outlet {lakes[l].OutletStem} vs {graphOff.Lakes[l].OutletStem}"); }
+            if (!joined && (lakes[l].OutletStem >= 0) != (graphOff.Lakes[l].OutletStem >= 0)) { outletDiff++; Console.WriteLine($"DRAINAGE_GRAPH_DETAIL {label}: lake {l} outlet {lakes[l].OutletStem} vs {graphOff.Lakes[l].OutletStem}"); }
         }
-        Console.WriteLine($"DRAINAGE_GRAPH_DETAIL {label}: in-lake stems {inLake}; lakes with another inlet count than without lake channels {inletDiff}, with another outlet presence {outletDiff}; inlets {graph.Inlets.Length} vs {graphOff.Inlets.Length}");
+        Console.WriteLine($"DRAINAGE_GRAPH_DETAIL {label}: in-lake stems {inLake}; spilling lakes whose exit flows into a channel cell and that gain an outlet with lake channels (c') {joinedPassing}; lakes with another inlet count than without lake channels {inletDiff}, with another outlet presence {outletDiff}; inlets {graph.Inlets.Length} vs {graphOff.Inlets.Length}");
         Check(inletDiff == 0 && outletDiff == 0, $"{label}: the inlet and outlet counts differ from the graph without lake channels on {inletDiff} and {outletDiff} lakes");
         // Negative control: a count changed by one must be flagged.
         int victim = Array.FindIndex(graphOff.Lakes, x => x.InletCount > 0);
         if (victim >= 0) Check(lakes[victim].InletCount - 1 != graphOff.Lakes[victim].InletCount, $"{label}: negative control: a changed inlet count was not flagged");
+    }
+
+    /// <summary>T2R-22 8a, written out again from the field: a stem that starts in a lake, ends as a confluence and whose receiving cell is a flooded cell of that same lake.</summary>
+    private static bool Strait(RiverNetwork net, DrainageField field, int stem)
+    {
+        RiverStem st = net.Stems[stem];
+        int up = net.Reaches[st.ReachStart].UpstreamLake;
+        if (up < 0 || st.Terminal != RiverTerminal.Confluence) return false;
+        int receiving = field.Down[st.LastCell];
+        return receiving >= 0 && field.LakeId[receiving] == up;
+    }
+
+    /// <summary>T2R-22 item 8, written out again from the field: a stem of a lake ends in that lake's water when its receiving stem starts in the same lake or its receiving cell is a flooded cell of the lake (a confluence), or its last cell is one (any other end); it is then no outlet.</summary>
+    private static bool EndsInLake(RiverNetwork net, DrainageField field, int stem)
+    {
+        RiverStem st = net.Stems[stem];
+        int up = net.Reaches[st.ReachStart].UpstreamLake;
+        if (up < 0) return false;
+        if (st.Terminal != RiverTerminal.Confluence) return field.LakeId[st.LastCell] == up;
+        int receiving = field.Down[st.LastCell];
+        return net.Reaches[net.Stems[st.TerminalId].ReachStart].UpstreamLake == up || (receiving >= 0 && field.LakeId[receiving] == up);
     }
 
     private static string DrainageFixturePath =>ProjectSettings.GlobalizePath("res://tools/fixtures/hydrology/d4_baseline/graph.json.gz");
@@ -1013,6 +1117,9 @@ public partial class DrainageGraphTest : RefCounted
                 if (basin >= 0 && !field.Basins.Span[basin].Closed && field.BasinId[down[c]] != basin) { fedBySpill[down[c]] = true; continue; }
                 inflow[down[c]] += field.RunoffAccumulation[c];
             }
+            // T2R-22: the saddle cell of an overflow takes the hand-over of its pool instead of the sum of the pool's cells (the lake's evaporation stays in the lake), and not its own runoff again when its old link pointed into the pool;
+            // drainage_overflow_test checks the value there. Every other cell, the one after the saddle included, is conserved as before.
+            foreach (DrainageOverflow overflow in field.Routed.Overflows) fedBySpill[overflow.SaddleCell] = true;
             int conservationBad = 0;
             for (int c = 0; c < field.Count; c++)
                 if (!fedBySpill[c] && field.Kind[c] == DrainageCellKind.Land && field.Visited[c] && inflow[c] > 0 && Math.Abs(field.RunoffAccumulation[c] - (inflow[c] + field.Runoff[c])) > 1e-6 * field.RunoffAccumulation[c]) conservationBad++;

@@ -528,6 +528,10 @@ public sealed record RiverBuildReport
     public double InLakeKm { get; init; }
     public double InLakeCutOver40Share { get; init; }
     public double InLakeCutMax { get; init; }
+    /// <summary>T2R-22 8f: junctions of a stem that is lake water to its end into a receiver (not held by a lake), how many of them made a fall in the receiver, and the numbers of that fall.</summary>
+    public int LakeEndJoins { get; init; }
+    public int LakeEndLowered { get; init; }
+    public string LakeEndText { get; init; } = "";
     /// <summary>T3R-3: spans, landings (spans and km), spans inside an exclusion zone, the zone count and the seconds the span step took (cut, gradients, exclusions, sections, landings).</summary>
     public int Spans { get; init; }
     public int SpanLandings { get; init; }
@@ -549,6 +553,7 @@ public sealed record RiverBuildReport
             "hydraulics p10/p50/p90 over reach length: Q " + P(Q) + " m3/s, S " + P(Gradient) + ", d " + P(Depth) + " m, w " + P(Width) + " m, U " + P(Speed) + " m/s",
             FormattableString.Invariant($"class share by length: calm {ClassShare.ElementAtOrDefault(0):P1}, swift {ClassShare.ElementAtOrDefault(1):P1}, fierce {ClassShare.ElementAtOrDefault(2):P1}, torrent {ClassShare.ElementAtOrDefault(3):P1}"),
             FormattableString.Invariant($"lake channels: {LakeChannelCells} marked cells ({LakeLeads} outlet leads), {InLakeStems} stems start inside a lake, in-lake length {InLakeKm:F1} km, cut over 40 m on {InLakeCutOver40Share:P2} of it (largest {InLakeCutMax:F1} m)"),
+            FormattableString.Invariant($"lake-end joins (T2R-22 8f): {LakeEndJoins} stems that are lake water to their end join a stem; {LakeEndLowered} receivers were lowered to the lake level at the junction; {LakeEndText}"),
             FormattableString.Invariant($"spans {Spans}, landings {SpanLandings} ({SpanLandingKm:F0} km), spans inside an exclusion zone {SpanExcluded} ({ExclusionZones} zones), span step {SpanSeconds:F2} s"),
             FormattableString.Invariant($"cut depth along paths (ground minus bed): p50 {CutP50:F1} m, p90 {CutP90:F1} m, max {CutMax:F1} m, share of length over 40 m {CutOver40Share:P2}, over 15 m {CutOver15Share:P2}; level filled up to a hold or the receiving level on {FillShareOfLevel:P1} of stations"),
             FormattableString.Invariant($"largest wander shift {MaxWanderMeters:F0} m, meander amplitude cap used {MaxMeanderMeters:F0} m, largest node shift from the eased chain {MaxNodeShiftMeters:F0} m (smoothing {MaxSmoothMeters:F0} m), snapped nodes {SnappedNodes}, barrier guard moved {GuardMovedNodes} nodes (largest {GuardMaxMeters:F0} m); seconds: centrelines {CentrelineSeconds:F2}, ground sampling {SampleSeconds:F2}, levels {LevelSeconds:F2}"),
@@ -642,12 +647,13 @@ public static class RiverGraphBuilder
                 int m = provisionalUp[next];
                 if (m < 0 || area[c] > area[m] || (area[c] == area[m] && c < m)) provisionalUp[next] = c;
             }
-            // A flooded cell is marked while its flow stays in the lake; the exit cell is marked only when the flow goes on into a stem head (a channel cell with no river upstream of it), the sea, a Weather Lung or the strip end (a lake that spills
-            // into a cell under the channel threshold ends its drowned channel one cell short, like a pit, so the stem stays a Lake stem and is never Dead).
+            // A flooded cell is marked while its flow stays in the lake; the exit cell is marked only when the flow goes on into a channel cell (T2R-22 item 7: any channel cell, also one with a river upstream of it: the drowned channel then runs
+            // through the exit and joins that river as a confluence), the sea, a Weather Lung or the strip end (a lake that spills into a cell under the channel threshold ends its drowned channel one cell short, like a pit, so the stem stays
+            // a Lake stem and is never Dead).
             bool Continues(int cell)
             {
                 int next = down[cell];
-                return (channel[next] && provisionalUp[next] < 0) || kind[next] is DrainageCellKind.Ocean or DrainageCellKind.Lung or DrainageCellKind.StripOutlet or DrainageCellKind.Intake;
+                return channel[next] || kind[next] is DrainageCellKind.Ocean or DrainageCellKind.Lung or DrainageCellKind.StripOutlet or DrainageCellKind.Intake;
             }
             void MarkFrom(int entry)
             {
@@ -768,6 +774,8 @@ public static class RiverGraphBuilder
             if (!channel[next]) continue;
             if (lakeChannel[next] && !lakeChannel[c]) continue; // item 3: a river that enters a lake ends on the in-lake stem
             int m = mainUp[next];
+            // T2R-22 item 7: where a lake's exit cell flows into a river that already runs there, the river is the main course and the drowned channel joins it as a confluence, whatever the areas.
+            if (m >= 0 && lakeChannel[c] != lakeChannel[m]) { if (lakeChannel[m]) mainUp[next] = c; continue; }
             if (m < 0 || area[c] > area[m] || (area[c] == area[m] && c < m)) mainUp[next] = c;
         }
 

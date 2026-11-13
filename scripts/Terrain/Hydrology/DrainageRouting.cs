@@ -24,6 +24,10 @@ public sealed class DrainageRouted
     public required float[] UnperturbedFilled { get; init; }
     /// <summary>One entry per conditioned basin, indexed like <see cref="DrainageConditioned.Lakes"/>.</summary>
     public required DrainageBasinInfo[] Basins { get; init; }
+    /// <summary>T2R-22: the overflows of closed basins (full pools that pass a surplus over their saddle) in resolve order; the closed basins left as they were because of a cycle and the pool cells the walk from the saddle missed (both expected 0).</summary>
+    public DrainageOverflow[] Overflows { get; init; } = Array.Empty<DrainageOverflow>();
+    public int OverflowCycles { get; init; }
+    public int OverflowUnreached { get; init; }
     public int SpillingBasins { get; init; }
     public int MultiRootSpills { get; init; }
     public int DryPans { get; init; }
@@ -157,6 +161,7 @@ public static class DrainageRouting
         {
             Down = down, AreaCells = area, Runoff = runoff, RunoffAccumulation = accumulated, Terminal = terminal, DownHash = hash,
             LakeId = lakeId, Lakes = lakes, UnperturbedFilled = balanceRun.Unperturbed, Basins = balanceRun.Info,
+            Overflows = balanceRun.OverflowList.ToArray(), OverflowCycles = balanceRun.OverflowCycles, OverflowUnreached = balanceRun.OverflowUnreached,
             SpillingBasins = balanceRun.Spilling, MultiRootSpills = balanceRun.MultiRootSpills, DryPans = balanceRun.DryPans, MultiPatchLakes = balanceRun.MultiPatchLakes,
             PitsAboveSpill = balanceRun.PitsAboveSpill, BasinCrossings = basinCrossings,
             TotalRunoff = totalRunoff, OutflowRunoff = outletRunoff, EvaporatedRunoff = evaporated, MassError = massError,

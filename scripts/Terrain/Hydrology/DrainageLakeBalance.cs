@@ -25,9 +25,20 @@ public struct DrainageBasinInfo
     /// <summary>The lowest Level among the basin's lakes, or its lowest cell height when it holds none (a dry pan).</summary>
     public float FloorLevel;
     public int Cells, DryCells, Lakes, DryPans, Roots, PitsAboveSpill, MultiPatchLakes;
+    /// <summary>T2R-22: full pools of this closed basin that pass a surplus over their saddle (overflows).</summary>
+    public int Overflows;
     /// <summary>Inflow (donors plus rain, runoff units), raw evaporation (the water that stays in the basin) and what leaves over the sill.</summary>
     public double Inflow, Evaporation, Outflow;
 }
+
+/// <summary>
+/// T2R-22 (RS1): one overflow of a closed basin, a top-level pool that is full, pinned at its parent's saddle and has passed a surplus (<see cref="Handover"/>, runoff units) on. Its cells link to
+/// <see cref="SaddleCell"/>, the saddle cell links to <see cref="OutCell"/> (the neighbour on the other side that the arithmetic used) and the descent goes on from there. The saddle cell's own descent before the
+/// links is classed: <see cref="Sill"/> (it pointed into the full pool: the cell is the lake's sill and nothing is redirected), <see cref="SamePool"/> (it pointed elsewhere but into the top-level pool that the out cell is in:
+/// the path moves by a cell, no water between pools) or <see cref="OtherPool"/> (it pointed into another pool than the arithmetic filled with the hand-over; <see cref="RedirectRunoff"/> is what the old link carried).
+/// <see cref="SharedSaddle"/>: another overflow of the basin has the same saddle cell.
+/// </summary>
+public readonly record struct DrainageOverflow(int Basin, int SaddleCell, int OutCell, int PoolCells, double Handover, bool HasLake, bool Sill, bool SamePool, bool OtherPool, double RedirectRunoff, bool SharedSaddle, bool BelowThreshold);
 
 /// <summary>Merge tree of one basin's cells below its spill level Z (S8b). Depends only on the heights, so it is built in parallel per basin.</summary>
 internal sealed class BasinTree
@@ -41,6 +52,8 @@ internal sealed class BasinTree
     /// <summary>For a merge node: the lowest-key neighbour of the saddle cell inside child A and child B (a cell index).</summary>
     public int[] NbA = Array.Empty<int>(), NbB = Array.Empty<int>();
     public float[] Saddle = Array.Empty<float>();
+    /// <summary>T2R-22: for a merge node, the cell whose insertion created it (the saddle cell, an own cell of the node); -1 for a leaf.</summary>
+    public int[] SaddleCell = Array.Empty<int>();
     /// <summary>Node each forest cell joined (own cell), and the own cells of each node as local indices in key order (CSR).</summary>
     public int[] OwnNode = Array.Empty<int>(), OwnStart = Array.Empty<int>(), OwnCells = Array.Empty<int>();
 }
@@ -55,6 +68,10 @@ public static class DrainageLakeBalance
     /// <summary>Evaporation per unit of cell area at lambda 1 and zero moisture, in runoff units (S8b, tune at review).</summary>
     public const double E0 = 20d;
     private const double FullTolerance = 1e-12;
+    /// <summary>T2R-22 test hook: false resolves closed basins as before the overflow links (levels, wet cells and the mass balance are the same either way). Default true.</summary>
+    public static bool Overflows = true;
+    /// <summary>T2R-22: contributing area, in km^2, at which the cell after a saddle counts as channel for the report ("overflows below the channel threshold"); the builder's default threshold.</summary>
+    internal const double OverflowChannelThresholdKm2 = 100d;
 
     internal sealed class Run
     {
@@ -73,6 +90,9 @@ public static class DrainageLakeBalance
         public readonly List<int> LakeMinCell = new();
         public long HeldArea;
         public double Evaporation, Outflow;
+        /// <summary>T2R-22: the overflows in resolve order, the closed basins whose links were left as they were (a cycle, never expected) and the pool cells the walk from the saddle did not reach (never expected).</summary>
+        public readonly List<DrainageOverflow> OverflowList = new();
+        public int OverflowCycles, OverflowUnreached;
         public int Spilling, MultiRootSpills, DryPans, MultiPatchLakes, PitsAboveSpill;
         public double PrepareSeconds, ResolveSeconds;
     }
@@ -151,10 +171,10 @@ public static class DrainageLakeBalance
         var setNode = new int[forest];
         var ownNode = new int[forest];
         var childA = new List<int>(); var childB = new List<int>(); var parent = new List<int>();
-        var nbA = new List<int>(); var nbB = new List<int>(); var saddle = new List<float>();
-        int NewNode(int a, int b, float zz, int na, int nbb)
+        var nbA = new List<int>(); var nbB = new List<int>(); var saddle = new List<float>(); var saddleCell = new List<int>();
+        int NewNode(int a, int b, float zz, int na, int nbb, int at = -1)
         {
-            childA.Add(a); childB.Add(b); parent.Add(-1); nbA.Add(na); nbB.Add(nbb); saddle.Add(zz);
+            childA.Add(a); childB.Add(b); parent.Add(-1); nbA.Add(na); nbB.Add(nbb); saddle.Add(zz); saddleCell.Add(at);
             return childA.Count - 1;
         }
         int Find(int x)
@@ -197,7 +217,7 @@ public static class DrainageLakeBalance
             int current = tmp[0].Node, firstRoot = tmp[0].Root, groupMin = tmp[0].MinNb;
             for (int t = 1; t < tmp.Count; t++)
             {
-                int merged = NewNode(current, tmp[t].Node, h[cell], cells[groupMin], cells[tmp[t].MinNb]);
+                int merged = NewNode(current, tmp[t].Node, h[cell], cells[groupMin], cells[tmp[t].MinNb], cell);
                 parent[current] = merged; parent[tmp[t].Node] = merged;
                 groupMin = Math.Min(groupMin, tmp[t].MinNb);
                 uf[tmp[t].Root] = firstRoot;
@@ -217,7 +237,7 @@ public static class DrainageLakeBalance
         return new BasinTree
         {
             Cells = cells, Forest = forest, Nodes = nodes, ChildA = childA.ToArray(), ChildB = childB.ToArray(), Parent = parent.ToArray(), NbA = nbA.ToArray(), NbB = nbB.ToArray(),
-            Saddle = saddle.ToArray(), OwnNode = ownNode, OwnStart = ownStart, OwnCells = ownCells,
+            Saddle = saddle.ToArray(), SaddleCell = saddleCell.ToArray(), OwnNode = ownNode, OwnStart = ownStart, OwnCells = ownCells,
         };
     }
 
@@ -288,6 +308,7 @@ public static class DrainageLakeBalance
         // Fill and spill, one pass in creation order.
         var pool = new bool[nodes];
         var pinned = new bool[nodes];
+        var handover = new double[nodes]; // T2R-22: the surplus a pool has passed over its parent's saddle (grows at each pin, cleared with the pins); read only by the overflow block
         bool Full(int x) => pool[x] && inflow[x] >= cap[x] * (1d - FullTolerance);
         int LeafOf(int cell) => t.OwnNode[pitOf[local[cell]]];
         int PoolOf(int leaf, int current)
@@ -310,12 +331,12 @@ public static class DrainageLakeBalance
                 int sibling = t.ChildA[q] == p ? t.ChildB[q] : t.ChildA[q];
                 if (Full(sibling))
                 {
-                    pool[q] = true; inflow[q] = inflow[p] + inflow[sibling]; pinned[p] = pinned[sibling] = false;
+                    pool[q] = true; inflow[q] = inflow[p] + inflow[sibling]; pinned[p] = pinned[sibling] = false; handover[p] = handover[sibling] = 0d;
                     p = q; amount = 0;
                     continue;
                 }
                 double surplus = Math.Max(0d, inflow[p] - cap[p]);
-                inflow[p] = cap[p]; pinned[p] = true;
+                inflow[p] = cap[p]; pinned[p] = true; handover[p] += surplus;
                 if (surplus <= 0) return;
                 int nbCell = t.ChildA[q] == p ? t.NbB[q] : t.NbA[q];
                 p = PoolOf(LeafOf(nbCell), current);
@@ -331,9 +352,9 @@ public static class DrainageLakeBalance
             if (!fullA && !fullB) continue;
             int x = fullA ? a : b, y = fullA ? b : a;
             double surplus = Math.Max(0d, inflow[x] - cap[x]);
-            inflow[x] = cap[x]; pinned[x] = true;
+            inflow[x] = cap[x]; pinned[x] = true; handover[x] += surplus;
             if (surplus > 0) Add(PoolOf(LeafOf(fullA ? t.NbB[node] : t.NbA[node]), node), surplus, node);
-            if (Full(y)) { pool[node] = true; inflow[node] = inflow[a] + inflow[b]; pinned[a] = pinned[b] = false; }
+            if (Full(y)) { pool[node] = true; inflow[node] = inflow[a] + inflow[b]; pinned[a] = pinned[b] = false; handover[a] = handover[b] = 0d; }
         }
         int roots = 0;
         bool spills = false;
@@ -398,6 +419,7 @@ public static class DrainageLakeBalance
         int wetTotal = 0, lakes = 0, pans = 0, multiPatch = 0;
         float floorLevel = float.PositiveInfinity;
         var stack = new Stack<int>();
+        var hasLake = new bool[nodes]; // T2R-22: which top-level pools hold a lake (read only by the overflow block)
         for (int node = 0; node < nodes; node++)
         {
             if (!pool[node] || (t.Parent[node] >= 0 && pool[t.Parent[node]])) continue;
@@ -449,10 +471,12 @@ public static class DrainageLakeBalance
             if (wet == 0) { pans++; continue; }
             run.Lakes.Add(new DrainageLake(temp, cells[deepest], level, h[cells[deepest]], wet, wet, (float)raw, k, true, water, evap));
             run.LakeMinCell.Add(minCell);
+            hasLake[node] = true;
             wetTotal += wet; lakes++;
             floorLevel = Math.Min(floorLevel, level);
             if (t.ChildA[node] >= 0 && level <= t.Saddle[node]) multiPatch++;
         }
+        if (Overflows) ApplyOverflows(run, k, t, pool, pinned, handover, hasLake, acc, ar, accDown, pitOf, ref info, down);
         info.Closed = true; info.Lakes = lakes; info.DryPans = pans; info.DryCells = n - wetTotal; info.MultiPatchLakes = multiPatch;
         info.FloorLevel = lakes > 0 ? floorLevel : h[cells[0]];
         info.Evaporation = evaporationRaw; info.Outflow = 0;
@@ -461,6 +485,127 @@ public static class DrainageLakeBalance
         run.DryPans += pans; run.MultiPatchLakes += multiPatch;
         run.Info[k] = info;
         run.ResolveSeconds += (double)(Stopwatch.GetTimestamp() - begin) / Stopwatch.Frequency;
+    }
+
+    // ------------------------------------------------------------------ T2R-22: overflows (RS1)
+
+    /// <summary>
+    /// T2R-22 (RS1): gives every overflow of a closed basin its path and re-accumulates the basin along the final links. The fill arithmetic, the levels, the wet cells and the verdicts are not touched; this runs after them.
+    /// An overflow is a top-level pool that is full, pinned at its parent's saddle and has passed a surplus on. Its cells link to the saddle cell (breadth-first from it over the pool's subtree, 8-neighbours in index
+    /// order, first in first out), the saddle cell links to the neighbour on the other side that the arithmetic used, and from there the descent is unchanged. The links of a pool without a lake are the same: the
+    /// river runs through it. Area and R are then accumulated once in topological order. R is accumulated plainly except at the step from a pool into its saddle, where the pool passes its hand-over in total
+    /// (its evaporation stays in the lake). A saddle cell whose old link pointed into a full pool that has it as saddle is that pool's sill: everything that flows through it was already counted into the pool, so it passes the hand-over and nothing else.
+    /// An overflow whose out cell lies in the pool of another overflow with the same saddle cell does not add its hand-over: the other one's already contains it.
+    /// </summary>
+    private static void ApplyOverflows(Run run, int k, BasinTree t, bool[] pool, bool[] pinned, double[] handover, bool[] hasLake, double[] acc, int[] ar, double[] accDown, int[] pitOf, ref DrainageBasinInfo info, int[] down)
+    {
+        int nodes = t.Nodes;
+        List<int>? found = null;
+        for (int node = 0; node < nodes; node++)
+            if (pool[node] && pinned[node] && handover[node] > 0d && t.Parent[node] >= 0 && !pool[t.Parent[node]]) (found ??= new List<int>()).Add(node);
+        if (found == null) return;
+        found.Sort((a, b) => t.Parent[b] != t.Parent[a] ? t.Parent[b].CompareTo(t.Parent[a]) : a.CompareTo(b)); // the higher saddle first (RS1 "Order")
+        DrainageDomain d = run.Domain;
+        int[] cells = t.Cells, local = run.Local, basinDown = run.BasinDown, basinOf = run.Conditioned.LakeId;
+        int n = cells.Length;
+        var next = new int[n];
+        for (int i = 0; i < n; i++) { int nd = basinDown[cells[i]]; next[i] = nd < 0 ? -1 : local[nd]; }
+        var owner = new int[n];      // 1 + index in found of the overflow whose pool holds the cell
+        var reached = new int[n];    // 1 + index in found of the overflow whose walk reached the cell
+        var saddleHand = new double[n];
+        var dropOwn = new bool[n];   // the saddle cell's old link pointed into a pool that has it as saddle: the cell passes the hand-over only
+        var saddleUses = new int[n];
+        var saddleOf = new int[found.Count];
+        var poolSize = new int[found.Count];
+        var queue = new int[n];
+        var stack = new Stack<int>();
+        var records = new List<DrainageOverflow>(found.Count);
+        int unreached = 0;
+        Span<int> nb = stackalloc int[8];
+        // Every overflow's pool and saddle first, so that overflows sharing a saddle cell see each other.
+        for (int f = 0; f < found.Count; f++)
+        {
+            int a = found[f], mark = f + 1;
+            saddleOf[f] = local[t.SaddleCell[t.Parent[a]]];
+            saddleUses[saddleOf[f]]++;
+            stack.Clear(); stack.Push(a);
+            while (stack.Count > 0)
+            {
+                int node = stack.Pop();
+                for (int p = t.OwnStart[node]; p < t.OwnStart[node + 1]; p++) { owner[t.OwnCells[p]] = mark; poolSize[f]++; }
+                if (t.ChildA[node] >= 0) { stack.Push(t.ChildA[node]); stack.Push(t.ChildB[node]); }
+            }
+        }
+        // The top-level pool of a cell: the pool of the pit its descent reaches, climbed while the parent is a pool (-1 above the forest).
+        int TopPool(int cell)
+        {
+            int pit = pitOf[local[cell]];
+            if (pit >= t.Forest) return -1;
+            int node = t.OwnNode[pit];
+            while (t.Parent[node] >= 0 && pool[t.Parent[node]]) node = t.Parent[node];
+            return node;
+        }
+        for (int f = 0; f < found.Count; f++)
+        {
+            int a = found[f], q = t.Parent[a], mark = f + 1;
+            int saddleCell = t.SaddleCell[q], outCell = t.ChildA[q] == a ? t.NbB[q] : t.NbA[q];
+            int ls = saddleOf[f], lx = local[outCell];
+            int head = 0, tail = 0, count = 0;
+            queue[tail++] = ls;
+            while (head < tail)
+            {
+                int u = queue[head++];
+                d.GetNeighbors(cells[u], nb);
+                for (int dir = 0; dir < 8; dir++)
+                {
+                    int m = nb[dir];
+                    if (m < 0 || basinOf[m] != k) continue;
+                    int lm = local[m];
+                    if (owner[lm] != mark || reached[lm] == mark) continue;
+                    reached[lm] = mark; next[lm] = u; queue[tail++] = lm; count++;
+                }
+            }
+            unreached += poolSize[f] - count;
+            int oldCell = basinDown[saddleCell];
+            int old = oldCell < 0 ? -1 : local[oldCell];
+            bool sill = old >= 0 && owner[old] != 0 && saddleOf[owner[old] - 1] == ls; // into a full pool that has this cell as its saddle
+            bool samePool = !sill && oldCell != outCell && oldCell >= 0 && TopPool(oldCell) == TopPool(outCell);
+            bool otherPool = !sill && oldCell != outCell && !samePool;
+            // An overflow that hands over into the pool of another overflow with the same saddle cell is part of that one's hand-over.
+            bool intoSibling = owner[lx] != 0 && owner[lx] != mark && saddleOf[owner[lx] - 1] == ls;
+            next[ls] = lx;
+            if (!intoSibling) saddleHand[ls] += handover[a];
+            if (sill) dropOwn[ls] = true;
+            records.Add(new DrainageOverflow(k, saddleCell, outCell, poolSize[f], handover[a], hasLake[a], sill, samePool, otherPool, otherPool ? accDown[ls] : 0d, saddleUses[ls] > 1, false));
+        }
+
+        // One accumulation along the final links, in topological order.
+        var indegree = new int[n];
+        for (int i = 0; i < n; i++) if (next[i] >= 0) indegree[next[i]]++;
+        var r = new double[n];
+        var area = new int[n];
+        for (int i = 0; i < n; i++) { r[i] = dropOwn[i] ? saddleHand[i] : acc[i] + saddleHand[i]; area[i] = ar[i]; }
+        int head2 = 0, tail2 = 0;
+        for (int i = 0; i < n; i++) if (indegree[i] == 0) queue[tail2++] = i;
+        while (head2 < tail2)
+        {
+            int u = queue[head2++], v = next[u];
+            if (v < 0) continue;
+            if (!dropOwn[v] && !(owner[u] != 0 && v == saddleOf[owner[u] - 1])) r[v] += r[u];
+            area[v] += area[u];
+            if (--indegree[v] == 0) queue[tail2++] = v;
+        }
+        if (tail2 != n) { run.OverflowCycles++; return; }
+        for (int i = 0; i < n; i++)
+        {
+            down[cells[i]] = next[i] < 0 ? -1 : cells[next[i]];
+            run.Accumulated[cells[i]] = r[i];
+            run.Area[cells[i]] = area[i];
+        }
+        int minCells = (int)Math.Ceiling(OverflowChannelThresholdKm2 / d.CellAreaKm2);
+        foreach (DrainageOverflow o in records) run.OverflowList.Add(o with { BelowThreshold = area[local[o.OutCell]] < minCells });
+        run.OverflowUnreached += unreached;
+        info.Overflows = records.Count;
     }
 
     /// <summary>Final lakes: ids by lowest cell as in S5, the per-cell lake id and the lake array.</summary>
