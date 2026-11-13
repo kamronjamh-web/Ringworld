@@ -23,6 +23,7 @@ public partial class RingLiveTuningDrawer
     private void BuildDiagnosticsTab(TabContainer tabs)
     {
         VBoxContainer tab = CreateTab(tabs, "Diagnostics"); bool available = _performanceMonitor != null;
+        tab.VisibilityChanged += () => { if (_open && tab.IsVisibleInTree()) { _diagnosticsRefreshElapsed = 0; RefreshDiagnostics(); } };
         VBoxContainer monitor = TuningMenuUi.CreateSection(tab, "Performance monitoring", "Recording remains per-frame. Live scope rows cover recent samples and refresh at most twice per second; exports retain full history.");
         _diagnosticsMonitoringToggle = Toggle(monitor, "DiagnosticsMonitoringToggle", "Enable performance monitoring", _performanceMonitor?.Enabled ?? false, v => { if (_performanceMonitor != null) { _performanceMonitor.Enabled = v; _performanceMonitor.MarkSettingsDirty(); } }, available);
         _diagnosticsGpuToggle = Toggle(monitor, "DiagnosticsGpuToggle", "Detailed GPU intervals", _performanceMonitor?.DetailedGpuEnabled ?? false, v => { if (_performanceMonitor != null) { _performanceMonitor.DetailedGpuEnabled = v; _performanceMonitor.MarkSettingsDirty(); } }, available);
@@ -100,7 +101,7 @@ public partial class RingLiveTuningDrawer
         _diagnosticsStatus.Text = $"{(strike ? "Field strike" : "Containment ripple")}: {(result?.ToString() ?? "no camera or bus")}. Live ripples {bus?.LiveCount ?? 0}, far strikes {bus?.FarStrikes.Count ?? 0}.";
     }
 
-    private void ProcessDiagnosticsTuning(double delta) { if (!_open || _diagnosticsSummary == null) return; if (_diagnosticsFarCaptureButton != null) _diagnosticsFarCaptureButton.Disabled = _performanceMonitor == null || _performanceMonitor.FarRingCaptureBusy || _diagnosticsFarCaptureExporting; _diagnosticsRefreshElapsed += delta; if (_diagnosticsRefreshElapsed < Math.Clamp(_performanceMonitor?.RefreshSeconds ?? .2f, .1f, 1f)) return; _diagnosticsRefreshElapsed = 0; RefreshDiagnostics(); }
+    private void ProcessDiagnosticsTuning(double delta) { if (!_open || _diagnosticsSummary == null || !_diagnosticsSummary.IsVisibleInTree()) return; if (_diagnosticsFarCaptureButton != null) _diagnosticsFarCaptureButton.Disabled = _performanceMonitor == null || _performanceMonitor.FarRingCaptureBusy || _diagnosticsFarCaptureExporting; _diagnosticsRefreshElapsed += delta; if (_diagnosticsRefreshElapsed < Math.Clamp(_performanceMonitor?.RefreshSeconds ?? .2f, .1f, 1f)) return; _diagnosticsRefreshElapsed = 0; RefreshDiagnostics(); }
     private async void CaptureFarRingViewportsFromDrawer()
     {
         if (_performanceMonitor == null || _diagnosticsFarCaptureExporting || _performanceMonitor.FarRingCaptureBusy) return;
