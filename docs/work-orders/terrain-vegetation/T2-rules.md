@@ -575,3 +575,24 @@ After the T2R-19 table (all ~705-755 dammed lakes per ring go at any keep-out; ~
 - A river whose path intersects a site is removed, **whole river branch** from its source down. Rivers flowing into that branch upstream stay unless they also hit the site.
 - A lake that intersects a site is removed together with its incoming and outgoing rivers.
 - **No intake structures**: T2R-24 is dropped. T2R-23 is to be rewritten by the lead for the removal rule (what happens to the removed water in the balance, how valleys look without the river, how the T2R-19 option code is reused or retired, and the R10/R11 guard checks with the smaller keep-out).
+
+## Water look and instance-slot follow-ups (lead investigation 2026-11-13; run after T2R-12d)
+
+Evidence: `.godot/captures/landscape/t2r/cream_and_instances/`. Root causes:
+- **Cream rivers.** Inland water uses the clear-ocean extinction, so a 2.5 m river passes 97-100 % of the bed. The wet bed is full-Desert sand. Near the camera the bed only looks dark because the water mesh casts an opaque sun shadow on it, which ends at the 400 m near sun map: teal below ~400 m, cream above.
+- **Instance-uniform overflow.** Fixed for now in 3344f78 (buffer 131072 -> 524288).
+
+User decisions 2026-11-13:
+1. **Inland clarity:** separate per-metre extinction for rivers and lakes in `ring_ocean_proxy.gdshader` (selected by `inland_weight`; ocean weight 0). Starting visibility about 2 m for rivers and 6 m for lakes, tuned on pictures. Two Water-tab rows (through `RingWaterModel.ApplyMaterial`, `RingGraphicsQualityController`, `GameplayWaterDefaults`). Changes legacy worlds' inland water too; accepted.
+2. **No self-shadow from water, ocean included:** water shadow casters (`ConfigureOpaqueShadowCaster`, `ConfigureOceanShadowCaster`) stop shadowing their own bed, for lakes, rivers and the ocean. Generation-1 coast pictures change; accepted.
+3. **River and Lake colours become the body colour** of near water (today 20 % of the tint).
+- Test: `inland_water_render_gpu_test` checks that the river centre patch matches within tolerance at 300 m and 500 m above (fails today).
+- Out of scope: the 16 m sand blocks under water (deferred by the user to the biomes work).
+
+Instance-slot follow-up (structural):
+- In `RingTerrainProxySector.cs` / `.VertexTable.cs`, free the water child, the water caster and the opaque caster when a sector has no water, stops casting or is recycled.
+- Cap the node pool per level (start at 32).
+- Show instance blocks used / capacity in diagnostics.
+- `tools/testing/TestRunner.psm1` fails a test whose log has "Too many instances using shader instance variables".
+
+Also noted: the 2 m and 4 m proxy levels overlap (dithered in the levels debug view); not investigated.
