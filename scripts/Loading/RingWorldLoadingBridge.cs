@@ -748,8 +748,8 @@ public partial class RingWorldLoadingBridge : Node
         _hydrologyTask = Task.Run(async () =>
         {
             RiverGraph graph = await RiverGraphStore.GetOrBuildAsync(inputs, token, progress);
-            // The operator measures every stem's reach on first use (about 5 s); done here, on the worker behind the loading screen, the main thread never stalls on it.
-            if (graph.Network.Stems.Length > 0) graph.Network.StemLateralReach(0, 0d);
+            // The operator's shared tables and every stem's reach are built on first use (about 5 s); done here, on the worker behind the loading screen, the main thread never stalls on it.
+            RiverCarveOperator.Prepare(graph);
             RingLoadTimeline.Mark("river_graph_ready");
             return graph;
         }, CancellationToken.None);

@@ -76,28 +76,23 @@ public sealed class RiverCarveOperator
         _net = graph.Network;
         _index = graph.Index;
         _halfCircumference = 0.5 * _net.CircumferenceM;
-        _outletLake = new int[_net.Stems.Length]; _endLake = new int[_net.Stems.Length];
-        _heldEnd = new double[_net.Stems.Length];
-        for (int i = 0; i < _net.Stems.Length; i++)
-        {
-            RiverStem st = _net.Stems[i];
-            int up = _net.Reaches[st.ReachStart].UpstreamLake;
-            _outletLake[i] = up >= 0 && st.Terminal != RiverTerminal.Dead ? up : -1;
-            _endLake[i] = st.Terminal == RiverTerminal.Lake ? st.TerminalId : -1;
-            _heldEnd[i] = _outletLake[i] >= 0 && graph.Lakes[_outletLake[i]].OutletStem == i ? graph.Lakes[_outletLake[i]].OutletS : _net.Curves[i].Length;
-        }
-        // T2R-8b item 7: a confluence stem that joins the held part of an in-lake stem (the outlet up to its outlet point, any other in-lake stem to its end) ends in that lake's water too.
-        for (int i = 0; i < _net.Stems.Length; i++)
-        {
-            RiverStem st = _net.Stems[i];
-            if (st.Terminal != RiverTerminal.Confluence) continue;
-            int recv = st.TerminalId, lake = _outletLake[recv];
-            if (lake >= 0 && st.JunctionS <= (graph.Lakes[lake].OutletStem == recv ? graph.Lakes[lake].OutletS : _net.Curves[recv].Length) + 1e-6) _endLake[i] = lake;
-        }
-        if (_net.Stems.Length > 0) _net.StemLateralReach(0, FadeEndMeters); // measure the stems' reach now, not on the first sample
+        // The per-stem tables and the stems' reach depend only on the graph: built once per graph and shared by every operator (a sampler copy builds one per tile request).
+        RiverCarveTables tables = graph.CarveTables;
+        Tables = tables;
+        _outletLake = tables.OutletLake; _endLake = tables.EndLake; _heldEnd = tables.HeldEnd;
+    }
+
+    /// <summary>Builds the graph's shared tables and measures every stem's reach now (about 5 s), so the first operator or sampler copy on the main thread is cheap. Safe to call from any thread, more than once.</summary>
+    public static void Prepare(RiverGraph graph)
+    {
+        if (graph == null) throw new ArgumentNullException(nameof(graph));
+        _ = graph.CarveTables;
     }
 
     public RiverGraph Graph => _graph;
+
+    /// <summary>The graph's shared per-stem tables (the same instance for every operator on the graph).</summary>
+    internal RiverCarveTables Tables { get; }
 
     // ------------------------------------------------------------------ geometry of one piece
 
@@ -594,5 +589,38 @@ public sealed class RiverCarveOperator
         Collect(col, row, around, across, footprintMeters, hits, out double weight);
         if (LakeOperator && _graph.Lakes.Length > 0) weight = Math.Max(weight, LakeWeight(LakeMembership(around, across, out _, out _)));
         return weight;
+    }
+}
+
+/// <summary>The immutable per-stem tables of <see cref="RiverCarveOperator"/> (lake of each stem, held end), derived from the graph alone; shared by every operator built on it (<see cref="RiverGraph.CarveTables"/>).</summary>
+internal sealed class RiverCarveTables
+{
+    /// <summary>Id of the lake each stem leaves (outlet) and of the lake it ends in, -1 for none.</summary>
+    public readonly int[] OutletLake, EndLake;
+    /// <summary>Arc length up to which a stem is in the water of its outlet lake.</summary>
+    public readonly double[] HeldEnd;
+
+    public RiverCarveTables(RiverGraph graph)
+    {
+        RiverNetwork net = graph.Network;
+        OutletLake = new int[net.Stems.Length]; EndLake = new int[net.Stems.Length];
+        HeldEnd = new double[net.Stems.Length];
+        for (int i = 0; i < net.Stems.Length; i++)
+        {
+            RiverStem st = net.Stems[i];
+            int up = net.Reaches[st.ReachStart].UpstreamLake;
+            OutletLake[i] = up >= 0 && st.Terminal != RiverTerminal.Dead ? up : -1;
+            EndLake[i] = st.Terminal == RiverTerminal.Lake ? st.TerminalId : -1;
+            HeldEnd[i] = OutletLake[i] >= 0 && graph.Lakes[OutletLake[i]].OutletStem == i ? graph.Lakes[OutletLake[i]].OutletS : net.Curves[i].Length;
+        }
+        // T2R-8b item 7: a confluence stem that joins the held part of an in-lake stem (the outlet up to its outlet point, any other in-lake stem to its end) ends in that lake's water too.
+        for (int i = 0; i < net.Stems.Length; i++)
+        {
+            RiverStem st = net.Stems[i];
+            if (st.Terminal != RiverTerminal.Confluence) continue;
+            int recv = st.TerminalId, lake = OutletLake[recv];
+            if (lake >= 0 && st.JunctionS <= (graph.Lakes[lake].OutletStem == recv ? graph.Lakes[lake].OutletS : net.Curves[recv].Length) + 1e-6) EndLake[i] = lake;
+        }
+        if (net.Stems.Length > 0) net.StemLateralReach(0, RiverCarveOperator.FadeEndMeters); // measure the stems' reach now, not on the first sample
     }
 }

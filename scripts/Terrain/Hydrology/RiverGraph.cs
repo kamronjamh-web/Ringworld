@@ -37,6 +37,16 @@ public sealed class RiverGraph
     public byte Source { get; }
     public ulong IdentityHash { get; }
 
+    private RiverCarveTables? _carveTables;
+    private readonly object _carveTablesLock = new();
+    /// <summary>The river operator's per-stem tables, built once on first use (thread-safe) and shared by every operator on this graph.</summary>
+    internal RiverCarveTables CarveTables => _carveTables ?? BuildCarveTables();
+
+    private RiverCarveTables BuildCarveTables()
+    {
+        lock (_carveTablesLock) return _carveTables ??= new RiverCarveTables(this);
+    }
+
     internal RiverGraph(RiverNetwork network, RiverLake[] lakes, RiverInlet[] inlets, LakeRun[] runs, RiverBasin[] basins, LakeRun[] dryRuns, int ringColumns, int rows, ulong inputIdentity, byte source, ulong? knownHash)
     {
         if (ringColumns > ushort.MaxValue || rows > ushort.MaxValue) throw new ArgumentOutOfRangeException(nameof(ringColumns), "grid does not fit the run record");

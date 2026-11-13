@@ -105,6 +105,7 @@ public partial class RiverCarveInvariantsTest : RefCounted
             Footprints();
             FarPoints();
             Cost();
+            SharedTables();
             Pictures();
         }
         catch (Exception e) { Console.Error.WriteLine("RIVER_CARVE_INVARIANTS=FAIL exception " + e); return 1; }
@@ -1173,6 +1174,40 @@ public partial class RiverCarveInvariantsTest : RefCounted
             if (noGraph.CalculateHeight(around, across) != plain.CalculateHeight(around, across)) differ++;
         }
         Check(differ == 0, $"a model without a graph differs from the generation 1 model on {differ} of 200 points");
+    }
+
+    // ------------------------------------------------------------------ shared tables
+
+    /// <summary>Operators on one graph share the per-stem tables (the sampler copy path builds one per copy), and a copy carves exactly like a fresh operator. Prints the construction cost (median of 50).</summary>
+    private void SharedTables()
+    {
+        var a = new RiverCarveOperator(_graph);
+        var b = new RiverCarveOperator(_graph);
+        Check(ReferenceEquals(a.Tables, b.Tables) && ReferenceEquals(a.Tables, _graph.CarveTables), "operators on one graph do not share the carve tables");
+        Check(ReferenceEquals(a.Tables.OutletLake, b.Tables.OutletLake) && ReferenceEquals(a.Tables.EndLake, b.Tables.EndLake) && ReferenceEquals(a.Tables.HeldEnd, b.Tables.HeldEnd), "carve table arrays are not shared");
+        int mismatch = 0, points = 0;
+        for (int i = 0; i < _sections.Count && points < 4000; i++)
+        {
+            Section sec = _sections[i];
+            for (int k = 0; k < 4; k++, points++)
+            {
+                double x = (RiverHash.Unit(Seed, i, k, 31) * 2 - 1) * 200d, around = sec.Around + x * sec.Nx, across = sec.Across + x * sec.Ny, ground = 10d + 5d * RiverHash.Unit(Seed, i, k, 32);
+                RiverOperatorResult ra = a.Evaluate(around, across, ground, 0d), rb = new RiverCarveOperator(_graph).Evaluate(around, across, ground, 0d);
+                if (!ra.Equals(rb)) mismatch++;
+            }
+        }
+        Check(points >= 1000, $"shared tables check used only {points} points");
+        Check(mismatch == 0, $"a copied operator differs from a fresh one at {mismatch} of {points} points");
+        double Median(Action work)
+        {
+            var times = new double[50];
+            work();
+            for (int i = 0; i < times.Length; i++) { var clock = System.Diagnostics.Stopwatch.StartNew(); work(); times[i] = clock.Elapsed.TotalMilliseconds; }
+            Array.Sort(times);
+            return 0.5 * (times[24] + times[25]);
+        }
+        double opMs = Median(() => _ = new RiverCarveOperator(_graph)), modelMs = Median(() => { using var m = NewModel(); });
+        Detail($"shared tables: {points} points equal; operator construction median {opMs:F4} ms, height model construction median {modelMs:F4} ms (50 each)");
     }
 
     // ------------------------------------------------------------------ cost
