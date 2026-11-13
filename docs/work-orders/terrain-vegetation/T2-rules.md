@@ -678,3 +678,11 @@ Instance-slot follow-up (structural):
 - `tools/testing/TestRunner.psm1` fails a test whose log has "Too many instances using shader instance variables".
 
 Also noted: the 2 m and 4 m proxy levels overlap (dithered in the levels debug view); not investigated.
+
+## User answers 2026-11-13 to T2R-23 RQ1-RQ3
+
+- **RQ1 keep-out:** 300 m.
+- **RQ2 tributaries:** rule **C**. Everything that drains into a site is removed, tributaries included. Lakes that were connected to removed rivers (and do not touch a site themselves) stay as plain lakes, "lakes that have not formed a river yet": no inlet or outlet river.
+- **RQ3:** natural ground where water was removed; no dry riverbed.
+- RQ4 and RQ5 stand as written (lakes beside a keep-out without spilling stay; all site kinds for now).
+Part A can still measure both readings for the record, but Part B implements C.
