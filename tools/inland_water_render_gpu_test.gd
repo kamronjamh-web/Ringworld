@@ -281,6 +281,13 @@ func _check_replacement(game: Node, key: String, p: Dictionary) -> void:
 	print("%s %s: finer level %d m, replacement distance %.1f m" % [MARKER, tag, finer_spacing, distance])
 	var materials := _water_materials(game)
 	var all_spacings: Array = levels.keys()
+	# T2R-18 releases fine LOD levels at altitude by projected error (AltitudeErrorFactor); the 'beyond' pose is ~3 km up, where the 16 m level is released on purpose.
+	# This check is about the T2R-12d handoff, so the error rule is switched off (0.01, as rivers_perf_probe does) for its poses and restored afterwards.
+	var coordinator := game.get_node_or_null("TerrainLodCoordinator")
+	var saved_factor := 0.0
+	if coordinator != null:
+		saved_factor = float(coordinator.get("CurrentAltitudeErrorFactor"))
+		coordinator.set("CurrentAltitudeErrorFactor", 0.01)
 	# Near: 30 m above the water point; far: just beyond the replacement distance.
 	for case in [["inside", 30.0], ["beyond", distance + 40.0]]:
 		var info: Dictionary = await HARNESS.go_pose(self, game, _pose_for(key, p, float(case[1]), -90.0), "noon")
@@ -325,6 +332,8 @@ func _check_replacement(game: Node, key: String, p: Dictionary) -> void:
 			failures.append("%s inside: the 16 m level still draws %d water pixels inside the %d m level's replacement distance" % [tag, only16_patch, finer_spacing])
 		if case[0] == "beyond" and float(only16_patch) < 0.5 * float(off_patch):
 			failures.append("%s beyond: the 16 m level draws only %d of %d water pixels beyond the replacement distance" % [tag, only16_patch, off_patch])
+	if coordinator != null:
+		coordinator.set("CurrentAltitudeErrorFactor", saved_factor)
 	_set_levels_visible(levels, all_spacings)
 
 
