@@ -68,6 +68,18 @@ public partial class DrainageBakeReportTool
     }
 
     /// <summary>p10/p50/p90 of the values, each weighted by its length.</summary>
+    private static string Quantiles(List<(double V, double W)> values, string format, params double[] q)
+    {
+        if (values.Count == 0) return "-";
+        values.Sort((a, b) => a.V.CompareTo(b.V));
+        double total = values.Sum(x => x.W), run = 0;
+        var result = new double[q.Length];
+        int k = 0;
+        foreach ((double v, double w) in values) { run += w; while (k < q.Length && run >= q[k] * total) result[k++] = v; }
+        while (k < q.Length) result[k++] = values[^1].V;
+        return string.Join("/", result.Select(x => x.ToString(format, CultureInfo.InvariantCulture)));
+    }
+
     private static string ThreeWeighted(List<(double V, double W)> values, string format = "G4")
     {
         if (values.Count == 0) return "-";
@@ -484,13 +496,10 @@ public partial class DrainageBakeReportTool
             foreach ((double _, string text) in lines.OrderByDescending(l => l.Inflow).Take(10)) sb.AppendLine(text);
         }
 
-        // ------------------------------------------------------------------ heads and the D6 minimum
+        // ------------------------------------------------------------------ heads and the smallest sections (T2R-20: no D6 minimum)
         {
-            RiverDangerConstants constants = RiverDangerConstants.Default;
-            RiverDangerConstants free = constants with { MinDepth = 0.001, MinWidth = 0.001 };
-            double minWidth = constants.MinWidth + 1e-3, minDepth = constants.MinDepth + 1e-3;
-            int sources = 0, outlets = 0, inLake = 0, sourcesAtWidth = 0, sourcesAtDepth = 0;
-            var headQ = new List<double>(); var headFreeWidth = new List<double>(); var headFreeDepth = new List<double>();
+            int sources = 0, outlets = 0, inLake = 0;
+            var headQ = new List<double>(); var headWidth = new List<double>(); var headDepth = new List<double>();
             for (int i = 0; i < stemCount; i++)
             {
                 RiverStem st = net.Stems[i];
@@ -498,15 +507,7 @@ public partial class DrainageBakeReportTool
                 if (net.Reaches[st.ReachStart].UpstreamLake >= 0) { outlets++; continue; }
                 sources++;
                 int span = table.ReachFirst[st.ReachStart];
-                if (2d * table.HalfWidth[span] <= minWidth) sourcesAtWidth++;
-                if (table.Depth[span] <= minDepth) sourcesAtDepth++;
-                RiverSpan sp = table.Spans[span];
-                headQ.Add(sp.Q);
-                if (sp.Q > 1e-6)
-                {
-                    RiverDangerChannel ch = RiverDanger.Channel(free, sp.Q, Math.Max(sp.Sh, 1e-4f), net.ChannelDepth, net.Ferocity, sp.Landing);
-                    headFreeWidth.Add(ch.Width); headFreeDepth.Add(ch.Depth);
-                }
+                headQ.Add(table.Spans[span].Q); headWidth.Add(2d * table.HalfWidth[span]); headDepth.Add(table.Depth[span]);
             }
             if (hasNear)
             {
@@ -525,29 +526,26 @@ public partial class DrainageBakeReportTool
                 foreach (var h in nearHeads.OrderByDescending(h => h.Width).ThenBy(h => h.Stem).Take(5).Concat(nearHeads.OrderBy(h => { double da = net.WrapDelta(h.AroundKm * 1000d - nearAround), dc = h.AcrossKm * 1000d - nearAcross; return da * da + dc * dc; }).Take(5)))
                     sb.AppendLine(FormattableString.Invariant($"  stem {h.Stem} head (around {h.AroundKm:F3} km, across {h.AcrossKm:F3} km) w {h.Width:F1} m d {h.Depth:F1} m Q {h.Q:F1} m3/s, length {net.Curves[h.Stem].Length / 1000d:F1} km"));
             }
-            sb.AppendLine(FormattableString.Invariant($"heads: {sources} stems start at the channel threshold (a source), {outlets} at a lake outlet, {inLake} inside a lake (drowned channels and outlet leads); sources at the minimum width {sourcesAtWidth} ({(double)sourcesAtWidth / Math.Max(1, sources):P1}), at the minimum depth {sourcesAtDepth} ({(double)sourcesAtDepth / Math.Max(1, sources):P1}); Q at the source p10/p50/p90 {Three(headQ, "F1")} m3/s; without the D6 floors the source would be {Three(headFreeWidth, "F1")} m wide and {Three(headFreeDepth, "F2")} m deep (p10/p50/p90)"));
-            double total = 0, atWidth = 0, atDepth = 0, atBoth = 0, atEither = 0;
-            var freeWidth = new List<(double, double)>(); var freeDepth = new List<(double, double)>(); var qAtWidth = new List<(double, double)>(); var qAtDepth = new List<(double, double)>();
-            var freeDepthAtWidth = new List<(double, double)>();
+            sb.AppendLine(FormattableString.Invariant($"heads: {sources} stems start at the channel threshold (a source), {outlets} at a lake outlet, {inLake} inside a lake (drowned channels and outlet leads); at the source Q p10/p50/p90 {Three(headQ, "F1")} m3/s, width {Three(headWidth, "F1")} m, depth {Three(headDepth, "F2")} m"));
+            double total = 0, under055 = 0, under115 = 0, under8 = 0, under3 = 0, oldFloor = 0, underDepth12 = 0;
+            var widths = new List<(double, double)>(); var depths = new List<(double, double)>();
             for (int i = 0; i < table.Count; i++)
             {
                 RiverSpan sp = table.Spans[i];
                 int stem = net.Reaches[sp.Reach].Stem;
                 if (stem < net.InLakeEnd.Length && net.InLakeEnd[stem] > 0d && sp.SEnd <= net.InLakeEnd[stem] + 1e-3) continue;
-                double len = sp.SEnd - sp.SStart;
+                double len = sp.SEnd - sp.SStart, w = 2d * table.HalfWidth[i], d = table.Depth[i];
                 total += len;
-                bool w = 2d * table.HalfWidth[i] <= minWidth, d = table.Depth[i] <= minDepth;
-                if (w) atWidth += len;
-                if (d) atDepth += len;
-                if (w && d) atBoth += len;
-                if (w || d) atEither += len;
-                if (!(w || d) || sp.Q <= 1e-6) continue;
-                RiverDangerChannel ch = RiverDanger.Channel(free, sp.Q, Math.Max(sp.Sh, 1e-4f), net.ChannelDepth, net.Ferocity, sp.Landing);
-                if (w) { freeWidth.Add((ch.Width, len)); qAtWidth.Add((sp.Q, len)); freeDepthAtWidth.Add((ch.Depth, len)); }
-                if (d) { freeDepth.Add((ch.Depth, len)); qAtDepth.Add((sp.Q, len)); }
+                widths.Add((w, len)); depths.Add((d, len));
+                if (d < 0.55) under055 += len;
+                if (d < 1.15) under115 += len;
+                if (w < 8d) under8 += len;
+                if (w < 3d) under3 += len;
+                if (d < 1.2) underDepth12 += len;
+                if (w < 8d || d < 1.2) oldFloor += len;
             }
-            sb.AppendLine(FormattableString.Invariant($"D6 minimum (width {constants.MinWidth:F0} m, depth {constants.MinDepth:F1} m), by span length without the in-lake parts: channel {total / 1000d:F0} km; at the minimum width {atWidth / 1000d:F0} km ({atWidth / Math.Max(1, total):P1}); at the minimum depth {atDepth / 1000d:F0} km ({atDepth / Math.Max(1, total):P1}); at both {atBoth / 1000d:F0} km ({atBoth / Math.Max(1, total):P1}); at either {atEither / 1000d:F0} km ({atEither / Math.Max(1, total):P1})"));
-            sb.AppendLine(FormattableString.Invariant($"  where the width is at the minimum: Q p10/p50/p90 {ThreeWeighted(qAtWidth, "F1")} m3/s; with both floors lifted the same law gives width {ThreeWeighted(freeWidth, "F1")} m and depth {ThreeWeighted(freeDepthAtWidth, "F2")} m. Where the depth is at the minimum: Q {ThreeWeighted(qAtDepth, "F1")} m3/s; lifted depth {ThreeWeighted(freeDepth, "F2")} m"));
+            sb.AppendLine(FormattableString.Invariant($"smallest sections (no minimum), by span length without the in-lake parts: channel {total / 1000d:F0} km; width p1/p10/p50 {Quantiles(widths, "F2", 0.01, 0.1, 0.5)} m; depth p1/p10/p50 {Quantiles(depths, "F2", 0.01, 0.1, 0.5)} m"));
+            sb.AppendLine(FormattableString.Invariant($"  centre depth under 0.55 m (the old swim entry): {under055 / 1000d:F0} km ({under055 / Math.Max(1, total):P1}); under 1.15 m: {under115 / 1000d:F0} km ({under115 / Math.Max(1, total):P1}); width under 8 m: {under8 / 1000d:F0} km ({under8 / Math.Max(1, total):P1}); under 3 m: {under3 / 1000d:F0} km ({under3 / Math.Max(1, total):P1}); where the old D6 floor (8 m wide or 1.2 m deep) would have acted: {oldFloor / 1000d:F0} km ({oldFloor / Math.Max(1, total):P1}), of which depth under 1.2 m {underDepth12 / 1000d:F0} km"));
         }
         sb.AppendLine(FormattableString.Invariant($"terminals section {clock.Elapsed.TotalSeconds:F1} s"));
 

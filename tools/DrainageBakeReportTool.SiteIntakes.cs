@@ -67,7 +67,7 @@ public partial class DrainageBakeReportTool
         int ends = 0, sea = 0, intakeStems = 0;
         var qs = new List<double>(); var widths = new List<double>(); var widthsFree = new List<double>();
         var siteOfStem = new HashSet<int>(); int engineEnds = 0, lungEnds = 0, siteEnds = 0;
-        RiverDangerConstants free = RiverDangerConstants.Default with { MinDepth = 0d, MinWidth = 0d };
+        RiverDangerConstants free = RiverDangerConstants.Default;
         double intakeQ = 0, allEndQ = 0;
         for (int i = 0; i < net.Stems.Length; i++)
         {

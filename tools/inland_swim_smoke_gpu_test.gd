@@ -3,6 +3,7 @@ extends SceneTree
 ## T2R-10: the player swims in still lake and river-pool water of a water.rivers world (docs/work-orders/terrain-vegetation/T2.md). Boots the landscape harness world (generation 1 with
 ## water.rivers; the harness bakes the river graph), teleports above a deep lake point and a deep river pool, lets the production swim motor take over, and checks IsSwimming, the water
 ## surface height against the sampler's exact level (0.05 m), that the player floats, and that a bank point beside the water is dry land (not swimming).
+## T2R-20: the swim entry is 1.15 m (chest depth): a wade pose in a shallow river (0.60 to 1.05 m, a depth the old 0.55 m entry swam in) must stand on the bed and not swim, with the water surface at the sampler level (0.05 m).
 ## RUN: tools/run_tests.ps1 -Tests inland_swim_smoke_gpu_test  (manifest user_args: --generation=1 --review-features=water.rivers). Prints INLAND_SWIM_SMOKE=PASS|FAIL.
 const HARNESS := preload("res://tools/landscape_harness_common.gd")
 const PROBE := preload("res://tools/InlandSwimProbe.cs")
@@ -89,6 +90,33 @@ func _run() -> void:
 				failures.append("%s: still swimming on the bank" % key)
 		else:
 			failures.append("%s: no bank found within 600 m" % key)
+	# T2R-20: wade pose. Water 0.60 to 1.05 m deep is walked (the swim entry is 1.15 m); the deep poses above still swim.
+	var wade: Dictionary = probe.call("FindShallowRiver", game, 0.60, 1.05)
+	if not bool(wade.get("ok", false)):
+		failures.append("wade: no shallow river point: %s" % str(wade.get("error", "")))
+	else:
+		var w: Dictionary = wade["river"]
+		print("%s wade=%s" % [MARKER, str(w)])
+		var wade_level := float(w["level"])
+		var wade_bed := float(w["bed"])
+		var wade_pose := {"name": "wade_river", "around_m": w["around"], "across_m": w["across"], "lift_m": wade_level + 4.0, "vertical_mode": "abs", "ground_m": wade_level, "yaw_deg": 0.0, "pitch_deg": 0.0}
+		var wade_info: Dictionary = await HARNESS.go_pose(self, game, wade_pose, "noon")
+		if wade_info.has("error"):
+			failures.append("wade: %s" % str(wade_info["error"]))
+		else:
+			explorer.call("TeleportToCanonicalMeters", float(w["around"]), wade_level + 2.0, float(w["across"]), 0.0, 0.0, false)
+			for i in SETTLE_PHYSICS_FRAMES:
+				await physics_frame
+			var wst: Dictionary = probe.call("Read", explorer)
+			var wade_error := absf(float(wst["surface"]) - wade_level)
+			var feet_depth := float(wst["surface"]) - float(wst["vertical"])
+			print("%s wade swimming=%s surface=%.3f level=%.3f bed=%.3f vertical=%.3f feet_depth=%.3f error=%.4f" % [MARKER, str(wst["swimming"]), float(wst["surface"]), wade_level, wade_bed, float(wst["vertical"]), feet_depth, wade_error])
+			if bool(wst["swimming"]):
+				failures.append("wade: swimming in %.2f m of water (the swim entry is 1.15 m)" % float(w["depth"]))
+			if wade_error > 0.05:
+				failures.append("wade: water surface %.3f is %.3f m from the sampler level %.3f" % [float(wst["surface"]), wade_error, wade_level])
+			if feet_depth <= 0.05 or float(wst["vertical"]) > wade_bed + 0.5:
+				failures.append("wade: not standing in the water on the bed (feet depth %.3f, vertical %.3f, bed %.3f)" % [feet_depth, float(wst["vertical"]), wade_bed])
 	if not failures.is_empty():
 		_fail("; ".join(failures))
 		return

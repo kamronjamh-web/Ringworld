@@ -77,7 +77,7 @@ public partial class RingVoxelExplorerController : CharacterBody3D
     [Export(PropertyHint.Range, "1,15,0.1")] public float SwimVerticalSpeed { get; set; } = 4.5f;
     [Export(PropertyHint.Range, "0,30,0.5")] public float SwimBuoyancyResponse { get; set; } = 8.0f;
     [Export(PropertyHint.Range, "0.1,3,0.05")] public float SwimSurfaceFloatDepthMeters { get; set; } = 1.15f;
-    [Export(PropertyHint.Range, "0.05,2,0.05")] public float SwimEnterDepthMeters { get; set; } = 0.55f;
+    [Export(PropertyHint.Range, "0.05,2,0.05")] public float SwimEnterDepthMeters { get; set; } = 1.15f;
     [Export(PropertyHint.Range, "0.01,1,0.05")] public float SwimExitDepthMeters { get; set; } = 0.15f;
     [ExportGroup("Dynamic water tools")]
     [Export] public bool EnableDynamicWaterTools { get; set; } = true;

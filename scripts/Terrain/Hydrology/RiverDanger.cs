@@ -8,10 +8,8 @@ namespace RingworldTechDemo.Terrain.Hydrology;
 /// </summary>
 public sealed record RiverDangerConstants
 {
-    /// <summary>E2: depth coefficient Kd (d = max(1.2, channel_depth Kd Q^0.4)).</summary>
+    /// <summary>E2: depth coefficient Kd (d = channel_depth Kd Q^0.4; T2R-20 lifted the 1.2 m and 8 m floors).</summary>
     public double Kd { get; init; } = 0.34;
-    public double MinDepth { get; init; } = 1.2;
-    public double MinWidth { get; init; } = 8d;
     /// <summary>E2: roughness at the lowest gradient Np, its limit Nm (the mountain roughness), the reference gradient Sa and the exponent Gn.</summary>
     public double Np { get; init; } = 0.05;
     public double Nm { get; init; } = 0.18;
@@ -54,11 +52,12 @@ public static class RiverDanger
     public static RiverDangerChannel Channel(RiverDangerConstants c, double q, double sh, double channelDepth, double ferocity, double landing = 1d)
     {
         sh = Math.Max(sh, 1e-4);
-        double d = Math.Max(c.MinDepth, channelDepth * c.Kd * Math.Pow(q, 0.4));
+        if (q <= 0d) return new RiverDangerChannel(0d, 0d, 0d);
+        double d = channelDepth * c.Kd * Math.Pow(q, 0.4);
         double n = Roughness(c, sh, ferocity, landing);
         double u0 = Math.Min(Math.Pow(d, 2d / 3d) * Math.Sqrt(sh) / n, c.Vpool / 1.5 * ferocity);
         double raw = q / (u0 * d);
-        double w = Math.Clamp(raw, c.MinWidth, c.Wmax);
+        double w = Math.Min(raw, c.Wmax);
         if (raw > c.Wmax) d = q / (u0 * c.Wmax);
         return new RiverDangerChannel(d, w, q / (w * d));
     }

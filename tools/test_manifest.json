@@ -4921,7 +4921,7 @@
         "hydrology"
       ],
       "marker": "INLAND_SWIM_SMOKE",
-      "expected_s": 90,
+      "expected_s": 120,
       "timeout_s": 600,
       "user_args": "--generation=1 --review-features=water.rivers"
     },

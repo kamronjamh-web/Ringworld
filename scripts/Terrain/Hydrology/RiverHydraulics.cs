@@ -9,15 +9,13 @@ public enum RiverClass : byte { Calm, Swift, Fierce, Torrent }
 public readonly record struct RiverSection(double Q, double Gradient, double Depth, double Width, double Speed, RiverClass Class);
 
 /// <summary>
-/// S6 (docs/work-orders/terrain-vegetation/T2.md): plan 3.2 relations with the T0 constants, a runoff scale of 20x and two floors, as pure statics of the
+/// S6 (docs/work-orders/terrain-vegetation/T2.md): plan 3.2 relations with the T0 constants, a runoff scale of 20x and no floors (T2R-20 lifted D6), as pure statics of the
 /// constants and the recipe fields. The bake stores Q and S per reach; everything else is derived here. All constants are starting values (T3-3 recalibrates).
 /// </summary>
 public static class RiverHydraulics
 {
     /// <summary>q_s: discharge per unit of accumulated runoff, m^3/s per km^2 (20 x the T0 0.02).</summary>
     public const double DischargePerKm2 = 0.40;
-    public const double MinDepth = 1.2;
-    public const double MinWidth = 8.0;
     public const double DepthCoefficient = 0.27;
     public const double DepthExponent = 0.4;
     public const double ManningBase = 0.035;
@@ -42,11 +40,12 @@ public static class RiverHydraulics
     public static RiverSection PathSection(double q, double gradient, double channelDepth, double ferocity)
     {
         double s = Math.Max(gradient, MinGradient);
-        double d = Math.Max(MinDepth, channelDepth * DepthCoefficient * Math.Pow(q, DepthExponent));
+        if (q <= 0d) return new RiverSection(0d, s, 0d, 0d, 0d, RiverClass.Calm);
+        double d = channelDepth * DepthCoefficient * Math.Pow(q, DepthExponent);
         double n = ManningBase / ferocity;
         double manning = Math.Pow(d, 2d / 3d) * Math.Sqrt(s) / n;
         double u0 = Math.Min(manning, SpeedCap * ferocity);
-        double w = Math.Max(MinWidth, q / (u0 * d));
+        double w = q / (u0 * d);
         double u = q / (w * d);
         double centre = 1.5 * u;
         RiverClass cls = centre < 1.5 ? RiverClass.Calm : centre < 4 ? RiverClass.Swift : centre < 7 ? RiverClass.Fierce : RiverClass.Torrent;

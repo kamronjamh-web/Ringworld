@@ -14,7 +14,7 @@ namespace RingworldTechDemo.Tools;
 
 /// <summary>
 /// T2R-12c (docs/work-orders/terrain-vegetation/T2.md, Spec S13.2): a river is drawn at its true width on every proxy level that owns it, and as coverage on the levels that do not.
-/// Builds raw sectors of the 4, 8, 16, 32 and 64 m levels over 30 river sections of a 400 km strip graph (ten each of w under 16 m, 16 to 64 m and over 64 m), and reads the built arrays.
+/// Builds raw sectors of the 4, 8, 16, 32 and 64 m levels over 35 river sections of a 400 km strip graph (five under 8 m wide since T2R-20 lifted the minimum, ten each of w 8 to 16 m, 16 to 64 m and over 64 m), and reads the built arrays.
 /// Drawn width: the area of the water triangles inside a window along the reach (and inside the sector) over the window length, against the true wet width of the operator at footprint 0
 /// (lines across the reach every 10 m, samples every 0.5 m); print p50 and p90 of drawn over true per level; pass: p90 at most 1.35 and median 0.85 to 1.2 (starting values, not tuned here).
 /// A river without an owner at a level has no water triangle there, and the payload of the vertices holds its area (sum of c * spacing^2) within 10 % of the true water area.
@@ -49,8 +49,8 @@ public partial class ProxyRiverTrueWidthTest : RefCounted
             Check(sampler.HasRiverLine, "a rivers sampler reports no river line");
             RiverGraph graph = sampler.RuntimeRiverGraph!;
             List<Section> sections = PickSections(recipe, graph);
-            Detail($"sections: {sections.Count} ({sections.Count(s => s.Width < 16)} under 16 m, {sections.Count(s => s.Width >= 16 && s.Width <= 64)} 16 to 64 m, {sections.Count(s => s.Width > 64)} over 64 m)");
-            Check(sections.Count == 30, $"only {sections.Count} usable river sections found");
+            Detail($"sections: {sections.Count} ({sections.Count(s => s.Width < 8)} under 8 m, {sections.Count(s => s.Width >= 8 && s.Width < 16)} 8 to 16 m, {sections.Count(s => s.Width >= 16 && s.Width <= 64)} 16 to 64 m, {sections.Count(s => s.Width > 64)} over 64 m)");
+            Check(sections.Count == 35, $"only {sections.Count} usable river sections found");
             var session = RingTerrainProxySector.CreateRiverWidthFixtureSession(EmptyEdits(sampler), sampler, sampler.RingAcrossWidthMeters);
             var op = new RiverCarveOperator(graph);
             foreach (int spacing in Spacings) Level(spacing, sections, sampler, session, graph, op, recipe);
@@ -69,7 +69,7 @@ public partial class ProxyRiverTrueWidthTest : RefCounted
 
     // ------------------------------------------------------------------ sections
 
-    /// <summary>Ten sections of each width class, by hash order, on ground at least 2 m, away from lakes, the sea, the strip ends and from other water: the only wet samples within 150 m are the stem's own.</summary>
+    /// <summary>Five sections under 8 m wide and ten of each other width class, by hash order, on ground at least 2 m, away from lakes, the sea, the strip ends and from other water: the only wet samples within 150 m are the stem's own.</summary>
     private List<Section> PickSections(TerrainGenerationParameters recipe, RiverGraph graph)
     {
         RiverNetwork net = graph.Network;
@@ -77,25 +77,32 @@ public partial class ProxyRiverTrueWidthTest : RefCounted
         using var natural = new TerrainGenerationHeightModel(recipe, false);
         double aroundMin = StripStart + 20_000d, aroundMax = StripStart + StripKm * 1000d - 20_000d;
         var picked = new List<Section>();
-        int[] taken = new int[3];
-        var candidates = new List<(int Stem, double S)>();
+        int[] taken = new int[4];
+        var candidates = new List<(int Stem, double S, bool Extra)>();
         var pieceScratch = new List<int>();
         for (int stem = 0; stem < net.Stems.Length; stem++)
-            for (double s = 300d; s < net.Curves[stem].Length - 300d; s += 250d) candidates.Add((stem, s));
-        foreach ((int stem, double s) in candidates.OrderBy(c => RiverHash.Mix(Seed, c.Stem, (int)(c.S / 250d))))
+            for (double s = 300d; s < net.Curves[stem].Length - 300d; s += 250d) candidates.Add((stem, s, false));
+        // Reaches under 8 m wide are rare and short (T2R-20): extra candidates every 40 m, used for that class only.
+        for (int stem = 0; stem < net.Stems.Length; stem++)
+            for (double s = 40d; s < net.Curves[stem].Length - 40d; s += 40d) candidates.Add((stem, s, true));
+        double minSeen = double.MaxValue; int narrowSeen = 0, rejStrip = 0, rejLow = 0, rejOther = 0, rejDirty = 0;
+        foreach ((int stem, double s, bool extra) in candidates.OrderBy(c => RiverHash.Mix(Seed, c.Stem, (int)(c.S / (c.Extra ? 40d : 250d)) + (c.Extra ? 7777 : 0))))
         {
-            if (taken[0] >= 10 && taken[1] >= 10 && taken[2] >= 10) break;
+            if (taken[0] >= 10 && taken[1] >= 10 && taken[2] >= 10 && taken[3] >= 5) break;
             net.CentreFrame(stem, s, out double around, out double across, out double nx, out double ny);
             net.ChannelAt(stem, s, out RiverChannel channel);
             double width = 2d * channel.HalfWidth;
-            int cls = width < 16d ? 0 : width <= 64d ? 1 : 2;
-            if (taken[cls] >= 10 || (cls == 2 && taken[2] >= 5 && width < 128d)) continue;
-            if (around < aroundMin || around > aroundMax || across < 5000d || across > net.WidthM - 5000d) continue;
-            if (natural.CalculateHeight(around, across) < 5d) continue;
+            int cls = width < 8d ? 3 : width < 16d ? 0 : width <= 64d ? 1 : 2;
+            if (width < minSeen) minSeen = width;
+            if (width < 8d) narrowSeen++;
+            if (extra && cls != 3) continue;
+            if (taken[cls] >= (cls == 3 ? 5 : 10) || (cls == 2 && taken[2] >= 5 && width < 128d)) continue;
+            if (around < aroundMin || around > aroundMax || across < 5000d || across > net.WidthM - 5000d) { if (width < 8d) rejStrip++; continue; }
+            if (natural.CalculateHeight(around, across) < 5d) { if (width < 8d) rejLow++; continue; }
             // No other stem near: the pieces the index lists for a 600 m square (a superset of those within 650 m of it) all belong to this stem.
             pieceScratch.Clear();
             graph.Index.CollectPieces(around - 300d, around + 300d, across - 300d, across + 300d, pieceScratch);
-            if (width < 128d && pieceScratch.Any(p => graph.PieceStem[p] != stem)) continue;
+            if (cls != 3 && width < 128d && pieceScratch.Any(p => graph.PieceStem[p] != stem)) { if (width < 8d) rejOther++; continue; }
             // Only this stem's water around: lines across the reach every 20 m to +-260 m along it, samples every 2 m (the widest window is 512 m).
             double tx = ny, ty = -nx;
             bool clean = true;
@@ -107,10 +114,11 @@ public partial class ProxyRiverTrueWidthTest : RefCounted
                     if (r.Kind == InlandWaterKind.Lake || (g < 1d && r.Kind != InlandWaterKind.River) || natural.CalculateHeight(a, c) < 1d) clean = false;
                     else if (r.Kind == InlandWaterKind.River && op.Locate(a, c, 0d, out RiverLocation loc) && loc.Stem != stem) clean = false;
                 }
-            if (!clean) continue;
+            if (!clean) { if (width < 8d) rejDirty++; continue; }
             taken[cls]++;
             picked.Add(new Section(stem, s, around, across, tx, ty, width));
         }
+        Detail($"candidates: {candidates.Count}, narrowest width seen {minSeen:F2} m, {narrowSeen} candidates under 8 m (before the cleanliness filters); rejected: strip margins {rejStrip}, ground under 5 m {rejLow}, other stem within 300 m {rejOther}, other or lake water within 150 m {rejDirty}");
         return picked;
     }
 

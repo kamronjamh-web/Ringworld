@@ -1023,9 +1023,14 @@ public partial class DrainageGraphTest : RefCounted
             {
                 RiverSection sec = net.Sections[r];
                 (double manning, double cap) = RiverHydraulics.SpeedLimits(sec.Depth, sec.Gradient, net.Ferocity);
-                if (Math.Abs(sec.Q - sec.Speed * sec.Width * sec.Depth) > 1e-6 * sec.Q || sec.Depth < 1.2 - 1e-9 || sec.Width < 8 - 1e-9 || sec.Speed > Math.Min(manning, cap) * (1 + 1e-9)) relBad++;
+                if (Math.Abs(sec.Q - sec.Speed * sec.Width * sec.Depth) > 1e-6 * sec.Q || !(sec.Depth > 0d) || !(sec.Width > 0d) || sec.Speed > Math.Min(manning, cap) * (1 + 1e-9)) relBad++;
             }
-            Check(relBad == 0, $"{label}: {relBad} reaches break Q = U w d, d >= 1.2, w >= 8 or the speed limits");
+            Check(relBad == 0, $"{label}: {relBad} reaches break Q = U w d, d > 0, w > 0 or the speed limits");
+            // No floor (T2R-20): a section of 2 m^3/s is what the law gives, not 1.2 m deep and 8 m wide.
+            RiverSection small = RiverHydraulics.PathSection(2d, 0.001, 1d, 1d);
+            Check(Math.Abs(small.Depth - 0.27 * Math.Pow(2d, 0.4)) < 1e-12 && small.Depth < 1.2 && Math.Abs(small.Q - small.Speed * small.Width * small.Depth) <= 1e-6 * small.Q, $"{label}: a section of 2 m^3/s is not the floor-free law (d {small.Depth:F3})");
+            RiverSection none = RiverHydraulics.PathSection(0d, 0.001, 1d, 1d);
+            Check(none.Depth == 0d && none.Width == 0d && none.Speed == 0d, $"{label}: a discharge of 0 does not give a zero section");
             for (double g = 1e-4; g < 0.1; g *= 3)
             {
                 double last = 0;

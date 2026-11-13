@@ -106,6 +106,53 @@ public partial class InlandSwimProbe : RefCounted
     }
 
     /// <summary>
+    /// T2R-20: a River point on a reach centreline whose water is between <paramref name="minDepth"/> and <paramref name="maxDepth"/> deep, the one nearest the middle of that band, with its nearest dry bank in the form of
+    /// <see cref="FindPoints"/> (<c>river</c>) plus <c>depth</c> and <c>width</c>: {ok, error, river}. The wade pose uses a band the old swim entry (0.55 m) swam in and the raised one (1.15 m) walks.
+    /// </summary>
+    public Godot.Collections.Dictionary FindShallowRiver(Node game, double minDepth, double maxDepth)
+    {
+        var result = new Godot.Collections.Dictionary { ["ok"] = false, ["error"] = "" };
+        try
+        {
+            using RingTerrainSampler? sampler = game.GetNodeOrNull<VoxelChunkGridManager>("ChunkGridManager")?.CreateIndependentTerrainSampler();
+            RiverGraph? graph = sampler?.RuntimeRiverGraph;
+            if (sampler == null || graph == null) { result["error"] = "the game's sampler has no river graph"; return result; }
+            RiverNetwork net = graph.Network;
+            double target = 0.5 * (minDepth + maxDepth), bestOff = double.MaxValue, bestWidth = 0d;
+            long bestA = 0; int bestZ = 0;
+            for (int r = 0; r < net.Reaches.Length; r++)
+            {
+                RiverReach reach = net.Reaches[r];
+                if (reach.SEnd - reach.SStart < 200f) continue;
+                for (int k = 1; k <= 3; k++)
+                {
+                    double s = reach.SStart + (reach.SEnd - reach.SStart) * k / 4d;
+                    net.Centre(reach.Stem, s, out double ca, out double cz, out _, out _);
+                    long a = (long)Math.Round(ca / 2d) * 2L; int z = (int)Math.Round(cz / 2d) * 2;
+                    if (z < 3000 || z > 315_000 || !Wet(sampler, a, z, SurfaceWaterKind.River, out float level, out float bed)) continue;
+                    double depth = level - bed, off = Math.Abs(depth - target);
+                    if (depth < minDepth || depth > maxDepth || off >= bestOff) continue;
+                    // Wet neighbours at 3 m on both sides: the point is in the channel, not on a one-sample sliver.
+                    bool inside = true;
+                    for (int d = 0; d < 4 && inside; d++) inside = Wet(sampler, a + (long)Math.Round(3 * Math.Cos(d * Math.PI / 2)), z + (int)Math.Round(3 * Math.Sin(d * Math.PI / 2)), SurfaceWaterKind.River, out _, out _);
+                    if (!inside) continue;
+                    net.ChannelAt(reach.Stem, s, out RiverChannel channel);
+                    bestOff = off; bestA = a; bestZ = z; bestWidth = 2d * channel.HalfWidth;
+                }
+            }
+            if (bestOff == double.MaxValue) { result["error"] = $"no river point with water {minDepth:F2} to {maxDepth:F2} m deep"; return result; }
+            Godot.Collections.Dictionary river = Describe(sampler, "river", bestA, bestZ, SurfaceWaterKind.River);
+            river["depth"] = (double)(river["level"].AsSingle() - river["bed"].AsSingle());
+            river["width"] = bestWidth;
+            result["river"] = river;
+            result["ok"] = river["bank_distance"].AsDouble() < 1e8;
+            if (!result["ok"].AsBool()) result["error"] = "the shallow river point has no dry bank";
+        }
+        catch (Exception e) { result["error"] = e.ToString(); }
+        return result;
+    }
+
+    /// <summary>
     /// T2R-12b: the widest river reach whose middle lies at across in [minAcross, maxAcross] and holds water at least 1.5 m deep: {ok, around, across, level, width}. The glint poses need a river far
     /// enough from the ring edge for a camera 230 km off along the sun azimuth, and near <paramref name="nearAround"/> so the time of day set there holds.
     /// </summary>
@@ -141,6 +188,41 @@ public partial class InlandSwimProbe : RefCounted
         return result;
     }
 
+    /// <summary>
+    /// Water look follow-up: the widest river reach whose water width lies in [minWidth, maxWidth] (wide enough to fill a centre patch seen from 500 m, narrow enough to be a river and not an
+    /// estuary) and holds water 1.5 m deep or more at its middle: {ok, around, across, level, width}.
+    /// </summary>
+    public Godot.Collections.Dictionary FindRiverByWidth(Node game, double minWidth, double maxWidth)
+    {
+        var result = new Godot.Collections.Dictionary { ["ok"] = false, ["error"] = "" };
+        try
+        {
+            using RingTerrainSampler? sampler = game.GetNodeOrNull<VoxelChunkGridManager>("ChunkGridManager")?.CreateIndependentTerrainSampler();
+            RiverGraph? graph = sampler?.RuntimeRiverGraph;
+            if (sampler == null || graph == null) { result["error"] = "the game's sampler has no river graph"; return result; }
+            RiverNetwork net = graph.Network;
+            double bestWidth = 0d;
+            for (int r = 0; r < net.Reaches.Length; r++)
+            {
+                RiverReach reach = net.Reaches[r];
+                if (reach.SEnd - reach.SStart < 200f) continue;
+                double mid = 0.5 * (reach.SStart + reach.SEnd);
+                net.Centre(reach.Stem, mid, out double ca, out double cz, out _, out _);
+                if (cz < 3000 || cz > 315_000) continue;
+                net.ChannelAt(reach.Stem, mid, out RiverChannel channel);
+                double width = 2d * channel.HalfWidth;
+                if (width < minWidth || width > maxWidth || width <= bestWidth) continue;
+                long a = (long)Math.Round(ca / 2d) * 2L; int z = (int)Math.Round(cz / 2d) * 2;
+                if (!Wet(sampler, a, z, SurfaceWaterKind.River, out float level, out float bed) || level - bed < 1.5f) continue;
+                bestWidth = width;
+                result["around"] = (double)a; result["across"] = (double)z; result["level"] = (double)level; result["width"] = width;
+                result["ok"] = true;
+            }
+            if (!result["ok"].AsBool()) result["error"] = "no river pool in the width range";
+        }
+        catch (Exception e) { result["error"] = e.ToString(); }
+        return result;
+    }
     /// <summary>
     /// T2R-11 escalation measure: of the land sectors of a proxy level (64 cells of <paramref name="spacing"/> metres, parent 2x) the share whose build routes to the CPU because a river or lake reaches it
     /// (S10), over the whole ring, sampling every <paramref name="stride"/>th sector on both axes. Land = the sector centre is not Ocean. Returns {sectors, land, river_land, share}.

@@ -15,7 +15,7 @@ namespace RingworldTechDemo.Tools;
 /// 3 % torrent. The user's bands (with fierce 5-10 %) are a whole-ring property and are checked on the whole-ring report (T3R-3 escalation decisions, T3.md Review notes): this strip
 /// held 10.1 % and 5.9 % fierce on the two seeds before T3R-3 changed anything. Also: the danger speed is monotone in gradient and in discharge; at most 5 km of dangerous water follows any
 /// dangerous span; every landing and every first calm or swift span after a dangerous one has a valley slope of at most 0.7; no fierce or torrent span inside the exclusion distances;
-/// widths 8 to 400 m, depth at least 1.2 m and Q = U w d within 1e-6; classes and landings equal across two bakes, two worker counts and a file round trip. Negative controls: the interim law
+/// widths above 0 and at most 400 m, depth above 0 and Q = U w d within 1e-6; classes and landings equal across two bakes, two worker counts and a file round trip. Negative controls: the interim law
 /// fails the share check, a fabricated 8 km torrent stem fails the exit check, and each other check is shown to fail on a fabricated input. Prints RIVER_DANGER=PASS|FAIL.
 /// Headless: tools/run_tests.ps1 -Tests river_danger_test.
 /// </summary>
@@ -107,14 +107,14 @@ public partial class RiverDangerTest : RefCounted
         return bad;
     }
 
-    /// <summary>Spans outside the width, depth or continuity limits: width 8 to 400 m, depth at least 1.2 m, Q = U w d within 1e-6.</summary>
+    /// <summary>Spans outside the width, depth or continuity limits: width above 0 and at most 400 m, depth above 0, Q = U w d within 1e-6 (no floors, T2R-20).</summary>
     private static int SectionViolations(IReadOnlyList<RiverSpan> spans, float[] halfWidth, float[] depth, float[] speed)
     {
         int bad = 0;
         for (int i = 0; i < spans.Count; i++)
         {
             double w = 2d * halfWidth[i], q = spans[i].Q;
-            bool ok = w >= 8d - 1e-4 && w <= 400d + 1e-3 && depth[i] >= 1.2 - 1e-6 && (q == 0d || Math.Abs(speed[i] * w * depth[i] - q) <= 1e-6 * q);
+            bool ok = w > 0d && w <= 400d + 1e-3 && depth[i] > 0d && !double.IsNaN(w) && !float.IsNaN(depth[i]) && !float.IsNaN(speed[i]) && (q == 0d || Math.Abs(speed[i] * w * depth[i] - q) <= 1e-6 * q);
             if (!ok) bad++;
         }
         return bad;
@@ -179,9 +179,10 @@ public partial class RiverDangerTest : RefCounted
         // Section: one span that is valid, then one broken in a single way each (width, width, depth, Q = U w d).
         var q30 = new[] { new RiverSpan { Q = 30f } };
         Check(SectionViolations(q30, new[] { 20f }, new[] { 1.5f }, new[] { 0.5f }) == 0, "the section check flagged a valid span");
-        Check(SectionViolations(q30, new[] { 3f }, new[] { 1.5f }, new[] { 30f / (6f * 1.5f) }) == 1, "negative control: a 6 m wide span was not flagged");
+        Check(SectionViolations(q30, new[] { 3f }, new[] { 1.0f }, new[] { 30f / (6f * 1.0f) }) == 0, "the section check flagged a 6 m wide, 1 m deep span (no floors since T2R-20)");
+        Check(SectionViolations(q30, new[] { 0f }, new[] { 1.5f }, new[] { 0.5f }) == 1, "negative control: a zero-width span was not flagged");
         Check(SectionViolations(q30, new[] { 210f }, new[] { 1.5f }, new[] { 30f / (420f * 1.5f) }) == 1, "negative control: a 420 m wide span was not flagged");
-        Check(SectionViolations(q30, new[] { 20f }, new[] { 1.0f }, new[] { 30f / (40f * 1.0f) }) == 1, "negative control: a 1 m deep span was not flagged");
+        Check(SectionViolations(q30, new[] { 20f }, new[] { 0f }, new[] { 0.5f }) == 1, "negative control: a zero-depth span was not flagged");
         Check(SectionViolations(q30, new[] { 20f }, new[] { 1.5f }, new[] { 0.51f }) == 1, "negative control: a span with a wrong Q = U w d was not flagged");
         // The user's bands (whole ring): the recorded whole-ring rows of Spec E3 are inside; too little fierce, too much fierce and too much torrent are flagged.
         Check(RiverDangerReport.InUserBands(new[] { 0.390, 0.507, 0.089, 0.013 }) && RiverDangerReport.InUserBands(new[] { 0.413, 0.493, 0.083, 0.011 }), "the whole-ring rows of Spec E3 are outside the user's bands");

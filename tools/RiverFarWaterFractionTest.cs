@@ -327,7 +327,7 @@ public partial class RiverFarWaterFractionTest : RefCounted
         var values = new float[n * n];
         double maxHalf = 0d;
         foreach (var w in _walk) maxHalf = Math.Max(maxHalf, w.HalfWidth);
-        foreach (int spacing in new[] { 8, 32, 128, 256, 512, 2048, 8192 })
+        foreach (int spacing in new[] { 4, 8, 32, 128, 256, 512, 2048, 8192 })
         {
             double footprint = RiverFootprint.ToMeters(RiverFootprint.ForProxySpacing(spacing));
             if (spacing <= 32) SwapNarrow();
@@ -358,10 +358,10 @@ public partial class RiverFarWaterFractionTest : RefCounted
             if (spacing <= 32) SwapNarrow();
         }
         SwapNarrow();
-        // Owner rule (S13.2): a piece adds coverage exactly when w < 2 spacings; UsesProxyLine(4) is false. Per spacing, a lattice around a piece just wide enough to own: the owners add nothing, and the
+        // Owner rule (S13.2): a piece adds coverage exactly when w < 2 spacings; UsesProxyLine(4) is true (T2R-20 lifted the 8 m minimum). Per spacing, a lattice around a piece just wide enough to own: the owners add nothing, and the
         // difference to the same lattice with no owners is the area of the segments that own.
         {
-            foreach (int spacing in new[] { 8, 16, 32, 64, 128, 256 })
+            foreach (int spacing in new[] { 4, 8, 16, 32, 64, 128, 256 })
             {
                 int wrong = 0;
                 foreach (var w in _walk) if (RiverCarveOperator.ValleyOnly(spacing, w.HalfWidth) != (2d * w.HalfWidth < RiverCarveOperator.OwnerWidthPerFootprint * spacing)) wrong++;
@@ -382,17 +382,18 @@ public partial class RiverFarWaterFractionTest : RefCounted
                 double narrowRef = ReferenceSplatArea(aroundOrigin, acrossOrigin, spacing, n, spacing);
                 Check(wideRef > 0d && Within(narrow, narrowRef, 0.05) && every - narrow >= 0.5 * wideRef, $"the {spacing} m owner rule: valley-only lattice {narrow:F0} m2 against {narrowRef:F0} m2 of channel area, owners hold {every - narrow:F0} m2 against {wideRef:F0} m2 (the lattice clamps at 1)");
             }
-            Check(!RiverFootprint.UsesProxyLine(4) && !RiverFootprint.UsesProxyLine(2) && RiverFootprint.UsesProxyLine(8) && RiverFootprint.UsesProxyLine(64) && RiverFootprint.UsesProxyLine(8192), "UsesProxyLine(4) is not false, or a level from 8 m does not carry coverage");
+            Check(!RiverFootprint.UsesProxyLine(2) && RiverFootprint.UsesProxyLine(4) && RiverFootprint.UsesProxyLine(8) && RiverFootprint.UsesProxyLine(64) && RiverFootprint.UsesProxyLine(8192), "UsesProxyLine(4) is not true, UsesProxyLine(2) is not false, or a level from 4 m does not carry coverage");
             // At 512 m and coarser every piece adds: ValleyOnly is true for any width at the far footprint (the conservation sums above use it).
             Check(RiverCarveOperator.ValleyOnly(RiverFootprint.Far, maxHalf) && RiverCarveOperator.ValleyOnly(RiverFootprint.Far, 0.5), "a river has an owner at the far footprint");
             Check(!RiverCarveOperator.ValleyOnly(8d, 8.5) && RiverCarveOperator.ValleyOnly(8d, 7.5) && !RiverCarveOperator.ValleyOnly(0d, 0.5), "the 8 m owner threshold is not 16 m, or footprint 0 is valley only");
         }
         // Placement (S13.2): at 8 and 32 m, for 50 valley-only points the coverage-weighted centre across the river lies within half a spacing of the operator's centreline at footprint 0.
+        // The bar counts rivers up to one spacing wide; T2R-20 lifted the 8 m minimum, so the candidates are only those (wider points were printed, never checked).
         foreach (int spacing in new[] { 8, 32 })
         {
             var candidates = new List<int>();
             for (int i = 2; i + 2 < _walk.Count; i++)
-                if (RiverCarveOperator.ValleyOnly(spacing, _walk[i].HalfWidth) && _walk[i + 2].DStep < 3d && _walk[i + 1].DStep < 3d && _walk[i].DStep < 3d) candidates.Add(i);
+                if (_walk[i].Width <= spacing && RiverCarveOperator.ValleyOnly(spacing, _walk[i].HalfWidth) && _walk[i + 2].DStep < 3d && _walk[i + 1].DStep < 3d && _walk[i].DStep < 3d) candidates.Add(i);
             const int k = 7;
             var cell = new float[k * k];
             var offsets = new List<double>();

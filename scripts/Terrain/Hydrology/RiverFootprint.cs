@@ -19,8 +19,8 @@ public static class RiverFootprint
     public static int ForProxySpacing(int spacingMeters)
         => spacingMeters <= 2 ? 0 : spacingMeters <= LargestFinitePointSpacing ? spacingMeters : FarCode;
 
-    /// <summary>S13.2: proxy levels (spacing above 2 m) that can have a river without an owner carry its valley-only channel area as coverage in the vertex payload: from 8 m up, false at 4 m.</summary>
-    public static bool UsesProxyLine(int spacingMeters) => spacingMeters > 2 && RiverHydraulics.MinWidth < RiverCarveOperator.OwnerWidthPerFootprint * spacingMeters;
+    /// <summary>S13.2: proxy levels (spacing above 2 m) that can have a river without an owner carry its valley-only channel area as coverage in the vertex payload. T2R-20 lifted the 8 m minimum width, so the 4 m level carries it too.</summary>
+    public static bool UsesProxyLine(int spacingMeters) => spacingMeters > 2;
 
     /// <summary>The footprint in metres for a cache footprint code.</summary>
     public static double ToMeters(int footprintCode) => footprintCode >= FarCode ? Far : footprintCode;
