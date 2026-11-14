@@ -20,6 +20,9 @@ public sealed class RiverStemStations
     public bool[] Filled = Array.Empty<bool>();
 }
 
+/// <summary>One chute or fall found by <see cref="RiverLevel.DropsNear"/> (T3 Spec W4): its arc parameter (the downstream end of the run) and the whole fall of the level over the run, in metres.</summary>
+public readonly record struct RiverDrop(double S, double Height);
+
 /// <summary>
 /// T2R-5 (docs/work-orders/terrain-vegetation/T2.md, S7 "Level"): ground samples every 50 m (25 m above 3 % gradient) on the centreline and both bank lines,
 /// the running-minimum profile from the sources downstream, knots within 0.75 m under it, and the displayed whole-metre pools and chutes.
@@ -33,6 +36,57 @@ public static class RiverLevel
     private const double BandLower = 0.74, BandUpper = 0.012; // T2R-6: 7 mm more upper margin so whole-centimetre knots stay under the profile.
     public const double ChuteMeters = 10d;
     public const double OutletTailMeters = 50d;
+
+    // ------------------------------------------------------------------ chutes and falls (T3R-10b)
+
+    /// <summary>The window, the steepness and the longest run of <see cref="DropsNear"/> (T3.md Spec W4; the 60 m is tune at review).</summary>
+    public const double DropStepMeters = 5d, DropWindowMeters = 10d, DropMinFallMeters = 0.5, DropMaxRunMeters = 60d;
+
+    /// <summary>
+    /// T3R-10b (T3.md Spec W4): the chutes and falls of a stem between s0 and s1, read from the displayed level <see cref="AtStem(RiverNetwork, int, double)"/> every 5 m. A drop is a run of at most
+    /// 60 m of channel along which the level falls by at least 0.5 m in every 10 m; it is one drop, at its downstream end, with the whole fall of the run as its height. A longer steep run
+    /// is a steep river and gives no drop. Only drops whose position lies in [s0, s1] are returned, in order of s. Read-only; returns the count (the first drops when the output is too small).
+    /// </summary>
+    public static int DropsNear(RiverNetwork net, int stem, double s0, double s1, Span<RiverDrop> output)
+    {
+        if (output.Length == 0 || !(s1 >= s0)) return 0;
+        double length = net.Curves[stem].Length;
+        // A margin of the longest run on both sides, so that a steep run cut by the walk is always longer than the limit and is refused.
+        double from = Math.Max(0d, s0 - DropMaxRunMeters - DropStepMeters), to = Math.Min(length, s1 + DropMaxRunMeters + DropStepMeters);
+        if (!(to - from >= DropWindowMeters)) return 0;
+        int steps = (int)Math.Floor((to - from) / DropStepMeters);
+        int windows = (int)(DropWindowMeters / DropStepMeters);
+        int count = 0, runStart = -1;
+        double previous = AtStem(net, stem, from);
+        if (double.IsNaN(previous)) return 0;
+        // level[i] is the level at from + i * step; window i spans level[i] to level[i + 2].
+        Span<double> ring = stackalloc double[4];
+        ring[0] = previous;
+        for (int i = 1; i <= windows; i++) ring[i] = AtStem(net, stem, Math.Min(length, from + i * DropStepMeters));
+        for (int w = 0; w + windows <= steps; w++)
+        {
+            double top = ring[w % 4], bottom = ring[(w + windows) % 4];
+            bool steep = top - bottom >= DropMinFallMeters - 1e-9;
+            if (steep && runStart < 0) runStart = w;
+            bool end = !steep || w + windows == steps;
+            if (runStart >= 0 && end)
+            {
+                int last = steep ? w : w - 1;
+                // The run covers the windows runStart..last: from runStart to last + 2 steps.
+                double runLength = (last - runStart + windows) * DropStepMeters;
+                if (runLength <= DropMaxRunMeters)
+                {
+                    double sTop = from + runStart * DropStepMeters, sEnd = from + (last + windows) * DropStepMeters;
+                    double fall = AtStem(net, stem, Math.Min(length, sTop)) - AtStem(net, stem, Math.Min(length, sEnd));
+                    if (sEnd >= s0 && sEnd <= s1 && fall > 0d && count < output.Length) output[count++] = new RiverDrop(sEnd, fall);
+                }
+                runStart = -1;
+            }
+            // Slide the window: level at step w + windows + 1.
+            if (w + windows + 1 <= steps) ring[(w + windows + 1) % 4] = AtStem(net, stem, Math.Min(length, from + (w + windows + 1) * DropStepMeters));
+        }
+        return count;
+    }
 
     // ------------------------------------------------------------------ displayed level
 

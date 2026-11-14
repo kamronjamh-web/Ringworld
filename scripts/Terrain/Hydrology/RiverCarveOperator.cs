@@ -15,6 +15,9 @@ public readonly record struct RiverOperatorResult(double Height, InlandWaterKind
 /// </summary>
 public readonly record struct RiverLocation(int Piece, int Stem, int Reach, double S, double T, double TangentAround, double TangentAcross, double HalfWidth, double BankWidth, double Depth, double EdgeDepth, double Level);
 
+/// <summary>One channel found by <see cref="RiverCarveOperator.ChannelsNear"/> (T3 Spec W4): the stem, the arc parameter and lateral coordinate of the closest point of the piece's displaced centreline, the channel's half width and the stem's displayed level there, and the unit tangent (downstream).</summary>
+public readonly record struct RiverChannelNear(int Stem, double S, double T, double HalfWidth, double Level, double TangentAround, double TangentAcross);
+
 /// <summary>
 /// The river operator of docs/work-orders/terrain-vegetation/T2.md S7 (T2R-7): per curve piece within reach, the section (bed, bank, then the natural ground clamped between a
 /// levee bound and a valley bound, faded out by 300 m), combined over overlapping pieces. Where channels of different levels come closer than their cores, the higher one's
@@ -464,6 +467,113 @@ public sealed class RiverCarveOperator
         ref readonly Hit h = ref hits[owner];
         location = new RiverLocation(h.Piece, h.Stem, h.Reach, h.S, h.T, h.TanX, h.TanY, h.A, h.B, h.Depth, h.EdgeDepth, h.Drawn);
         return true;
+    }
+
+    /// <summary>The largest radius <see cref="ChannelsNear"/> is complete for: the merged buckets are 4 km wide and the square of half side radius - 300 m must fit two of them.</summary>
+    public const double ChannelsNearMaxRadiusMeters = 2300d;
+
+    private const double NearSampleMeters = 25d;
+
+    /// <summary>
+    /// T3R-10b (T3.md Spec W4): every channel piece whose displaced centreline passes within <paramref name="radiusMeters"/> of the point, one entry per piece: the closest point of the
+    /// piece's displaced centreline (its arc parameter, the signed lateral distance to it, left positive), the channel there, the stem's displayed level and the centreline's unit
+    /// tangent (downstream). Read-only: it changes no output of <see cref="Evaluate"/> or <see cref="Locate"/>. One bucket of the index is complete to 300 m only (a meander displaces
+    /// a centreline by up to 350 m, the index radius is 650 m), so the pieces of the buckets at the four corners of the square of half side radius - 300 m around the point are merged
+    /// (a piece listed twice is taken once). <see cref="LocatePiece"/> finds the closest point of the base curve and gives a lateral coordinate against it, which is not the distance to
+    /// the displaced centreline beyond the operator's own reach (T3.md V12: errors of tens of metres at 300 m and up to 580 m at 2 km), so each piece that passes the hull cull is
+    /// searched on its displaced centreline (25 m samples, then a golden-section refinement of the best). The radius is limited to <see cref="ChannelsNearMaxRadiusMeters"/>. Returns the
+    /// count; with more hits than output slots the nearest are kept. Allocation free.
+    /// </summary>
+    public int ChannelsNear(double around, double across, double radiusMeters, Span<RiverChannelNear> output)
+    {
+        if (output.Length == 0 || !(radiusMeters > 0d)) return 0;
+        double radius = Math.Min(radiusMeters, ChannelsNearMaxRadiusMeters);
+        double h = Math.Max(0d, radius - FadeEndMeters);
+        Span<int> ids = stackalloc int[4];
+        Span<double> cornerAround = stackalloc double[4], cornerAcross = stackalloc double[4];
+        int buckets = 0;
+        for (int i = 0; i < 4; i++)
+        {
+            double ca = around + ((i & 1) == 0 ? -h : h), cz = across + ((i & 2) == 0 ? -h : h);
+            int id = _index.RowOf(cz) / RiverSpatialIndex.BucketCells * _index.BucketColumns + _index.ColumnOf(ca) / RiverSpatialIndex.BucketCells;
+            bool seen = false;
+            for (int j = 0; j < buckets; j++) if (ids[j] == id) { seen = true; break; }
+            if (seen) continue;
+            ids[buckets] = id; cornerAround[buckets] = ca; cornerAcross[buckets] = cz; buckets++;
+        }
+        int count = 0;
+        for (int b = 0; b < buckets; b++)
+        {
+            ReadOnlySpan<int> pieces = _index.PiecesNear(cornerAround[b], cornerAcross[b]);
+            for (int i = 0; i < pieces.Length; i++)
+            {
+                int piece = pieces[i];
+                bool earlier = false;
+                for (int e = 0; e < b && !earlier; e++) earlier = _index.PiecesNear(cornerAround[e], cornerAcross[e]).BinarySearch(piece) >= 0;
+                if (earlier) continue;
+                if (!NearestOnPiece(piece, around, across, radius, out int stem, out double s, out double signed)) continue;
+                double level = RiverLevel.AtStem(_net, stem, s);
+                if (double.IsNaN(level)) continue;
+                _net.ChannelAt(stem, s, out RiverChannel channel);
+                _net.CentreFrame(stem, s, out _, out _, out double nx, out double ny);
+                var result = new RiverChannelNear(stem, s, signed, channel.HalfWidth, level, ny, -nx);
+                if (count < output.Length) { output[count++] = result; continue; }
+                int far = 0;
+                for (int j = 1; j < count; j++) if (Math.Abs(output[j].T) > Math.Abs(output[far].T)) far = j;
+                if (Math.Abs(signed) < Math.Abs(output[far].T)) output[far] = result;
+            }
+        }
+        return count;
+    }
+
+    /// <summary>The closest point of one piece's displaced centreline to the point, when it lies within <paramref name="radius"/> (the signed distance is left positive against the displaced tangent).</summary>
+    private bool NearestOnPiece(int piece, double around, double across, double radius, out int stem, out double s, out double signed)
+    {
+        s = 0; signed = 0;
+        stem = _graph.PieceStem[piece];
+        ref readonly RiverStem st = ref _net.Stems[stem];
+        int k = piece - st.NodeStart;
+        RiverStemCurve curve = _net.Curves[stem];
+        curve.Controls(k, out double ax, out double ay, out double px, out double py, out double cx, out double cy);
+        double qx = around - (curve.OriginAround + px), qy = across - (curve.OriginAcross + py);
+        if (qx > _halfCircumference || qx < -_halfCircumference) qx = _net.WrapDelta(qx);
+        double loX = Math.Min(Math.Min(ax - px, cx - px), 0d), hiX = Math.Max(Math.Max(ax - px, cx - px), 0d);
+        double loY = Math.Min(Math.Min(ay - py, cy - py), 0d), hiY = Math.Max(Math.Max(ay - py, cy - py), 0d);
+        double dx = Math.Max(Math.Max(loX - qx, qx - hiX), 0d), dy = Math.Max(Math.Max(loY - qy, qy - hiY), 0d);
+        double s0 = curve.S0[k], s1 = s0 + curve.Len[k];
+        // The displacement is at most the largest meander amplitude of the reaches the piece spans (blends included, RiverNetwork.LateralReach), never above the 350 m cap.
+        double cap = 0d;
+        for (int r = _net.ReachAt(stem, s0), last = _net.ReachAt(stem, s1); r <= last; r++) cap = Math.Max(cap, _net.LateralReach(r, 0d));
+        double reach = radius + Math.Min(cap, 350d) + CullSlackMeters;
+        if (dx * dx + dy * dy > reach * reach) return false;
+        int n = Math.Max(1, (int)Math.Ceiling((s1 - s0) / NearSampleMeters));
+        double step = (s1 - s0) / n, best = double.MaxValue, bestS = s0;
+        for (int i = 0; i <= n; i++)
+        {
+            double d = CentreDistance(stem, s0 + i * step, around, across);
+            if (d < best) { best = d; bestS = s0 + i * step; }
+        }
+        double lo = Math.Max(s0, bestS - step), hi = Math.Min(s1, bestS + step);
+        for (int it = 0; it < 24; it++)
+        {
+            double m1 = lo + (hi - lo) / 3d, m2 = hi - (hi - lo) / 3d;
+            if (CentreDistance(stem, m1, around, across) < CentreDistance(stem, m2, around, across)) hi = m2; else lo = m1;
+        }
+        double sm = 0.5 * (lo + hi), dm = CentreDistance(stem, sm, around, across);
+        if (dm < best) { best = dm; bestS = sm; }
+        if (best > radius) return false;
+        s = bestS;
+        _net.CentreFrame(stem, s, out double ca, out double cz, out double nx, out double ny);
+        double da = _net.WrapDelta(around - ca), dz = across - cz;
+        signed = da * nx + dz * ny >= 0d ? best : -best;
+        return true;
+    }
+
+    private double CentreDistance(int stem, double s, double around, double across)
+    {
+        _net.Centre(stem, s, out double a, out double z, out _, out _);
+        double da = _net.WrapDelta(around - a), dz = across - z;
+        return Math.Sqrt(da * da + dz * dz);
     }
 
     /// <summary>Test hook (T2R-12c): true when any piece that acts on the point is only a valley at this footprint (no core, no owner).</summary>

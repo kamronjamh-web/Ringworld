@@ -4884,6 +4884,20 @@
       "timeout_s": 240,
       "parallel_safe": false
     },
+    "water_sound_sources_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "audio",
+        "water",
+        "hydrology"
+      ],
+      "marker": "WATER_SOUND_SOURCES",
+      "expected_s": 60,
+      "timeout_s": 240,
+      "parallel_safe": false
+    },
     "floating_body_test": {
       "kind": "test",
       "mode": "headless",
@@ -4896,6 +4910,18 @@
       "expected_s": 10,
       "timeout_s": 60,
       "parallel_safe": false
+    },
+    "water_sound_field_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "audio",
+        "water"
+      ],
+      "marker": "WATER_SOUND_FIELD",
+      "expected_s": 3,
+      "timeout_s": 60
     },
     "drainage_bake_report": {
       "kind": "tool",
