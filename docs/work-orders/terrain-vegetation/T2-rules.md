@@ -823,3 +823,14 @@ Part A can still measure both readings for the record, but Part B implements C.
 **Decisions 2026-11-13 on the T2R-22 Part B review.** Primary: 8f and 8g accepted. RQ7 (user): accept the outlet cuts as terrain features, with **no study**. T2R-26 is not ordered and item 8h (median stills) is dropped.
 
 **T2R-22 closed 2026-11-13 (primary).** 7/7 tests pass (run 20261113-162927); fill arithmetic bit-equal; Dead stems 4 / 4 / 1; classes (f) and (c) are 0. 8f escalations accepted for this batch: 15-28 receivers lowered per ring, and falls over 25 m on 0-3 junctions per ring (largest 66.3 m, seed 876374626, receiver stem 7947). These are the same grid-versus-fine mismatch the user accepted for outlet cuts; listed for T2R-25. The 8g strength line (47 of 326 sections keep full strength) is accepted as a tripwire. Lake stems still ending in higher water (21 / 19 / 15 per ring) are listed for T2R-25.
+
+## Play-test 2 (2026-11-13, user world seed 713263263): water findings and decisions
+
+Evidence: `.godot/captures/landscape/t2r/playtest_lakes/`. Lead findings:
+1. **Banks stand out of lake water** (lake 20792, ARC 31122.7 / ACROSS 135.1). Inside its own lake a river drops its bank and levee bounds only where `P_own > 0.25` (`Smoothstep(PlugBand, 2*PlugBand, P_own)` in `RiverCarveOperator.Evaluate`), and `LakeDepthRunMeters = 2` keeps banks in shallows. Fix (PT2-1): fade over the plug band, `Smoothstep(0, PlugBand, P_own)`, and set `LakeDepthRunMeters` to 0.3.
+2. **Drowned channel looks like a river band through the lake** (lake 20722, ARC 16190.5 / ACROSS 148.5). Fix (PT2-2), user decision: river water held at its own lake's level, inside that lake's membership, is reported as Lake for appearance (colour, clarity, ripples). The reach stays available for T3 flow. Edit the T3.md note on "river-kind water along its drowned channel" to match.
+3. **One-frame terrain hole at the altitude level releases** (~550 m and 1,100 m above ground, T2R-18): handed to the streaming lead.
+4. **Inland water morph restore** (`BuildRawSector`, about :4060). Lakes and rivers are shifted +0.3 m / -0.5 m against their bed in the 4 m and 8 m morph bands. Fix (PT2-3) after a levels still confirms it: no restore terms for Lake and River vertices; `LodSectorCacheRiverVersion` 12 -> 13. Waits until the streaming lead is done with the proxy files.
+5. **Binding-16 texture errors during a world switch:** fixed in d7b8169 (precipitation occlusion global reset).
+User decisions: drowned channel looks like the lake (PT2-2). Pale lakes over sand, lake vs sea colour (keep their own colour) and the dark ground around lake 20722 are all left for the biomes work. River ripple drift direction waits for T3 flow.
+PT2-1 and PT2-2 share one `CarveOperator` bump (9 -> 10); the user's world is recreated once.
