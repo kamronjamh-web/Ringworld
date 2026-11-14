@@ -105,7 +105,10 @@ void fragment() {
 	apply_tree_dither(FRAGCOORD.xy);
 	vec4 albedo = texture(albedo_layers, vec3(UV, float(tree_variant))) * texelFetch(variant_parameters, ivec2(tree_variant, 0), 0);
 	vec4 flags = texelFetch(variant_parameters, ivec2(tree_variant, 2), 0);
-	if (flags.r > .5 && albedo.a < tree_parameters.a) discard;
+	if (flags.r > .5) {
+		ALPHA = albedo.a;
+		ALPHA_SCISSOR_THRESHOLD = tree_parameters.a;
+	}
 	ALBEDO = albedo.rgb * mix(night_tint, vec3(1.0), tree_day_factor) * (1.0 - tree_cloud_occlusion * tree_day_factor * .34);
 	ALBEDO *= tree_haze_T;
 	ALBEDO *= 1.0 - 0.55 * 0.5 * min(tree_wet_state.x, 1.0); // wet world: bark and foliage darken half as much as soil

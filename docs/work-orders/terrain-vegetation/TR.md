@@ -1,7 +1,7 @@
 # TR. Tree rendering: LOD triangles, far billboards, billboard match: work orders
 
 Parent: no plan section yet. This phase comes from the 2026-11-13 conversation with the user (tree cost, the LOD2-to-billboard switch, and the "tree rendering in Godot" video). It sits beside T6 and touches the same renderer, so read T6 "Phase facts" first. Prerequisite reading: `docs/landscape-audit-t0-spec.md` lines 1115-1220 (T0 cost baseline), `docs/terrain-vegetation-revamp-plan.md` section 7.1 (tree pack audit).
-Status: not started
+Status: in progress. **TR-3 done** (2026-11-14): leaf cutout uses ALPHA_SCISSOR_THRESHOLD in both tree shaders; after vs before SSIM 0.9896 against a before-vs-before floor of 0.98-0.99 at forest_edge_eye noon (identical heatmaps), the 0.9 fail check 0.823; the four TR-3 tests pass. The harness's go_pose now re-issues a drifted pose (user mouse look reached the captured window) and records `pose_reached`. TR-1 running.
 Depends on: nothing. It can run alongside T1-T5. Coordinate with T6-8 (tint), T6-10 (far canopy) and T6-11 (LOD tail), which touch the same shaders.
 Freeze: none. This is a renderer change, not world content (see decision D1).
 

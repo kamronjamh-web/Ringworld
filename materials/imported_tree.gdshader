@@ -101,7 +101,10 @@ void vertex() {
 void fragment() {
 	apply_tree_dither(FRAGCOORD.xy);
 	vec4 albedo = texture(albedo_texture, UV) * albedo_tint;
-	if (use_alpha_cutout && albedo.a < alpha_cutoff) discard;
+	if (use_alpha_cutout) {
+		ALPHA = albedo.a;
+		ALPHA_SCISSOR_THRESHOLD = alpha_cutoff;
+	}
 	ALBEDO = albedo.rgb * mix(night_tint, vec3(1.0), tree_day_factor) * (1.0 - tree_cloud_occlusion * tree_day_factor * 0.34);
 	ALBEDO *= tree_haze_T;
 	ALBEDO *= 1.0 - 0.55 * 0.5 * min(tree_wet_state.x, 1.0); // wet world: bark and foliage darken half as much as soil

@@ -392,7 +392,25 @@ static func go_pose(tree: SceneTree, game: Node, pose: Dictionary, time_name: St
 			info["error"] = "ground check failed: game %.3f m vs %s %.3f m" % [sampled, "fixture" if ground_model == null else "selected world", expected]
 	else:
 		info["ground"] = {"ok": true, "note": "absolute pose, not checked"}
+	# Mouse look reaching the window rotates the camera during the settle. If the heading or velocity moved, re-issue the teleport (it zeroes velocity and sets yaw/pitch) and settle again, because a teleport restarts the camera-basis alignment; an undisturbed pose is left alone. The pose actually reached is recorded either way.
+	var before := _explorer_pose(explorer)
+	info["pose_before_reissue"] = before
+	var drifted := absf(wrapf(float(before["yaw_deg"]) - yaw, -180.0, 180.0)) > 0.01 or absf(float(before["pitch_deg"]) - pitch) > 0.01 or float(before["velocity_mps"]) > 0.001
+	info["pose_reissued"] = drifted
+	if drifted:
+		explorer.call("TeleportToCanonicalMeters", around, vertical, across, yaw, pitch, true)
+		await COMMON.settle(tree, settle_s)
+	var reached := _explorer_pose(explorer)
+	reached["requested"] = {"around_m": around, "vertical_m": vertical, "across_m": across, "yaw_deg": yaw, "pitch_deg": pitch}
+	info["pose_reached"] = reached
 	return info
+
+
+static func _explorer_pose(explorer: Node) -> Dictionary:
+	var position: Vector3 = explorer.call("GetCanonicalAtmospherePositionMeters") # x is always 0; only vertical (y) and across (z) are exposed
+	var velocity: Vector3 = explorer.get("CanonicalVelocity")
+	return {"vertical_m": position.y, "across_m": position.z, "yaw_deg": rad_to_deg(float(explorer.get("SavedYaw"))),
+		"pitch_deg": float(explorer.get("SavedPitch")), "velocity_mps": velocity.length()}
 
 
 # ------------------------------------------------------------------ capture
