@@ -1115,6 +1115,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
         if (ReferenceEquals(_finerCoverageLevel, finerCoverageLevel)
             && ReferenceEquals(_terrainHeightSource, terrainHeightSource)
             && _hasVoxelCoverageProvider == hasVoxelCoverageProvider) return;
+        bool providerChanged = !ReferenceEquals(_finerCoverageLevel, finerCoverageLevel)
+            || _hasVoxelCoverageProvider != hasVoxelCoverageProvider;
         _finerCoverageLevel?._oceanReplacementDependents.Remove(this);
         _finerCoverageLevel = finerCoverageLevel;
         _finerCoverageLevel?._oceanReplacementDependents.Add(this);
@@ -1123,6 +1125,28 @@ public partial class RingTerrainProxySector : MeshInstance3D
         _lastFinerCoverageRevision = ulong.MaxValue;
         _lastHeightRangeRevision = ulong.MaxValue;
         _lastAround = long.MinValue;
+        if (providerChanged) DropCoverageProvenByPreviousProvider();
+    }
+
+    /// <summary>
+    /// The coverage provider changed, for example the finer level was released by the altitude rule and recycled
+    /// its sectors in this frame. Quads and water that were omitted because the old provider drew them would be a
+    /// hole until this level's next streaming update, which waits for the request interval and a free worker slot.
+    /// Without a finer level the masks go at once (the same call the next update makes); with another finer level
+    /// the safety pass, which runs before the frame is drawn, revisits every covered bit against it.
+    /// </summary>
+    private void DropCoverageProvenByPreviousProvider()
+    {
+        _hasCoverageSafetyFocus = false;
+        if (_finerCoverageLevel != null) return;
+        if (_activeCoverageMasks.Count == 0 && _latestCoverageMasks.Count == 0
+            && _activeOceanReplacementMasks.Count == 0 && _innerExcluded.Count == 0) return;
+        ClearCoverageMasks(new List<RingTerrainSectorCoordinate>(_active.Keys));
+        if (_innerExcluded.Count > 0)
+        {
+            _innerExcluded.Clear();
+            _coverageRevision++;
+        }
     }
 
     public void SetMorphTargetSurfaceBase(float parentUnderlayOffsetMeters, bool parentRestoresWaterUnderlay)
@@ -2804,10 +2828,18 @@ public partial class RingTerrainProxySector : MeshInstance3D
             }
         }
         bool aligned = fineSize > 0 && size % fineSize == 0 && fineSize % spacing == 0;
+        // A parent across the around seam needs the wrapped per-cell proof. A parent that only
+        // reaches past the ring's across edge does not: the raster is exact for its cells inside
+        // the ring, and the rows that reach past the edge are cleared below (the per-cell proof
+        // rejects any cell whose across end is beyond the ring width).
+        bool anyAcrossEdgeParent = false;
         foreach (RingTerrainSectorCoordinate parent in work.Keys)
-            if (parent.AroundSector * (double)size + size > circumference
-                || parent.AcrossSector * size + size > ringWidth)
+        {
+            bool acrossEdge = parent.AcrossSector * (long)size + size > ringWidth;
+            if (parent.AroundSector * (double)size + size > circumference || (acrossEdge && !aligned))
                 fallbackParents.Add(parent);
+            else if (acrossEdge) anyAcrossEdgeParent = true;
+        }
         if (aligned)
         {
             foreach ((RingTerrainSectorCoordinate fineCoordinate, SurfaceCoverageMask fineMask) in snapshot.Masks)
@@ -2851,6 +2883,18 @@ public partial class RingTerrainProxySector : MeshInstance3D
                     int z0 = (fineCoordinate.AcrossSector * fineSize - parentAcross * size) / spacing;
                     int span = fineSize / spacing;
                     for (int z = 0; z < span; z++) Array.Fill(presentBits, true, (z0 + z) * coarseCells + x0, span);
+                }
+            if (anyAcrossEdgeParent)
+                foreach ((RingTerrainSectorCoordinate parent, bool[] bits) in work)
+                {
+                    long acrossOrigin = parent.AcrossSector * (long)size;
+                    if (acrossOrigin + size <= ringWidth || fallbackParents.Contains(parent)) continue;
+                    // Row z is inside the ring while acrossOrigin + (z + 1) * spacing <= ringWidth.
+                    int firstOutsideRow = (int)Math.Clamp((ringWidth - acrossOrigin) / spacing, 0L, coarseCells);
+                    int start = firstOutsideRow * coarseCells;
+                    Array.Clear(bits, start, bits.Length - start);
+                    if (presentWork != null && presentWork.TryGetValue(parent, out bool[]? edgePresent))
+                        Array.Clear(edgePresent, start, edgePresent.Length - start);
                 }
         }
         foreach (RingTerrainSectorCoordinate coordinate in coordinateList)
@@ -7349,6 +7393,47 @@ public partial class RingTerrainProxySector : MeshInstance3D
         };
         passed &= AssertRasterParity(new FinerOceanSnapshot(largeMasks, new HashSet<RingTerrainSectorCoordinate>()),
             new[] { new RingTerrainSectorCoordinate(largeParentAround, 0) }, 64, 32, 4, 64, 1_500_000_000.0);
+
+        // A parent that reaches past the ring's across edge (ring width 42 inside a 64 m parent, no seam): the raster
+        // path must equal the per-cell proof for ocean cells and for present cells, with mixed, fully wet and missing fine sectors.
+        var edgeMasks = new Dictionary<RingTerrainSectorCoordinate, SurfaceCoverageMask>
+        {
+            [new RingTerrainSectorCoordinate(0, 0)] = FineMask(true),
+            [new RingTerrainSectorCoordinate(1, 0)] = FineMask(true),
+            [new RingTerrainSectorCoordinate(0, 1)] = FineMask(true),
+            [new RingTerrainSectorCoordinate(1, 1)] = FineMask(true),
+            [new RingTerrainSectorCoordinate(2, 1)] = FineMask(true)
+        };
+        edgeMasks[new RingTerrainSectorCoordinate(1, 0)].CoveredCells[3 * 16 + 9] = false;
+        var edgePresentSectors = new HashSet<RingTerrainSectorCoordinate>(edgeMasks.Keys);
+        var edgeSnapshot = new FinerOceanSnapshot(edgeMasks, new HashSet<RingTerrainSectorCoordinate> { new RingTerrainSectorCoordinate(0, 1) }, edgePresentSectors);
+        var edgeParents = new[] { new RingTerrainSectorCoordinate(0, 0), new RingTerrainSectorCoordinate(1, 0) };
+        bool EdgePresentParity()
+        {
+            var edgeScratch = new OceanReplacementMaskScratch();
+            Dictionary<RingTerrainSectorCoordinate, SurfaceCoverageMask> built = BuildOceanReplacementMasks(
+                edgeSnapshot, edgeParents, 64, 4, 32, 42, 4096.0, edgeScratch, null, true);
+            foreach (RingTerrainSectorCoordinate parent in edgeParents)
+            {
+                SurfaceCoverageMask mask = built[parent];
+                if (mask.PresentCells == null) return false;
+                for (int z = 0; z < 16; z++)
+                for (int x = 0; x < 16; x++)
+                {
+                    double a0 = parent.AroundSector * 64.0 + x * 4, z0 = parent.AcrossSector * 64.0 + z * 4;
+                    if (mask.PresentCells[z * 16 + x] != IsSnapshotPresent(edgeSnapshot, a0, a0 + 4, z0, z0 + 4, 32, 42, 4096.0)) return false;
+                    if (mask.CoveredCells[z * 16 + x] != IsSnapshotOceanCovered(edgeSnapshot, a0, a0 + 4, z0, z0 + 4, 32, 42, 4096.0)) return false;
+                }
+            }
+            return true;
+        }
+        passed &= AssertRasterParity(edgeSnapshot, edgeParents, 64, 32, 4, 42, 4096.0) && EdgePresentParity();
+        edgeMasks.Remove(new RingTerrainSectorCoordinate(1, 1));
+        edgePresentSectors.Remove(new RingTerrainSectorCoordinate(1, 1));
+        passed &= AssertRasterParity(edgeSnapshot, edgeParents, 64, 32, 4, 42, 4096.0) && EdgePresentParity();
+        // The same parents with a ring width on a fine-sector boundary and with one that leaves no row inside.
+        passed &= AssertRasterParity(edgeSnapshot, edgeParents, 64, 32, 4, 32, 4096.0)
+            && AssertRasterParity(edgeSnapshot, edgeParents, 64, 32, 4, 3, 4096.0);
 
         // S13.3 presence: cells under a visible finer water sector are present, others are not, ocean
         // cells keep their own bit, and without inland water the output carries no present cells.
