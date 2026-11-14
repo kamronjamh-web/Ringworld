@@ -550,7 +550,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
     // vertex colors, so biome material changes do not invalidate this format.
     private const int LodSectorCacheVersion = 11;
     // T2R-10 (S9): water.rivers worlds use this version and append footprint, exact level and flag to every record; generation 1 keeps version 11 and its bytes.
-    private const int LodSectorCacheRiverVersion = 12;
+    private const int LodSectorCacheRiverVersion = 13;
     /// <summary>T2R-12b (S11b): the river line coverage c is stored in UV2.y of terrain vertices as 0.49 c, below the 0.5 threshold every reader of that flag uses.</summary>
     private const float RiverLineMorphScale = 0.49f;
     private const float ShorelineOverlapMeters = RingShorelineClip.OverlapMeters;
@@ -4101,8 +4101,11 @@ public partial class RingTerrainProxySector : MeshInstance3D
             // FFT-capable water tiers restore that underlay in the vertex shader.
             // At morph=1 this makes both fine and coarse vertices resolve to
             // the same canonical radial height at their ownership handoff.
-            float ownWaterRestore = spacing is 2 or 4 or 8 ? underlay : 0.0f;
-            float parentWaterRestore = parentRestoresWaterUnderlay ? parentUnderlay : 0.0f;
+            // PT2-3: the vertex shader restores the underlay only for FFT ocean vertices; lake and river
+            // water keeps its own underlay, so those vertices take no restore terms.
+            bool inlandWaterVertex = terrainSample.WaterKind is SurfaceWaterKind.Lake or SurfaceWaterKind.River;
+            float ownWaterRestore = !inlandWaterVertex && spacing is 2 or 4 or 8 ? underlay : 0.0f;
+            float parentWaterRestore = !inlandWaterVertex && parentRestoresWaterUnderlay ? parentUnderlay : 0.0f;
             morphData[i] = new Vector2(
                 parentTerrainHeight - terrainGeometryHeight + underlay - parentUnderlay,
                 hasRiverLine ? RiverLineMorphScale * riverLine[i] : 0.0f);

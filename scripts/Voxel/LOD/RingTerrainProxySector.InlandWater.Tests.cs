@@ -62,7 +62,7 @@ public partial class RingTerrainProxySector
         private readonly int _ringWidth;
         internal RiverWidthFixtureSession(RingLodSurfaceEditSnapshot edits, RingTerrainSampler sampler, int ringWidth) { _edits = edits; _sampler = sampler; _ringWidth = ringWidth; }
 
-        public RiverWidthFixtureSector Build(RingTerrainSectorCoordinate coordinate, int spacing, int cells, double ringRadius)
+        public RiverWidthFixtureSector Build(RingTerrainSectorCoordinate coordinate, int spacing, int cells, double ringRadius, float underlay = 0.0f, float parentUnderlay = 0.0f, bool parentRestoresWaterUnderlay = false)
         {
             int size = cells * spacing;
             var geometry = new RingLodGeometrySnapshot(Transform3D.Identity, Vector3.Zero, Vector3.Zero, ringRadius, 0.0, 0.0, _sampler.AroundRingVoxelLength, -100000.0, 100000.0,
@@ -71,8 +71,8 @@ public partial class RingTerrainProxySector
             SectorData data = BuildRawSector(
                 requestVersion: 1, coordinate: coordinate, editSnapshot: _edits, sampler: _sampler, sampleCache: cache,
                 geometry: geometry, ownerInverse: Transform3D.Identity, size: size, spacing: spacing,
-                parentSpacing: spacing * 2, globalMorphTarget: null, cells: cells, underlay: 0.0f, parentUnderlay: 0.0f,
-                parentRestoresWaterUnderlay: false, ringWidth: _ringWidth, buildWalls: false, buildSkirts: false,
+                parentSpacing: spacing * 2, globalMorphTarget: null, cells: cells, underlay: underlay, parentUnderlay: parentUnderlay,
+                parentRestoresWaterUnderlay: parentRestoresWaterUnderlay, ringWidth: _ringWidth, buildWalls: false, buildSkirts: false,
                 skirtDepth: 32.0f, blocky: false, alignSurfaceToTerrainSdf: false, heightQuantum: 1,
                 low: Colors.Black, high: Colors.White, coverageMask: null);
             VertexTableSlotBlocks? blocks = PackVertexTableSlot(data, cells, new SkirtPlan(size, _ringWidth, false));

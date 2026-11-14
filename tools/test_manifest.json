@@ -4951,6 +4951,19 @@
       "timeout_s": 600,
       "user_args": "--generation=1 --review-features=water.rivers"
     },
+    "proxy_inland_water_morph_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain",
+        "water",
+        "hydrology"
+      ],
+      "marker": "PROXY_INLAND_WATER_MORPH",
+      "expected_s": 30,
+      "timeout_s": 240
+    },
     "proxy_river_true_width_test": {
       "kind": "test",
       "mode": "headless",
