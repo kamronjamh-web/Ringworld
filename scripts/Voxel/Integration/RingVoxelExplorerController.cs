@@ -191,22 +191,11 @@ public partial class RingVoxelExplorerController : CharacterBody3D
     private long _smoothDeepShaftAround;
     private int _smoothDeepShaftAcross;
     private int _smoothDeepShaftFloor;
-    // Ambient systems consume these cached probes rather than creating one
-    // AudioStreamPlayer per water tile.  They are intentionally refreshed at a
-    // low cadence: hydrology is deterministic and shore sound does not need a
-    // physics-frame update.
-    private float _waterAmbienceProbeRemaining;
-    private float _waterAmbienceProximity;
-    private float _waterAmbienceShoreProximity;
-    private SurfaceWaterKind _waterAmbienceKind;
     // UpdateWaterState runs every physics tick; the presentation sample and exact
     // surface are pure in (sampler, edit snapshot, position), so reuse them until
     // any of those change.
     private static readonly StringName MetaCameraUnderwater = new("ring_camera_underwater");
     private static readonly StringName MetaWaterDepthMeters = new("ring_water_depth_meters");
-    private static readonly StringName MetaWaterAmbienceKind = new("ring_water_ambience_kind");
-    private static readonly StringName MetaWaterAmbienceProximity = new("ring_water_ambience_proximity");
-    private static readonly StringName MetaWaterAmbienceShoreProximity = new("ring_water_ambience_shore_proximity");
     private RingTerrainSampler? _waterCacheSampler;
     private RingLodSurfaceEditSnapshot? _waterCacheEdits;
     private long _waterCacheAround = long.MinValue;
@@ -1108,9 +1097,6 @@ public partial class RingVoxelExplorerController : CharacterBody3D
             || _canonicalPosition.AcrossMeters < 0.0
             || _canonicalPosition.AcrossMeters > _grid.RingAcrossWidthMeters)
         {
-            _waterAmbienceKind = SurfaceWaterKind.None;
-            _waterAmbienceProximity = 0.0f;
-            _waterAmbienceShoreProximity = 0.0f;
             ClearWaterState();
             return;
         }
@@ -1160,9 +1146,7 @@ public partial class RingVoxelExplorerController : CharacterBody3D
                 WaterKind = exactSurface < 0 ? SurfaceWaterKind.Ocean : SurfaceWaterKind.None,
                 WaterSurfaceHeight = exactSurface < 0 ? 0 : Mathf.FloorToInt(exactSurface)
             };
-        UpdateWaterAmbienceMetadata(sample, around, across);
-        // Ambience is independent from swimming mechanics. A game mode may
-        // disable buoyancy while shore, river, and open-water sound remains.
+        // Water sound (RingWaterAmbience) finds the water itself and reads only the swim metas published below.
         if (!EnableSwimming)
         {
             ClearWaterState();
@@ -1260,91 +1244,6 @@ public partial class RingVoxelExplorerController : CharacterBody3D
         CurrentWaterDepthMeters = 0.0f;
         SetMeta(MetaCameraUnderwater, false);
         SetMeta(MetaWaterDepthMeters, 0.0f);
-        PublishWaterAmbienceMetadata();
-    }
-
-    private void UpdateWaterAmbienceMetadata(in TerrainSample centerSample, long around, int across)
-    {
-        _waterAmbienceProbeRemaining -= (float)GetPhysicsProcessDeltaTime();
-        if (_waterAmbienceProbeRemaining > 0.0f)
-        {
-            PublishWaterAmbienceMetadata();
-            return;
-        }
-
-        _waterAmbienceProbeRemaining = 0.4f;
-        RingTerrainSampler? sampler = _grid?.TerrainSampler;
-        if (sampler == null)
-        {
-            _waterAmbienceKind = SurfaceWaterKind.None;
-            _waterAmbienceProximity = 0.0f;
-            _waterAmbienceShoreProximity = 0.0f;
-            PublishWaterAmbienceMetadata();
-            return;
-        }
-
-        bool centerHasWater = centerSample.HasSurfaceWater;
-        _waterAmbienceKind = centerHasWater ? centerSample.WaterKind : SurfaceWaterKind.None;
-        float nearestOppositeMeters = float.PositiveInfinity;
-        float nearestWaterMeters = float.PositiveInfinity;
-        SurfaceWaterKind nearestWaterKind = SurfaceWaterKind.None;
-        ReadOnlySpan<int> radii = stackalloc[] { 48, 128, 320, 640 };
-        ReadOnlySpan<Vector2I> directions = stackalloc[]
-        {
-            new Vector2I(1, 0), new Vector2I(-1, 0), new Vector2I(0, 1), new Vector2I(0, -1),
-            new Vector2I(1, 1), new Vector2I(1, -1), new Vector2I(-1, 1), new Vector2I(-1, -1)
-        };
-        foreach (int radius in radii)
-        {
-            foreach (Vector2I direction in directions)
-            {
-                long probeAround = around + (long)Math.Round(direction.X * radius * (direction.Y == 0 ? 1.0 : 0.70710678));
-                int probeAcross = Mathf.Clamp(
-                    across + Mathf.RoundToInt(direction.Y * radius * (direction.X == 0 ? 1.0f : 0.70710678f)),
-                    0, Mathf.Max(0, Mathf.RoundToInt(_grid!.RingAcrossWidthMeters)));
-                TerrainSample probe = sampler.GetTerrainSample(probeAround, probeAcross);
-                float distance = radius;
-                if (probe.HasSurfaceWater)
-                {
-                    if (distance < nearestWaterMeters)
-                    {
-                        nearestWaterMeters = distance;
-                        nearestWaterKind = probe.WaterKind;
-                    }
-                }
-                else if (centerHasWater)
-                {
-                    nearestOppositeMeters = Mathf.Min(nearestOppositeMeters, distance);
-                }
-            }
-        }
-
-        if (centerHasWater)
-        {
-            _waterAmbienceProximity = 1.0f;
-            _waterAmbienceShoreProximity = float.IsFinite(nearestOppositeMeters)
-                ? 1.0f - Mathf.Clamp(nearestOppositeMeters / 320.0f, 0.0f, 1.0f)
-                : 0.0f;
-        }
-        else if (float.IsFinite(nearestWaterMeters))
-        {
-            _waterAmbienceKind = nearestWaterKind;
-            _waterAmbienceProximity = 1.0f - Mathf.Clamp(nearestWaterMeters / 640.0f, 0.0f, 1.0f);
-            _waterAmbienceShoreProximity = 1.0f - Mathf.Clamp(nearestWaterMeters / 256.0f, 0.0f, 1.0f);
-        }
-        else
-        {
-            _waterAmbienceProximity = 0.0f;
-            _waterAmbienceShoreProximity = 0.0f;
-        }
-        PublishWaterAmbienceMetadata();
-    }
-
-    private void PublishWaterAmbienceMetadata()
-    {
-        SetMeta(MetaWaterAmbienceKind, (int)_waterAmbienceKind);
-        SetMeta(MetaWaterAmbienceProximity, _waterAmbienceProximity);
-        SetMeta(MetaWaterAmbienceShoreProximity, _waterAmbienceShoreProximity);
     }
 
     private void ProcessSwimming(float dt)

@@ -255,7 +255,6 @@
         "scripts/**/*Ocean*",
         "scripts/**/*Fft*",
         "scripts/**/*Shore*",
-        "scripts/water_ambience.gd",
         "materials/ring_water*",
         "materials/ring_ocean*",
         "materials/*water*"
@@ -4911,6 +4910,19 @@
       "timeout_s": 60,
       "parallel_safe": false
     },
+    "water_ambience_capture_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "audio",
+        "water"
+      ],
+      "marker": "WATER_AMBIENCE_CAPTURE",
+      "expected_s": 100,
+      "timeout_s": 240,
+      "parallel_safe": false
+    },
     "water_sound_field_test": {
       "kind": "test",
       "mode": "headless",
@@ -7055,6 +7067,18 @@
       "marker": "WATER_FFT_GEOMETRY_VISUAL_TEST",
       "expected_s": null,
       "timeout_s": 300
+    },
+    "water_wave_spectrum_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "audio",
+        "water"
+      ],
+      "marker": "WATER_WAVE_SPECTRUM_GPU",
+      "expected_s": 12,
+      "timeout_s": 90
     },
     "water_fft_gpu_smoke_test": {
       "kind": "test",

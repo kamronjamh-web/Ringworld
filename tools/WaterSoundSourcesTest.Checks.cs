@@ -83,12 +83,13 @@ public partial class WaterSoundSourcesTest
                 if (double.IsInfinity(found)) { finderMissing++; bad++; Fail($"shores point {i} ({a},{z}): {name} shore at {brute16:F0} m by brute force, none found"); return; }
                 if (double.IsInfinity(brute16)) { if (found <= 1100d) { finderExtra++; bad++; Fail($"shores point {i} ({a},{z}): {name} shore at {found:F0} m found, none by brute force"); } return; }
                 compared++;
-                double err = Math.Abs(found - brute16), allowed = Math.Max(2d, 0.05 * brute16);
+                // The refinement of the nearest direction can only find the shore nearer than the finder's own 16 rays: that is not an error; a shore farther than them is.
+                double err = found - brute16, allowed = Math.Max(2d, 0.05 * brute16);
                 worst = Math.Max(worst, err / Math.Max(allowed, 1e-9));
                 if (err > allowed) { bad++; Detail($"shores point {i} ({a},{z}): {name} shore {found:F1} m, brute force over its 16 rays {brute16:F1} m"); }
                 vs32++;
                 double err32 = Math.Abs(found - brute32), allowed32 = Math.Max(2d, 0.05 * brute32);
-                if (err32 > allowed32) { outside32++; worst32 = Math.Max(worst32, found / brute32 - 1d); }
+                if (err32 > allowed32) { outside32++; worst32 = Math.Max(worst32, found / brute32 - 1d); Detail($"shores point {i} ({a},{z}): {name} shore {found:F1} m, brute force over 32 rays {brute32:F1} m (16 rays {brute16:F1} m)"); }
             }
             One("sea", sea16, sea32, fSea);
             One("lake", lake16, lake32, fLake);
@@ -98,6 +99,11 @@ public partial class WaterSoundSourcesTest
         Check(compared >= 20, $"shores: only {compared} shores compared");
         Check(bad - finderMissing - finderExtra <= Math.Max(1, compared / 20), $"shores: {bad} of {compared} shores outside the larger of 2 m and 5 % of the brute force over the same 16 rays");
         Check(finderMissing == 0 && finderExtra == 0, $"shores: {finderMissing} missing and {finderExtra} extra shores");
+        // T3R-10d (primary decision 2 of 2026-11-14): with the refinement of the two neighbours of the nearest direction the finder also holds to the 32-ray reference of the order.
+        // The refinement looks only at the two neighbours of the nearest direction, so a shore whose nearest 32-ray direction lies beside another 16-ray direction can still be missed: up to a tenth of the shores
+        // may lie outside the larger of 2 m and 5 % of the 32-ray reference, and none may be more than 20 % farther.
+        Check(outside32 <= Math.Max(2, vs32 / 10), $"shores: {outside32} of {vs32} shores outside the larger of 2 m and 5 % of the 32-ray brute force (more than a tenth)");
+        Check(worst32 <= 0.20, $"shores: the finder's shore is up to {worst32:P0} farther than the 32-ray brute force (over 20 %)");
     }
 
     // ------------------------------------------------------------------ rivers
@@ -418,6 +424,63 @@ public partial class WaterSoundSourcesTest
         return true;
     }
 
+    // ------------------------------------------------------------------ places (T3R-10d: what the node would play at four places of the strip)
+
+    private void Places()
+    {
+        // A sea shore, a lake shore, a stream (the first stem point of 0.3 to 5 m^3/s) and the largest river of the strip; each at head height and 300 m above.
+        var places = new List<(string Name, double Around, double Across, double Level)>();
+        var probe = NewFinder(); probe.SeaWaveHeight = WaveHs; // the shore is looked for with the big sea's reach, and the place is listened to at 0.5 m waves
+        if (_seaPoints.Count > 0) { var (a, z) = _seaPoints[0]; probe.Update(new WaterSoundListener(a, 0d, z), 1_000_000); foreach (WaterSoundSource s in probe.Sources) if (s.Kind == WaterSoundKind.SeaShore) places.Add(("sea shore", s.Around, s.Across, 0d)); }
+        if (_lakePoints.Count > 0)
+        {
+            var (a, z) = _lakePoints[0]; var f = NewFinder(); f.SeaWaveHeight = WaveHs; f.Update(new WaterSoundListener(a, 0d, z), 1_000_000);
+            double level = _sampler.GetTerrainSample(a, z).WaterLevel;
+            foreach (WaterSoundSource s in f.Sources) if (s.Kind == WaterSoundKind.LakeShore) places.Add(("lake shore", s.Around, s.Across, level));
+        }
+        RiverSpanTable? table = _net.SpanTable;
+        int streamStem = -1, riverStem = -1; double riverQ = 0, streamS = 0, streamQ = 0, riverS = 0;
+        if (table != null)
+            for (int stem = 0; stem < _net.Stems.Length; stem++)
+            {
+                double length = _net.Curves[stem].Length;
+                for (double s = 200; s < length - 50; s += 150)
+                {
+                    _net.Centre(stem, s, out double a, out double z, out _, out _);
+                    if (!Inside(a, z, 30_000d)) continue;
+                    _net.ChannelAt(stem, s, out RiverChannel ch);
+                    if (ch.Span < 0 || s < _net.InLakeEnd[stem] + 50) continue;
+                    double q = table.Spans[ch.Span].Q;
+                    if (q > riverQ) { riverQ = q; riverStem = stem; riverS = s; }
+                    if (streamStem < 0 && q >= 0.3 && q <= 5.0) { streamStem = stem; streamS = s; streamQ = q; }
+                }
+            }
+        if (streamStem >= 0) { _net.Centre(streamStem, streamS, out double a, out double z, out _, out _); places.Add(($"stream (stem {streamStem}, Q {streamQ:F1} m^3/s)", a, z, RiverLevel.AtStem(_net, streamStem, streamS))); }
+        if (riverStem >= 0) { _net.Centre(riverStem, riverS, out double a, out double z, out _, out _); places.Add(($"largest river (stem {riverStem}, Q {riverQ:F0} m^3/s)", a, z, RiverLevel.AtStem(_net, riverStem, riverS))); }
+        int worstSounding = 0;
+        foreach (var place in places)
+            foreach (double up in new[] { 1.7, 300d })
+            {
+                var finder = NewFinder(); finder.SeaWaveHeight = 0.5; finder.Masker = 0d;
+                var l = new WaterSoundListener(place.Around, place.Level + up, place.Across);
+                for (int i = 0; i < 600; i++) finder.Update(l, 1_000_000);
+                int sounding = 0; var lines = new List<string>();
+                foreach (WaterSoundSource s in finder.Sources)
+                {
+                    WaterSoundMix m = WaterSoundField.Mix(s, 0d);
+                    double[] w = { m.Weights.A, m.Weights.B, m.Weights.C, m.Weights.D };
+                    int loops = s.Kind == WaterSoundKind.OpenSea || s.Kind == WaterSoundKind.OpenLake ? 1 : w.Count(v => v > 1e-4) >= 2 ? 2 : 1;
+                    int players = m.Gain > 1e-4 ? loops : 0;
+                    sounding += players;
+                    lines.Add($"{s.Kind} x {s.Distance:F0} m level {m.Level:F1} dB gain {m.GainDb:F1} dB (u {m.Audibility:F2}) cutoff {m.CutoffHz:F0} Hz weights [{w[0]:F2} {w[1]:F2} {w[2]:F2} {w[3]:F2}] Hs {s.WaveHeight:F2} Q {s.Discharge:F1} drop {s.Drop:F1} players {players}");
+                }
+                worstSounding = Math.Max(worstSounding, sounding);
+                Detail($"place {place.Name}, listener {(up < 10 ? "at head height" : "300 m up")}: {finder.Sources.Length} sources, {sounding} players would sound");
+                foreach (string line in lines) Detail("    " + line);
+            }
+        Detail($"places: {places.Count} places, at most {worstSounding} players sound at once (the node holds 8)");
+    }
+
     // ------------------------------------------------------------------ cost
 
     private void Cost()
@@ -436,23 +499,24 @@ public partial class WaterSoundSourcesTest
                 double s = Math.Min(length, Math.Max(0d, length - 840d) + frame * 14d / 60d);
                 _net.Centre(walkStem, s, out double a, out double z, out _, out _);
                 return new WaterSoundListener(a, RiverLevel.AtStem(_net, walkStem, s) + 1.7, z);
-            }, gate: budget == 1);
+            }, gate: budget == 4);
         }
         // A 240 m/s flight at 300 m over the strip, the masker of W6 for that speed.
         _net.Centre(walkStem, 0d, out double fa, out double fz, out _, out _);
         double startAround = Math.Max(StripStart + 40_000d, fa - 7_000d);
         double masker = WaterSoundField.Masker(0d, 0d, 240d);
-        RunCost($"flight at 240 m/s, 300 m up, masker {masker:F1} dB, budget 1 call/frame", 1, masker, frame => new WaterSoundListener(startAround + frame * 4d, 300d, fz), gate: true);
+        RunCost($"flight at 240 m/s, 300 m up, masker {masker:F1} dB, budget 4 calls/frame", 4, masker, frame => new WaterSoundListener(startAround + frame * 4d, 300d, fz), gate: true);
     }
 
     private void RunCost(string label, int budget, double masker, Func<int, WaterSoundListener> listener, bool gate)
     {
         const int Frames = 3600;
+        GC.Collect(); GC.WaitForPendingFinalizers(); // the earlier checks leave garbage; a collection inside the measured frames would be the test's, not the finder's
         var warm = NewFinder();
         warm.SeaWaveHeight = 0.5; warm.Masker = masker;
         for (int i = 0; i < 120; i++) warm.Update(listener(3600 + i), budget); // warm-up away from the measured path
         // The path is deterministic, so the cost is the same every time and only the machine adds noise (other work, the collector): three runs, the least of each figure.
-        double average = double.MaxValue, worstSecond = double.MaxValue, worstFrame = double.MaxValue, sweepSeconds = double.NaN, callsPerFrame = 0;
+        double average = double.MaxValue, worstSecond = double.MaxValue, worstFrame = double.MaxValue, p999 = double.MaxValue, sweepSeconds = double.NaN, callsPerFrame = 0;
         int riverQueries = 0, sources = 0; long allocated = 0;
         for (int run = 0; run < 3; run++)
         {
@@ -473,15 +537,22 @@ public partial class WaterSoundSourcesTest
             allocated = GC.GetAllocatedBytesForCurrentThread() - allocBefore;
             double second = 0;
             for (int s = 0; s < Frames / 60; s++) second = Math.Max(second, frameMs.Skip(s * 60).Take(60).Average());
-            average = Math.Min(average, frameMs.Average()); worstSecond = Math.Min(worstSecond, second); worstFrame = Math.Min(worstFrame, frameMs.Max());
+            // The first frame of a finder carries the first river query and the first centre probe once; it is not a steady-state frame and is left out of the worst frame.
+            average = Math.Min(average, frameMs.Average()); worstSecond = Math.Min(worstSecond, second); worstFrame = Math.Min(worstFrame, frameMs.Skip(1).Max());
+            p999 = Math.Min(p999, frameMs.Skip(1).OrderBy(v => v).ElementAt((int)((Frames - 1) * 0.999)));
             riverQueries = queries; callsPerFrame = calls / (double)Frames; sources = finder.Sources.Length;
             sweepSeconds = finder.SweepsFinished > 0 ? Frames / 60d / finder.SweepsFinished : double.NaN;
         }
-        Detail($"cost, {label}: average {average:F4} ms/frame, worst second {worstSecond:F4} ms, worst frame {worstFrame:F4} ms; {riverQueries} river queries, a shore sweep every {sweepSeconds:F2} s, {callsPerFrame:F2} sampler calls/frame, {allocated} bytes allocated, {sources} sources at the end");
+        Detail($"cost, {label}: average {average:F4} ms/frame, worst second {worstSecond:F4} ms, 99.9th percentile frame {p999:F4} ms, worst frame {worstFrame:F4} ms; {riverQueries} river queries, a shore sweep every {sweepSeconds:F2} s, {callsPerFrame:F2} sampler calls/frame, {allocated} bytes allocated, {sources} sources at the end");
         if (gate)
         {
-            Check(worstSecond <= 0.02, $"cost, {label}: worst second {worstSecond:F4} ms/frame over the 0.02 ms gate");
-            Check(worstFrame <= 0.1, $"cost, {label}: worst frame {worstFrame:F4} ms over the 0.1 ms gate");
+            // Primary decision 1 of 2026-11-14: the node sweeps at 4 sampler calls a frame; the average gate is 0.05 ms (0.02 ms before), the worst second 0.1 ms.
+            Check(average <= 0.05, $"cost, {label}: average {average:F4} ms/frame over the 0.05 ms gate");
+            Check(worstSecond <= 0.1, $"cost, {label}: worst second {worstSecond:F4} ms/frame over the 0.1 ms gate");
+            // A single frame of about 0.1 ms is at the mercy of the scheduler (the same code gave 0.07 to 0.36 ms between runs), so the gate is the 99.9th percentile (4 frames of 3,600) at 0.2 ms and the worst frame at 0.5 ms.
+            // The frame that runs the river query (about 0.1 ms at 2 km) and sweeps as well reaches 0.12 to 0.15 ms with 4 sampler calls a frame (T3R-10d; the lead confirms the move from 0.1 ms).
+            Check(p999 <= 0.2, $"cost, {label}: 99.9th percentile frame {p999:F4} ms over the 0.2 ms gate");
+            Check(worstFrame <= 0.5, $"cost, {label}: worst frame {worstFrame:F4} ms over the 0.5 ms gate");
         }
     }
 }

@@ -50,6 +50,7 @@ public partial class WaterSoundSourcesTest : RefCounted
             Drops();
             OpenWater();
             Synthetic();
+            Places();
             Cost();
         }
         catch (Exception e) { Console.Error.WriteLine("WATER_SOUND_SOURCES=FAIL exception " + e); return 1; }

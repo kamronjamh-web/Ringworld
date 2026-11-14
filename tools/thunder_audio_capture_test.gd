@@ -166,10 +166,13 @@ func drain_capture() -> float:
 	return peak
 
 func stop_fixture_loops() -> void:
-	for path in ["OutsideAmbience", "WaterAmbience/Shore", "WaterAmbience/OpenWater", "WaterAmbience/River", "WaterAmbience/Underwater"]:
-		var player := scene.get_node_or_null(path)
-		if player != null and player.has_method("stop"):
-			player.call("stop")
+	var outside := scene.get_node_or_null("OutsideAmbience")
+	if outside != null and outside.has_method("stop"):
+		outside.call("stop")
+	# The water node makes its players itself (T3R-10d); switching it off keeps them quiet.
+	var water := scene.get_node_or_null("WaterAmbience")
+	if water != null:
+		water.set("Enabled", false)
 
 func fail(message: String) -> void:
 	push_error("THUNDER_AUDIO_CAPTURE=FAIL " + message)

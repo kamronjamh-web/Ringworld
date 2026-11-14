@@ -62,8 +62,16 @@
 [ext_resource type="Script" uid="uid://bukbdgbrs7nqc" path="res://scripts/Voxel/Integration/RingCavityLightingCaptureDirector.cs" id="44"]
 [ext_resource type="Script" path="res://scripts/outside_ambience.gd" id="45_outside_ambience"]
 [ext_resource type="AudioStream" path="res://resources/audio/timeline_1_outside_ambience.ogg" id="46_outside_ambience_stream"]
-[ext_resource type="Script" path="res://scripts/water_ambience.gd" id="47_water_ambience"]
-[ext_resource type="AudioStream" path="res://resources/audio/water/shore_wave_cc0.ogg" id="48_water_ambience_stream"]
+[ext_resource type="Script" path="res://scripts/RingWaterAmbience.cs" id="47_water_ambience"]
+[ext_resource type="AudioStream" path="res://resources/audio/water/water_lap_loop.ogg" id="48_water_lap"]
+[ext_resource type="AudioStream" path="res://resources/audio/water/surf_break_loop.ogg" id="48_water_surf_break"]
+[ext_resource type="AudioStream" path="res://resources/audio/water/surf_far_loop.ogg" id="48_water_surf_far"]
+[ext_resource type="AudioStream" path="res://resources/audio/water/open_water_loop.ogg" id="48_water_open"]
+[ext_resource type="AudioStream" path="res://resources/audio/water/stream_babble_loop.ogg" id="48_water_babble"]
+[ext_resource type="AudioStream" path="res://resources/audio/water/river_rush_loop.ogg" id="48_water_rush"]
+[ext_resource type="AudioStream" path="res://resources/audio/water/river_roar_loop.ogg" id="48_water_roar"]
+[ext_resource type="AudioStream" path="res://resources/audio/water/waterfall_loop.ogg" id="48_water_waterfall"]
+[ext_resource type="AudioStream" path="res://resources/audio/water/underwater_loop.ogg" id="48_water_underwater"]
 [ext_resource type="Script" path="res://scripts/Voxel/LOD/RingStandingGrassLayer.cs" id="49_standing_grass"]
 [ext_resource type="Script" uid="uid://c2020c08rjxsu" path="res://scripts/RingDayNightCycle.cs" id="50_day_night_cycle"]
 [ext_resource type="Script" path="res://scripts/RingCloudTransitionCaptureDirector.cs" id="51_cloud_transition_capture"]
@@ -233,26 +241,15 @@ RainRoofStream = ExtResource("rain_roof_drum")
 
 [node name="WaterAmbience" type="Node" parent="."]
 script = ExtResource("47_water_ambience")
-player_path = NodePath("../Explorer")
-
-[node name="Shore" type="AudioStreamPlayer" parent="WaterAmbience"]
-stream = ExtResource("48_water_ambience_stream")
-bus = &"WaterAbove"
-
-[node name="OpenWater" type="AudioStreamPlayer" parent="WaterAmbience"]
-stream = ExtResource("48_water_ambience_stream")
-bus = &"WaterAbove"
-pitch_scale = 0.82
-
-[node name="River" type="AudioStreamPlayer" parent="WaterAmbience"]
-stream = ExtResource("48_water_ambience_stream")
-bus = &"WaterAbove"
-pitch_scale = 1.22
-
-[node name="Underwater" type="AudioStreamPlayer" parent="WaterAmbience"]
-stream = ExtResource("48_water_ambience_stream")
-bus = &"WaterUnderwater"
-pitch_scale = 0.62
+LapStream = ExtResource("48_water_lap")
+SurfBreakStream = ExtResource("48_water_surf_break")
+SurfFarStream = ExtResource("48_water_surf_far")
+OpenWaterStream = ExtResource("48_water_open")
+BabbleStream = ExtResource("48_water_babble")
+RushStream = ExtResource("48_water_rush")
+RoarStream = ExtResource("48_water_roar")
+WaterfallStream = ExtResource("48_water_waterfall")
+UnderwaterStream = ExtResource("48_water_underwater")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Explorer" unique_id=1380201851]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)

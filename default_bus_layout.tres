@@ -4,14 +4,26 @@
 cutoff_hz = 1450.0
 resonance = 0.18
 
+[sub_resource type="AudioEffectLowPassFilter" id="AudioEffectLowPassFilter_wind"]
+cutoff_hz = 18000.0
+
 [sub_resource type="AudioEffectLowPassFilter" id="AudioEffectLowPassFilter_rain_bed"]
 cutoff_hz = 18000.0
 
 [sub_resource type="AudioEffectLowPassFilter" id="AudioEffectLowPassFilter_rain_field"]
 cutoff_hz = 18000.0
 
-[sub_resource type="AudioEffectLowPassFilter" id="AudioEffectLowPassFilter_wind"]
-cutoff_hz = 18000.0
+[sub_resource type="AudioEffectLowPassFilter" id="AudioEffectLowPassFilter_water_shore"]
+cutoff_hz = 20000.0
+db = 1
+
+[sub_resource type="AudioEffectLowPassFilter" id="AudioEffectLowPassFilter_water_river"]
+cutoff_hz = 20000.0
+db = 1
+
+[sub_resource type="AudioEffectLowPassFilter" id="AudioEffectLowPassFilter_water_drop"]
+cutoff_hz = 20000.0
+db = 1
 
 [resource]
 bus/1/name = &"WaterAbove"
@@ -70,3 +82,27 @@ bus/8/volume_db = 0.0
 bus/8/send = &"Rain"
 bus/8/effect/0/effect = SubResource("AudioEffectLowPassFilter_rain_field")
 bus/8/effect/0/enabled = true
+bus/9/name = &"WaterShore"
+bus/9/solo = false
+bus/9/mute = false
+bus/9/bypass_fx = false
+bus/9/volume_db = 0.0
+bus/9/send = &"WaterAbove"
+bus/9/effect/0/effect = SubResource("AudioEffectLowPassFilter_water_shore")
+bus/9/effect/0/enabled = true
+bus/10/name = &"WaterRiver"
+bus/10/solo = false
+bus/10/mute = false
+bus/10/bypass_fx = false
+bus/10/volume_db = 0.0
+bus/10/send = &"WaterAbove"
+bus/10/effect/0/effect = SubResource("AudioEffectLowPassFilter_water_river")
+bus/10/effect/0/enabled = true
+bus/11/name = &"WaterDrop"
+bus/11/solo = false
+bus/11/mute = false
+bus/11/bypass_fx = false
+bus/11/volume_db = 0.0
+bus/11/send = &"WaterAbove"
+bus/11/effect/0/effect = SubResource("AudioEffectLowPassFilter_water_drop")
+bus/11/effect/0/enabled = true

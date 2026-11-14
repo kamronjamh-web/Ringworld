@@ -4,6 +4,19 @@ using RingworldTechDemo.Voxel.Phase3;
 
 namespace RingworldTechDemo.Water;
 
+/// <summary>What the water sound node needs from a finder (T3R-10d): the real <see cref="WaterSoundSourceFinder"/>, or a fixed list of sources in a test.</summary>
+public interface IWaterSoundFinder
+{
+    /// <summary>The sea's significant wave height in metres; lakes follow at 0.24 of it.</summary>
+    double SeaWaveHeight { get; set; }
+    /// <summary>The masker M of W6 in dB.</summary>
+    double Masker { get; set; }
+    /// <summary>Sampler calls of the last <see cref="Update"/>, for the node's diagnostics.</summary>
+    int LastSamplerCalls { get; }
+    ReadOnlySpan<WaterSoundSource> Sources { get; }
+    void Update(in WaterSoundListener listener, int maxSamplerCalls);
+}
+
 /// <summary>The listener as a canonical position (docs/work-orders/terrain-vegetation/T3.md, Spec W1): ring around and across in metres, vertical in metres above the sea (the same scale as water levels).</summary>
 public readonly record struct WaterSoundListener(double Around, double Vertical, double Across);
 
@@ -14,7 +27,7 @@ public readonly record struct WaterSoundListener(double Around, double Vertical,
 /// <see cref="Sources"/> is the current list, with the distances recomputed for the listener's present position from the kept points (W1: height is distance), so a moving listener hears no steps.
 /// The source powers are Spec W3's (<see cref="WaterSoundField"/>). Nothing here has a floor: a power of 0 stays 0, and no source is kept for being small. The shield of W8 is T3R-10f's and stays 0.
 /// </summary>
-public sealed class WaterSoundSourceFinder
+public sealed class WaterSoundSourceFinder : IWaterSoundFinder
 {
     public const int MaxSources = 8;
     /// <summary>W4: the sampler radii double from 4 m up to 2,048 m; 16 directions; five bisection steps.</summary>
@@ -71,6 +84,10 @@ public sealed class WaterSoundSourceFinder
     // The shore sweep, a state machine of one ray at a time.
     private bool _sweeping;
     private int _direction, _radiusIndex, _bisectLeft;
+    // The rays of a sweep: the 16 directions, then (T3R-10d, primary decision 2 of 2026-11-14) the two neighbours at half a spacing of the nearest sea direction and of the nearest lake direction.
+    private readonly double[] _rayAngle = new double[Directions + 4], _rayLimit = new double[Directions + 4];
+    private int _rayTotal, _bestSeaDirection, _bestLakeDirection;
+    private bool _refining;
     private double _sweepRadiusLimit, _sweepOriginAround, _sweepOriginAcross;
     private bool _sweepBaseWet, _rayBisecting;
     private double _rayLo, _rayHi, _rayWetRadius, _rayLevel;
@@ -243,12 +260,13 @@ public sealed class WaterSoundSourceFinder
             if (!_centerValid) return;
             if (_sweepEver && !MovedWrapped(listener, _lastSweepAt, SweepRestartMeters) && _updatesSinceSweep < 120) return;
             _sweeping = true; _sweepEver = true; _lastSweepAt = listener; _updatesSinceSweep = 0;
-            _direction = 0; _radiusIndex = 0; _rayBisecting = false;
+            _direction = 0; _radiusIndex = 0; _rayBisecting = false; _refining = false; _rayTotal = Directions; _bestSeaDirection = -1; _bestLakeDirection = -1;
             _sweepOriginAround = listener.Around; _sweepOriginAcross = listener.Across;
             _sweepBaseWet = _centerBaseWet;
             // Radii up to the first one at or beyond the reach (a shore at 300 m is bracketed by 256 and 512).
             _sweepRadiusLimit = FirstShoreRadiusMeters;
             while (_sweepRadiusLimit < _shoreReach && _sweepRadiusLimit < MaxShoreRadiusMeters) _sweepRadiusLimit *= 2d;
+            for (int d = 0; d < Directions; d++) { _rayAngle[d] = d * (Math.PI * 2d / Directions); _rayLimit[d] = _sweepRadiusLimit; }
             _sweepSea = default; _sweepLake = default; _bestSeaDistance = double.PositiveInfinity; _bestLakeDistance = double.PositiveInfinity;
         }
         int start = LastSamplerCalls;
@@ -258,13 +276,13 @@ public sealed class WaterSoundSourceFinder
     /// <summary>One sampler call of the sweep: the next radius of the current ray, or the next bisection step after the first change between wet and dry.</summary>
     private void StepSweep()
     {
-        double angle = _direction * (Math.PI * 2d / Directions);
+        double angle = _rayAngle[_direction];
         double ux = Math.Cos(angle), uz = Math.Sin(angle);
         if (!_rayBisecting)
         {
             double radius = FirstShoreRadiusMeters * (1 << _radiusIndex);
             double z = _sweepOriginAcross + uz * radius;
-            if (radius > _sweepRadiusLimit + 1e-9 || z < 0d || z > _acrossMax) { NextDirection(); return; }
+            if (radius > _rayLimit[_direction] + 1e-9 || z < 0d || z > _acrossMax) { NextDirection(); return; }
             TerrainSample s = Probe(_sweepOriginAround + ux * radius, z);
             bool wet = Wet(s);
             if (wet == _sweepBaseWet) { _radiusIndex++; return; }
@@ -292,25 +310,51 @@ public sealed class WaterSoundSourceFinder
             Valid = true, Kind = kind, Power = WaterSoundField.ShorePower(hs), HalfSize = WaterSoundField.ShoreHalfSize(hs),
             Around = WrapAround(around), Across = Math.Clamp(across, 0d, _acrossMax), Level = _rayLevel, Top = _rayLevel, WaveHeight = hs, Stem = -1,
         };
-        if (kind == WaterSoundKind.SeaShore) { if (radius < _bestSeaDistance) { _bestSeaDistance = radius; _sweepSea = kept; } }
-        else if (radius < _bestLakeDistance) { _bestLakeDistance = radius; _sweepLake = kept; }
+        if (kind == WaterSoundKind.SeaShore) { if (radius < _bestSeaDistance) { _bestSeaDistance = radius; _sweepSea = kept; _bestSeaDirection = _direction; } }
+        else if (radius < _bestLakeDistance) { _bestLakeDistance = radius; _sweepLake = kept; _bestLakeDirection = _direction; }
         NextDirection();
     }
 
     private void NextDirection()
     {
         _rayBisecting = false; _radiusIndex = 0;
-        if (++_direction < Directions) return;
+        if (++_direction < _rayTotal) return;
+        if (!_refining)
+        {
+            // Refinement: the two rays at half a spacing either side of the nearest direction of each kind (a 32-ray sweep near the nearest shore, about 26 calls each), searched only out to the shore found.
+            _refining = true;
+            AddRefinementRays(_bestSeaDirection, _bestSeaDistance);
+            AddRefinementRays(_bestLakeDirection, _bestLakeDistance);
+            if (_direction < _rayTotal) return;
+        }
         _sweeping = false;
         _seaShore = _sweepSea; _lakeShore = _sweepLake;
         SweepsFinished++; SweepFinishedLastUpdate = true;
     }
 
+    private void AddRefinementRays(int direction, double distance)
+    {
+        if (direction < 0 || !double.IsFinite(distance)) return;
+        double limit = FirstShoreRadiusMeters;
+        while (limit < distance && limit < _sweepRadiusLimit) limit *= 2d;
+        double half = Math.PI / Directions;
+        for (int side = -1; side <= 1; side += 2)
+        {
+            if (_rayTotal >= _rayAngle.Length) return;
+            _rayAngle[_rayTotal] = _rayAngle[direction] + side * half;
+            _rayLimit[_rayTotal] = limit;
+            _rayTotal++;
+        }
+    }
+
     // ------------------------------------------------------------------ rivers, chutes and falls
+
+    private bool RiverQueryDue(in WaterSoundListener listener, double radius)
+        => !_riverEver || MovedWrapped(listener, _lastRiverAt, RiverRefreshMeters) || radius > _lastRiverRadius * 1.25 || _updatesSinceRiver >= 180;
 
     private void RefreshRivers(in WaterSoundListener listener, double radius)
     {
-        if (_riverEver && !MovedWrapped(listener, _lastRiverAt, RiverRefreshMeters) && radius <= _lastRiverRadius * 1.25 && _updatesSinceRiver < 180) return;
+        if (!RiverQueryDue(listener, radius)) return;
         _riverEver = true; _lastRiverAt = listener; _lastRiverRadius = radius; _updatesSinceRiver = 0; RiverQueryRanLastUpdate = true;
         RiverNetwork net = _net!;
         int n = _operator!.ChannelsNear(listener.Around, listener.Across, radius, _hits);
