@@ -96,6 +96,11 @@ public partial class RingPrecipitationOcclusion : Node, IPrecipitationCoverProbe
         Deactivate();
         ReleaseProbe();
         SetDebugOverlay(false);
+        // The capture effect frees both map textures with the viewport, while this wrapper can outlive it (a managed reference). A global that still points at it makes
+        // every material that reads ring_precip_occlusion fail its uniform set ("Texture (binding: 16, index 0) is not a valid texture") until the next world's first
+        // capture, so the global goes back to the default texture here (the state global is already 0).
+        if (PublishedTexture != null) RenderingServer.GlobalShaderParameterSet(GlobalTexture, Variant.From(default(Rid)));
+        PublishedTexture = null;
         if (_viewport != null && IsInstanceValid(_viewport)) _viewport.QueueFree();
         _viewport = null; _camera = null; _capture = null;
     }
