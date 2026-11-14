@@ -11,14 +11,15 @@ Written 2026-11-10 by four `claude-lead` agents working in parallel, then cross-
 | [T0-wrapup.md](T0-wrapup.md) | T0 leftovers (weather pin, the A1000 run, exit crash, shadow-harness prefs, earlier failures, vastness V0) | T0W-1 to T0W-8 | none | now |
 | [T1.md](T1.md) | Recipe v9, generation ledger, test-world tooling | T1-0 to T1-9 | none (plumbing) | implemented/reviewed; uncommitted, gate exceptions in handoff |
 | [T2.md](T2.md) | Rivers and lakes (reset 2026-11-11, see `docs/t2-river-reset.md`) | T2R-0 to T2R-16 | (open until T3) | T1. The Codex study (old T2-1 to T2-15) is retired. |
-| [T3.md](T3.md) | Current, danger, floating | T3-1 to T3-16 | "rivers" (gen 2) | T2 core; T3-2 can start any time |
+| [T3.md](T3.md) | River danger data (done) and water sound (re-scoped 2026-11-13: flow, danger in play and floating moved to T9i) | T3R-1 to T3R-3, T3R-6 and T3R-10a to T3R-10d (done); T3R-10e to T3R-10g moved to the sound project; T3R-12 to T3R-16 (the freeze, pending the user's decision) | "rivers" (gen 2), pending | T2 core |
 | [../sound/README.md](../sound/README.md) | Sound effects, its own project since 2026-11-14 (water loops, T3R-10e to T3R-10g moved from T3, then weather and thunder) | SFX-1, SFX-2, T3R-10e to T3R-10g | none (sound is not world data) | now |
 | [T4.md](T4.md) | Ground surface | T4-1 to T4-8 | "ground" | T1 (alongside T2/T3) |
 | [T5.md](T5.md) | Scatter foundation and rocks | T5-1 to T5-12 | "rocks" | T4-1 design |
 | [T6.md](T6.md) | Vegetation from existing packs | T6-1 to T6-13 | "vegetation", then gate G3 | T5 designs |
 | [T7.md](T7.md) | Lowland meso-relief | T7-1 to T7-14 | "landforms" | rivers frozen |
 | [T8.md](T8.md) | New tree species and assets | T8-1 to T8-10 | "species" | G3 forest review |
-| [T9.md](T9.md) | Contingent groups T9a-T9h | per group | per group | each needs the user's go |
+| [T9.md](T9.md) | Contingent groups T9a-T9i (T9i: river flow, danger and floating, moved from T3 on 2026-11-13; its orders keep their T3R numbers) | per group | per group | each needs the user's go |
+| [TR.md](TR.md) | Tree rendering: LOD decimation, camera-facing far billboard, billboard match, maximum tree count, distant canopy shadows (added 2026-11-13) | TR-1 to TR-10 | none (renderer only; decision D1) | now; coordinate with T6-8, T6-10, T6-11 |
 
 **Critical path:** T0W-1, then T1, then T2 and T3 (the rivers freeze), then T7. The dressing track (T4, T5, T6) runs alongside T2 and T3 once T1 lands. Its river-dependent WOs (T4-7, T5-11, T6-12) wait for rivers and land in whichever step freezes after them. Vastness V1 and later depend on T1 as well (vastness plan section 11).
 
