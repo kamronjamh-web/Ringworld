@@ -79,6 +79,10 @@ public partial class RingVoxelExplorerController : CharacterBody3D
     [Export(PropertyHint.Range, "0.1,3,0.05")] public float SwimSurfaceFloatDepthMeters { get; set; } = 1.15f;
     [Export(PropertyHint.Range, "0.05,2,0.05")] public float SwimEnterDepthMeters { get; set; } = 1.15f;
     [Export(PropertyHint.Range, "0.01,1.15,0.05")] public float SwimExitDepthMeters { get; set; } = 0.9f;
+    /// <summary>Feet this far or less above the bed count as able to stand, so the 0.9 m wade-out exit applies.</summary>
+    [Export(PropertyHint.Range, "0.1,2,0.05")] public float SwimBedReachMeters { get; set; } = 0.5f;
+    /// <summary>Swim exit where the bed is out of reach (deep water): only leaving the water near the surface ends swimming.</summary>
+    [Export(PropertyHint.Range, "0.01,1,0.01")] public float SwimDeepExitDepthMeters { get; set; } = 0.15f;
     [ExportGroup("Dynamic water tools")]
     [Export] public bool EnableDynamicWaterTools { get; set; } = true;
     [Export] public Key PlaceWaterSourceKey { get; set; } = Key.F;
@@ -1199,7 +1203,12 @@ public partial class RingVoxelExplorerController : CharacterBody3D
             ? dynamicWaterSurface
             : generatedWaterSurface;
         CurrentWaterDepthMeters = Mathf.Max(0.0f, CurrentWaterSurfaceHeightMeters - (float)_canonicalPosition.VerticalMeters);
-        float threshold = IsSwimming ? SwimExitDepthMeters : SwimEnterDepthMeters;
+        // Swim exit at 0.9 m is for wading out into shallows: a swimmer only leaves the swim motor there when the bed is
+        // within reach (feet less than SwimBedReachMeters above it). In deep water a wave trough can drop the submersion
+        // under 0.9 m for a moment; that must not drop the swimmer out of swimming (the old 0.15 m floor still applies).
+        float feetAboveBed = (float)_canonicalPosition.VerticalMeters - exactSurface;
+        bool bedInReach = feetAboveBed < SwimBedReachMeters;
+        float threshold = IsSwimming ? (bedInReach ? SwimExitDepthMeters : SwimDeepExitDepthMeters) : SwimEnterDepthMeters;
         IsSwimming = CurrentWaterDepthMeters > Mathf.Max(0.01f, threshold);
         float cameraHeight = _head?.Position.Y ?? BodyHeight * 0.85f;
         IsCameraUnderwater = _canonicalPosition.VerticalMeters + cameraHeight
