@@ -294,7 +294,19 @@ def circ_autocorr_peak(env, lo_lag, hi_lag):
     return float(mid[ok].max()) if ok.any() else 0.0
 
 
-def analyse(x, kind, autocorr):
+# --verify --ai (loops from tools/media/water_sfx_ai.py): recorded-style water drifts more than the synthesised beds, so the
+# quarter-second range limit (dB, 5th to 95th percentile) is per loop. The synthesised limits stay 6 (tight) and 14 (loose).
+# The shore and open-water loops come and go with the waves; their limits were set from the takes the user picked by ear
+# (2026-11-14: water_lap GEN-0036-03 range 20.8 gap 17.8, open_water GEN-0039-03 range 28.3 gap 21.2) with some margin.
+# The gap limit still rejects true silence (the control sits 110 dB under its RMS).
+AI_RANGE_LIMIT = {"water_lap_loop": 24.0, "surf_break_loop": 24.0, "open_water_loop": 32.0, "surf_far_loop": 18.0,
+                  "stream_babble_loop": 8.0, "river_rush_loop": 8.0, "river_roar_loop": 8.0, "waterfall_loop": 8.0,
+                  "underwater_loop": 8.0}
+AI_GAP_LIMIT = {"water_lap_loop": 22.0, "surf_break_loop": 22.0, "open_water_loop": 25.0, "surf_far_loop": 18.0}
+AI_LENGTH = (15.0, 47.0)  # 47 s take minus 2 s trim minus the crossfade; the synthesised files keep their exact lengths
+
+
+def analyse(x, kind, autocorr, limit=None, gap_limit=15.0):
     r = {}
     rms = np.sqrt(np.mean(x * x))
     r["rms_db"] = 20 * np.log10(rms + 1e-12)
@@ -310,9 +322,9 @@ def analyse(x, kind, autocorr):
     a, b = np.sqrt(np.mean(mono[-n:] ** 2)), np.sqrt(np.mean(mono[:n] ** 2))
     r["seam_db"] = float(abs(20 * np.log10((a + 1e-12) / (b + 1e-12))))
     r["autocorr"] = circ_autocorr_peak(wlin, 2, len(wlin) // 2) if autocorr else None
-    limit = 6.0 if kind == "tight" else 14.0
+    limit = limit or (6.0 if kind == "tight" else 14.0)
     fails = []
-    if r["gap_db"] > 15.0:
+    if r["gap_db"] > gap_limit:
         fails.append("gap")
     if r["range_db"] > limit:
         fails.append("range")
@@ -333,13 +345,16 @@ def verify(args):
     ok = True
     rows = []
     for name, _, kind, autocorr in LOOPS:
+        if args.only and not any(s in name for s in args.only):
+            continue
         path = os.path.join(args.out_dir, name + ".ogg")
         want_len, want_ch = EXPECT[name]
         x = decode(args.ffmpeg, path, want_ch)
         probe = subprocess.run([args.ffmpeg, "-hide_banner", "-i", path], capture_output=True, text=True).stderr
         info_ok = (f"{SR} Hz" in probe) and (("stereo" in probe) == (want_ch == 2))
-        length_ok = abs(len(x) / SR - want_len) < 0.05
-        r = analyse(x, kind, autocorr)
+        length_ok = AI_LENGTH[0] <= len(x) / SR <= AI_LENGTH[1] if args.ai else abs(len(x) / SR - want_len) < 0.05
+        r = analyse(x, kind, autocorr, AI_RANGE_LIMIT[name] if args.ai else None,
+                    AI_GAP_LIMIT.get(name, 15.0) if args.ai else 15.0)
         r["fails"] = r["fails"] + ([] if info_ok else ["format"]) + ([] if length_ok else ["length"]) \
             + (["peak"] if r["peak_db"] > -3.0 else []) + (["rms"] if abs(r["rms_db"] + 20.0) > 0.7 else [])
         passed = not r["fails"]
@@ -374,9 +389,10 @@ def main():
     ap.add_argument("--wav-dir", default=None)
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--ffmpeg", default=shutil.which("ffmpeg") or "ffmpeg")
-    ap.add_argument("--only", nargs="*", default=None, help="substring filters on output names")
+    ap.add_argument("--only", nargs="*", default=None, help="substring filters on output names (also with --verify)")
     ap.add_argument("--verify", action="store_true", help="check the encoded loops instead of generating")
     ap.add_argument("--control", default=os.path.join(_HERE, "..", "..", "resources", "audio", "water", "shore_wave_cc0.ogg"))
+    ap.add_argument("--ai", action="store_true", help="with --verify: accept the AI loops (length 15 to 47 s, per-loop range limits)")
     ap.add_argument("--markdown", action="store_true", help="with --verify: print the LICENSE.md table")
     args = ap.parse_args()
     if args.verify:
