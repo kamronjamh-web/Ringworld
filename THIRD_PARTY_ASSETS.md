@@ -64,3 +64,9 @@ Changes were made to the originals. The prepared catalog
 adaptation, and the shared far impostor built from the authored LOD3 card
 meshes are adaptations of LOLIPOP's work and carry the same credit, with a
 "modified" note. The supplied source files themselves are unmodified.
+
+## Water loops (resources/audio/water)
+
+`water_lap_loop.ogg`, `surf_break_loop.ogg`, `surf_far_loop.ogg`, `open_water_loop.ogg`, `stream_babble_loop.ogg`,
+`river_rush_loop.ogg`, `river_roar_loop.ogg`, `waterfall_loop.ogg` and `underwater_loop.ogg` are original synthesised
+work (tools/media/water_sfx_gen.py); no third-party material. Provenance and hashes: resources/audio/water/LICENSE.md.
