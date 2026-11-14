@@ -157,6 +157,52 @@ def find_take(take_id):
     sys.exit(f"take {take_id} not found under {STUDIO_OUT}")
 
 
+# ---- texture fix --------------------------------------------------------------------------------------------------
+# Stable Audio Open leaves a pattern of short rising and falling chirps in steady water noise (the user hears it as two
+# notes trading off, loudest in surf at 1-3 kHz; found 2026-11-14). Noise substitution keeps the STFT magnitude, smoothed
+# over +-2 bins (~86 Hz) and +-1 hop (~6 ms), and replaces the fine structure with seeded random noise inside the band,
+# with ramped band edges. The user judged the result "pattern gone, sound almost the same". Not used on the bubbly loops
+# (stream, lap, underwater, open water), whose 1-3 kHz content is tonal bubble pitches that this would smear.
+RENOISE_BAND = {"surf_break": (900.0, 3300.0), "surf_far": (900.0, 3300.0), "river_rush": (900.0, 3300.0),
+                "river_roar": (900.0, 3300.0), "waterfall": (900.0, 3300.0)}
+RN_N, RN_H = 1024, 256
+
+
+def _rn_stft(x):
+    w = np.hanning(RN_N)
+    frames = np.lib.stride_tricks.sliding_window_view(np.pad(x, (RN_N, RN_N)), RN_N)[::RN_H]
+    return np.fft.rfft(frames * w, axis=1), w
+
+
+def _rn_istft(X, w, length):
+    fr = np.fft.irfft(X, RN_N, axis=1) * w
+    out = np.zeros((len(fr) - 1) * RN_H + RN_N)
+    norm = np.zeros_like(out)
+    for i, f in enumerate(fr):
+        out[i * RN_H:i * RN_H + RN_N] += f
+        norm[i * RN_H:i * RN_H + RN_N] += w * w
+    return (out / np.maximum(norm, 1e-8))[RN_N:RN_N + length]
+
+
+def renoise(x, band, seed):
+    """x: (n, ch). Returns x with the fine structure inside `band` (Hz) replaced by seeded noise of the same smoothed
+    magnitude; outside the band (and on the ramps' outer side) the signal is untouched."""
+    from numpy.lib.stride_tricks import sliding_window_view as sw
+    lo, hi = band
+    f = np.fft.rfftfreq(RN_N, 1 / SR)
+    m = np.clip(np.minimum((f - lo * 0.8) / (lo * 0.2), (hi * 1.2 - f) / (hi * 0.2)), 0, 1)
+    out = np.empty_like(x)
+    for c in range(x.shape[1]):
+        X, w = _rn_stft(x[:, c])
+        P = np.abs(X) ** 2
+        P = sw(np.pad(P, ((0, 0), (2, 2)), mode="edge"), 5, axis=1).mean(-1)
+        P = sw(np.pad(P, ((1, 1), (0, 0)), mode="edge"), 3, axis=0).mean(-1)
+        N, _ = _rn_stft(np.random.default_rng(seed + c).standard_normal(len(x)))
+        N /= np.sqrt(np.mean(np.abs(N) ** 2))
+        out[:, c] = _rn_istft(X * (1 - m) + np.sqrt(P) * N * m, w, len(x))
+    return out
+
+
 def make_loop(x, xfade_s):
     """x: (n, ch) with the end artefacts already trimmed. Equal-power crossfade of the tail onto the head; the result is
     xfade shorter, and its last sample flows straight into its first (out[0] is x[n-c], out[-1] is x[n-c-1])."""
@@ -229,6 +275,8 @@ def cmd_audition(args):
         parts, seams = [], []
         for i, o in enumerate(m["outputs"]):
             x = decode(ffmpeg, os.path.join(STUDIO_OUT, entry["job_id"], o["wav"]), 2)
+            if name in RENOISE_BAND and not args.raw:
+                x = renoise(x, RENOISE_BAND[name], loop_seed(name))
             letter = LETTERS[i]
             rows.append((name, letter, o["take_id"]))
             body = x[int(TRIM_S * SR):int(TRIM_S * SR) + 10 * SR]
@@ -266,8 +314,10 @@ def cmd_build(args):
         ch = CHANNELS[name]
         x = decode(ffmpeg, wav, 2 if ch == 2 else 1)
         t = int(TRIM_S * SR)
-        x = x[t:len(x) - t]
-        loop = make_loop(conform(x, ch), args.xfade)
+        x = conform(x[t:len(x) - t], ch)
+        if name in RENOISE_BAND and not args.raw:
+            x = renoise(x, RENOISE_BAND[name], loop_seed(name))
+        loop = make_loop(x, args.xfade)
         ogg = os.path.join(args.out_dir, name + "_loop.ogg")
         y = normalise(loop, ffmpeg, ogg, os.path.join(scratch, name + ".wav"), ch)
         os.remove(os.path.join(scratch, name + ".wav"))
@@ -276,7 +326,8 @@ def cmd_build(args):
         records[name] = {"take": take, "seed": out.get("seed"), "prompt": meta["settings"]["prompt"],
                          "negative": meta["settings"].get("negative_prompt", ""), "steps": meta["settings"].get("steps"),
                          "guidance": meta["settings"].get("guidance_scale"), "backend": meta.get("backend", "diffusers"),
-                         "length": len(y) / SR, "channels": ch, "model_revision": meta.get("model", {}).get("model_revision", "")}
+                         "length": len(y) / SR, "channels": ch,
+                         "renoise_hz": None if args.raw else RENOISE_BAND.get(name), "model_revision": meta.get("model", {}).get("model_revision", "")}
     if not args.no_license:
         update_license(args.out_dir, records, args.xfade)
     if not args.scratch and os.path.isdir(scratch):
@@ -302,11 +353,13 @@ def update_license(out_dir, records, xfade):
              "diffusers backend, 47 s, 100 steps, guidance 7). They replace the synthesised loops of `tools/media/water_sfx_gen.py`; "
              "file names, loop flags and levels are unchanged.", "",
              f"Processing (`tools/media/water_sfx_ai.py build`): decode the picked take, drop the first and last {TRIM_S:g} s, "
+             "for the steady-noise loops (renoise_hz set) replace the fine structure in that band with seeded noise of the same "
+             "smoothed magnitude (removes the model's chirp texture), "
              f"equal-power crossfade of the tail onto the head ({xfade:g} s by default; the loop is that much shorter), "
              "mono downmix except open_water and underwater (stereo), 44.1 kHz, DC removed, normalised to -20 dBFS RMS with a soft "
              f"knee only if the peak would exceed -3 dBFS, Ogg Vorbis quality {VORBIS_Q}. Check: "
              "`python -I tools/media/water_sfx_gen.py --out-dir resources/audio/water --verify --ai`.", "",
-             "Per file (JSON: take ID, seed, prompt, negative prompt, steps, guidance, backend, loop length s, channels, model revision):", ""]
+             "Per file (JSON: take ID, seed, prompt, negative prompt, steps, guidance, backend, loop length s, channels, renoise band Hz, model revision):", ""]
     for name in PROMPTS:
         if name in old:
             lines.append(f"- `{name}_loop.ogg`: " + json.dumps(old[name], sort_keys=True))
@@ -333,6 +386,7 @@ def main():
     a.add_argument("--scratch", required=True)
     a.add_argument("--only", nargs="*", default=None)
     a.add_argument("--xfade", type=float, default=3.0)
+    a.add_argument("--raw", action="store_true", help="skip the texture fix (RENOISE_BAND)")
     a.set_defaults(fn=cmd_audition)
     b = sub.add_parser("build")
     b.add_argument("--pick", nargs="+", required=True, metavar="NAME=GEN-XXXX-NN")
@@ -340,6 +394,7 @@ def main():
     b.add_argument("--out-dir", default=DEFAULT_OUT)
     b.add_argument("--scratch", default=None, help="scratch dir for temporary wavs (default: inside out-dir, removed)")
     b.add_argument("--no-license", action="store_true", help="do not touch LICENSE.md")
+    b.add_argument("--raw", action="store_true", help="skip the texture fix (RENOISE_BAND)")
     b.set_defaults(fn=cmd_build)
     args = ap.parse_args()
     args.fn(args)
