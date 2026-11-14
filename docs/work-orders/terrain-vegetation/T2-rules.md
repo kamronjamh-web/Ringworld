@@ -836,3 +836,12 @@ User decisions: drowned channel looks like the lake (PT2-2). Pale lakes over san
 PT2-1 and PT2-2 share one `CarveOperator` bump (9 -> 10); the user's world is recreated once.
 
 **User re-test 2026-11-13:** PT2-1 (banks in lakes), PT2-2 (lake channel colour) and the binding-16 world-switch fix (d7b8169) all **pass** in game.
+
+**User re-test 2026-11-13 (evening): all points pass.** The re-test covered:
+- streaming stutter;
+- the altitude hole and flipping;
+- rain occlusion gating and the speed freeze;
+- the tools/play.ps1 launcher;
+- inland water morph (PT2-3).
+
+The user: "performance is largely back to what it was before, hitches are almost gone". T2R-25, T2R-14, T2R-16 and the C2c gate run are still open; the user moved on to T3.
