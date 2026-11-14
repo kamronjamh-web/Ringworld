@@ -27,8 +27,8 @@ const GLINT_ALTITUDE_M := 150000.0
 const GLINT_SUN_ELEVATION := 35.0
 const GLINT_SUN_RISING := true
 const GLINT_RING_WIDTH_M := 318000.0
-const GLINT_ACROSS_MIN_M := 64000.0
-const GLINT_ACROSS_MAX_M := 90000.0
+const GLINT_ACROSS_MIN_M := 76000.0
+const GLINT_ACROSS_MAX_M := 100000.0
 const GLINT_SEARCH_HALF := 100
 const GLINT_PEAK_HALF := 2
 const GLINT_OFF_FRACTION := 0.6
@@ -120,7 +120,7 @@ func _run() -> void:
 	if series.is_empty():
 		return
 	if rivers and not far_only:
-		# The glint poses sit 230 km off along the sun azimuth (a third of it across the ring): the river must be 64 to 90 km from the ring edge. The widest such reach, so the glint has coverage to show.
+		# The glint poses sit 230 km off along the sun azimuth (about 70 km of it across the ring, towards the ring edge or away from it with the sun side; the pose 90 degrees off turns to the side that stays on the ring, up to about 205 km across): the river must be 76 to 100 km from the ring edge, so both poses stay on the 318 km ring. The widest such reach, so the glint has coverage to show.
 		var glint_point: Dictionary = probe.call("FindRiverAcross", game, GLINT_ACROSS_MIN_M, GLINT_ACROSS_MAX_M, float(pose["around"]), 400000.0)
 		if not bool(glint_point.get("ok", false)):
 			_fail("no glint river point: %s" % str(glint_point.get("error", "")))
