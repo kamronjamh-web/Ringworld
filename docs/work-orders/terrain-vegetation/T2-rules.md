@@ -834,3 +834,5 @@ Evidence: `.godot/captures/landscape/t2r/playtest_lakes/`. Lead findings:
 5. **Binding-16 texture errors during a world switch:** fixed in d7b8169 (precipitation occlusion global reset).
 User decisions: drowned channel looks like the lake (PT2-2). Pale lakes over sand, lake vs sea colour (keep their own colour) and the dark ground around lake 20722 are all left for the biomes work. River ripple drift direction waits for T3 flow.
 PT2-1 and PT2-2 share one `CarveOperator` bump (9 -> 10); the user's world is recreated once.
+
+**User re-test 2026-11-13:** PT2-1 (banks in lakes), PT2-2 (lake channel colour) and the binding-16 world-switch fix (d7b8169) all **pass** in game.
