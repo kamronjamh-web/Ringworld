@@ -553,9 +553,12 @@ public partial class RingTerrainLodCoordinator : Node
             _lastAltitudeEditVersion = editVersion;
         }
 
+        // The visible ground over the ocean is the water surface, not the sea bed: measured from the bed the
+        // finest levels (and their FFT ocean geometry) were released once the bed was deep enough.
+        double visibleSurface = System.Math.Max(_cachedAltitudeSurfaceHeight, _grid.TerrainSampler.SeaLevelY);
         return Mathf.Max(
             0.0f,
-            (float)(canonical.VerticalMeters - _cachedAltitudeSurfaceHeight));
+            (float)(canonical.VerticalMeters - visibleSurface));
     }
 
     private void RefreshScreenSpaceSelectionIfNeeded(double delta)

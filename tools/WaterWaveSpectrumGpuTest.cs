@@ -10,7 +10,7 @@ namespace RingworldTechDemo.Tools;
 /// <summary>
 /// T3R-10d (docs/work-orders/terrain-vegetation/T3.md, V10): pins the CPU significant wave height (WaterWaveSpectrum) to the surface the FFT really draws. For three winds, the provider runs 4 cascades
 /// at 128 x 128; the displacement of every cascade is read back and its height variance (channel Y, metres) is compared with WaterWaveSpectrum.Variance for the same period and wind. The ratio
-/// is printed per cascade; the check is that every ratio lies within WaterWaveSpectrum's calibration band. Prints WATER_WAVE_SPECTRUM_GPU=PASS|FAIL. GPU: tools/run_tests.ps1 -Tests water_wave_spectrum_gpu_test.
+/// is printed per cascade; the check is that the median ratio is within 25 % of WaterWaveSpectrum's calibration, and that the Hs WaterWaveSpectrum.SignificantHeight returns for 2 and for 4 cascades is within 0.8 to 1.25 of the Hs of the drawn geometry variances (cascades 1..count-1). Prints WATER_WAVE_SPECTRUM_GPU=PASS|FAIL. GPU: tools/run_tests.ps1 -Tests water_wave_spectrum_gpu_test.
 /// </summary>
 public partial class WaterWaveSpectrumGpuTest : Node
 {
@@ -23,6 +23,7 @@ public partial class WaterWaveSpectrumGpuTest : Node
     private readonly double[] _observed = new double[4];
     private readonly List<string> _log = new();
     private readonly List<double> _ratios = new();
+    private readonly List<double> _hsRatios = new();
     public bool Completed { get; private set; }
     public bool Passed { get; private set; }
     public string LastFailure { get; private set; } = "";
@@ -79,6 +80,15 @@ public partial class WaterWaveSpectrumGpuTest : Node
             _ratios.Add(ratio);
             _log.Add($"wind {wind} m/s cascade {c} (period {Periods[c]} m): drawn height variance {_observed[c]:0.0000} m^2, spectrum {predicted:0.0000} m^2, ratio {ratio:0.###}");
         }
+        // The sea the player sees: the geometry sums cascades 1..count-1 (cascade 0 only when alone). Compare the Hs of the drawn variances with the CPU Hs for 4 cascades and for the default 2.
+        foreach (int count in new[] { 2, 4 })
+        {
+            double drawn = 0;
+            for (int c = WaterWaveSpectrum.FirstGeometryCascade(count); c < count; c++) drawn += _observed[c];
+            double drawnHs = 4.0 * Math.Sqrt(drawn), cpuHs = WaterWaveSpectrum.SignificantHeight(128, Periods.AsSpan(0, count), wind, 1.0), hsRatio = cpuHs / drawnHs;
+            _hsRatios.Add(hsRatio);
+            _log.Add($"wind {wind} m/s, {count} cascades: drawn Hs {drawnHs:0.00} m, WaterWaveSpectrum.SignificantHeight {cpuHs:0.00} m, ratio {hsRatio:0.###}");
+        }
         if (++_wind < Winds.Length) { Begin(); return; }
         Finish();
     }
@@ -94,6 +104,8 @@ public partial class WaterWaveSpectrumGpuTest : Node
         _ratios.Sort();
         double median = _ratios[_ratios.Count / 2];
         if (Math.Abs(median / calibration - 1.0) > 0.25) { Fail($"median ratio {median:0.###} is not within 25 % of the factor {calibration:0.###}"); return; }
+        foreach (double r in _hsRatios)
+            if (r < 0.8 || r > 1.25) { Fail($"CPU Hs is {r:0.###} of the drawn Hs (allowed 0.8 to 1.25)"); return; }
         Passed = true; Completed = true;
         Console.WriteLine("WATER_WAVE_SPECTRUM_GPU=PASS");
         _provider?.Dispose(); _provider = null;
