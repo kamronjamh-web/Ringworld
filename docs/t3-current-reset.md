@@ -4,6 +4,15 @@ Date: 2026-11-11. Author: Fable 5.2, acting as Lead at the user's request. Branc
 Supersedes: sections 3.2 to 3.7 of `docs/terrain-vegetation-revamp-plan.md` where the two differ, and the previous `docs/work-orders/terrain-vegetation/T3.md`.
 Executed through: `docs/work-orders/terrain-vegetation/T3.md` (rewritten with this document; its "Spec" holds the constants).
 
+**Note of 2026-11-13.** This document is the design record of 2026-11-11 and is not edited further. The Spec of `T3.md` was revised on 2026-11-13, after the T2 rules batch and play-test 2, and wins where the two differ. What differs:
+- 4.3: the floors of 1.2 m depth and 8 m width are gone (T2R-20), and source stems taper over 1,500 m (T2R-21). The constants were re-chosen in the T3R-3 escalation: mountain roughness 0.18, eta 0.80.
+- 4.5: the class mix is counted on rivers alone; the drowned channels inside lakes (T2R-8b) are not rivers to classify. Today's numbers: T3.md Spec E3.
+- 4.7: water held in a lake is still apart from inflow jets and the draw at the outlet; the surface is the located level; the head factor replaces the 200 m fade-in (T3.md Spec E5).
+- 4.8: the swim entry is 1.15 m and the exit 0.9 m; wading takes its footing from depth times speed (T3.md Spec E6).
+- 4.10: the vertex channel is `CUSTOM1`; the roar has no floors; whitewater also rides on the proxy tint (T3.md Spec E7 and E8).
+- Section 5: the budgets are re-based (T3.md Spec "Budgets").
+- Section 10: four new questions for the user are in T3.md, "Questions for the user (2026-11-13)".
+
 ## 0. Summary
 
 - **Danger is where the river falls.** The class of a stretch comes from its *danger speed*: the mean centre speed over its pools and chutes together. Pool speed comes from depth and gradient; chutes come from the stored level profile, one per metre of drop. Gentle ground gives calm water, hill country gives swift pool-and-drop rivers, a fall of 5 to 10 % gives a fierce cascade, and steeper or deeper gives a torrent.
