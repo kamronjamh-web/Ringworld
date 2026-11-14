@@ -76,6 +76,8 @@ public partial class RingLocalWeatherEffects : Node3D
     [Export(PropertyHint.Range, "0,32,0.5")] public float BoltGlowEmissionEnergy { get; set; } = 5.0f;
 
     public float PrecipitationIntensity { get; private set; }
+    /// <summary>The intensity PrecipitationIntensity is ramping toward (local weather potential x phase factor, 0 when disabled). Above zero while rain or snow is arriving, before any drop is visible; the occlusion map wakes on it.</summary>
+    public float PrecipitationTargetIntensity { get; private set; }
     /// <summary>Observer phase against the local cloud base/top (docs/storm-revamp-s1-design.md section 4). Above removes local precipitation.</summary>
     public PrecipitationPhase PrecipitationPhase { get; private set; }
     /// <summary>Phase multipliers for streak density and rain haze (InCloud 0.5 / 2.0). Exposed for consumers; not applied here.</summary>
@@ -425,6 +427,7 @@ public partial class RingLocalWeatherEffects : Node3D
         float targetIntensity = Enabled && localCloudsVisible
             ? SmoothUnit((weather.PrecipitationPotential - start) / (1.0f - start)) * PrecipitationAltitude.IntensityFactor(column.Phase)
             : 0.0f;
+        PrecipitationTargetIntensity = targetIntensity;
         PrecipitationIntensity = Mathf.MoveToward(
             PrecipitationIntensity,
             targetIntensity,

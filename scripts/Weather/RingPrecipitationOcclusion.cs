@@ -13,7 +13,9 @@ namespace RingworldTechDemo.Weather;
 /// world compositor effects off it, and only RingPrecipOcclusionCapture.gd runs (POST_OPAQUE, depth -> R32F metres below the plane, ping-pong outputs).
 /// Layers (RingRenderLayers): every Light3D moves to the Lights bit and grass/trees/player/weather meshes to NoPrecipitationOcclusion, both outside the map camera's cull mask.
 ///
-/// Cadence: render on first activation, on a recentre (more than 16 m), a plane/height change, a terrain or construction edit revision, and every second.
+/// Active only while precipitation is present or imminent at the observer (PrecipitationNeeded; a 10 s hold bridges threshold flicker); otherwise the state global stays 0 and no render happens.
+/// Cadence: render on first activation (priming on the transition into precipitation), on a recentre (more than 16 m), a plane/height change, a terrain or construction edit revision, and every second.
+/// While the observer moves at or above RingRainHazeSettings.OcclusionFreezeSpeed (100 m/s default, hysteresis 10%) nothing re-centres or re-renders; the last map is kept.
 /// A floating-origin rebase only republishes the world-space frame (the map content is canonical-relative), it never re-renders.
 /// Active only in the Below phase (PrecipitationAltitude); otherwise the globals say "not ready" and every shader treats the world as exposed.
 /// The 10 Hz cover probe (Probe partial) implements <see cref="IPrecipitationCoverProbe"/> and is reachable through <see cref="PrecipitationCover.Probe"/>.
@@ -33,6 +35,8 @@ public partial class RingPrecipitationOcclusion : Node, IPrecipitationCoverProbe
         GlobalAcross = "ring_precip_occlusion_across", GlobalState = "ring_precip_occlusion_state";
     private const string CaptureScript = "res://scripts/render/RingPrecipOcclusionCapture.gd";
     private const double PendingTimeoutSeconds = 3.0;
+    /// <summary>How long the published map is kept (no renders) after precipitation stops being needed, so threshold flicker and a storm tail do not drop it; and the time constant of the speed smoothing.</summary>
+    private const double IdleHoldSeconds = 10.0, SpeedSmoothingSeconds = 0.1;
 
     /// <summary>Manual frame (tests, tools): the world-space map transform is supplied through SubmitManualFrame; grid, weather and phase logic are bypassed.</summary>
     public bool ManualFrame { get; set; }
@@ -46,6 +50,9 @@ public partial class RingPrecipitationOcclusion : Node, IPrecipitationCoverProbe
     public int FrameGeneration { get; private set; }
     public long RenderCount { get; private set; }
     public long RenderRequests { get; private set; }
+    /// <summary>Smoothed observer speed (m/s) and whether the map is frozen for fast travel (see RingRainHazeSettings.OcclusionFreezeSpeed).</summary>
+    public double ObserverSpeedMetersPerSecond => _observerSpeed;
+    public bool FrozenForSpeed => _fast;
     public string LastRenderReason { get; private set; } = "";
     public Transform3D PublishedTransform { get; private set; }
     public float PublishedFarMeters { get; private set; }
@@ -65,6 +72,9 @@ public partial class RingPrecipitationOcclusion : Node, IPrecipitationCoverProbe
     private int _serialIssued, _pendingSerial, _pendingSlot = -1, _publishedSlot = -1;
     private bool _renderPending, _anchorSubscribed, _treeHooked, _forceRender;
     private double _lastRenderSeconds = double.NegativeInfinity, _pendingSinceSeconds;
+    private double _lastNeededSeconds = double.NegativeInfinity, _speedSampleSeconds, _observerSpeed;
+    private RingCanonicalPosition _speedSample;
+    private bool _fast, _speedSampleValid;
     private ulong _editVersion = ulong.MaxValue, _smoothEditVersion = ulong.MaxValue;
     private static readonly StringName CompletedSerialName = "get_completed_serial", CompletedSlotName = "get_completed_slot", GetTextureName = "get_texture", RequestCaptureName = "request_capture";
 
@@ -159,7 +169,8 @@ public partial class RingPrecipitationOcclusion : Node, IPrecipitationCoverProbe
     {
         if (!ReferenceEquals(Instance, this) || !Supported) return;
         double now = Time.GetTicksMsec() / 1000.0;
-        if (!Enabled || (!ManualFrame && !GridPhaseActive())) { Deactivate(); UpdateDebugOverlay(); return; }
+        bool needed = ManualFrame || PrecipitationNeeded(now);
+        if (!Enabled || (!ManualFrame && (!GridPhaseActive() || !(needed || Ready && now - _lastNeededSeconds < IdleHoldSeconds)))) { Deactivate(); UpdateDebugOverlay(); return; }
         EnsureViewport();
         if (_viewport == null || _capture == null) return;
         PollCompletion(now);
@@ -167,7 +178,7 @@ public partial class RingPrecipitationOcclusion : Node, IPrecipitationCoverProbe
         {
             RingLodGeometrySnapshot geometry = _grid.CaptureLodGeometrySnapshot();
             RefreshWorldFrame(geometry);
-            if (!_renderPending) Schedule(geometry, now);
+            Schedule(geometry, now, needed);
         }
         else if (ManualFrame && _forceRender && !_renderPending) IssueRender(null, _pendingTransform, "manual", now);
         TickProbe(now);
@@ -177,19 +188,53 @@ public partial class RingPrecipitationOcclusion : Node, IPrecipitationCoverProbe
     private bool GridPhaseActive() =>
         _grid != null && _grid.TerrainSampler != null && (_weather?.PrecipitationPhase ?? PrecipitationPhase.Below) == PrecipitationPhase.Below;
 
+    /// <summary>
+    /// True while precipitation is present or imminent at the observer: the weather's intensity (rain or snow actually falling, ramping down after it stops), its target
+    /// intensity (above zero as soon as the local weather potential crosses the precipitation start, before the ramp has made a drop visible: the lead time that lets the first
+    /// map render and publish before drops show), or the storm-arrival observer state (fat drops, hail, core or trailing rain of an approaching cell). With no weather node
+    /// (tests) it is always true. Records the last time it held, so a short hold keeps the published map across threshold flicker.
+    /// </summary>
+    private bool PrecipitationNeeded(double now)
+    {
+        StormArrivalState arrival = StormArrivalMath.Observer;
+        bool arrivalActive = arrival.Valid && (arrival.FatDrop > 0.01f || arrival.HailIntensity > 0.01f || arrival.Core + arrival.Trailing > 0.01f);
+        bool needed = _weather == null || PrecipitationOcclusionFrame.IsPrecipitationNeeded(_weather.PrecipitationIntensity, _weather.PrecipitationTargetIntensity, arrivalActive);
+        if (needed) _lastNeededSeconds = now;
+        return needed;
+    }
+
+    /// <summary>Smoothed observer speed from the canonical position (floating-origin independent) and the fast-travel latch with hysteresis: set at the tuned speed, cleared 10% below it.</summary>
+    private void UpdateObserverSpeed(in RingCanonicalPosition observer, double circumference, double now)
+    {
+        double dt = now - _speedSampleSeconds;
+        if (_speedSampleValid && dt > 1e-4 && dt < 0.5)
+        {
+            double dAround = PrecipitationOcclusionFrame.AroundDelta(observer.AroundMeters, _speedSample.AroundMeters, circumference);
+            double dAcross = observer.AcrossMeters - _speedSample.AcrossMeters, dUp = observer.VerticalMeters - _speedSample.VerticalMeters;
+            double instant = Math.Sqrt(dAround * dAround + dAcross * dAcross + dUp * dUp) / dt;
+            _observerSpeed += (instant - _observerSpeed) * (1.0 - Math.Exp(-dt / SpeedSmoothingSeconds));
+        }
+        else _observerSpeed = 0.0;
+        _speedSample = observer; _speedSampleSeconds = now; _speedSampleValid = true;
+        _fast = PrecipitationOcclusionFrame.StepFrozen(_fast, _observerSpeed, RingRainHazeSettings.Current.OcclusionFreezeSpeed);
+    }
+
     private Vector3? ObserverWorld()
     {
         Camera3D? camera = CameraSource != null && IsInstanceValid(CameraSource) ? CameraSource : GetViewport()?.GetCamera3D();
         return camera != null && IsInstanceValid(camera) ? camera.GlobalPosition : null;
     }
 
-    private void Schedule(in RingLodGeometrySnapshot geometry, double now)
+    private void Schedule(in RingLodGeometrySnapshot geometry, double now, bool needed)
     {
         if (_grid == null) return;
         Vector3? world = ObserverWorld();
         if (world == null) return;
         RingCanonicalPosition observer = _grid.WorldToCanonicalRingPosition64(world.Value);
         double circumference = geometry.CircumferenceMeters;
+        UpdateObserverSpeed(observer, circumference, now);
+        // Nothing to schedule while a render is in flight, while precipitation is not present or imminent (hold period), or while moving fast with a map already published.
+        if (_renderPending || !needed || (_fast && _publishedFrame != null)) return;
         double cloudBase = _weather?.PrecipitationCloudBaseMeters ?? double.NaN;
         string reason = "";
         bool rebuild = _frame is not { } current || current.NeedsRebuild(observer, cloudBase, circumference);
@@ -263,6 +308,7 @@ public partial class RingPrecipitationOcclusion : Node, IPrecipitationCoverProbe
     {
         if (!Ready && !_renderPending && _frame == null && _publishedFrame == null) return;
         if (Ready) RenderingServer.GlobalShaderParameterSet(GlobalState, new Vector4(0, PrecipitationOcclusionFrame.Resolution, FrameSerial, 0));
+        _fast = false; _speedSampleValid = false; _observerSpeed = 0.0;
         Ready = false; _renderPending = false; _frame = null; _publishedFrame = null; _pendingFrame = null; _forceRender = false;
         InvalidateProbe();
     }

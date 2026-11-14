@@ -24,6 +24,7 @@ public partial class RingLiveTuningDrawer
         AddRainHazeNumber(group, "StreakBrightness", "Streak brightness", .01);
         AddRainHazeNumber(group, "StreakLength", "Streak length", .01);
         AddRainHazeNumber(group, "SplashAmount", "Splash amount", .01);
+        AddRainHazeNumber(group, "OcclusionFreezeSpeed", "Shelter map freeze speed (m/s)", 1);
         AddRainHazeNumber(group, "HazeOnset", "Haze onset (storm level)", .01);
         AddRainHazeNumber(group, "Density", "Rain haze density", .0001);
         AddRainHazeNumber(group, "NearClearDistanceMeters", "Near-clear distance (m)", 1);

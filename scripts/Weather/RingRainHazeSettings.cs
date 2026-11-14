@@ -20,5 +20,7 @@ public partial class RingRainHazeSettings : Resource
     [Export(PropertyHint.Range, "0,1,0.01")] public float StreakBrightness { get; set; } = .5f;
     [Export(PropertyHint.Range, "0.5,2,0.01")] public float StreakLength { get; set; } = 1f;
     [Export(PropertyHint.Range, "0,2,0.01")] public float SplashAmount { get; set; } = 1f;
+    /// <summary>Observer speed (m/s) at and above which the precipitation occlusion map stops re-centring and re-rendering and keeps its last map (resumes a little below it). Older files without it load this default.</summary>
+    [Export(PropertyHint.Range, "10,1000,1")] public float OcclusionFreezeSpeed { get; set; } = 100f;
     [Export] public Color Tint { get; set; } = new(.48f, .53f, .58f, 1f);
 }

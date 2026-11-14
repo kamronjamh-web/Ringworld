@@ -58,6 +58,8 @@ func _run() -> void:
 	await frames(30)
 	var before := root.get_texture().get_image(); before.save_png(out_dir + "/main_without_producer.png")
 	var occlusion: Node = preload("res://scripts/Weather/RingPrecipitationOcclusion.cs").new()
+	# No weather node: the producer then counts precipitation as always present (it is otherwise idle without rain, and this probe measures renders).
+	occlusion.set("WeatherEffectsPath", NodePath())
 	occlusion.name = "PrecipitationOcclusion"; world.add_child(occlusion)
 	await frames(240)
 	print("PRECIP_WORLD producer ready=", occlusion.get("Ready"), " renders=", occlusion.get("RenderCount"), " last=", occlusion.get("LastRenderReason"), " supported=", occlusion.get("Supported"))

@@ -45,6 +45,12 @@ public partial class PrecipitationOcclusionFrameTest : RefCounted
             Check(!f.NeedsRebuild(new RingCanonicalPosition(123456.3 + 15.0, 40, 54321.4), 600, circ), "no rebuild within 16 m");
             Check(f.NeedsRebuild(new RingCanonicalPosition(123456.0 + 16.5, 40, 54322.0), 600, circ), "rebuild past 16 m around");
             Check(f.NeedsRebuild(new RingCanonicalPosition(123456.0, 40, 54322.0 - 16.5), 600, circ), "rebuild past 16 m across");
+            Check(!PrecipitationOcclusionFrame.IsPrecipitationNeeded(0, 0, false) && !PrecipitationOcclusionFrame.IsPrecipitationNeeded(0.001f, 0.001f, false), "dry weather needs no map");
+            Check(PrecipitationOcclusionFrame.IsPrecipitationNeeded(0.01f, 0, false) && PrecipitationOcclusionFrame.IsPrecipitationNeeded(0, 0.01f, false) && PrecipitationOcclusionFrame.IsPrecipitationNeeded(0, 0, true), "intensity, target (imminent) or storm arrival needs the map");
+            Check(!PrecipitationOcclusionFrame.IsPrecipitationNeeded(float.NaN, float.NaN, false), "non-finite intensity is not precipitation");
+            Check(!PrecipitationOcclusionFrame.StepFrozen(false, 99.9, 100) && PrecipitationOcclusionFrame.StepFrozen(false, 100, 100), "freeze latches at the limit");
+            Check(PrecipitationOcclusionFrame.StepFrozen(true, 95, 100) && !PrecipitationOcclusionFrame.StepFrozen(true, 89.9, 100), "freeze releases below 90% of the limit");
+            Check(PrecipitationOcclusionFrame.StepFrozen(true, double.NaN, 100) && !PrecipitationOcclusionFrame.StepFrozen(false, double.NaN, 100), "non-finite speed keeps the state");
             Check(f.NeedsRebuild(new RingCanonicalPosition(123456.0, 40 + 17, 54322.0), 600, circ), "rebuild on 17 m climb");
             Check(!f.NeedsRebuild(new RingCanonicalPosition(123456.0, 40 + 10, 54322.0), 600, circ), "no rebuild on 10 m climb");
             Check(f.NeedsRebuild(new RingCanonicalPosition(123456.0, 40, 54322.0), 700, circ), "rebuild when the cloud base moves 100 m");

@@ -32,6 +32,24 @@ public readonly record struct PrecipitationOcclusionFrame(
     public const double VerticalRebuildMeters = 16.0;
     public const float NearMeters = 0.05f;
 
+    /// <summary>Intensity (rain or snow actually falling, or the target it ramps toward) above which precipitation counts as present at the observer.</summary>
+    public const float NeededIntensity = 0.002f;
+    /// <summary>The freeze latch clears below this share of the freeze speed (hysteresis).</summary>
+    public const double FreezeHysteresis = 0.9;
+
+    /// <summary>Precipitation present or imminent at the observer: current or target intensity above <see cref="NeededIntensity"/>, or a storm-arrival state (fat drops, hail, core or trailing rain) at the observer.</summary>
+    public static bool IsPrecipitationNeeded(float intensity, float targetIntensity, bool arrivalActive) =>
+        arrivalActive || (float.IsFinite(intensity) && intensity > NeededIntensity) || (float.IsFinite(targetIntensity) && targetIntensity > NeededIntensity);
+
+    /// <summary>Fast-travel latch: set at <paramref name="limitMetersPerSecond"/> and above, cleared again below <see cref="FreezeHysteresis"/> of it. A non-finite speed keeps the state.</summary>
+    public static bool StepFrozen(bool frozen, double speedMetersPerSecond, double limitMetersPerSecond)
+    {
+        if (!double.IsFinite(speedMetersPerSecond)) return frozen;
+        double limit = Math.Max(1.0, limitMetersPerSecond);
+        return frozen ? speedMetersPerSecond >= limit * FreezeHysteresis : speedMetersPerSecond >= limit;
+    }
+
+
     /// <summary>Far plane distance from the map plane: the plane height above the observer plus the margin below them.</summary>
     public float FarMeters => PlaneHeightMeters + (float)FarMarginMeters;
 
