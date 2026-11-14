@@ -12,6 +12,7 @@ Executed through: `docs/work-orders/terrain-vegetation/T3.md` (rewritten with th
 - 4.10: the vertex channel is `CUSTOM1`; the roar has no floors; whitewater also rides on the proxy tint (T3.md Spec E7 and E8).
 - Section 5: the budgets are re-based (T3.md Spec "Budgets").
 - Section 10: four new questions for the user are in T3.md, "Questions for the user (2026-11-13)".
+- Scope, later the same day, by the user's decisions: 4.7 to 4.9, the visual half of 4.10 and 4.11 are no longer T3's. They are executed through `T9.md`, group T9i, when the user gives the go, and the Spec sections and questions named above for them (E5 to E7, E9, the budgets, the four questions) are there. The sound half of 4.10 is replaced by `T3.md` Spec W1 to W9, the sound of water as a whole.
 
 ## 0. Summary
 
