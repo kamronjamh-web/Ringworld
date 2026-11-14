@@ -51,8 +51,10 @@ public sealed class RiverCarveOperator
 
     /// <summary>S8: half-width of the plug band in cell units of the indicator P, and the width over which a river's lower bounds fade out inside a lake (P above the band).</summary>
     private const double PlugBand = 0.25;
-    /// <summary>The ground must stand this far under the lake surface before a river's lower bounds are removed there, and the river must be within 0.5 to 2 m of the lake level (a river on the slope above the water keeps its banks).</summary>
-    private const double LakeDepthRunMeters = 2d;
+    /// <summary>The ground must stand this far under the lake surface before a river's lower bounds are removed there (PT2-1: 0.3 m, so no bank stands out of the water), and the river must be within 0.5 to 2 m of the lake level (a river on the slope above the water keeps its banks).</summary>
+    private const double LakeDepthRunMeters = 0.3;
+    /// <summary>PT2-2: a river owner within this distance of its own lake's level, inside that lake, is reported as Lake.</summary>
+    private const double HeldAtLakeLevelMeters = 0.5;
 
     private readonly RiverGraph _graph;
     private readonly RiverNetwork _net;
@@ -71,6 +73,8 @@ public sealed class RiverCarveOperator
 
     /// <summary>Test hook for the lake-held fill comparison: false makes the operator ignore lakes altogether (the T2R-7 state).</summary>
     internal bool LakeOperator { get; init; } = true;
+    /// <summary>Test control (PT2-1): the in-lake bank fade as it was before (above twice the plug band, 2 m depth run).</summary>
+    internal bool PreFixLakeBanks { get; init; }
 
     /// <summary>Test hook for the river-mouth measurement (T2R-7d): false takes the plain minimum of the ground and the valley bound in place of the rounded one.</summary>
     internal bool ValleyRounding { get; init; } = true;
@@ -540,7 +544,7 @@ public sealed class RiverCarveOperator
                     {
                         if ((int)lakeData[8 + k] != ownId) continue;
                         double own = lakeData[4 + k];
-                        pieceLo -= RiverHydraulics.Smoothstep(PlugBand, 2d * PlugBand, lakeData[k]) * RiverHydraulics.Smoothstep(0d, LakeDepthRunMeters, own - g) * (1d - RiverHydraulics.Smoothstep(0.5, 2d, level - own)) * Math.Max(0d, pieceLo - g);
+                        pieceLo -= (PreFixLakeBanks ? RiverHydraulics.Smoothstep(PlugBand, 2d * PlugBand, lakeData[k]) : RiverHydraulics.Smoothstep(0d, PlugBand, lakeData[k])) * RiverHydraulics.Smoothstep(0d, PreFixLakeBanks ? 2d : LakeDepthRunMeters, own - g) * (1d - RiverHydraulics.Smoothstep(0.5, 2d, level - own)) * Math.Max(0d, pieceLo - g);
                         break;
                     }
             }
@@ -585,6 +589,20 @@ public sealed class RiverCarveOperator
             // No river core owns the point: a lake owns it where P > 0 (S8); islands and the ring stay dry because the sampler tests the ground against the level.
             if (p > 0d && !double.IsNaN(lakeLevel)) return new RiverOperatorResult(height, InlandWaterKind.Lake, lakeLevel, -1, 0d, weight, height - g);
             return new RiverOperatorResult(height, InlandWaterKind.None, double.NaN, -1, 0d, weight, height - g);
+        }
+        // PT2-2: river water held at its own lake's level inside that lake's membership is part of the lake for appearance (colour, clarity, ripples); the reach and offset stay for T3 flow.
+        if (lakeCount > 0)
+        {
+            ref readonly Hit o = ref hits[owner];
+            int ownId = StemLakeId(o.Stem, o.S);
+            if (ownId >= 0)
+                for (int k = 0; k < lakeCount; k++)
+                {
+                    if ((int)lakeData[8 + k] != ownId) continue;
+                    if (lakeData[k] > 0d && Math.Abs(o.Drawn - lakeData[4 + k]) < HeldAtLakeLevelMeters)
+                        return new RiverOperatorResult(height, InlandWaterKind.Lake, lakeData[4 + k], o.Reach, o.T, weight, height - g);
+                    break;
+                }
         }
         return new RiverOperatorResult(height, InlandWaterKind.River, hits[owner].Drawn, hits[owner].Reach, hits[owner].T, weight, height - g);
     }

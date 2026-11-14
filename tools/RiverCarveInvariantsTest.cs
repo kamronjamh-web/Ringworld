@@ -105,6 +105,7 @@ public partial class RiverCarveInvariantsTest : RefCounted
             StandIns();
             Sections();
             Lakes();
+            InLakeBanks();
             LakeWater();
             Paths();
             MeanderSlope();
@@ -725,6 +726,74 @@ public partial class RiverCarveInvariantsTest : RefCounted
         (long _, long badJoins, double _) = JoinLevels(0.5d, op);
         Check(badJoins > 0, "negative control: join levels 0.5 m off were not flagged");
         Detail($"controls: plug off leaks {gapOff.LeakBad}/{gapOff.LeakPairs} (largest {gapOff.LeakMax:F2} m), zero weight flags {zero.WetNoWeight}, tall plug flags {tall.RingOver5}/{tall.RingSamples}, shifted joins flag {badJoins}/{joins}");
+    }
+
+    /// <summary>
+    /// PT2-1: inside its own lake (membership above the plug band) and where the natural ground stands at least 0.5 m under the lake level, a river leaves no bank, levee or
+    /// plug standing above the lake level. Samples across the drowned channel of every stem that starts in a lake and of the last 400 m of the stems that end in one; the
+    /// control repeats it with the bank fade as it was before PT2-1 (fade only above twice the plug band, 2 m depth run), which must fail.
+    /// </summary>
+    private (long Samples, long Over, double Max, string Example) InLakeBankScan(bool before)
+    {
+        var picks = new List<(int Stem, int Lake, double From, double To)>();
+        var inletStems = new HashSet<int>(_graph.Inlets.Select(x => x.Stem));
+        double lo = _stripAroundMin + 20_000, hi = _stripAroundMax - 20_000;
+        foreach (int i in Enumerable.Range(0, _net.Stems.Length).OrderBy(i => RiverHash.Mix(Seed, i, 97)))
+        {
+            int own = _net.Reaches[_net.Stems[i].ReachStart].UpstreamLake;
+            double length = _net.Curves[i].Length;
+            if (own >= 0) { if (_net.InLakeEnd[i] > 20d) picks.Add((i, own, 0d, Math.Min(length, _net.InLakeEnd[i]))); }
+            else if (inletStems.Contains(i) && length > 400d) picks.Add((i, -1, length - 400d, length));
+        }
+        picks = picks.Where(p => { _net.Centre(p.Stem, p.From, out double a, out _, out _, out _); return a > lo && a < hi; }).Take(250).ToList();
+        long samples = 0, over = 0;
+        double max = 0d;
+        string example = "";
+        var locker = new object();
+        var op = new RiverCarveOperator(_graph) { PreFixLakeBanks = before };
+        Parallel.For(0, _workers, new ParallelOptions { MaxDegreeOfParallelism = _workers }, w =>
+        {
+            using TerrainGenerationHeightModel natural = new(_recipe, false);
+            long n = 0, bad = 0;
+            double worst = 0d;
+            string first = "";
+            for (int pi = w; pi < picks.Count; pi += _workers)
+            {
+                (int stem, int _, double from, double to) = picks[pi];
+                for (double s = from; s <= to; s += 20d)
+                {
+                    _net.CentreFrame(stem, s, out double a0, out double c0, out double nx, out double ny);
+                    double held = RiverLevel.AtStem(_net, stem, s);
+                    if (double.IsNaN(held)) continue;
+                    for (double t = -90d; t <= 90d; t += 10d)
+                    {
+                        double a = a0 + nx * t, c = c0 + ny * t;
+                        double p = op.LakeMembership(a, c, out double level, out _);
+                        if (!(p > 0.25) || double.IsNaN(level) || Math.Abs(held - level) > 0.5) continue; // only where the channel is held at this lake's level
+                        double g = natural.CalculateHeight(a, c);
+                        if (g > level - 0.5) continue;
+                        RiverOperatorResult r = op.Evaluate(a, c, g, 0d);
+                        n++;
+                        double above = r.Height - level;
+                        if (above > 0.05) { bad++; if (above > worst) { worst = above; first = FormattableString.Invariant($"stem {stem} s {s:F0} t {t:F0}: P {p:F2}, ground {g:F2}, level {level:F1}, height {r.Height:F2} ({above:F2} m above)"); } }
+                    }
+                }
+            }
+            lock (locker) { samples += n; over += bad; if (worst > max) { max = worst; example = first; } }
+        });
+        return (samples, over, max, example);
+    }
+
+    private void InLakeBanks()
+    {
+        var after = InLakeBankScan(false);
+        var before = InLakeBankScan(true);
+        Detail(FormattableString.Invariant($"in-lake banks (PT2-1): {after.Samples} samples under the lake level inside its membership, {after.Over} stand above it (largest {after.Max:F2} m); with the pre-PT2-1 fade {before.Samples} samples, {before.Over} above (largest {before.Max:F2} m)"));
+        if (after.Over > 0) Detail("example " + after.Example);
+        if (before.Over > 0) Detail("example (pre-PT2-1) " + before.Example);
+        Check(after.Samples > 1000, $"too few in-lake bank samples ({after.Samples})");
+        Check(after.Over == 0, $"in-lake banks: {after.Over}/{after.Samples} samples stand above the lake level (largest {after.Max:F2} m)");
+        Check(before.Over > 0, "negative control: the pre-PT2-1 bank fade left no bank above the lake level in this scan");
     }
 
     // ------------------------------------------------------------------ rivers reach the lake's water (T2R-8 review)
