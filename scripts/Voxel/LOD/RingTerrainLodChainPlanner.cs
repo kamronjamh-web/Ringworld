@@ -142,7 +142,18 @@ internal static class RingTerrainLodChainPlanner
     // Error rule margins are tighter than the visibility rule: a late return shows the
     // coarser level for a moment, never a hole.
     public const float ErrorRuleKeepRatio = 1.20f;
-    public const float ErrorRuleReturnRatio = 1.10f;
+    // The return sits well below the release (0.90 h against 1.20 h, a 25% band) because every
+    // crossing costs one 50-63 ms frame plus seconds of re-streaming hundreds of sectors, and
+    // over hilly ground the altitude above terrain swings by tens of metres. The old 1.10 h
+    // return left a ~46 m band at 549 m, which ordinary terrain relief re-crossed.
+    public const float ErrorRuleReturnRatio = 0.90f;
+    // Minimum time between two flips of one level's error rule, so a viewer who does cross a
+    // threshold and turns back does not pay the stream-out and stream-in cost in quick succession.
+    public const float ErrorRuleMinDwellSeconds = 5.0f;
+
+    /// <summary>Holds the previous error-rule state until it has stood for <paramref name="minDwellSeconds"/>.</summary>
+    public static bool ApplyErrorRuleDwell(bool previous, bool wanted, double nowSeconds, double lastChangeSeconds, float minDwellSeconds)
+        => wanted == previous || nowSeconds - lastChangeSeconds >= minDwellSeconds ? wanted : previous;
 
     /// <summary>
     /// A level is still needed while the next coarser enabled level, at the nearest ground,

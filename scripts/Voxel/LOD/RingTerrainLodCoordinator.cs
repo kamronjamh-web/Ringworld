@@ -180,6 +180,8 @@ public partial class RingTerrainLodCoordinator : Node
     // may stream. Levels whose far handoff lies well below the viewer altitude
     // are never visible and release their windows.
     private bool[] _altitudeActive = Array.Empty<bool>();
+    private bool[] _altitudeErrorNeeded = Array.Empty<bool>();
+    private double[] _altitudeErrorChangeSeconds = Array.Empty<double>();
     private int _altitudeSuppressedLevelCount;
     private int _altitudePlanSignature;
     private float _viewerHeightAboveSeaMeters;
@@ -457,6 +459,7 @@ public partial class RingTerrainLodCoordinator : Node
         int configuredCount = ResolveConfiguredLevelCount();
         float errorFactor = _currentProfile?.AltitudeErrorFactor ?? RingTerrainLodChainPlanner.ProxyErrorFactor;
         float targetPixelError = _currentProfile?.TargetPixelError ?? 3.0f;
+        double nowSeconds = Time.GetTicksMsec() / 1000.0;
         for (int i = 0; i < _levels.Count; i++)
         {
             float far = GetRuntimeBand(i).Y;
@@ -467,6 +470,16 @@ public partial class RingTerrainLodCoordinator : Node
             bool errorNeeded = coarser < 0 || RingTerrainLodChainPlanner.IsLevelNeededForError(
                 _levels[coarser].SampleSpacingMeters, _projectionScale, targetPixelError,
                 errorFactor, altitude, _altitudeActive[i]);
+            // Dwell: a level that just flipped on the error rule keeps that state for a few seconds.
+            bool dwelled = RingTerrainLodChainPlanner.ApplyErrorRuleDwell(
+                _altitudeErrorNeeded[i], errorNeeded, nowSeconds, _altitudeErrorChangeSeconds[i],
+                RingTerrainLodChainPlanner.ErrorRuleMinDwellSeconds);
+            if (dwelled != _altitudeErrorNeeded[i])
+            {
+                _altitudeErrorNeeded[i] = dwelled;
+                _altitudeErrorChangeSeconds[i] = nowSeconds;
+            }
+            errorNeeded = dwelled;
             next = next && errorNeeded;
             _altitudeActive[i] = next;
             if (!next) suppressed++;
@@ -485,6 +498,10 @@ public partial class RingTerrainLodCoordinator : Node
         if (_altitudeActive.Length == _levels.Count) return;
         _altitudeActive = new bool[_levels.Count];
         Array.Fill(_altitudeActive, true);
+        _altitudeErrorNeeded = new bool[_levels.Count];
+        Array.Fill(_altitudeErrorNeeded, true);
+        _altitudeErrorChangeSeconds = new double[_levels.Count];
+        Array.Fill(_altitudeErrorChangeSeconds, double.NegativeInfinity);
         _altitudePlanSignature = 0;
     }
 
@@ -1390,25 +1407,52 @@ public partial class RingTerrainLodCoordinator : Node
             Require(RingTerrainLodChainPlanner.IsLevelNeededForError(4.0f, scale, 1.25f, factor, 0.0f, true), $"k={factor}: needed at altitude 0");
             Require(RingTerrainLodChainPlanner.IsLevelNeededForError(4.0f, scale, 1.25f, factor, h * 1.19f, true), $"k={factor}: kept below 1.20h");
             Require(!RingTerrainLodChainPlanner.IsLevelNeededForError(4.0f, scale, 1.25f, factor, h * 1.21f, true), $"k={factor}: released above 1.20h");
-            Require(!RingTerrainLodChainPlanner.IsLevelNeededForError(4.0f, scale, 1.25f, factor, h * 1.11f, false), $"k={factor}: stays released above 1.10h");
-            Require(RingTerrainLodChainPlanner.IsLevelNeededForError(4.0f, scale, 1.25f, factor, h * 1.09f, false), $"k={factor}: returns below 1.10h");
+            Require(!RingTerrainLodChainPlanner.IsLevelNeededForError(4.0f, scale, 1.25f, factor, h * 0.91f, false), $"k={factor}: stays released above 0.90h");
+            Require(RingTerrainLodChainPlanner.IsLevelNeededForError(4.0f, scale, 1.25f, factor, h * 0.89f, false), $"k={factor}: returns below 0.90h");
             bool needed = false; // starts released, high above the thresholds
             int errorFlips = 0;
-            for (float altitude = h * 1.2f + 50.0f; altitude >= h * 1.1f - 50.0f; altitude -= 5.0f)
+            for (float altitude = h * 1.2f + 50.0f; altitude >= h * 0.9f - 50.0f; altitude -= 5.0f)
             {
                 bool next = RingTerrainLodChainPlanner.IsLevelNeededForError(4.0f, scale, 1.25f, factor, altitude, needed);
                 if (next != needed) errorFlips++;
                 needed = next;
             }
-            for (float altitude = h * 1.1f - 50.0f; altitude <= h * 1.2f + 50.0f; altitude += 5.0f)
+            for (float altitude = h * 0.9f - 50.0f; altitude <= h * 1.2f + 50.0f; altitude += 5.0f)
             {
                 bool next = RingTerrainLodChainPlanner.IsLevelNeededForError(4.0f, scale, 1.25f, factor, altitude, needed);
                 if (next != needed) errorFlips++;
                 needed = next;
             }
             Require(errorFlips == 2, $"k={factor}: expected one return and one release over a +-50 m sweep, saw {errorFlips}");
-            releaseText += $" k{factor:0.0}:release={h * 1.2f:0}m,return={h * 1.1f:0}m";
+            // Small terrain relief at k=6 on the 1440p profile (release 549 m, return 412 m): a released level
+            // stays released through +-60 m around 500 m (the old 503 m return flipped it every cycle), and a
+            // kept level stays kept through +-45 m (+-60 m would peak above the 549 m release).
+            if (factor == 6.0f)
+            {
+                float hSix = 4.0f * scale / (6.0f * 1.25f);
+                Require(hSix * 1.2f > 500.0f + 45.0f && hSix * 0.9f < 500.0f - 60.0f, "oscillation probe must sit inside the k=6 band");
+                foreach ((bool start, float amplitude) in new[] { (false, 60.0f), (true, 45.0f) })
+                {
+                    bool held = start;
+                    int wobbleFlips = 0;
+                    for (int step = 0; step < 400; step++)
+                    {
+                        float altitude = 500.0f + amplitude * Mathf.Sin(step * 0.3f);
+                        bool next = RingTerrainLodChainPlanner.IsLevelNeededForError(4.0f, scale, 1.25f, 6.0f, altitude, held);
+                        if (next != held) wobbleFlips++;
+                        held = next;
+                    }
+                    Require(wobbleFlips == 0, $"+-{amplitude:0} m oscillation around 500 m (start needed={start}) must not flip the level, saw {wobbleFlips}");
+                }
+            }
+            releaseText += $" k{factor:0.0}:release={h * 1.2f:0}m,return={h * 0.9f:0}m";
         }
+        // Dwell: a flip is held until the state has stood for the minimum dwell.
+        float dwell = RingTerrainLodChainPlanner.ErrorRuleMinDwellSeconds;
+        Require(RingTerrainLodChainPlanner.ApplyErrorRuleDwell(true, false, 2.0, 0.0, dwell), "dwell must hold a flip inside the dwell window");
+        Require(RingTerrainLodChainPlanner.ApplyErrorRuleDwell(true, false, dwell + 0.1, 0.0, dwell) == false, "dwell must allow a flip after the window");
+        Require(RingTerrainLodChainPlanner.ApplyErrorRuleDwell(true, true, 0.1, 0.0, dwell), "dwell must not touch an unchanged state");
+        Require(!RingTerrainLodChainPlanner.ApplyErrorRuleDwell(false, true, 4.9, 0.0, dwell), "dwell must also hold a return");
         // Contract model (EvaluateContract): the first tier after a deliberate release is held to the chosen
         // factor, not the strict 2.5. A release factor above the checked one must still report it.
         float scale1080 = RingTerrainLodChainPlanner.ProjectionScale(1080.0f, 80.0f);
