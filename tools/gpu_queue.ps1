@@ -73,12 +73,14 @@ if ($null -ne $Wrap) {
         while ($true) { Start-Sleep -Seconds 300; Get-ChildItem $d -Filter "*_$l.ticket" -ErrorAction SilentlyContinue | ForEach-Object { $_.LastWriteTime = Get-Date } }
     }
     $code = 0
+    $prevNoGrab = $env:RINGWORLD_TEST_NO_GRAB; $env:RINGWORLD_TEST_NO_GRAB = '1'   # TestRunMouseRelease autoload
     try {
         $global:LASTEXITCODE = 0
         if ($Wrap -is [scriptblock]) { & $Wrap } else { Invoke-Expression ([string]$Wrap) }
         $code = [int]$global:LASTEXITCODE
     } catch { Write-Host "gpu_queue: wrapped command failed: $($_.Exception.Message)"; $code = 1 }
     finally {
+        $env:RINGWORLD_TEST_NO_GRAB = $prevNoGrab
         Stop-Job $hb -ErrorAction SilentlyContinue; Remove-Job $hb -Force -ErrorAction SilentlyContinue
         Invoke-Release
     }

@@ -580,7 +580,7 @@ function Get-PsHost { if ($PSVersionTable.PSEdition -eq 'Core') { return (Get-Pr
 
 # Builds the command line for a spec. Returns exe/args/env.
 function Get-LaunchPlan($Ctx, $Spec) {
-    $env_ = @()
+    $env_ = @('RINGWORLD_TEST_NO_GRAB=1')   # TestRunMouseRelease autoload: test windows never clip/capture the cursor or take focus
     if ($Spec.Synthetic -or $Spec.Runner) {
         $runnerPath = Join-Path $script:Root $Spec.Runner
         $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runnerPath)

@@ -29,6 +29,7 @@ buses/default_bus_layout="uid://bg7j2e1mk3215"
 WorldSession="*res://scripts/world_session.gd"
 HardwareProfile="*res://scripts/hardware_profile.gd"
 NativeTextureStreamingBootstrap="*res://scripts/Rendering/native_texture_streaming_bootstrap.gd"
+TestRunMouseRelease="*res://scripts/Tools/TestRunMouseRelease.cs"
 
 [debug]
 
