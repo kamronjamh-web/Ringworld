@@ -12,6 +12,7 @@ Written 2026-11-10 by four `claude-lead` agents working in parallel, then cross-
 | [T1.md](T1.md) | Recipe v9, generation ledger, test-world tooling | T1-0 to T1-9 | none (plumbing) | implemented/reviewed; uncommitted, gate exceptions in handoff |
 | [T2.md](T2.md) | Rivers and lakes (reset 2026-11-11, see `docs/t2-river-reset.md`) | T2R-0 to T2R-16 | (open until T3) | T1. The Codex study (old T2-1 to T2-15) is retired. |
 | [T3.md](T3.md) | Current, danger, floating | T3-1 to T3-16 | "rivers" (gen 2) | T2 core; T3-2 can start any time |
+| [../sound/README.md](../sound/README.md) | Sound effects, its own project since 2026-11-14 (water loops, T3R-10e to T3R-10g moved from T3, then weather and thunder) | SFX-1, SFX-2, T3R-10e to T3R-10g | none (sound is not world data) | now |
 | [T4.md](T4.md) | Ground surface | T4-1 to T4-8 | "ground" | T1 (alongside T2/T3) |
 | [T5.md](T5.md) | Scatter foundation and rocks | T5-1 to T5-12 | "rocks" | T4-1 design |
 | [T6.md](T6.md) | Vegetation from existing packs | T6-1 to T6-13 | "vegetation", then gate G3 | T5 designs |
@@ -42,7 +43,7 @@ Generation numbers are assigned when a phase freezes, in the order phases freeze
 | 2 | T0W-4 | Shadow-harness prefs fix | **Answered 2026-11-10: yes, option A.** |
 | 3 | T0W-3 | Commit and branch | **Answered 2026-11-10: T0 work committed on branch `terrain-vegetation-revamp`.** |
 | 4 | T2 | Lake coverage and excavation | **Answered 2026-11-11 after map review.** Keep the 40 m excavation cap and accept a lake-rich direction. Report measured coverage. The 3 % and 2-5 % figures remain study references. |
-| 5 | T3-10 | River sound: do you supply CC0 or CC-BY calm and rapids loops, or may an agent find them? | — |
+| 5 | T3-10 | River sound: do you supply CC0 or CC-BY calm and rapids loops, or may an agent find them? | **Superseded 2026-11-14:** the loops are Stable Audio Open takes the user picked; real recordings are an option in the sound project (SFX-1). |
 | 6 | T3-1 | If no calibration reaches the danger targets, relax them? | Asked only if it happens. |
 | 7 | G2 | Swim the calm, fierce and torrent reaches and sign off before the rivers freeze. | — |
 | 8 | T4-1 | Rock texture: the existing alpine rock now, or wait for CC0 textures from T8? | Existing alpine rock now. |
