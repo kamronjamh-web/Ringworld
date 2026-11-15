@@ -444,6 +444,40 @@
       "expected_s": 5,
       "timeout_s": 45
     },
+    "tree_lod_decimation_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation",
+        "render-core"
+      ],
+      "marker": "TREE_LOD_DECIMATION_TEST",
+      "expected_s": 110,
+      "timeout_s": 400
+    },
+    "prepare_tree_render_lods": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "PREPARE_TREE_RENDER_LODS",
+      "expected_s": 160,
+      "timeout_s": 600
+    },
+    "tree_lod_contact_sheets": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "TREE_LOD_SHEETS",
+      "expected_s": 300,
+      "timeout_s": 1200
+    },
     "prepare_tree_assets": {
       "kind": "tool",
       "mode": "headless",
@@ -6633,6 +6667,18 @@
       "marker": "TREE_ATMOSPHERE_GPU",
       "expected_s": 5,
       "timeout_s": 60
+    },
+    "tree_billboard_match_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation",
+        "atmosphere-haze"
+      ],
+      "marker": "TREE_BILLBOARD_MATCH_GPU_TEST",
+      "expected_s": 180,
+      "timeout_s": 900
     },
     "tree_compute_optimization_regression": {
       "kind": "test",
