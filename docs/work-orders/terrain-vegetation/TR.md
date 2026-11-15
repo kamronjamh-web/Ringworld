@@ -16,7 +16,7 @@ Freeze: none. This is a renderer change, not world content (see decision D1).
 | D3 | TR-2 | Which fade distances are the reference for the tree budget and the TR-8 gates: the shipped defaults (LOD0 to 40 m, cards from 300-350 m) or the user's saved preferences (LOD0 to 200 m, cards from 550-900 m)? | **Answered 2026-11-14: the shipped defaults.** The user's preferences stay a heavier option on top. |
 | D4 | TR-9 | (Added by TR-2, 2026-11-14.) If a preset cannot draw every placed tree inside its far distance within the budget, should it end the trees sooner (shorter far distance) or keep the distance and draw only a share of the far trees (thinner forest)? | Shorten the far distance. Thinning shows as a sparser forest; a shorter distance hands over to the far canopy tint (T6-10) in new worlds. Design B4, F3. **Answered 2026-11-14: end the trees sooner (shorten the far distance).** |
 | D5 | none (deferred) | (Added by TR-2.) A lighter LOD0 mesh pays only with long near-detail fades such as the user's (LOD0 to 200 m: 1.8 to 2.5 ms for 256 trees). At the shipped fades LOD0 costs 0.1 to 0.5 ms. Build it? | Defer. Decide from TR-8's table at the user's preferences. Design C1. |
-| D6 | TR-6 | (Added by TR-2.) Seen from above, a far tree is one quad that faces the camera and is sized to the tree's real outline from that angle (its side-view picture squeezed to a crown-sized patch). Nothing is enlarged. Is that look acceptable? | Yes, judged from TR-6's altitude captures. Design D3. **Answered 2026-11-14: yes, judged from TR-6's altitude captures.** |
+| D6 | TR-6 | (Added by TR-2.) Seen from above, a far tree is one quad that faces the camera and is sized to the tree's real outline from that angle (its side-view picture squeezed to a crown-sized patch). Nothing is enlarged. Is that look acceptable? | Yes, judged from TR-6's altitude captures. Design D3. **Answered 2026-11-14: yes, judged from TR-6's altitude captures.** **Confirmed 2026-11-14 on the TR-6 captures: the upright shape is accepted (brightness is TR-7's).** |
 
 ## Phase facts
 
@@ -47,6 +47,7 @@ Verified 2026-11-13 against the `terrain-vegetation-revamp` working tree. TR-1 m
 | TR-4 offline decimation and contact sheets | sol_implementer | M | TR-2 | TR-6, TR-7 |
 | TR-5 wire the decimated LODs into the compact profile | sol_implementer | M | TR-4, user D1 and D2 | TR-6 |
 | TR-6 camera-facing far billboard tier | sol_implementer | M | TR-2, user D1 | TR-4, TR-7 |
+| TR-6b top-down crown card for the far tier (user request 2026-11-14) | implementer | M | TR-6, TR-7 | TR-9a |
 | TR-7 billboard match: crown normals, tint, alpha coverage | sol_implementer | M | TR-2, TR-3, user D1 | TR-4, TR-6 |
 | TR-8 review pack: before/after cost and look | sol_implementer | S | TR-5, TR-6, TR-7 | none |
 | TR-9a cap fall-through: budget-derived band edges (added by TR-2, 2026-11-14) | sol_implementer | M | TR-5, TR-6; merged after TR-8's cost run | TR-7 |
@@ -670,6 +671,34 @@ VALIDATION STEPS (rewritten 2026-11-14)
 
 ESCALATION CONDITIONS
 The steep-angle rule shows a visible pop or sliver that TR-2 did not foresee.
+
+STOP RULE
+2 watchdog periods, 4 build-plus-test attempts.
+
+### TR-6b. Top-down crown card for the far tier (requested by the user, 2026-11-14)
+
+ROLE: implementer (bake and shader), after the lead checks the bake method
+SIZE: M
+DEPENDS ON: TR-6, TR-7 (the card calibration also covers this card)
+
+OBJECTIVE
+Seen from above, a far tree also shows a horizontal card through the middle of its crown with a real top-down picture of that tree type, so a forest seen from the air reads as treetops rather than as tilted side views.
+
+CONTEXT
+The user asked for it after judging the TR-6 captures (D6 confirmed): "have the trees that face you have an intersecting texture running through the middle of them for when the player is above them". Reusing a side picture of the tree as the horizontal card would look like a tree lying on the ground, so the card gets its own top-down bake.
+
+REQUIRED CHANGES
+1. An offline bake: render each variant's authored LOD2 from straight above (orthographic, the crown's bounds, the same atlas size and alpha rules as the LOD3 cards) into a new atlas layer per variant, stored beside the impostor atlas; deterministic, and the 30-variant catalog stays byte-identical.
+2. The far quad mesh gains a second, horizontal card at mid-crown height, sized to the crown's horizontal bounds (no enlargement).
+3. Visibility: the horizontal card fades in with the same 20-30 degree steepness the TR-6 rule uses, and the upright card keeps its D3 behaviour; at low angles the horizontal card is edge-on and is dropped entirely (no cost from the side).
+4. Lighting: the horizontal card's normal is surface-up, blended with TR-7's crown normal; TR-7's per-variant calibration applies to it as well.
+5. The UseFarTreeQuads A/B export covers it; no new menu row.
+
+VALIDATION STEPS
+- Measure the added cost per far tree at the TR-6 poses (expected a few tenths of a millisecond at 200,000 far trees).
+- The TR-6 altitude and mountainside captures again (300 m and 2 km, 30 and 70 degrees), before and after, for the user.
+- A dolly through 20-30 degrees: `flicker` shows no new spike.
+- `tree_lod_dither_gpu_test`, `tree_shared_impostor_integration`, `imported_tree_impostor_catalog_smoke`, `tree_atmosphere_gpu_test`.
 
 STOP RULE
 2 watchdog periods, 4 build-plus-test attempts.
