@@ -52,7 +52,7 @@ public partial class GrassCardShaderFixture : RefCounted
             c.NormalOut = 0f; c.NormalFace = 0f; c.Backlight = 0f;
             if (mode == "mask")
             {
-                c.DryFraction = 1f; c.GreenPull = 1f;
+                c.DryFraction = 1.2f; c.DryTone = new Vector3(4.7f, 3.9f, 1.6f); c.GreenPull = 1f;
                 c.RootDark = 0f; c.TipGain = 0f; // far vertex-colour path goes black so cards beyond the converge range stay visible in the mask
                 c.ConvergeStartPercent = 99f; c.ConvergeEndPercent = 100f; // no convergence back to the ground colour
             }

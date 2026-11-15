@@ -263,3 +263,41 @@ per-instance rank.
 - **Adaptive tile grouping is re-enabled for Cards** (S5 had disabled it).
 
 - 2026-10-16: user confirmed the per-preset card reach values stay as implemented (Low 300, Laptop/Medium/High 400, VeryHigh 450, UltraVideo 500, Cinematic5090 600 m); 400 m remains the default.
+
+---
+
+## Bright specks on cards (investigated 2026-11-15, fix not yet implemented)
+
+**Symptom.** Grass cards within about 70 m of the camera are peppered with single-pixel yellow-white specks.
+
+**Root cause.** `grass_card_blade_color` (`materials/ring_grass_card_color.gdshaderinc:105-107`) decodes the atlas B channel (per-blade random) with `fract(r * 7.31)` to pick the 7 % "dry" blades, and with `fract(r * 3.71)` for the hue jitter. B is not an id by the time the shader reads it: the atlas is sampled with `filter_linear_mipmap` (`ring_grass_cards.gdshader:25,176`) and its mips hold a coverage-weighted average of the blades in each texel (`RingGrassCardAtlasGenerator.cs:149,212`). Every blended value hashes to an unrelated class, so texels where blades overlap turn "dry" at random. Both pieces date from 25c0c4b (2026-10-15), copied from the spike.
+
+The specks are bright because the dry tone has an absolute floor, `dry_tone * (0.55 + 1.2 * lum)`. Since 2e22901 the ground colour carries `ringworld_terrain_albedo_scale` (0.15) and the 0.55 does not, so a dry texel is about 8 times as bright as the blade next to it. The spike's design ratio was about 2.
+
+Also: `GrassCardDryFraction = 0` does not switch dry blades off (the smoothstep still reaches 0.74 at the top of the range).
+
+**Evidence** (RTX 4070, `grass_card_color_match_gpu_test`, pose `day_down`, share of grass pixels brighter than 3 times the median):
+
+| Shader | Bright pixels | Of those isolated |
+|---|---|---|
+| Current | 8.58 % | 7.94 % |
+| Decode fixed, tone unchanged | 2.91 % | 1.14 % |
+| Decode and tone fixed | 0.27 % | 0.13 % |
+
+Atlas statistics (CPU, real generator): the share of "dry" texels that belong to no dry blade is 0 % at mip 0, 23 % at mip 1, 53 % at mip 2, 74 % at mip 3 and over 90 % from mip 4. Images: `.godot/captures/grass_specks/`.
+
+**Fix design.**
+
+1. `ring_grass_card_color.gdshaderinc`, `grass_card_blade_color`:
+   - `dry = smoothstep(1.0 - f - 0.04, 1.0 - f + 0.02, r) * smoothstep(0.0, 0.01, f)` with `f = grass_card_dry_fraction`. Monotone in `r`, so a filtered value can never be drier than the driest blade under it, and `f = 0` means none.
+   - dry tone `grass_card_dry_tone * (0.55 * ringworld_terrain_albedo_scale + 1.2 * lum)` (user decision pending, see below).
+   - hue jitter factor `abs(fract(r * 3.71) * 2.0 - 1.0)` (continuous).
+   - Rule for this function: `r` is a filtered value. Only continuous functions of it are allowed, and class decisions must be monotone. Update the "promoted verbatim from the spike" comment.
+2. `tools/GrassCardShaderFixture.cs` mask mode (:55): `DryFraction = 1.2f` and `DryTone = new Vector3(4.7f, 3.9f, 1.6f)`, so the mask does not depend on the dry tone. Without this the dusk mask loses half its pixels (292,265 to 150,837) once the tone is fixed.
+3. No atlas change, no new setting.
+
+**Verification.** `grass_card_color_match_gpu_test` passes with the dusk mask pixel count unchanged, plus a new check in it: on the `day_near` and `day_down` production captures, grass pixels brighter than 3 times the median luma are at most 1.0 % (current shader 7.2 % and 8.6 %, fixed 0.27 %).
+
+**Open for the user.** Dry blade brightness: about 2 times the neighbours (spike design, recommended) or the current 8 times. The fix also lowers the field's mean lightness against the ground by about 3 L* (production dL +1.9 to -1.0 in the fixture).
+
+**Scope.** Card style near path only. The blade style, trees, rocks and the far terrain tint have no such decode. `materials/grass_cards_spike/spike_grass_color.gdshaderinc:20-22` has the same code (manual tool only).

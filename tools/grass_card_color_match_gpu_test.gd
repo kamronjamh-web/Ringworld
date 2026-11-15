@@ -23,6 +23,8 @@ const SLOPE_X := 0.03
 const SLOPE_Z := 0.015
 const MASK_THRESHOLD := 10
 const BLOCK := 32
+const SPECK_FACTOR := 3.0
+const SPECK_MAX_PERCENT := 1.0
 
 # name, cam (local x, z), eye height above ground, look (local x, z, extra height), sun = direction to the sun, delta-E target
 var POSES := [
@@ -350,6 +352,30 @@ func _strip_region(near_m: float, far_m: float, half_width: float, cam_xz: Vecto
 	return r.intersection(Rect2i(Vector2i.ZERO, size))
 
 
+# Share of grass (mask) pixels in the production shot whose linear luma exceeds SPECK_FACTOR x the median grass luma.
+# Catches single-pixel bright specks from mipmapped per-blade random being decoded as a class id (old shader: 7-9 %).
+func _speck_percent(production: Image, ground: Image, mask: Image) -> float:
+	var s := production.get_data()
+	var g := ground.get_data()
+	var m := mask.get_data()
+	var lumas := PackedFloat32Array()
+	for o in range(0, s.size(), 4):
+		var md := maxi(absi(m[o] - g[o]), maxi(absi(m[o + 1] - g[o + 1]), absi(m[o + 2] - g[o + 2])))
+		if md <= MASK_THRESHOLD:
+			continue
+		lumas.append(0.2126 * pow(s[o] / 255.0, 2.2) + 0.7152 * pow(s[o + 1] / 255.0, 2.2) + 0.0722 * pow(s[o + 2] / 255.0, 2.2))
+	if lumas.size() < 1000:
+		return 100.0
+	var sorted := lumas.duplicate()
+	sorted.sort()
+	var limit: float = sorted[sorted.size() / 2] * SPECK_FACTOR
+	var hot := 0
+	for v in lumas:
+		if v > limit:
+			hot += 1
+	return 100.0 * hot / lumas.size()
+
+
 func _run_color() -> void:
 	var rows: Array = []
 	var any_fail := false
@@ -380,6 +406,11 @@ func _run_color() -> void:
 		var r16: Dictionary = fixture.CompareBlocks(neutral, ground, mask, full, MASK_THRESHOLD, 16, 0.5)
 		var p: Dictionary = fixture.CompareBlocks(production, ground, mask, full, MASK_THRESHOLD, int(pose.block), 0.5)
 		var ok: bool = r.blocks > 8 and float(r.mean) <= float(pose.target)
+		if pose.name == "day_near" or pose.name == "day_down":
+			var hot := _speck_percent(production, ground, mask)
+			var speck_ok := hot <= SPECK_MAX_PERCENT
+			print("GRASS_S4_SPECKS pose=%s hot=%.2f%% max=%.1f%% %s" % [pose.name, hot, SPECK_MAX_PERCENT, "PASS" if speck_ok else "FAIL"])
+			ok = ok and speck_ok
 		any_fail = any_fail or not ok
 		var line := "GRASS_S4_COLOR pose=%s blocks%d(n=%d mean=%.2f median=%.2f p95=%.2f max=%.2f dL=%+.2f) target=%.1f %s | blocks16(mean=%.2f p95=%.2f) pixel(n=%d mean=%.2f) | production blocks%d(mean=%.2f dL=%+.2f)" % [
 			pose.name, pose.block, r.blocks, r.mean, r.get("median", -1.0), r.p95, r.max, r.mean_dl, pose.target, "PASS" if ok else "FAIL",

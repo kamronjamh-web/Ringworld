@@ -97,14 +97,16 @@ float grass_card_derivative_lod(vec2 uv, float texel_width) {
 }
 
 // ground: biome ground colour at the blade/card, r: per-blade random (0..1), g: height gradient (0 root .. 1 tip),
-// tuft: per-tuft random. Promoted verbatim from the P0c spike (spike_near_blade_color).
+// tuft: per-tuft random. Promoted from the P0c spike (spike_near_blade_color), with the filtered-r fixes below.
+// r is a FILTERED (mipmapped, coverage-averaged) value, not an id: only continuous functions of it and monotone class
+// decisions are allowed (no fract(r * k) class hashing, which turns blended texels into random dry blades).
 vec3 grass_card_blade_color(vec3 ground, float r, float g, float tuft) {
 	float lum = dot(ground, vec3(0.299, 0.587, 0.114));
 	vec3 hue = grass_card_hue / dot(grass_card_hue, vec3(0.299, 0.587, 0.114));
 	vec3 c = mix(ground, lum * hue, grass_card_green_pull);
-	float dry = smoothstep(1.0 - grass_card_dry_fraction - 0.04, 1.0 - grass_card_dry_fraction + 0.02, fract(r * 7.31));
-	c = mix(c, grass_card_dry_tone * (0.55 + 1.2 * lum), dry * 0.75);
-	c *= mix(vec3(1.0 + grass_card_blade_hue_jitter, 1.0, 1.0 - grass_card_blade_hue_jitter), vec3(1.0 - grass_card_blade_hue_jitter, 1.0, 1.0 + grass_card_blade_hue_jitter), fract(r * 3.71));
+	float dry = smoothstep(1.0 - grass_card_dry_fraction - 0.04, 1.0 - grass_card_dry_fraction + 0.02, r) * smoothstep(0.0, 0.01, grass_card_dry_fraction);
+	c = mix(c, grass_card_dry_tone * (0.55 * ringworld_terrain_albedo_scale + 1.2 * lum), dry * 0.75);
+	c *= mix(vec3(1.0 + grass_card_blade_hue_jitter, 1.0, 1.0 - grass_card_blade_hue_jitter), vec3(1.0 - grass_card_blade_hue_jitter, 1.0, 1.0 + grass_card_blade_hue_jitter), abs(fract(r * 3.71) * 2.0 - 1.0));
 	c *= 1.0 + (r - 0.5) * 2.0 * grass_card_blade_value_jitter;
 	c *= 1.0 + (tuft - 0.5) * 2.0 * grass_card_tuft_value_jitter;
 	float ao = mix(grass_card_root_ao, 1.0, smoothstep(0.0, 0.6, g));
