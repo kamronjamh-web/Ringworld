@@ -5226,7 +5226,7 @@
       ],
       "marker": "LANDSCAPE_LOD_SWITCH",
       "expected_s": 400,
-      "timeout_s": 1200
+      "timeout_s": 2400
     },
     "landscape_drainage_prototype": {
       "kind": "tool",

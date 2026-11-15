@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Godot;
 using RingworldTechDemo.Diagnostics;
+using RingworldTechDemo.Vegetation;
 using RingworldTechDemo.Voxel.LOD;
 
 namespace RingworldTechDemo.Tools;
@@ -190,6 +191,127 @@ public partial class LandscapeTimingBridge : RefCounted
         result["variant"] = tree0.Variant; result["species"] = tree0.Species.ToString();
         result["distance_to_pose"] = bestDistance;
         result["bearing_deg"] = chosen * 180d / Math.PI; result["clear_radius_m"] = clearance;
+        return result;
+    }
+
+    /// <summary>
+    /// TR-1 switch strip (docs/work-orders/terrain-vegetation/TR.md): for each species the best isolated tree within 600 m of one of the anchors that can be watched from every
+    /// distance in <paramref name="distances"/> along one bearing with no other tree near the line and the terrain below the sight line. Only trees with a rank of at most
+    /// <paramref name="maxRank"/> are taken, so the tree survives the far slots' rank gates. Returns {species name -> {found, tree_around, tree_across, height, width, variant, rank,
+    /// bearing_deg, clearance_m, isolation_m, anchor}, tree_counts, line_m}. Tiles are built through the selected world exactly as NearestTreeAhead does.
+    /// </summary>
+    public Godot.Collections.Dictionary FindStripTrees(LandscapeWorldBridge world, double[] anchorsAround, double[] anchorsAcross, double[] distances, double maxRank, double minHeight)
+    {
+        var result = new Godot.Collections.Dictionary();
+        const double Circ = LandscapeWorld.Circumference, Cell = 40d;
+        double lineM = 0d;
+        foreach (double d in distances) lineM = Math.Max(lineM, d);
+        lineM += 10d;
+        double scan = lineM + 620d;
+        using var sampler = world.SelectedSpec.CreateSampler();
+        long cells = (long)Math.Ceiling(Circ / 30d);
+        var best = new Dictionary<TreeSpecies, (double Score, Godot.Collections.Dictionary Entry)>();
+        var counts = new Godot.Collections.Array();
+        for (int anchor = 0; anchor < anchorsAround.Length && anchor < anchorsAcross.Length; anchor++)
+        {
+            bool allGood = best.Count == 3;
+            foreach (var entry in best.Values) if (entry.Score < 8d) allGood = false;
+            if (allGood) break;
+            double a0 = anchorsAround[anchor], z0 = anchorsAcross[anchor];
+            var trees = new List<RingBiomeDecorationLayer.ImportedForestPlacementRecord>();
+            for (long tx = (long)Math.Floor((a0 - scan) / 240d); tx <= (long)Math.Floor((a0 + scan) / 240d); tx++)
+                for (long tz = (long)Math.Floor((z0 - scan) / 240d); tz <= (long)Math.Floor((z0 + scan) / 240d); tz++)
+                    trees.AddRange(RingBiomeDecorationLayer.BuildImportedForestReviewTile(sampler, tx, tz, cells, 30d, LandscapeWorld.Seed, Circ, LandscapeWorld.Width));
+            counts.Add(trees.Count);
+            var grid = new Dictionary<(long, long), List<int>>();
+            for (int i = 0; i < trees.Count; i++)
+            {
+                var key = ((long)Math.Floor((trees[i].Around - a0) / Cell), (long)Math.Floor((trees[i].Across - z0) / Cell));
+                if (!grid.TryGetValue(key, out List<int>? list)) grid[key] = list = new List<int>();
+                list.Add(i);
+            }
+            var candidates = new List<(double Isolation, int Index)>();
+            for (int i = 0; i < trees.Count; i++)
+            {
+                var t = trees[i];
+                if (t.Height < minHeight || (float)(t.Id >> 40) / 16777215.0f > maxRank) continue;
+                double da = t.Around - a0, dz = t.Across - z0;
+                if (da * da + dz * dz > 600d * 600d) continue;
+                long cx = (long)Math.Floor(da / Cell), cz = (long)Math.Floor(dz / Cell);
+                double isolation = 60d;
+                for (long gx = cx - 2; gx <= cx + 2; gx++)
+                    for (long gz = cz - 2; gz <= cz + 2; gz++)
+                    {
+                        if (!grid.TryGetValue((gx, gz), out List<int>? list)) continue;
+                        foreach (int j in list)
+                        {
+                            if (j == i) continue;
+                            double oa = trees[j].Around - t.Around, oz = trees[j].Across - t.Across;
+                            isolation = Math.Min(isolation, Math.Sqrt(oa * oa + oz * oz));
+                        }
+                    }
+                if (isolation >= 10d) candidates.Add((isolation, i));
+            }
+            candidates.Sort((x, y) => y.Isolation.CompareTo(x.Isolation));
+            var tried = new Dictionary<TreeSpecies, int>();
+            foreach ((double isolation, int index) in candidates)
+            {
+                var t = trees[index];
+                if (best.TryGetValue(t.Species, out var current) && current.Score >= 12d) continue;
+                int attempts = tried.GetValueOrDefault(t.Species);
+                if (attempts >= 60) continue;
+                tried[t.Species] = attempts + 1;
+                double treeGround = world.GroundHeight(t.Around, t.Across), target = treeGround + 0.5d * t.Height;
+                double bestScore = 0d, bestBearing = double.NaN;
+                for (int k = 0; k < 72; k++)
+                {
+                    double bearing = k * Math.PI / 36d, ca = Math.Cos(bearing), cz = Math.Sin(bearing), worst = 30d;
+                    for (double s = 0d; s <= lineM + 20d && worst > bestScore; s += 20d)
+                    {
+                        long gx0 = (long)Math.Floor((t.Around + ca * s - a0) / Cell), gz0 = (long)Math.Floor((t.Across + cz * s - z0) / Cell);
+                        for (long gx = gx0 - 1; gx <= gx0 + 1; gx++)
+                            for (long gz = gz0 - 1; gz <= gz0 + 1; gz++)
+                            {
+                                if (!grid.TryGetValue((gx, gz), out List<int>? list)) continue;
+                                foreach (int j in list)
+                                {
+                                    if (j == index) continue;
+                                    var o = trees[j];
+                                    double oa = o.Around - t.Around, oz = o.Across - t.Across, along = oa * ca + oz * cz;
+                                    if (along < 2d || along > lineM + 5d) continue;
+                                    worst = Math.Min(worst, Math.Abs(-oa * cz + oz * ca) - (0.45d * o.Width + 2.5d));
+                                }
+                            }
+                    }
+                    if (worst <= bestScore) continue;
+                    bool clear = true;
+                    foreach (double d in distances)
+                    {
+                        double camA = t.Around + ca * d, camZ = t.Across + cz * d, eye = world.GroundHeight(camA, camZ) + 1.7d;
+                        for (int step = 1; step <= 7 && clear; step++)
+                        {
+                            double f = step / 8d;
+                            if (world.GroundHeight(camA + (t.Around - camA) * f, camZ + (t.Across - camZ) * f) + 1d > eye + (target - eye) * f) clear = false;
+                        }
+                        if (!clear) break;
+                    }
+                    if (!clear) continue;
+                    bestScore = worst; bestBearing = bearing;
+                }
+                if (double.IsNaN(bestBearing)) continue;
+                if (best.TryGetValue(t.Species, out var previous) && previous.Score >= bestScore) continue;
+                best[t.Species] = (bestScore, new Godot.Collections.Dictionary
+                {
+                    ["found"] = true, ["species"] = t.Species.ToString(), ["tree_around"] = (double)t.Around, ["tree_across"] = (double)t.Across,
+                    ["tree_ground"] = treeGround, ["height"] = (double)t.Height, ["width"] = (double)t.Width, ["variant"] = t.Variant,
+                    ["rank"] = (double)((float)(t.Id >> 40) / 16777215.0f), ["bearing_deg"] = bestBearing * 180d / Math.PI,
+                    ["clearance_m"] = bestScore, ["isolation_m"] = isolation, ["anchor"] = anchor
+                });
+            }
+        }
+        foreach (TreeSpecies species in Enum.GetValues<TreeSpecies>())
+            result[species.ToString()] = best.TryGetValue(species, out var chosen) ? chosen.Entry : new Godot.Collections.Dictionary { ["found"] = false, ["species"] = species.ToString() };
+        result["tree_counts"] = counts; result["line_m"] = lineM;
         return result;
     }
 }

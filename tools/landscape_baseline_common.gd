@@ -21,10 +21,53 @@ const CASES := ["baseline", "near_terrain_hidden", "far_terrain_hidden", "trees_
 const HIDE_CLASSES := ["near_terrain_hidden", "far_terrain_hidden", "trees_hidden", "grass_hidden"]
 const MARKERS := ["GPU.TreeCulling", "GPU.GrassCulling", "GPU.Vegetation", "GPU.ProxyHeights", "GPU.HeightShadow", "GPU.WaterFft"]
 const FILL_SCOPES := ["Trees build", "Trees disk load", "Grass build"]
+## TR-1 (docs/work-orders/terrain-vegetation/TR.md): tree LOD slot cases. A slot case hides that slot's main-pass renderers only (its shadow casters stay); tree_shadows_off
+## removes the tree shadow casters only. A "@rs50" suffix measures the same case at 50 % 3D render scale (fill test).
+const TREE_LOD_CASES := ["baseline", "trees_hidden", "tree_slot0_hidden", "tree_slot2_hidden", "tree_slot3_hidden", "tree_slot4_hidden", "tree_shadows_off", "baseline_repeat"]
+const TREE_LOD_POSES := ["forest_interior_eye", "forest_edge_eye", "forest_clearing_eye", "coast_eye"]
+const TREE_LOD_EXTRA := [["forest_edge_eye", "sun_8_set"]]
+const TREE_FADE_PROPERTIES := ["TreeNearDetailFadeStartMeters", "TreeNearDetailFadeEndMeters", "TreeBillboardFadeStartMeters", "TreeBillboardFadeEndMeters"]
+const RS_SUFFIX := "@rs50"
+const RS_SCALE := 0.5
+const STRIP_SPECIES := ["Maple", "Pine", "Fir"]
+## Search sites (around, across in m) for the strip trees, tried in order: places of the pinned v8 world where maple, pine or fir grow thinly enough for a 950 m tree-free
+## sight line over flat ground (found with a headless lattice scan through FindStripTrees, 2026-11-14). The fixture poses have no fir, their forests are too dense for a
+## clear line, and a tree on a mountainside is seen from far above or below. A species takes the first site whose tree is watched within STRIP_MAX_PITCH_DEG of level.
+const STRIP_SITES := [[10422000.0, 240000.0], [18759000.0, 160000.0], [4070000.0, 240000.0], [11216000.0, 80000.0], [894000.0, 160000.0]]
+const STRIP_MAX_PITCH_DEG := 8.0
+const STRIP_TIGHT_PX := 192
+const STRIP_TIGHT_SCALE := 3
+const STRIP_WIDE := Vector2i(576, 324)
 const LOD_STEPS := 180
 const LOD_START_M := 15.0
 const LOD_STEP_M := 0.25
 const EYE_M := 1.7
+
+
+# ------------------------------------------------------------------ args
+
+## User arguments plus the words of the LANDSCAPE_HARNESS_ARGS environment variable (space separated). tools/run_tests.ps1 has no per-run argument pass-through, so the
+## TR-1 modes are selected with e.g. $env:LANDSCAPE_HARNESS_ARGS = '--tree-lod=slots --strip'. Only the options read through these helpers see the variable.
+static func harness_args() -> PackedStringArray:
+	var args := OS.get_cmdline_user_args()
+	for word in OS.get_environment("LANDSCAPE_HARNESS_ARGS").split(" ", false):
+		args.append(word)
+	return args
+
+
+static func harness_arg(prefix: String, fallback: String) -> String:
+	for arg in harness_args():
+		if arg.begins_with(prefix):
+			return arg.trim_prefix(prefix)
+	return fallback
+
+
+static func harness_flag(flag: String) -> bool:
+	return flag in harness_args()
+
+
+static func harness_csv(prefix: String) -> PackedStringArray:
+	return harness_arg(prefix, "").split(",", false)
 
 
 # ------------------------------------------------------------------ setup
@@ -111,7 +154,7 @@ static func _common_record(ctx: Dictionary) -> Dictionary:
 
 
 static func t0_poses() -> Array:
-	var names := COMMON.csv_arg("--poses=")
+	var names := harness_csv("--poses=")
 	var result: Array = []
 	for pose in H.report_poses("t0"):
 		if names.is_empty() or str(pose["name"]) in names:
@@ -259,7 +302,72 @@ static func capture_original_state(ctx: Dictionary) -> Dictionary:
 	state["grass_layers"] = _layers(state["grass_geometry"])
 	state["tree_geometry"] = _geometry_nodes(ctx["trees"])
 	state["tree_layers"] = _layers(state["tree_geometry"])
+	# TR-1: the GPU tree outputs are named GpuTree_<around>_<across>_<variant>_L<slot>; a shadow proxy is the child <output name>_ShadowLod<n> (RingBiomeDecorationLayer.GpuShadows.cs).
+	var slot_pattern := RegEx.create_from_string("GpuTree_.*_L(\\d)")
+	# The layer's own map (tools/RingBiomeDecorationLayer.TreeBudgetProbe.cs) wins over the names: an output recreated while its predecessor is still in the tree
+	# gets a generated "@MultiMeshInstance3D@N" name.
+	var by_id := {}
+	if (ctx["trees"] as Node).has_method("TreeBudgetProbeOutputSlots"):
+		by_id = (ctx["trees"] as Node).call("TreeBudgetProbeOutputSlots")
+	var slots: Array = []
+	var proxies: Array = []
+	var casts: Array = []
+	var unclassified: Array = []
+	for node in state["tree_geometry"]:
+		var code := int(by_id.get(node.get_instance_id(), -1))
+		if code >= 0:
+			slots.append(code % 16)
+			proxies.append(code >= 16 and code < 32)
+		else:
+			var found := slot_pattern.search(str(node.name))
+			slots.append(int(found.get_string(1)) if found != null else -1)
+			proxies.append("_ShadowLod" in str(node.name))
+			if found == null and node.visible:
+				unclassified.append(str(node.name))
+		casts.append(int(node.cast_shadow))
+	state["tree_unclassified_visible"] = unclassified
+	state["tree_slot"] = slots
+	state["tree_proxy"] = proxies
+	state["tree_cast"] = casts
+	state["tree_cast_touched"] = {}
+	state["viewport"] = (ctx["tree"] as SceneTree).root
+	state["scale"] = (ctx["tree"] as SceneTree).root.scaling_3d_scale
 	return state
+
+
+## [case label without the render-scale suffix, render scale or -1.0].
+static func _case_parts(label: String) -> Array:
+	if label.ends_with(RS_SUFFIX):
+		return [label.trim_suffix(RS_SUFFIX), RS_SCALE]
+	return [label, -1.0]
+
+
+static func _known_case(base: String) -> bool:
+	if base in ["baseline", "baseline_repeat", "near_terrain_hidden", "far_terrain_hidden", "trees_hidden", "grass_hidden", "tree_shadows_off"]:
+		return true
+	return base.begins_with("tree_slot") and base.ends_with("_hidden") and base.trim_prefix("tree_slot").trim_suffix("_hidden").is_valid_int()
+
+
+## Expected [layers, cast_shadow] of tree geometry node `index` under case `base`. A slot case removes the slot's renderers from the main pass and keeps their shadows;
+## tree_shadows_off removes the shadow casters (the shadows-only proxies, and the cast of any renderer that still casts for itself).
+static func _tree_expected(state: Dictionary, index: int, base: String) -> Array:
+	var layers := int(state["tree_layers"][index])
+	var cast := int(state["tree_cast"][index])
+	var slot := int(state["tree_slot"][index])
+	var proxy := bool(state["tree_proxy"][index])
+	if base == "trees_hidden":
+		layers = 0
+	elif base == "tree_shadows_off":
+		if proxy or cast == GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY:
+			layers = 0
+		elif cast == GeometryInstance3D.SHADOW_CASTING_SETTING_ON:
+			cast = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	elif slot >= 0 and not proxy and base == "tree_slot%d_hidden" % slot:
+		if cast == GeometryInstance3D.SHADOW_CASTING_SETTING_ON:
+			cast = GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY
+		elif cast != GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY:
+			layers = 0
+	return [layers, cast]
 
 
 static func _shader_name(node: Node) -> String:
@@ -304,10 +412,26 @@ static func restore_state(state: Dictionary) -> void:
 		for index in nodes.size():
 			if is_instance_valid(nodes[index]):
 				nodes[index].layers = state[key[1]][index]
+	if state.has("tree_cast_touched"):
+		for index in state["tree_cast_touched"]:
+			var node: Variant = state["tree_geometry"][index]
+			if is_instance_valid(node):
+				node.cast_shadow = int(state["tree_cast"][index])
+		state["tree_cast_touched"] = {}
+	if state.has("viewport") and is_instance_valid(state["viewport"]) and not is_equal_approx((state["viewport"] as Viewport).scaling_3d_scale, float(state["scale"])):
+		(state["viewport"] as Viewport).scaling_3d_scale = float(state["scale"])
 
 
 static func apply_case(state: Dictionary, label: String) -> bool:
-	match label:
+	var parts := _case_parts(label)
+	var base: String = parts[0]
+	if not _known_case(base):
+		return false
+	if float(parts[1]) > 0.0:
+		if not state.has("viewport"):
+			return false
+		(state["viewport"] as Viewport).scaling_3d_scale = float(parts[1])
+	match base:
 		"baseline", "baseline_repeat":
 			pass
 		"near_terrain_hidden":
@@ -316,21 +440,32 @@ static func apply_case(state: Dictionary, label: String) -> bool:
 		"far_terrain_hidden":
 			for node in state["far_nodes"]:
 				node.visible = false
-		"trees_hidden":
-			for node in state["tree_geometry"]:
-				if is_instance_valid(node):
-					node.layers = 0
 		"grass_hidden":
 			for node in state["grass_geometry"]:
 				if is_instance_valid(node):
 					node.layers = 0
 		_:
-			return false
+			# trees_hidden, tree_slot<N>_hidden, tree_shadows_off
+			for index in state["tree_geometry"].size():
+				var node: Variant = state["tree_geometry"][index]
+				if not is_instance_valid(node):
+					continue
+				var expected := _tree_expected(state, index, base)
+				node.layers = int(expected[0])
+				if int(expected[1]) != int(state["tree_cast"][index]):
+					node.cast_shadow = int(expected[1])
+					state["tree_cast_touched"][index] = true
 	return true
 
 
 ## "" when the case's state is applied exactly (and nothing else is hidden), else the reason. Freed geometry nodes (streaming) are skipped.
-static func verify_case(state: Dictionary, label: String) -> String:
+static func verify_case(state: Dictionary, full_label: String) -> String:
+	var parts := _case_parts(full_label)
+	var label: String = parts[0]
+	if state.has("viewport"):
+		var wanted_scale := float(parts[1]) if float(parts[1]) > 0.0 else float(state["scale"])
+		if not is_equal_approx((state["viewport"] as Viewport).scaling_3d_scale, wanted_scale):
+			return "render scale is %.3f, not %.3f, for %s" % [(state["viewport"] as Viewport).scaling_3d_scale, wanted_scale, full_label]
 	for index in state["near_nodes"].size():
 		var node: Node3D = state["near_nodes"][index]
 		if is_instance_valid(node) and node.visible != (false if label == "near_terrain_hidden" else bool(state["near_visible"][index])):
@@ -348,9 +483,14 @@ static func verify_case(state: Dictionary, label: String) -> String:
 		if is_instance_valid(node) and node.layers != (0 if label == "grass_hidden" else int(state["grass_layers"][index])):
 			return "grass render layer was not applied for " + label
 	for index in state["tree_geometry"].size():
-		var node: Node = state["tree_geometry"][index]
-		if is_instance_valid(node) and node.layers != (0 if label == "trees_hidden" else int(state["tree_layers"][index])):
+		var node: Variant = state["tree_geometry"][index]
+		if not is_instance_valid(node):
+			continue
+		var expected := _tree_expected(state, index, label)
+		if node.layers != int(expected[0]):
 			return "tree render layer was not applied for " + label
+		if int(expected[1]) != int(state["tree_cast"][index]) and int(node.cast_shadow) != int(expected[1]):
+			return "tree shadow casting was not applied for " + label
 	return ""
 
 
@@ -501,8 +641,8 @@ static func run_cost(ctx: Dictionary) -> Dictionary:
 	var tree: SceneTree = ctx["tree"]
 	var marker: String = ctx["marker"]
 	var machine: Dictionary = ctx["machine"]
-	var rounds := maxi(1, int(COMMON.arg_value("--rounds=", "2")))
-	var seconds := maxf(1.0, float(COMMON.arg_value("--seconds=", "8")))
+	var rounds := maxi(1, int(harness_arg("--rounds=", "2")))
+	var seconds := maxf(1.0, float(harness_arg("--seconds=", "8")))
 	var out_dir := H.baseline_dir(str(machine["tag"]), "t0", "cost", ctx["booted"]["world_tag"])
 	H.copy_prefs_snapshot(ctx["booted"], out_dir)
 	var power_path := out_dir.path_join("power_log.csv")
@@ -640,9 +780,9 @@ static func run_cost(ctx: Dictionary) -> Dictionary:
 
 
 ## Window medians per case (over rounds), hide deltas, the noise floor and the draw/primitive deltas.
-static func _derive(windows: Array) -> Dictionary:
+static func _derive(windows: Array, cases: Array = CASES) -> Dictionary:
 	var by_label := {}
-	for label in CASES:
+	for label in cases:
 		by_label[label] = []
 	for window in windows:
 		if by_label.has(window["label"]):
@@ -658,17 +798,39 @@ static func _derive(windows: Array) -> Dictionary:
 	var rep_far: float = med.call("baseline_repeat", "far_gpu_ms", "median")
 	var base_draw: float = med.call("baseline", "draw_calls", "mean")
 	var base_prim: float = med.call("baseline", "primitives", "mean")
+	var med_marker := func(label: String, name: String) -> float:
+		var values: Array = []
+		for window in by_label[label]:
+			if window["markers"].has(name) and int(window["markers"][name].get("n", 0)) > 0:
+				values.append(float(window["markers"][name]["median"]))
+		return _median(values) if not values.is_empty() else NAN
 	var classes := {}
 	var parts: Array = []
-	for label in HIDE_CLASSES:
-		var d_root: float = base_root - float(med.call(label, "root_gpu_ms", "median"))
-		var d_far: float = base_far - float(med.call(label, "far_gpu_ms", "median"))
-		var d_draw: float = base_draw - float(med.call(label, "draw_calls", "mean"))
-		var d_prim: float = base_prim - float(med.call(label, "primitives", "mean"))
+	var scales := {}
+	for case_label in cases:
+		var label := str(case_label)
+		var suffix := RS_SUFFIX if label.ends_with(RS_SUFFIX) else ""
+		var reference := "baseline" + suffix
+		if label.trim_suffix(suffix).begins_with("baseline"):
+			if label == reference and by_label.has("baseline_repeat" + suffix):
+				var first: float = med.call(reference, "root_gpu_ms", "median")
+				var again: float = med.call("baseline_repeat" + suffix, "root_gpu_ms", "median")
+				scales[reference] = {"baseline_root_gpu_ms": first, "baseline_repeat_root_gpu_ms": again, "noise_floor_root_gpu_ms": absf(first - again),
+					"baseline_opaque_bracket_ms": med_marker.call(reference, "BRACKET:opaque"), "baseline_primitives": med.call(reference, "primitives", "mean"),
+					"baseline_draw_calls": med.call(reference, "draw_calls", "mean")}
+			continue
+		if not by_label.has(reference):
+			continue
+		var d_root: float = float(med.call(reference, "root_gpu_ms", "median")) - float(med.call(label, "root_gpu_ms", "median"))
+		var d_far: float = float(med.call(reference, "far_gpu_ms", "median")) - float(med.call(label, "far_gpu_ms", "median"))
+		var d_draw: float = float(med.call(reference, "draw_calls", "mean")) - float(med.call(label, "draw_calls", "mean"))
+		var d_prim: float = float(med.call(reference, "primitives", "mean")) - float(med.call(label, "primitives", "mean"))
+		var d_opaque: float = float(med_marker.call(reference, "BRACKET:opaque")) - float(med_marker.call(label, "BRACKET:opaque"))
 		var changed := absf(d_draw) >= 0.5 or absf(d_prim) >= 1.0
 		classes[label] = {"root_gpu_delta_ms": d_root, "far_gpu_delta_ms": d_far, "draw_delta": d_draw, "primitive_delta": d_prim, "changed_submissions": changed,
-			"root_gpu_hidden_median_ms": med.call(label, "root_gpu_ms", "median")}
-		parts.append("%s root %.2f ms draws %.0f prims %.0f" % [label.trim_suffix("_hidden"), d_root, d_draw, d_prim])
+			"root_gpu_hidden_median_ms": med.call(label, "root_gpu_ms", "median"), "opaque_bracket_delta_ms": d_opaque}
+		if suffix == "":
+			parts.append("%s root %.2f ms draws %.0f prims %.0f" % [label.trim_suffix("_hidden"), d_root, d_draw, d_prim])
 	var markers := {}
 	for name in MARKERS:
 		var values: Array = []
@@ -685,7 +847,7 @@ static func _derive(windows: Array) -> Dictionary:
 	return {"baseline_root_gpu_ms": base_root, "baseline_repeat_root_gpu_ms": rep_root, "noise_floor_root_gpu_ms": absf(base_root - rep_root), "baseline_far_gpu_ms": base_far,
 		"noise_floor_far_gpu_ms": absf(base_far - rep_far), "baseline_p95_root_gpu_ms": med.call("baseline", "root_gpu_ms", "p95"), "baseline_frame_ms": med.call("baseline", "frame_ms", "median"),
 		"baseline_root_cpu_ms": med.call("baseline", "root_cpu_ms", "median"), "baseline_draw_calls": base_draw, "baseline_primitives": base_prim,
-		"baseline_noise_draw_calls": absf(base_draw - float(med.call("baseline_repeat", "draw_calls", "mean"))), "classes": classes, "markers": markers,
+		"baseline_noise_draw_calls": absf(base_draw - float(med.call("baseline_repeat", "draw_calls", "mean"))), "classes": classes, "markers": markers, "render_scales": scales,
 		"summary_line": "base %.2f ms (noise %.2f), %s" % [base_root, absf(base_root - rep_root), "; ".join(parts)]}
 
 
@@ -863,5 +1025,548 @@ static func run_lod(ctx: Dictionary) -> Dictionary:
 	record["status"] = "PASS"
 	_save_json(out_dir.path_join("frames.json"), record)
 	print("%s tree: %s" % [marker, JSON.stringify(found)])
+	print("%s output: %s" % [marker, out_dir])
+	return record
+
+
+# ------------------------------------------------------------------ TR-1 tree LOD part (docs/work-orders/terrain-vegetation/TR.md)
+
+static func _tree_fade(trees: Node) -> Dictionary:
+	return {"compact_profile": trees.get("UseCompactTreeLodProfile"), "near_start_m": trees.get("TreeNearDetailFadeStartMeters"), "near_end_m": trees.get("TreeNearDetailFadeEndMeters"),
+		"billboard_start_m": trees.get("TreeBillboardFadeStartMeters"), "billboard_end_m": trees.get("TreeBillboardFadeEndMeters"), "mid_span": trees.get("MidTreeBatchTileSpan"),
+		"sun_shadow_distance_m": trees.get("TreeSunShadowDistanceMeters"), "maximum_gpu_tree_roots": trees.get("MaximumGpuTreeRoots"),
+		"maximum_lod1_trees": trees.get("MaximumLod1Trees"), "maximum_lod2_trees": trees.get("MaximumLod2Trees"), "maximum_lod3_trees": trees.get("MaximumLod3Trees"),
+		"maximum_lod4_trees": trees.get("MaximumLod4Trees"), "maximum_tree_billboards": trees.get("MaximumTreeBillboards")}
+
+
+## Sets exported properties of the tree layer for this run only ("Name:value,Name:value"). Returns {name: {from, to}} or {error}.
+static func _apply_tree_settings(trees: Node, settings: Dictionary) -> Dictionary:
+	var applied := {}
+	for name in settings:
+		var before: Variant = trees.get(str(name))
+		if before == null:
+			return {"error": "the tree layer has no property %s" % name}
+		trees.set(str(name), type_convert(settings[name], typeof(before)))
+		applied[name] = {"from": before, "to": trees.get(str(name))}
+	return applied
+
+
+static func _parse_tree_settings(text: String) -> Dictionary:
+	var settings := {}
+	for item in text.split(",", false):
+		var pair := item.split(":", false)
+		if pair.size() == 2:
+			settings[pair[0]] = pair[1].to_float()
+	return settings
+
+
+## Streaming idle, the wanted GPU tree outputs installed, no source preparation, no pending shadow proxy and no fallback output, for 30 frames in a row.
+static func _wait_trees_settled(ctx: Dictionary, timeout_s: float) -> bool:
+	var tree: SceneTree = ctx["tree"]
+	var trees: Node = ctx["trees"]
+	var deadline := Time.get_ticks_msec() + int(timeout_s * 1000.0)
+	var stable := 0
+	while Time.get_ticks_msec() < deadline:
+		await tree.process_frame
+		var settled: bool = COMMON.builds_idle(ctx["game"]) and bool(trees.get("GpuTreeCullingSettled")) and not bool(trees.get("TreePreparationPending")) \
+			and int(trees.get("PendingGpuTreeShadowProxyCount")) == 0 and int(trees.get("GpuTreeFallbackBatchCount")) == 0
+		stable = stable + 1 if settled else 0
+		if stable >= 30:
+			return true
+	return false
+
+
+## Budget chain at the current camera (tools/RingBiomeDecorationLayer.TreeBudgetProbe.cs): records -> GPU roots -> band -> rank gate -> cap -> drawn, per slot.
+static func _probe(ctx: Dictionary) -> Dictionary:
+	var trees: Node = ctx["trees"]
+	if not trees.has_method("TreeBudgetProbeBegin") or not bool(trees.call("TreeBudgetProbeBegin")):
+		return {"ok": false, "error": "tree budget probe unavailable (GPU tree path not running)"}
+	for i in 900:
+		await RenderingServer.frame_post_draw
+		var result: Dictionary = trees.call("TreeBudgetProbeTake")
+		if not result.is_empty():
+			return result
+	return {"ok": false, "error": "tree budget probe readback did not finish in 900 frames"}
+
+
+static func _memory() -> Dictionary:
+	return {"video_mem_mb": Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0, "texture_mem_mb": Performance.get_monitor(Performance.RENDER_TEXTURE_MEM_USED) / 1048576.0,
+		"buffer_mem_mb": Performance.get_monitor(Performance.RENDER_BUFFER_MEM_USED) / 1048576.0, "static_mem_mb": Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0}
+
+
+static func _image_mean(image: Image) -> Array:
+	var copy := image.duplicate() as Image
+	if copy.get_format() != Image.FORMAT_RGBA8:
+		copy.convert(Image.FORMAT_RGBA8)
+	var total := Vector3.ZERO
+	var count := 0
+	var step_x := maxi(1, copy.get_width() / 192)
+	var step_y := maxi(1, copy.get_height() / 108)
+	for y in range(0, copy.get_height(), step_y):
+		for x in range(0, copy.get_width(), step_x):
+			var c := copy.get_pixel(x, y)
+			total += Vector3(c.r, c.g, c.b)
+			count += 1
+	total /= maxf(1.0, float(count))
+	return [total.x, total.y, total.z]
+
+
+## Normal frame plus Viewport.DEBUG_DRAW_OVERDRAW frames (all, trees hidden, trees only, trees only without slot 0 or slot 2). The engine's overdraw view replaces every material, so
+## geometry whose vertices are placed by its shader (the shared far impostor of slots 3 and 4, texelFetch of vertex_data) does not appear in it.
+static func _capture_pictures(ctx: Dictionary, state: Dictionary, out_dir: String, key: String) -> Dictionary:
+	var root: Window = (ctx["tree"] as SceneTree).root
+	var shots := {}
+	# "trees only" hides the near terrain, the far terrain and the grass, whose own overdraw otherwise saturates the picture.
+	var others := ["near_terrain_hidden", "far_terrain_hidden", "grass_hidden"]
+	var plan := [["normal", ["baseline"], Viewport.DEBUG_DRAW_DISABLED], ["overdraw", ["baseline"], Viewport.DEBUG_DRAW_OVERDRAW], ["overdraw_trees_hidden", ["trees_hidden"], Viewport.DEBUG_DRAW_OVERDRAW],
+		["overdraw_trees_only", others, Viewport.DEBUG_DRAW_OVERDRAW], ["overdraw_trees_only_slot0_hidden", others + ["tree_slot0_hidden"], Viewport.DEBUG_DRAW_OVERDRAW],
+		["overdraw_trees_only_slot2_hidden", others + ["tree_slot2_hidden"], Viewport.DEBUG_DRAW_OVERDRAW]]
+	for item in plan:
+		restore_state(state)
+		for case_label in item[1]:
+			apply_case(state, str(case_label))
+		root.debug_draw = item[2]
+		for i in 45:
+			await RenderingServer.frame_post_draw
+		var image := root.get_texture().get_image()
+		var path := out_dir.path_join("%s__%s.png" % [key, item[0]])
+		image.save_png(path)
+		shots[item[0]] = {"png": path, "mean_rgb": _image_mean(image)}
+	root.debug_draw = Viewport.DEBUG_DRAW_DISABLED
+	restore_state(state)
+	for i in 10:
+		await RenderingServer.frame_post_draw
+	return shots
+
+
+## `--tree-lod=slots`: per-slot hide cases, tree-shadow-off, the 50 % render-scale fill test, the overdraw pictures and the budget probe at the forest and coast poses.
+## `--tree-lod=cap`: the same cases and probe at the three forest poses for each root-cap configuration (`--cap-configs=65536,262144,262144+far`; "+far" also raises
+## MaximumLod4Trees and MaximumTreeBillboards to their limits). Output: .godot/audit_baseline/<machine>/tr1/tree_lod_<mode>/<stamp>/tree_lod.json and tree_lod.md.
+## Other options: --poses=a,b  --rounds=2  --seconds=8  --rs50=<pose__time,...|none>  --overdraw=<pose__time,...|none>  --tree-set=Property:value,...
+static func run_tree_lod(ctx: Dictionary) -> Dictionary:
+	var tree: SceneTree = ctx["tree"]
+	var marker: String = ctx["marker"]
+	var machine: Dictionary = ctx["machine"]
+	var trees: Node = ctx["trees"]
+	var mode := harness_arg("--tree-lod=", "slots")
+	if mode != "slots" and mode != "cap":
+		return {"status": "FAIL", "failure": "unknown --tree-lod=%s (slots|cap)" % mode}
+	var rounds := maxi(1, int(harness_arg("--rounds=", "2")))
+	var seconds := maxf(1.0, float(harness_arg("--seconds=", "8")))
+	var out_dir := H.baseline_dir(str(machine["tag"]), "tr1", "tree_lod_" + mode, ctx["booted"]["world_tag"])
+	H.copy_prefs_snapshot(ctx["booted"], out_dir)
+	var overrides := _apply_tree_settings(trees, _parse_tree_settings(harness_arg("--tree-set=", "")))
+	if overrides.has("error"):
+		return {"status": "FAIL", "failure": str(overrides["error"])}
+	if not overrides.is_empty():
+		await COMMON.wait_builds_idle(tree, ctx["game"], 300.0)
+	var power_path := out_dir.path_join("power_log.csv")
+	ctx["power_pid"] = COMMON.start_power_log(power_path)
+	_viewports(ctx)
+	var timing: RefCounted = TIMING.new()
+	timing.call("Begin", true)
+	ctx["timing"] = timing
+	var bracket := await _install_bracket(ctx)
+	print("%s opaque bracket: %s" % [marker, JSON.stringify(bracket)])
+	await COMMON.settle(tree, 1.5)
+
+	var failures: Array = []
+	var names := harness_csv("--poses=")
+	if names.is_empty():
+		names = PackedStringArray(TREE_LOD_POSES if mode == "slots" else TREE_LOD_POSES.slice(0, 3))
+	var pose_times: Array = []
+	for name in names:
+		var pose := H.pose_by_name(name)
+		if pose.is_empty():
+			failures.append("pose %s is not in the fixture" % name)
+			continue
+		pose_times.append([pose, "noon"])
+	if mode == "slots":
+		for extra in TREE_LOD_EXTRA:
+			if str(extra[0]) in names:
+				pose_times.append([H.pose_by_name(str(extra[0])), str(extra[1])])
+	var rs50_keys := harness_csv("--rs50=")
+	if rs50_keys.is_empty() and mode == "slots":
+		rs50_keys = PackedStringArray(["forest_edge_eye__noon"])
+	var overdraw_keys := harness_csv("--overdraw=")
+	if overdraw_keys.is_empty() and mode == "slots":
+		overdraw_keys = PackedStringArray(["forest_edge_eye__noon", "forest_interior_eye__noon"])
+
+	# root-cap configurations: one ("as set") in slots mode
+	var original := {"MaximumGpuTreeRoots": trees.get("MaximumGpuTreeRoots"), "MaximumLod4Trees": trees.get("MaximumLod4Trees"), "MaximumTreeBillboards": trees.get("MaximumTreeBillboards")}
+	var configs: Array = []
+	if mode == "cap":
+		var wanted := harness_csv("--cap-configs=")
+		if wanted.is_empty():
+			wanted = PackedStringArray(["65536", "262144", "262144+far"])
+		for item in wanted:
+			var settings: Dictionary = original.duplicate()
+			settings["MaximumGpuTreeRoots"] = int(item.trim_suffix("+far"))
+			if item.ends_with("+far"):
+				settings["MaximumLod4Trees"] = 16384
+				settings["MaximumTreeBillboards"] = 65536
+			configs.append({"name": "roots_" + item, "settings": settings})
+	else:
+		configs.append({"name": "as_set", "settings": {}})
+	print("%s tree-lod mode %s: %d pose-times x %d configs x %d rounds x %d cases, windows of %.1f s, fades %s" % [marker, mode, pose_times.size(), configs.size(), rounds, TREE_LOD_CASES.size(), seconds,
+		JSON.stringify(_tree_fade(trees))])
+
+	var results: Array = []
+	var windows_total := 0
+	for entry in pose_times:
+		var pose: Dictionary = entry[0]
+		var time_name: String = entry[1]
+		var key := "%s__%s" % [pose["name"], time_name]
+		timing.call("ResetWindow")
+		var sampler := Callable(timing, "Sample")
+		tree.process_frame.connect(sampler)
+		var fill_start := Time.get_ticks_msec()
+		var info: Dictionary = await H.go_pose(tree, ctx["game"], pose, time_name, ctx["ground_model"])
+		var fill_wall_s := (Time.get_ticks_msec() - fill_start) / 1000.0
+		tree.process_frame.disconnect(sampler)
+		var record := {"key": key, "pose": pose["name"], "time": time_name, "go_pose": info, "weather": H.weather_at(ctx["game"], float(pose["around_m"]), float(pose["across_m"])), "configs": []}
+		if info.has("error"):
+			failures.append("%s: %s" % [key, str(info["error"])])
+			record["failure"] = str(info["error"])
+			results.append(record)
+			continue
+		var cpu_window: Dictionary = timing.call("CpuWindow")
+		record.merge({"sun_elevation_deg": info.get("sun_elevation_deg", NAN), "fill": {"wall_s_incl_settle": fill_wall_s, "scopes": _fill_summary(cpu_window)}})
+		for config_index in configs.size():
+			var config: Dictionary = configs[config_index]
+			var applied := _apply_tree_settings(trees, config["settings"])
+			var settle_start := Time.get_ticks_msec()
+			var settled := await _wait_trees_settled(ctx, 420.0)
+			var settle_s := (Time.get_ticks_msec() - settle_start) / 1000.0
+			var probe: Dictionary = await _probe(ctx)
+			if not bool(probe.get("ok", false)):
+				failures.append("%s %s: %s" % [key, config["name"], str(probe.get("error", "probe failed"))])
+			var state := capture_original_state(ctx)
+			var nodes := {"templates_and_other": 0, "shadow_proxies": 0}
+			for index in state["tree_geometry"].size():
+				var slot := int(state["tree_slot"][index])
+				if bool(state["tree_proxy"][index]):
+					nodes["shadow_proxies"] = int(nodes["shadow_proxies"]) + 1
+				elif slot < 0:
+					nodes["templates_and_other"] = int(nodes["templates_and_other"]) + 1
+				else:
+					nodes["slot%d" % slot] = int(nodes.get("slot%d" % slot, 0)) + 1
+			var cases: Array = TREE_LOD_CASES.duplicate()
+			if config_index == 0 and key in rs50_keys:
+				for label in TREE_LOD_CASES:
+					cases.append(str(label) + RS_SUFFIX)
+			nodes["unclassified_visible"] = state["tree_unclassified_visible"]
+			var config_record := {"name": config["name"], "settings_applied": applied, "settled": settled, "settle_s": settle_s, "tree_settings": _tree_fade(trees), "probe": probe,
+				"workload": _workload(ctx), "memory": _memory(), "tree_nodes": nodes, "cases": cases, "windows": [], "viewport": {"scaling_3d_scale": tree.root.scaling_3d_scale,
+				"scaling_3d_mode": tree.root.scaling_3d_mode, "msaa_3d": tree.root.msaa_3d, "use_taa": tree.root.use_taa, "screen_space_aa": tree.root.screen_space_aa}}
+			print("%s %s %s settled=%s (%.1f s) nodes %s probe slots %s" % [marker, key, config["name"], str(settled), settle_s, JSON.stringify(nodes), _probe_line(probe)])
+			var pose_before: Dictionary = COMMON.pose_now(ctx["game"])
+			for round_index in rounds:
+				var order: Array = cases.duplicate()
+				if round_index % 2 == 1:
+					order.reverse()
+				for label in order:
+					restore_state(state)
+					if not apply_case(state, str(label)):
+						failures.append("%s: unknown case %s" % [key, label])
+						continue
+					var window: Dictionary = await sample_window(ctx, seconds)
+					var why := verify_case(state, str(label))
+					window["label"] = label
+					window["round"] = round_index
+					window["state_ok"] = why == ""
+					if why != "":
+						window["failure"] = why
+						failures.append("%s %s %s round %d: %s" % [key, config["name"], label, round_index, why])
+					(config_record["windows"] as Array).append(window)
+					windows_total += 1
+			restore_state(state)
+			# pose guard: the camera must not move or turn during the window set (a drifting pose would turn the hide deltas into noise)
+			var pose_after: Dictionary = COMMON.pose_now(ctx["game"])
+			var moved := Vector3(float(pose_after["around"]) - float(pose_before["around"]), float(pose_after["vertical"]) - float(pose_before["vertical"]), float(pose_after["across"]) - float(pose_before["across"])).length()
+			var turned := maxf(absf(float(pose_after["yaw"]) - float(pose_before["yaw"])), absf(float(pose_after["pitch"]) - float(pose_before["pitch"])))
+			config_record["pose_guard"] = {"before": pose_before, "after": pose_after, "moved_m": moved, "turned": turned, "fixture_yaw_deg": pose["yaw_deg"], "fixture_pitch_deg": pose["pitch_deg"]}
+			if moved > 0.5 or turned > 0.1:
+				failures.append("%s %s: the camera moved %.2f m and turned %.3f during the windows" % [key, config["name"], moved, turned])
+			config_record["derived"] = _derive(config_record["windows"], cases)
+			if config_index == 0 and key in overdraw_keys:
+				config_record["pictures"] = await _capture_pictures(ctx, state, out_dir, key)
+			(record["configs"] as Array).append(config_record)
+			print("%s %s %s derived %s" % [marker, key, config["name"], JSON.stringify(config_record["derived"]["summary_line"])])
+		if mode == "cap":
+			_apply_tree_settings(trees, original)
+			await _wait_trees_settled(ctx, 420.0)
+		results.append(record)
+		_save_json(out_dir.path_join("tree_lod_partial.json"), {"completed": results.size(), "of": pose_times.size(), "pose_times": results})
+
+	COMMON.stop_power_log(int(ctx["power_pid"]))
+	ctx["power_pid"] = -1
+	if ctx.has("bracket_effects"):
+		var remaining: Array = (ctx["world_environment"] as WorldEnvironment).compositor.compositor_effects.duplicate()
+		for effect in ctx["bracket_effects"]:
+			remaining.erase(effect)
+		(ctx["world_environment"] as WorldEnvironment).compositor.compositor_effects = remaining
+		ctx.erase("bracket_effects")
+	timing.call("End")
+	ctx.erase("timing")
+	for i in 10:
+		await RenderingServer.frame_post_draw
+	await COMMON.settle(tree, 0.5)
+	# a hide case that changed no draw or primitive count at any pose cannot be measured (TR-1 escalation condition)
+	var case_effect := {}
+	for label in TREE_LOD_CASES:
+		if str(label).begins_with("baseline"):
+			continue
+		case_effect[label] = 0
+		for record in results:
+			for config_record in record.get("configs", []):
+				if bool(config_record["derived"]["classes"][label]["changed_submissions"]):
+					case_effect[label] = int(case_effect[label]) + 1
+		if int(case_effect[label]) == 0 and not results.is_empty():
+			failures.append("case %s changed no draw or primitive count at any pose (escalate: the slot cannot be hidden on its own)" % label)
+	var report: Dictionary = (ctx["record"] as Dictionary).duplicate(true)
+	report.merge({"marker": marker, "tool": "landscape_cost_baseline --tree-lod=" + mode, "mode": mode, "label": "4070, non-authoritative" if not bool(machine["authoritative"]) else "A1000",
+		"rounds": rounds, "window_seconds": seconds, "warmup_frames": WARMUP_FRAMES, "settle_s": SETTLE_S, "bracket": bracket, "cases": TREE_LOD_CASES, "tree_overrides": overrides,
+		"tree_settings": _tree_fade(trees), "pose_times": results, "failures": failures, "windows": windows_total, "case_effect_poses": case_effect,
+		"status": "FAIL" if not failures.is_empty() or results.is_empty() else "PASS", "output": out_dir, "power_log": power_path}, true)
+	_save_json(out_dir.path_join("tree_lod.json"), report)
+	var file := FileAccess.open(out_dir.path_join("tree_lod.md"), FileAccess.WRITE)
+	if file != null:
+		file.store_string(_tree_markdown(report))
+		file.close()
+	DirAccess.remove_absolute(out_dir.path_join("tree_lod_partial.json"))
+	print("%s output: %s" % [marker, out_dir])
+	return report
+
+
+static func _probe_line(probe: Dictionary) -> String:
+	if not bool(probe.get("ok", false)):
+		return str(probe.get("error", "no probe"))
+	var parts: Array = []
+	for slot in probe.get("slots", []):
+		if bool(slot["enabled"]):
+			parts.append("s%d %d/%d/%d (cap %d)" % [int(slot["slot"]), int(slot["roots_in_range"]), int(slot["gated_in_range"]), int(slot["drawn"]), int(slot["cap"])])
+	return "roots %d of %d visible records; in range/gated/drawn: %s" % [int(probe["gpu_roots"]), int(probe["visible_records"]), ", ".join(parts)]
+
+
+static func _tree_markdown(report: Dictionary) -> String:
+	var machine: Dictionary = report["machine"]
+	var lines: Array = []
+	lines.append("# TR-1 tree LOD cost (%s, mode %s)" % [report["label"], report["mode"]])
+	lines.append("")
+	lines.append("Machine: %s, adapter `%s`, %s, Godot %s. Resolution %s, VSync off, preset `%s`. Rounds %d, window %.0f s (+%d warm-up frames, %.0f s settle). Prefs `%s`. Clocks held, weather %s." % [
+		machine["label"], machine["adapter"], machine["renderer"], report["godot"], str(report["resolution"]), report["preset"].get("preset", "?"), int(report["rounds"]),
+		float(report["window_seconds"]), int(report["warmup_frames"]), float(report["settle_s"]), report["prefs"]["mode"], str(report["weather"].get("mode", "?"))])
+	lines.append("")
+	lines.append("Tree settings: `%s`. Overrides for this run: `%s`." % [JSON.stringify(report["tree_settings"]), JSON.stringify(report["tree_overrides"])])
+	lines.append("")
+	lines.append("Status %s, %d windows. A slot case hides the slot's main-pass renderers only; tree_shadows_off removes the tree shadow casters only. Deltas are baseline minus case (median of window medians)." % [report["status"], int(report["windows"])])
+	for record in report["pose_times"]:
+		for config in record.get("configs", []):
+			var d: Dictionary = config["derived"]
+			lines.append("")
+			lines.append("## %s, %s (sun %s deg), config %s" % [record["pose"], record["time"], _f(float(record.get("sun_elevation_deg", NAN)), 1), config["name"]])
+			lines.append("")
+			lines.append("Baseline root GPU %s ms (p95 %s, repeat %s, noise floor %s), frame %s ms, opaque bracket %s ms, draws %s, primitives %s. Settled %s in %s s. Video memory %s MB, tree GPU buffers %s MB." % [
+				_f(d["baseline_root_gpu_ms"]), _f(d["baseline_p95_root_gpu_ms"]), _f(d["baseline_repeat_root_gpu_ms"]), _f(d["noise_floor_root_gpu_ms"]), _f(d["baseline_frame_ms"]),
+				_f(float(d["markers"]["BRACKET:opaque"]["median_ms"])), _f(d["baseline_draw_calls"], 0), _f(d["baseline_primitives"], 0), str(config["settled"]), _f(float(config["settle_s"]), 1),
+				_f(float(config["memory"]["video_mem_mb"]), 0), _f(float(config["probe"].get("gpu_buffer_bytes", 0)) / 1048576.0, 1)])
+			lines.append("")
+			lines.append("| case | root GPU delta ms | opaque bracket delta ms | far GPU delta ms | draws delta | primitives delta |")
+			lines.append("|---|---|---|---|---|---|")
+			for label in config["cases"]:
+				if d["classes"].has(label) and not str(label).ends_with(RS_SUFFIX):
+					var c: Dictionary = d["classes"][label]
+					lines.append("| %s | %s | %s | %s | %s | %s |" % [label, _f(float(c["root_gpu_delta_ms"])), _f(float(c["opaque_bracket_delta_ms"])), _f(float(c["far_gpu_delta_ms"])), _f(float(c["draw_delta"]), 0), _f(float(c["primitive_delta"]), 0)])
+			if d["render_scales"].has("baseline" + RS_SUFFIX):
+				var half: Dictionary = d["render_scales"]["baseline" + RS_SUFFIX]
+				lines.append("")
+				lines.append("Fill test at 50 %% render scale (a quarter of the pixels): baseline %s ms (noise floor %s). Fill part = (delta at 100 %% - delta at 50 %%) / 0.75; the rest does not scale with pixels." % [
+					_f(float(half["baseline_root_gpu_ms"])), _f(float(half["noise_floor_root_gpu_ms"]))])
+				lines.append("")
+				lines.append("| case | delta at 100 % | delta at 50 % | ratio | fill part ms | pixel-independent part ms |")
+				lines.append("|---|---|---|---|---|---|")
+				for label in TREE_LOD_CASES:
+					if d["classes"].has(label) and d["classes"].has(str(label) + RS_SUFFIX):
+						var full := float(d["classes"][label]["root_gpu_delta_ms"])
+						var scaled := float(d["classes"][str(label) + RS_SUFFIX]["root_gpu_delta_ms"])
+						var fill := (full - scaled) / (1.0 - RS_SCALE * RS_SCALE)
+						lines.append("| %s | %s | %s | %s | %s | %s |" % [label, _f(full), _f(scaled), _f(scaled / full if absf(full) > 0.0001 else NAN), _f(fill), _f(full - fill)])
+			var probe: Dictionary = config["probe"]
+			if bool(probe.get("ok", false)):
+				var cap: Dictionary = probe["root_cap"]
+				lines.append("")
+				lines.append("Budget chain: %d records in %d visible tiles (%d inside the far edge %s m), %d GPU roots of a cap of %d (%d inside the far edge). %d visible records are not roots (%d inside the far edge); the nearest of them is at %s m, the farthest root at %s m, and %d roots lie beyond the nearest dropped record." % [
+					int(probe["visible_records"]), int(probe["visible_tiles"]), int(probe["visible_records_within_far_edge"]), _f(float(probe["far_edge_m"]), 0), int(probe["gpu_roots"]), int(probe["maximum_gpu_tree_roots"]),
+					int(probe["gpu_roots_within_far_edge"]), int(cap["visible_not_root"]), int(cap["visible_not_root_within_far_edge"]), _f(float(cap["nearest_dropped_m"]), 0), _f(float(cap["farthest_root_m"]), 0),
+					int(cap["roots_beyond_nearest_dropped"])])
+				lines.append("")
+				lines.append("| slot | band m | rank gate | cap | visible records in band | GPU roots in band | after rank gate | drawn | partial dither | outputs | triangles per tree | submitted triangles | shadow casters | shadow triangles |")
+				lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+				for slot in probe["slots"]:
+					if not bool(slot["enabled"]):
+						continue
+					lines.append("| %d | %s to %s | %s | %d | %d | %d | %d | %d | %d | %d | %d to %d | %d | %d | %d |" % [int(slot["slot"]), _f(float(slot["near_m"]), 0), _f(float(slot["far_m"]), 0), _f(float(slot["rank_gate"])),
+						int(slot["cap"]), int(slot["visible_in_range"]), int(slot["roots_in_range"]), int(slot["gated_in_range"]), int(slot["drawn"]), int(slot["drawn_partial_coverage"]), int(slot["outputs"]),
+						int(slot["mesh_triangles_min"]), int(slot["mesh_triangles_max"]), int(slot["submitted_triangles"]), int(slot["shadow_proxies"]) + int(slot["self_shadow_outputs"]), int(slot["shadow_triangles"])])
+				lines.append("")
+				lines.append("Distance histogram (bin start in m; g = GPU roots passing the slot's band and rank gate, d = drawn):")
+				lines.append("")
+				lines.append("| from m | visible records | GPU roots | dropped by root cap | s0 g / d | s2 g / d | s3 g / d | s4 g / d |")
+				lines.append("|---|---|---|---|---|---|---|---|")
+				var edges: Array = probe["bin_edges_m"]
+				for bin in edges.size():
+					var cells: Array = []
+					for slot_index in [0, 2, 3, 4]:
+						var slot: Dictionary = probe["slots"][slot_index]
+						cells.append("%d / %d" % [int(slot["histogram_gated"][bin]), int(slot["histogram_drawn"][bin])])
+					lines.append("| %s | %d | %d | %d | %s |" % [_f(float(edges[bin]), 0), int(probe["histogram_visible"][bin]), int(probe["histogram_roots"][bin]), int(probe["histogram_visible_not_root"][bin]), " | ".join(cells)])
+			if config.has("pictures"):
+				lines.append("")
+				for name in config["pictures"]:
+					lines.append("- picture %s: `%s` (mean rgb %s)" % [name, config["pictures"][name]["png"], str(config["pictures"][name]["mean_rgb"])])
+	if not (report["failures"] as Array).is_empty():
+		lines.append("")
+		lines.append("## Failures")
+		lines.append("")
+		for failure in report["failures"]:
+			lines.append("- " + str(failure))
+	lines.append("")
+	return "\n".join(lines)
+
+
+# ------------------------------------------------------------------ TR-1 switch strip
+
+## Five camera distances across a billboard fade band: 50 m before it, its start, its middle, its end and 50 m after it.
+static func _strip_distances(start_m: float, end_m: float) -> Array:
+	return [start_m - 50.0, start_m, (start_m + end_m) * 0.5, end_m, end_m + 50.0]
+
+
+## `--strip`: one isolated maple, pine and fir, watched from five distances across the LOD2-to-cards fade at noon and at sun 8 degrees, for each fade configuration
+## (`--strip-configs=user,f1`: "user" = the fades as loaded from the preferences and the preset, "f1" = the shipped 300 to 350 m fade of TR.md fact F1).
+## Frames: .godot/captures/landscape/t0/lod_switch_strip/<stamp>/<config>/<species>/{tight,wide}/frame%08d.png, index = time * 5 + distance. tight = the centre
+## 192 x 192 pixels enlarged 3 x without filtering; wide = the centre 576 x 324 pixels as rendered. strip.json records the tree, its rank and every frame.
+static func run_strip(ctx: Dictionary) -> Dictionary:
+	var tree: SceneTree = ctx["tree"]
+	var marker: String = ctx["marker"]
+	var trees: Node = ctx["trees"]
+	var game: Node = ctx["game"]
+	var world: RefCounted = ctx["booted"]["world_bridge"]
+	var out_dir := H.transient_dir("lod_switch_strip", ctx["booted"]["world_tag"])
+	var times: Dictionary = H.load_poses().get("times", {})
+	var time_names := ["noon", "sun_8_set"]
+	var original := {}
+	for property in TREE_FADE_PROPERTIES:
+		original[property] = trees.get(property)
+	var config_names := harness_csv("--strip-configs=")
+	if config_names.is_empty():
+		config_names = PackedStringArray(["user", "f1"])
+	var configs: Array = []
+	var all_distances := PackedFloat64Array()
+	for name in config_names:
+		var fades: Dictionary = original.duplicate()
+		if name == "f1":
+			fades = {"TreeNearDetailFadeStartMeters": 25.0, "TreeNearDetailFadeEndMeters": 40.0, "TreeBillboardFadeStartMeters": 300.0, "TreeBillboardFadeEndMeters": 350.0}
+		elif name != "user":
+			return {"status": "FAIL", "failure": "unknown --strip-configs entry %s (user|f1)" % name}
+		var distances := _strip_distances(float(fades["TreeBillboardFadeStartMeters"]), float(fades["TreeBillboardFadeEndMeters"]))
+		for distance in distances:
+			all_distances.append(float(distance))
+		configs.append({"name": name, "fades": fades, "distances": distances})
+	var finder: RefCounted = TIMING.new()
+	var search_start := Time.get_ticks_msec()
+	var found := {}
+	for site in STRIP_SITES:
+		var at_site: Dictionary = finder.call("FindStripTrees", world, PackedFloat64Array([float(site[0])]), PackedFloat64Array([float(site[1])]), all_distances, 0.33, 10.0)
+		for species in STRIP_SPECIES:
+			var candidate: Dictionary = at_site.get(species, {})
+			if found.has(species) or not bool(candidate.get("found", false)):
+				continue
+			var candidate_bearing := deg_to_rad(float(candidate["bearing_deg"]))
+			var candidate_target := float(world.call("GroundHeight", candidate["tree_around"], candidate["tree_across"])) + 0.5 * float(candidate["height"])
+			var steepest := 0.0
+			for distance in all_distances:
+				var eye := float(world.call("GroundHeight", float(candidate["tree_around"]) + cos(candidate_bearing) * distance, float(candidate["tree_across"]) + sin(candidate_bearing) * distance)) + EYE_M
+				steepest = maxf(steepest, absf(rad_to_deg(atan2(candidate_target - eye, distance))))
+			candidate["max_pitch_deg"] = steepest
+			candidate["site"] = site
+			if steepest <= STRIP_MAX_PITCH_DEG and float(candidate["clearance_m"]) >= 4.0:
+				found[species] = candidate
+		if found.size() == STRIP_SPECIES.size():
+			break
+	print("%s strip trees (%.1f s): %s" % [marker, (Time.get_ticks_msec() - search_start) / 1000.0, JSON.stringify(found)])
+	var record: Dictionary = (ctx["record"] as Dictionary).duplicate(true)
+	record.merge({"marker": marker, "tool": "landscape_lod_switch_capture --strip", "trees": found, "sites": STRIP_SITES, "configs": configs, "output": out_dir, "frames": [],
+		"crop": {"tight_px": STRIP_TIGHT_PX, "tight_scale": STRIP_TIGHT_SCALE, "wide_px": [STRIP_WIDE.x, STRIP_WIDE.y]}, "rank_gates": "slot 3 keeps rank <= 0.35, slot 4 rank <= 0.10"}, true)
+	var failures: Array = []
+	var exposure_disabled := false
+	# the HUD crosshair sits on the screen centre, exactly where the tree is; hide the HUD layers for these captures
+	var hidden_layers: Array = []
+	for node in _all_nodes(game):
+		if node is CanvasLayer and (node.name == "TerrainMinimap" or (node.get_script() != null and "RingPresentationHud" in (node.get_script() as Script).resource_path)):
+			(node as CanvasLayer).visible = false
+			hidden_layers.append(str(node.name))
+	record["hidden_hud_layers"] = hidden_layers
+	for config in configs:
+		_apply_tree_settings(trees, config["fades"])
+		for species in STRIP_SPECIES:
+			var info: Dictionary = found.get(species, {})
+			if not bool(info.get("found", false)):
+				failures.append("no %s with a clear line found" % species)
+				continue
+			var tree_a := float(info["tree_around"])
+			var tree_z := float(info["tree_across"])
+			var tree_ground := float(world.call("GroundHeight", tree_a, tree_z))
+			var target_y := tree_ground + 0.5 * float(info["height"])
+			var bearing := deg_to_rad(float(info["bearing_deg"]))
+			var dir_a := cos(bearing)
+			var dir_z := sin(bearing)
+			for time_index in time_names.size():
+				var time_name: String = time_names[time_index]
+				var sun := NAN
+				var distances: Array = config["distances"]
+				for index in distances.size():
+					var distance := float(distances[index])
+					var cam_a := tree_a + dir_a * distance
+					var cam_z := tree_z + dir_z * distance
+					var vertical := float(world.call("GroundHeight", cam_a, cam_z)) + EYE_M
+					var yaw := rad_to_deg(atan2(-dir_z, -dir_a))
+					var pitch := rad_to_deg(atan2(target_y - vertical, distance))
+					_teleport_to(ctx, cam_a, cam_z, vertical, yaw, pitch)
+					await COMMON.settle(tree, 0.2)
+					var idle := await COMMON.wait_builds_idle(tree, game, 240.0)
+					if index == 0:
+						var time_state: Dictionary = COMMON.apply_time(game, times[time_name])
+						if time_state.has("error"):
+							failures.append("%s %s %s: %s" % [config["name"], species, time_name, str(time_state["error"])])
+						sun = float(time_state.get("sun_elevation_deg", NAN))
+						await COMMON.settle(tree, 2.0)
+						if not exposure_disabled:
+							await _disable_auto_exposure(ctx)
+							exposure_disabled = true
+					var settled := await _wait_trees_settled(ctx, 90.0)
+					_teleport_to(ctx, cam_a, cam_z, vertical, yaw, pitch)
+					for i in 6:
+						await RenderingServer.frame_post_draw
+					var image := tree.root.get_texture().get_image()
+					var centre := Vector2i(image.get_width() / 2, image.get_height() / 2)
+					var tight := image.get_region(Rect2i(centre.x - STRIP_TIGHT_PX / 2, centre.y - STRIP_TIGHT_PX / 2, STRIP_TIGHT_PX, STRIP_TIGHT_PX))
+					tight.resize(STRIP_TIGHT_PX * STRIP_TIGHT_SCALE, STRIP_TIGHT_PX * STRIP_TIGHT_SCALE, Image.INTERPOLATE_NEAREST)
+					var wide := image.get_region(Rect2i(centre.x - STRIP_WIDE.x / 2, centre.y - STRIP_WIDE.y / 2, STRIP_WIDE.x, STRIP_WIDE.y))
+					var frame := time_index * distances.size() + index
+					var base_dir := out_dir.path_join(str(config["name"])).path_join(str(species).to_lower())
+					for kind in ["tight", "wide"]:
+						DirAccess.make_dir_recursive_absolute(base_dir.path_join(kind))
+					tight.save_png(base_dir.path_join("tight").path_join("frame%08d.png" % frame))
+					wide.save_png(base_dir.path_join("wide").path_join("frame%08d.png" % frame))
+					var camera := tree.root.get_camera_3d()
+					(record["frames"] as Array).append({"config": config["name"], "species": species, "time": time_name, "frame": frame, "distance_m": distance, "sun_elevation_deg": sun,
+						"streaming_idle": idle, "trees_settled": settled, "camera_vertical_m": vertical, "yaw_deg": yaw, "pitch_deg": pitch, "fov_deg": camera.fov if camera != null else NAN,
+						"weather": H.weather_at(game, cam_a, cam_z)})
+			print("%s strip %s %s done" % [marker, config["name"], species])
+	_apply_tree_settings(trees, original)
+	record["failures"] = failures
+	record["status"] = "PASS" if failures.is_empty() and not (record["frames"] as Array).is_empty() else "FAIL"
+	_save_json(out_dir.path_join("strip.json"), record)
 	print("%s output: %s" % [marker, out_dir])
 	return record

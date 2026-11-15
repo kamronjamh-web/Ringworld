@@ -6,6 +6,11 @@ extends SceneTree
 ##   Add --generation=N [--review-features=a,b] after -- to select a v9 world.
 ##   A1000 (authoritative) run: laptop, undocked, P0 / 35 W, memory clock 5300-5700 MHz; the same command.
 ## Machine rule: numbers are only authoritative on the A1000 laptop (P0 / 35 W); on any other GPU the output is stamped "non-authoritative" with the machine tag and adapter name.
+## TR-1 tree LOD modes (docs/work-orders/terrain-vegetation/TR.md), selected after -- or through the LANDSCAPE_HARNESS_ARGS environment variable (tools/run_tests.ps1 has no argument pass-through):
+##   --tree-lod=slots  per-slot hide cases (slots 0, 2, 3, 4), tree-shadow-off, the 50 % render-scale fill test, overdraw pictures and the tree budget probe at the forest and coast poses
+##   --tree-lod=cap    the same cases and probe at the forest poses per root-cap configuration [--cap-configs=65536,262144,262144+far]
+##   options: [--poses=a,b] [--rounds=2] [--seconds=8] [--rs50=pose__time,...|none] [--overdraw=pose__time,...|none] [--tree-set=Property:value,...]
+##   output: .godot/audit_baseline/<machine>/tr1/tree_lod_<mode>/<stamp>/tree_lod.json and tree_lod.md
 ## Test-only. The harness world directory is deleted at exit. Prints LANDSCAPE_COST=PASS.
 const BASE := preload("res://tools/landscape_baseline_common.gd")
 const MARKER := "LANDSCAPE_COST"
@@ -25,7 +30,11 @@ func _run() -> void:
 	if ctx.is_empty() or not ctx.has("ok"):
 		_finish_failed()
 		return
-	var report: Dictionary = await BASE.run_cost(ctx)
+	var report: Dictionary
+	if BASE.harness_arg("--tree-lod=", "") != "":
+		report = await BASE.run_tree_lod(ctx)
+	else:
+		report = await BASE.run_cost(ctx)
 	if str(report.get("status", "FAIL")) != "PASS":
 		var failures: Array = report.get("failures", [])
 		_fail(str(report.get("failure", "; ".join(failures) if not failures.is_empty() else "no result")))

@@ -5,6 +5,9 @@ extends SceneTree
 ##   or Godot_console.exe --path . --resolution 1920x1080 --script res://tools/landscape_lod_switch_capture.gd -- [--poses=a,b] [--prefs=user|defaults|<dir>] [--preset=medium|keep] [--allow-blades] [--pose=forest_edge_eye]
 ##   Add --generation=N [--review-features=a,b] after -- to select a v9 world.
 ## Machine rule: numbers are only authoritative on the A1000 laptop (P0 / 35 W); on any other GPU the output is stamped "non-authoritative" with the machine tag and adapter name.
+## TR-1 switch strip (docs/work-orders/terrain-vegetation/TR.md): --strip after -- or in the LANDSCAPE_HARNESS_ARGS environment variable. One isolated maple, pine and fir, watched from five
+##   distances across the LOD2-to-cards fade at noon and at sun 8 degrees, per fade configuration [--strip-configs=user,f1]. Frames and strip.json go to
+##   .godot/captures/landscape/t0/lod_switch_strip/<stamp>/<config>/<species>/{tight,wide}/; make one sheet per species with tools/media/ffmpeg_tools.ps1 sheet -Columns 5 -Rows 2 -TileWidth 576.
 ## Test-only. The harness world directory is deleted at exit. Prints LANDSCAPE_LOD_SWITCH=PASS.
 const BASE := preload("res://tools/landscape_baseline_common.gd")
 const MARKER := "LANDSCAPE_LOD_SWITCH"
@@ -18,13 +21,19 @@ func _init() -> void:
 
 
 func _run() -> void:
-	var watchdog := create_timer(1150.0)
-	watchdog.timeout.connect(func() -> void: _fail("watchdog timeout (1150.0 s)"))
+	var strip := BASE.harness_flag("--strip")
+	var limit := 2300.0 if strip else 1150.0
+	var watchdog := create_timer(limit)
+	watchdog.timeout.connect(func() -> void: _fail("watchdog timeout (%.1f s)" % limit))
 	ctx = await BASE.setup(self, MARKER)
 	if ctx.is_empty() or not ctx.has("ok"):
 		_finish_failed()
 		return
-	var report: Dictionary = await BASE.run_lod(ctx)
+	var report: Dictionary
+	if strip:
+		report = await BASE.run_strip(ctx)
+	else:
+		report = await BASE.run_lod(ctx)
 	if str(report.get("status", "FAIL")) != "PASS":
 		var failures: Array = report.get("failures", [])
 		_fail(str(report.get("failure", "; ".join(failures) if not failures.is_empty() else "no result")))

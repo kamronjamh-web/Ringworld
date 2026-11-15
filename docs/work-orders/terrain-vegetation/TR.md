@@ -16,7 +16,7 @@ Freeze: none. This is a renderer change, not world content (see decision D1).
 
 ## Phase facts
 
-Verified 2026-11-13 against the `terrain-vegetation-revamp` working tree.
+Verified 2026-11-13 against the `terrain-vegetation-revamp` working tree. TR-1 measured against these facts on 2026-11-14 and corrects F1 and F6 (with notes on F8 and TR-9): read "Corrections from TR-1 (2026-11-14)" under "TR-1 results" with them.
 
 - F1. **LOD profile in production.** `UseCompactTreeLodProfile` is on by default (`RingBiomeDecorationLayer.RenderPolicy.cs:12`). Internal LOD slots map to authored LODs through `CreateImportedTemplates` (`RingBiomeDecorationLayer.cs:221-224`): slot 0 = authored LOD0, slot 1 = authored LOD1, slot 2 = authored LOD2, slot 3 = authored LOD3 (crossed cards, no shadows). The intervals are in `GpuTreeLodInterval` (`RenderPolicy.cs:56-68`) and the edges in `GpuTreeLodEdges` (`RingBiomeDecorationLayer.Gpu.cs:443-451`):
   - authored LOD0: 0 to 40 m, dither out from 25 to 40 m (`TreeNearDetailFadeStart/EndMeters`);
@@ -84,6 +84,205 @@ A slot cannot be hidden on its own without changing selection (report the reason
 
 STOP RULE
 2 watchdog periods, 3 build-plus-run attempts.
+
+### TR-1 results (2026-11-14)
+
+Measured on the RTX 4070 desktop only (machine-specific). 1920 x 1080, Medium preset, Forward+, VSync off, clocks held, clear weather, 2 rounds of 8 s windows per case (second round reversed), noise floor = baseline against baseline_repeat. The camera did not move in any window set (pose guard: 0.00 m, 0.000 degrees at every pose). All cited runs were made after TR-3 was committed (592c6cf, 16:52); only the T0 comparison straddles it.
+
+| Run | What | Results |
+|---|---|---|
+| `tr1` 20261114-165524 | slot cases, shadows, fill test, overdraw, budget probe, with the user's preferences | `.godot/audit_baseline/rtx4070/tr1/tree_lod_slots/2026-11-14_16-56-02/tree_lod.md` (+ `.json`, PNGs) |
+| `tr1` 20261114-171905 | root cap 65,536 / 262,144 / 262,144 with far caps raised | `.godot/audit_baseline/rtx4070/tr1/tree_lod_cap/2026-11-14_17-19-29/tree_lod.md` |
+| `tr1` 20261114-174658 | slot cases with the shipped F1 fades forced, and the switch strip | `.godot/audit_baseline/rtx4070/tr1/tree_lod_slots/2026-11-14_17-47-22/tree_lod.md`, `.godot/audit_baseline/rtx4070/tr1/switch_strip/2026-11-14_18-04-41/` |
+
+**Two configurations.** The harness loads the user's preference files, as T0 did. The user's `gameplay_vegetation_defaults.tres` overrides the fades, so T0 (F6) and the first two runs measured this, not F1:
+
+| | LOD0 (slot 0) | LOD2 (slot 2) | cards (slot 3) | far (slot 4) | mid batch span | tree sun shadows |
+|---|---|---|---|---|---|---|
+| user preferences (what the user plays, what T0 measured) | 0 to 200 m, dither out 25 to 200 m | 25 to 900 m, dither in 25 to 200 m, out 550 to 900 m | 550 to 1,920 m | 1,920 to 5,500 m | 3 tiles (720 m) | 240 m (Medium) |
+| shipped F1 fades (third run) | 0 to 40 m, dither out 25 to 40 m | 25 to 350 m, out 300 to 350 m | 300 to 1,920 m | 1,920 to 5,500 m | 2 tiles (480 m) | 240 m (Medium) |
+
+Medium without any override would be 20/30 and 250/300 (`PresetTrees`); it was not measured.
+
+#### 1. Cost per slot (user preferences)
+
+Root viewport GPU ms, baseline minus case. A slot case hides that slot's main-pass renderers only; "shadows" removes the tree shadow casters only. The parts add up to the all-trees delta within 0.3 ms.
+
+| pose | time | baseline | noise floor | all trees | slot 0 (LOD0) | slot 2 (LOD2) | slot 3 (cards) | slot 4 (far) | tree shadows | sum of parts |
+|---|---|---|---|---|---|---|---|---|---|---|
+| forest_interior_eye | noon | 15.87 | 0.01 | 9.66 | 2.50 | 3.96 | 0.32 | 0.29 | 2.30 | 9.37 |
+| forest_edge_eye | noon | 15.02 | 0.18 | 8.48 | 1.77 | 4.80 | 0.10 | -0.04 | 1.53 | 8.16 |
+| forest_clearing_eye | noon | 11.45 | 0.02 | 5.25 | 0.12 | 3.34 | 0.25 | 0.19 | 1.18 | 5.08 |
+| coast_eye | noon | 8.38 | 0.01 | 1.65 | 0.55 | 0.64 | 0.03 | 0.00 | 0.44 | 1.66 |
+| forest_edge_eye | sun_8_set | 16.11 | 0.01 | 10.43 | 1.70 | 4.74 | 0.14 | -0.01 | 3.66 | 10.24 |
+
+Draw calls and primitives removed by each case (the primitive counter counts every pass, so a main-pass slot shows about twice its submitted triangles):
+
+| pose | time | draws: all / s0 / s2 / s3 / s4 / shadows | primitives in millions: all / s0 / s2 / s3 / s4 / shadows |
+|---|---|---|---|
+| forest_interior_eye | noon | 677 / 48 / 30 / 9 / 12 / 366 | 13.01 / 5.01 / 4.02 / 0.40 / 1.20 / 2.38 |
+| forest_edge_eye | noon | 296 / 66 / 46 / 5 / 1 / 178 | 15.73 / 4.96 / 8.07 / 0.22 / 0.02 / 2.47 |
+| forest_clearing_eye | noon | 151 / 24 / 24 / 8 / 9 / 86 | 8.04 / 2.50 / 2.89 / 0.35 / 0.85 / 1.44 |
+| coast_eye | noon | 656 / 38 / 42 / 0 / 0 / 364 | 1.64 / 0.68 / 0.61 / 0.00 / 0.00 / 0.35 |
+| forest_edge_eye | sun_8_set | 748 / 66 / 46 / 5 / 1 / 418 | 15.73 / 4.96 / 8.07 / 0.22 / 0.02 / 2.47 |
+
+What each slot draws for that time (GPU readback of the indirect counts):
+
+| pose | slot | trees drawn | triangles per tree | submitted triangles | ms | microseconds per tree | ms per million triangles |
+|---|---|---|---|---|---|---|---|
+| forest_interior_eye | 0 | 256 | 465 to 22,490 (mean 8,300) | 2.12 M | 2.50 | 9.8 | 1.18 |
+| forest_interior_eye | 2 | 2,696 | 157 to 5,321 (mean 1,400) | 3.78 M | 3.96 | 1.47 | 1.05 |
+| forest_interior_eye | 3 | 5,200 | 36 | 0.19 M | 0.32 | 0.06 | 1.7 |
+| forest_interior_eye | 4 | 3,715 | 36 | 0.13 M | 0.29 | 0.08 | 2.2 |
+| forest_edge_eye | 0 | 256 | mean 6,500 | 1.66 M | 1.77 | 6.9 | 1.07 |
+| forest_edge_eye | 2 | 2,696 | mean 1,650 | 4.45 M | 4.80 | 1.78 | 1.08 |
+| forest_edge_eye | 3 | 5,200 | 36 | 0.19 M | 0.10 | 0.02 | 0.5 |
+| forest_edge_eye | 4 | 3,327 | 36 | 0.12 M | -0.04 | at the noise floor | |
+
+- LOD2 is the largest single cost in forest (3.3 to 4.8 ms), then LOD0 (1.7 to 2.5 ms for 256 trees), then shadows. Slots 3 and 4 together are under 0.6 ms.
+- LOD0 and LOD2 both cost about 1.1 ms per million submitted triangles. One LOD2 tree costs 25 to 70 times one card tree; one LOD0 tree costs 4 to 7 times one LOD2 tree.
+- Of the all-trees delta, about three quarters falls inside the opaque bracket (tree shadow maps and the colour pass: 7.23 of 9.66 ms at forest_interior_eye, 6.48 of 8.48 ms at forest_edge_eye) and the rest before it (depth prepass). The tree-shadow delta is entirely inside the bracket (1.52 of 1.53 ms).
+
+#### 2. Tree shadows
+
+Tree shadow casters cost 1.2 to 2.3 ms at noon in forest and 3.66 ms at forest_edge_eye with the sun at 8 degrees (0.44 ms at coast_eye). That is 18 to 24 % of the tree cost at noon and 35 % at low sun. The casters are the shadow proxies of slots 0 and 2 inside 240 m (24 to 34 LOD2 proxies with 0.36 to 0.47 M triangles, 15 to 23 card proxies with 0.10 M); at forest_edge_eye the same proxies draw 178 times at noon and 418 times at sun 8 degrees (more cascades see them). This is the number TR-10 starts from.
+
+#### 3. Fill test and overdraw: the forest is triangle-bound
+
+forest_edge_eye, noon, the same cases at 50 % 3D render scale (a quarter of the pixels). The whole frame falls from 15.02 to 12.91 ms; the tree cost barely moves.
+
+| case | delta at 100 % | delta at 50 % | ratio | part that scales with pixels | part that does not |
+|---|---|---|---|---|---|
+| all trees | 8.48 | 7.98 | 0.94 | 0.67 | 7.81 |
+| slot 0 | 1.77 | 1.67 | 0.95 | 0.13 | 1.64 |
+| slot 2 | 4.80 | 4.63 | 0.97 | 0.22 | 4.58 |
+| tree shadows | 1.53 | 1.53 | 1.00 | 0.00 | 1.53 |
+
+Verdict: not fill-bound. A fill-bound pass would fall towards a quarter; trees keep 94 %. Decimation (fewer triangles) is the lever that pays, at about 1.1 ms per million triangles removed from slots 0 and 2. The 8 to 11 ms forest opaque pass of F6 is tree geometry, not overdraw.
+
+Overdraw pictures (`Viewport.DEBUG_DRAW_OVERDRAW`), in the first run's folder:
+- `forest_edge_eye__noon__overdraw.png`, `forest_interior_eye__noon__overdraw.png`: the whole scene. The grass saturates the lower half, so these say little about trees.
+- `forest_edge_eye__noon__overdraw_trees_only.png`, `forest_interior_eye__noon__overdraw_trees_only.png`: terrain and grass hidden. The interior picture shows many stacked leaf-card layers over the whole upper half of the screen. The layers are real, but with the depth prepass they cost little shading time, which is what the fill test shows.
+- `..._overdraw_trees_only_slot0_hidden.png`, `..._slot2_hidden.png`, `..._overdraw_trees_hidden.png`, `..._normal.png`: the same view without LOD0, without LOD2, without trees, and the normal frame.
+- Limit of the engine view: it replaces every material, so the shared far impostor (slots 3 and 4, whose vertices come from a texture in its shader) does not appear, and leaf cut-outs and the LOD dither are ignored. The numbers above, not the pictures, carry the verdict.
+
+#### 4. Budget chain: how many trees are drawn
+
+The chain is: tree records in the streamed tiles, then the resident GPU roots (`MaximumGpuTreeRoots`), then each slot's distance band, rank gate and cap (`GpuTreeLodCaps`, `RingBiomeDecorationLayer.Gpu.cs:972`). Counts at the three forest poses and the coast (user preferences, 65,536 roots):
+
+| pose | records inside 5.5 km | GPU roots | records inside 5.5 km that are not roots | reach of the roots | drawn: s0 / s2 / s3 / s4 | drawn in total | share of the records inside 5.5 km |
+|---|---|---|---|---|---|---|---|
+| forest_interior_eye | 220,313 | 65,536 | 154,777 | 2.8 to 3.0 km | 256 / 2,696 / 5,200 / 3,715 | 11,867 | 5.4 % |
+| forest_edge_eye | 220,323 | 65,536 | 154,787 | 2.6 to 2.9 km | 256 / 2,696 / 5,200 / 3,327 | 11,479 | 5.2 % |
+| forest_clearing_eye | 221,074 | 65,536 | 155,538 | 2.7 to 3.0 km | 51 / 2,696 / 5,200 / 3,204 | 11,151 | 5.0 % |
+| coast_eye | 48,665 | 52,095 (all) | 0 | 5.9 km | 80 / 1,068 / 1,765 / 4,888 | 7,801 | 16 % |
+
+Per slot at forest_edge_eye (the other forest poses are within a few percent):
+
+| slot | band | rank gate | cap | records in band | GPU roots in band | after the rank gate | drawn | what limits it |
+|---|---|---|---|---|---|---|---|---|
+| 0 (LOD0) | 0 to 200 m | 1.0 | 256 | 395 | 395 | 395 | 256 | the cap |
+| 2 (LOD2) | 25 to 900 m | 1.0 | 2,696 | 13,338 | 13,338 | 13,338 | 2,696 | the cap (20 % drawn) |
+| 3 (cards) | 550 to 1,920 m | 0.35 | 5,200 | 37,888 | 37,888 | 16,893 | 5,200 | the rank gate, then the cap |
+| 4 (far) | 1,920 to 5,500 m | 0.10 | 15,000 | 177,967 | 23,180 | 3,327 | 3,327 | the root cap, then the rank gate |
+
+Drop order:
+- **Root cap (65,536): nearest tiles first.** Source preparation takes whole tiles in order of tile-centre distance (`RingBiomeDecorationLayer.GpuPreparation.cs:146-179`). The nearest record that is not a root is at 2,646 to 2,786 m, the farthest root at 2,946 to 3,042 m, and 2,800 to 4,000 roots lie beyond the nearest dropped record (one tile of slack). Every tree from about 3 km to 5.5 km is absent: about 155,000 records, 70 % of those inside the far edge.
+- **Slot caps: batch order, not tree order.** The compute shader gives each batch what is left of the slot's budget, in the order protected (collider) roots first, then batches by the nearest point of their bounds (`Gpu.cs:557-560`, `ring_gpu_vegetation_indirect.glsl:250-260`). A batch that straddles the limit keeps its first roots in buffer order. So the drops are patchy in space, not farthest-first.
+- **Slot 0.** The collider trees come first (up to 192, within 110 m); the rest of the 256 goes to the nearest tile groups. At forest_interior_eye all but 7 trees inside 100 m are LOD0, but only 42 of 212 at 100 to 150 m and 19 of 274 at 150 to 200 m. These trees are inside the 25 to 200 m cross-dither, so a tree without its LOD0 part is drawn by LOD2 alone at partial dither coverage (see-through).
+- **Slot 2.** Merged 720 m batches. At forest_edge_eye LOD2 draws 80 of 134 trees at 100 to 150 m, 202 of 690 at 200 to 300 m, 248 of 986 at 300 to 400 m, 795 of 2,397 at 400 to 550 m, 897 of 3,405 at 550 to 700 m and 306 of 5,469 at 700 to 900 m. The trees not drawn between 200 and 550 m have no other slot, so half to two thirds of the forest at that range is missing (drawn share of the trees at 200 to 550 m: 31 % at forest_edge_eye, 41 % at forest_interior_eye, 47 % at forest_clearing_eye).
+- **Slot 3.** Nearest batches first; the 5,200 run out at about 1.2 km (forest_edge_eye: 1,593 of 4,185 at 900 to 1,200 m, 166 of 4,299 at 1,200 to 1,500 m, none of 4,422 at 1,500 to 1,920 m). There is an empty ring from about 1.3 km to 1.92 km before slot 4 starts.
+- **Slot 4.** At 65,536 roots it draws every gated root (it is starved by the root cap, not its own cap). At 262,144 roots it hits 15,000 and drops the farthest batches (forest_interior_eye: 5,681 of 15,922 gated trees drawn between 4 and 5.5 km, 89 of 5,849 past 5 km).
+- **Rank gates** (`Gpu.cs:497`): slot 3 keeps rank <= 0.35, slot 4 rank <= 0.10, by design. At the LOD2-to-cards hand-off 65 % of trees get no card; at 1,920 m another 71 % of the remaining trees go.
+
+Full distance histograms (records, roots, gated and drawn per slot in 21 bins) are in each `tree_lod.md`.
+
+#### 5. Root cap at 262,144
+
+Same poses, same process, three configurations (user preferences). "far caps" also sets `MaximumLod4Trees` 16,384 and `MaximumTreeBillboards` 65,536, their property limits.
+
+| pose | configuration | GPU roots | drawn: s0 / s2 / s3 / s4 | drawn in total | baseline ms | all trees ms | slot 3 ms | slot 4 ms | video memory MB | tree buffers MB | settle s |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| forest_interior_eye | 65,536 | 65,536 | 256 / 2,696 / 5,200 / 3,715 | 11,867 | 15.88 | 9.59 | 0.34 | 0.30 | 3,007 | 8.8 | 0.5 |
+| forest_interior_eye | 262,144 | 241,730 (all) | 256 / 2,696 / 5,200 / 15,000 | 23,152 | 16.44 | 10.20 | 0.31 | 0.86 | 3,024 | 20.2 | 2.5 |
+| forest_interior_eye | 262,144 + far caps | 241,730 | 256 / 2,696 / 15,401 / 25,270 | 43,623 | 17.42 | 11.17 | 0.85 | 1.32 | 3,048 | 37.8 | 0.9 |
+| forest_edge_eye | 65,536 | 65,536 | 256 / 2,696 / 5,200 / 3,327 | 11,479 | 15.02 | 8.48 | 0.16 | 0.00 | 2,976 | 8.8 | 0.5 |
+| forest_edge_eye | 262,144 | 242,493 (all) | 256 / 2,696 / 5,200 / 15,000 | 23,152 | 15.30 | 8.76 | 0.15 | 0.26 | 2,981 | 20.8 | 2.4 |
+| forest_edge_eye | 262,144 + far caps | 242,493 | 256 / 2,696 / 16,384 / 24,929 | 44,265 | 15.90 | 9.38 | 0.46 | 0.57 | 2,997 | 37.5 | 0.8 |
+| forest_clearing_eye | 65,536 | 65,536 | 51 / 2,696 / 5,200 / 3,204 | 11,151 | 11.49 | 5.24 | 0.27 | 0.24 | 2,780 | 7.6 | 0.4 |
+| forest_clearing_eye | 262,144 | 243,230 (all) | 51 / 2,696 / 5,200 / 15,000 | 22,947 | 12.17 | 5.98 | 0.31 | 0.87 | 2,791 | 19.5 | 1.8 |
+| forest_clearing_eye | 262,144 + far caps | 243,230 | 51 / 2,696 / 16,384 / 24,922 | 44,053 | 13.11 | 6.94 | 0.88 | 1.19 | 2,810 | 36.2 | 0.7 |
+
+- No crash and no memory problem. All 242,000 streamed records fit under 262,144, so the root cap no longer drops anything. Noise floors 0.00 to 0.06 ms.
+- 262,144 roots alone doubles the drawn trees (11,500 to 23,150) for 0.3 to 0.7 ms, and removes the empty band beyond 3 km. The drawn count then sits exactly on the sum of the slot caps (23,152).
+- With the far caps raised the engine draws about 44,000 trees for 0.9 to 1.6 ms over today. Slot 3 then draws every gated tree; slot 4 is limited by its 0.10 rank gate (25,000 of 178,000 records in its band).
+- A card tree costs 0.02 to 0.06 microseconds: slots 3 and 4 together cost 1.0 to 2.2 ms for about 41,000 trees, against 3.3 to 4.8 ms for 2,696 LOD2 trees.
+- LOD0 and LOD2 are untouched by the root cap (their caps bind first).
+
+#### 6. The shipped F1 fades
+
+The same poses with the four fades of F1 and the default mid batch span forced on the tree layer (`--tree-set`); everything else as above (user preferences, Medium, 65,536 roots).
+
+| pose | time | baseline | noise floor | all trees | slot 0 | slot 2 | slot 3 | slot 4 | tree shadows | sum of parts | drawn: s0 / s2 / s3 / s4 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| forest_interior_eye | noon | 13.96 | 0.05 | 7.75 | 0.52 | 3.73 | 0.31 | 0.20 | 2.31 | 7.08 | 35 / 2,152 / 5,200 / 3,715 |
+| forest_edge_eye | noon | 10.79 | 0.01 | 4.22 | 0.09 | 2.32 | 0.24 | 0.00 | 1.48 | 4.12 | 12 / 1,547 / 5,200 / 3,327 |
+| forest_clearing_eye | noon | 9.26 | 0.03 | 3.02 | 0.00 | 1.79 | 0.31 | 0.21 | 0.74 | 3.05 | 0 / 1,009 / 5,200 / 3,204 |
+| coast_eye | noon | 7.48 | 0.05 | 0.74 | 0.02 | 0.41 | 0.04 | 0.01 | 0.11 | 0.60 | 0 / 230 / 1,823 / 4,888 |
+| forest_edge_eye | sun_8_set | 10.12 | 0.01 | 4.41 | 0.10 | 2.34 | 0.22 | 0.03 | 1.90 | 4.60 | 12 / 1,547 / 5,200 / 3,327 |
+
+- With these fades slots 0 and 2 are not cap-bound: every tree in the LOD0 and LOD2 bands is drawn (forest_interior_eye: 2,152 LOD2 trees, 3.63 M triangles, 3.73 ms). The patchy LOD2 drops of section 4 are an effect of the user's 900 m LOD2 band against the 2,696 cap.
+- The frame is 0.9 to 6.0 ms cheaper than with the user's fades (forest_edge_eye: 15.02 to 10.79 ms at noon, 16.11 to 10.12 ms at sun 8 degrees). LOD0 falls from 1.8 to 2.5 ms to 0.1 to 0.5 ms, because 12 to 35 trees are inside 40 m instead of 256 inside 200 m. LOD2 is still the largest cost (1.8 to 3.7 ms in forest), then shadows.
+- Slot 3 is still on its cap: 5,200 of 16,900 to 19,100 gated trees. The cards now start at 300 m, so they run out sooner, at about 1.0 to 1.1 km (forest_edge_eye: 600 of 4,185 drawn at 900 to 1,200 m, 1 of 4,299 at 1,200 to 1,500 m), and the empty ring reaches from there to 1.92 km.
+- The root cap result is the same (nothing past about 3 km).
+- Fill test at forest_edge_eye: 4.22 ms at 100 %, 3.93 ms at 50 % (ratio 0.93). Triangle-bound here too.
+- At forest_interior_eye the parts add to 7.08 ms against 7.75 ms for all trees; the other poses agree within 0.2 ms.
+
+#### 7. Switch strip
+
+One isolated tree per species, watched at eye level (within 2.7 degrees of level) from five distances across the LOD2-to-cards fade, at noon and with the sun at 8 degrees, HUD hidden. Each sheet has noon on the top row (tiles 0 to 4) and sun 8 degrees on the bottom row (tiles 5 to 9); the columns are the five distances. "tight" is the centre 192 x 192 pixels enlarged 3 times without filtering; "wide" is the centre 576 x 324 pixels as rendered.
+
+Sheets in `.godot/audit_baseline/rtx4070/tr1/switch_strip/2026-11-14_18-04-41/` (with `strip.json`: trees, ranks, every frame):
+
+| fade | distances | sheets |
+|---|---|---|
+| shipped F1 fade, 300 to 350 m (the work order's strip) | 250, 300, 325, 350, 400 m | `maple_f1_tight.png`, `pine_f1_tight.png`, `fir_f1_tight.png` (and `*_f1_wide.png`) |
+| the user's fade, 550 to 900 m | 500, 550, 725, 900, 950 m | `maple_user_tight.png`, `pine_user_tight.png`, `fir_user_tight.png` (and `*_user_wide.png`) |
+
+- Trees: maple (variant 5, 20 m tall, rank 0.07) and pine (variant 17, 21 m, rank 0.27) near around 10,422,000 m / across 240,000 m; fir (variant 12, 10.5 m, rank 0.13) near around 18,759,000 m / across 160,000 m. All three have a rank under 0.33, so they keep a card. The fixture poses have no fir and no tree with a 950 m clear line, so the harness searches these scanned sites (`STRIP_SITES`).
+- **Maple, noon.** LOD2 at 250 and 300 m is an open crown of sunlit yellow-green leaves with sky showing through. The card at 350 and 400 m is a solid dark green silhouette, wider than the tree and leaning to one side. At 325 m both are on screen, dithered.
+- **Maple, sun 8 degrees.** The step has the opposite sign: LOD2 is dark with a little rim light, the card is evenly bright yellow-green (one flat plane lit by the low sun, F7).
+- So the step is three things at once: brightness (darker at noon, brighter at low sun), crown openness (the cards lose the gaps between leaves) and silhouette.
+- **Pine.** It stands in front of a pine wood. The change is small at these distances.
+- **Fir.** The fir is the small dark tree at the centre of each tile. The taller pale tree about 20 m to its right is a maple, which shows the same step as the maple sheet.
+- An earlier capture found the pine and fir on a 35 degree mountainside, so the camera looked down at them by 25 to 42 degrees: `.godot/audit_baseline/rtx4070/tr1/switch_strip/2026-11-14_17-13-42/pine_f1_tight.png`. From that angle the crossed cards read as flat T shapes on the ground at 350 and 400 m. It is kept as a picture of the steep-angle case of TR-2 item 4.
+
+#### 8. F1 verdict
+
+F1's slot-to-mesh mapping holds for slots 0 and 2 (authored LOD0, and authored LOD2 through `GetSimplifiedMesh`) and for slot 1 (not drawn). It is wrong for slot 3: with `MergeFarGpuTreeBatches` and `UseSharedFarTreeImpostors` on (both default, both on in every run), slots 3 and 4 both draw the shared far impostor (`Gpu.cs:260`, `:787-791`; probe: 36 triangles per tree and `shared_far_impostors = true` in both slots). The *unverified* item of F1 is confirmed: slot 4 is the shared impostor. Slots 3 and 4 differ only in batch size (2 and 4 tile spans), rank gate, cap and the dither data.
+
+#### Corrections from TR-1 (2026-11-14)
+
+The Phase facts above are left as written. Read them with these corrections:
+
+1. **F1, intervals.** They are the code defaults (also the High and Very High preset values), not what the user plays or what T0 measured. The user's preferences give LOD0 0 to 200 m, LOD2 25 to 900 m and cards from 550 m, with 720 m mid batches; Medium without overrides gives 20/30 and 250/300 with a 240 m tree shadow distance (`RingGraphicsQualityController.PresetTrees`). Every cost in F6 was measured with the user's preferences.
+2. **F1, slot 3.** Slot 3 is the shared far impostor, not the authored LOD3 mesh with the `imported_tree` shader. Authored LOD3 is used as the shadow proxy of slot 2 (`GpuShadows.cs:97`) and as the impostor's source. A change to the card look (TR-7) therefore lands in `imported_tree_impostor.gdshader` for the whole range from the LOD2 hand-off to 5.5 km, and TR-6's "dithered hand-off from the crossed-card tier" is a hand-off between two bands of the same mesh.
+3. **F6, "the GPU root count is exactly 65,536".** That is the resident root cap, not the number of trees drawn. In forest the engine draws 11,200 to 11,900 trees of about 220,000 inside 5.5 km, and nothing beyond about 3 km.
+4. **TR-9, limits.** The limits that bind are the per-slot caps `MaximumLod1Trees` (256), `MaximumLod2Trees` + `MaximumLod3Trees` (2,696 for slot 2 in the compact profile), `MaximumLod4Trees` (5,200) and `MaximumTreeBillboards` (15,000), plus the rank gates of `VegetationLodRankGate` (0.35 and 0.10). TR-9 lists only `MaximumTreeBillboards`. Raising `MaximumGpuTreeRoots` alone cannot draw more than 23,152 trees. None of the slot caps or gates is in the grave-key menu or in a preset.
+5. **TR-1 and TR-7, the switch.** At the LOD2-to-cards hand-off 65 % of trees get no card (rank gate 0.35), and slot 2's cap already removes most LOD2 trees before the hand-off. The visible step is a change of tree count as much as a change of look. TR-2 item 7 ("fix that order first") applies: the slot caps do not drop nearest-first.
+6. **TR-1, strip distances.** 250 to 400 m straddles the hand-off only with the 300/350 fade. With the user's fade the same five points are 500, 550, 725, 900 and 950 m. Both were captured.
+7. **F8, harness.** `run_tests.ps1` cannot pass per-run arguments, so the TR-1 modes are selected with the `LANDSCAPE_HARNESS_ARGS` environment variable (see below). Output node names cannot be used to find a slot's renderers (Godot renames a recreated output to `@MultiMeshInstance3D@N`); the harness asks the layer.
+
+#### Rerunning (TR-5, TR-8, TR-10)
+
+```powershell
+$env:LANDSCAPE_HARNESS_ARGS = '--tree-lod=slots --strip'      # slot cases, shadows, fill, overdraw, probe; then the strip
+.\tools\run_tests.ps1 -Tests landscape_cost_baseline,landscape_lod_switch_capture -Label tr1
+$env:LANDSCAPE_HARNESS_ARGS = '--tree-lod=cap'                # root-cap configurations
+.\tools\run_tests.ps1 -Tests landscape_cost_baseline -Label tr1
+```
+
+Options: `--poses=`, `--rounds=`, `--seconds=`, `--rs50=<pose__time|none>`, `--overdraw=<pose__time|none>`, `--cap-configs=65536,262144,262144+far`, `--tree-set=Property:value,...` (sets tree-layer properties for the run), `--strip-configs=user,f1`. Without the variable both tests run their T0 behaviour unchanged. The probe is `tools/RingBiomeDecorationLayer.TreeBudgetProbe.cs` (read-only). Sheets: `tools/media/ffmpeg_tools.ps1 sheet -Path <strip>/<config>/<species>/tight/frame.png -Columns 5 -Rows 2 -TileWidth 576`.
 
 ### TR-2. Design: decimation targets, far billboard, billboard match
 
