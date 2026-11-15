@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://dwdo2kbgim5vb"
+path="res://.godot/imported/ring_drainage_sample.glsl-c0d6f7898e13a01011604595c4eb1d15.res"
+
+[deps]
+
+source_file="res://materials/terrain_gpu/ring_drainage_sample.glsl"
+dest_files=["res://.godot/imported/ring_drainage_sample.glsl-c0d6f7898e13a01011604595c4eb1d15.res"]
+
+[params]
+

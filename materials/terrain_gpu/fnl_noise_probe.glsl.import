@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://bw5lospojebps"
+path="res://.godot/imported/fnl_noise_probe.glsl-fd3cb974b6fd30a2952af2b2585857c9.res"
+
+[deps]
+
+source_file="res://materials/terrain_gpu/fnl_noise_probe.glsl"
+dest_files=["res://.godot/imported/fnl_noise_probe.glsl-fd3cb974b6fd30a2952af2b2585857c9.res"]
+
+[params]
+

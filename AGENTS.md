@@ -10,8 +10,11 @@ This file is shared by Codex (OpenAI) and Claude Code (Anthropic). Claude Code l
 | Implementer | Bounded, well-specified code changes | `sol_implementer` — `gpt-6.1-sol` @ medium | `implementer` — Sonnet 5.5 @ medium |
 | Lead | Investigation, root-causing, fix design, reviewing implementer output | `sol_lead` — `gpt-6.1-sol` @ high | `claude-lead` — Opus 5.5 @ high |
 | Deep | Exceptionally hard or unresolved problems only | `sol_deep` — `gpt-6.1-sol` @ max | `claude-deep` — Opus 5.5 @ max |
+| Fable | Deep thought: world building, creative direction, planning projects and feature arcs | none (Claude Code only) | `claude-fable` — Fable 5.2 @ high (pinned; the user updates it for new releases) |
 
-Keep the two agent sets in sync: when a role's instructions change, update both `.codex/agents/*.toml` and `.claude/agents/*.md`.
+Keep the two agent sets in sync: when a role's instructions change, update both `.codex/agents/*.toml` and `.claude/agents/*.md`. The Fable role is the exception: it exists only in Claude Code.
+
+**Fable needs user approval.** Before spawning `claude-fable`, ask the user and name the task you want it for. Suggest it when a task is mainly world building, creative direction, or planning a whole project or multi-phase feature. Do not use it for debugging or implementation (use Lead or Deep), and do not substitute another model if it is unavailable.
 
 ## Default workflow
 

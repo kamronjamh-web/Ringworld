@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://ui22gtpbbn65"
+path="res://.godot/imported/ring_proxy_sector_k2.glsl-bd7390b24351f4476e8aacd03006b6eb.res"
+
+[deps]
+
+source_file="res://materials/terrain_gpu/ring_proxy_sector_k2.glsl"
+dest_files=["res://.godot/imported/ring_proxy_sector_k2.glsl-bd7390b24351f4476e8aacd03006b6eb.res"]
+
+[params]
+

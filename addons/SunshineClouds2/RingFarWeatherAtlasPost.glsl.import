@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://bk0ihmipctfdd"
+path="res://.godot/imported/RingFarWeatherAtlasPost.glsl-07c54532e5bfffbf44ecf4af3497b909.res"
+
+[deps]
+
+source_file="res://addons/SunshineClouds2/RingFarWeatherAtlasPost.glsl"
+dest_files=["res://.godot/imported/RingFarWeatherAtlasPost.glsl-07c54532e5bfffbf44ecf4af3497b909.res"]
+
+[params]
+

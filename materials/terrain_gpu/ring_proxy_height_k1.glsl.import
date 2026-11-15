@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://bfpdvrwf6vh76"
+path="res://.godot/imported/ring_proxy_height_k1.glsl-45cbe20d5dd4dc8682c5421b64325c44.res"
+
+[deps]
+
+source_file="res://materials/terrain_gpu/ring_proxy_height_k1.glsl"
+dest_files=["res://.godot/imported/ring_proxy_height_k1.glsl-45cbe20d5dd4dc8682c5421b64325c44.res"]
+
+[params]
+

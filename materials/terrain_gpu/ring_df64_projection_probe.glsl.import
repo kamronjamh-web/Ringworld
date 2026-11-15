@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://d2uw3l4gbkabp"
+path="res://.godot/imported/ring_df64_projection_probe.glsl-617817abb07e98c2f289e23dcfddd5e4.res"
+
+[deps]
+
+source_file="res://materials/terrain_gpu/ring_df64_projection_probe.glsl"
+dest_files=["res://.godot/imported/ring_df64_projection_probe.glsl-617817abb07e98c2f289e23dcfddd5e4.res"]
+
+[params]
+

@@ -2,5 +2,5 @@
 
 ## Claude Code notes
 
-- Subagents for each role live in `.claude/agents/` (`implementer`, `claude-lead`, `claude-deep`). Spawn them with the Agent tool by name.
+- Subagents for each role live in `.claude/agents/` (`implementer`, `claude-lead`, `claude-deep`, `claude-fable`; ask the user before spawning `claude-fable`). Spawn them with the Agent tool by name.
 - Do not fall back to the built-in `general-purpose` agent for delegated implementation; use `implementer` so the model and effort match the role table.
