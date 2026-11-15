@@ -91,6 +91,7 @@ public partial class RingBiomeDecorationLayer
         public bool CachedVisibility;
         public bool TreeDitherData;
         public bool FarQuad;
+        public bool RenderLodMesh;
     }
     private Dictionary<GpuGroupKey, GpuTreeGroup> _gpuTreeGroups = new();
     private Dictionary<int, Dictionary<GpuGroupKey, GpuTreeGroup>> _gpuTreeMergedGroups = new();
@@ -609,7 +610,7 @@ public partial class RingBiomeDecorationLayer
         foreach (var item in _gpuTreeOrder)
         {
             bool needsReplacement = !_gpuTreeOutputs.TryGetValue(item.Key, out GpuTreeOutput? current)
-                || !ReferenceEquals(current.SourceGroup, _gpuTreeOutputGroups[item.Key]) || current.TreeDitherData != UsesTreeDitherData(item.Key.Lod) || current.FarQuad != UsesFarQuadMesh(item.Key.Lod);
+                || !ReferenceEquals(current.SourceGroup, _gpuTreeOutputGroups[item.Key]) || current.TreeDitherData != UsesTreeDitherData(item.Key.Lod) || current.FarQuad != UsesFarQuadMesh(item.Key.Lod) || current.RenderLodMesh != UsesRenderLodMesh(item.Key.Lod);
             if (!needsReplacement) continue;
             // Guarantee progress even if mandatory selection consumed this
             // frame's soft budget. One Godot allocation cannot be interrupted.
@@ -618,7 +619,7 @@ public partial class RingBiomeDecorationLayer
                 || (_gpuTreeFrameDeadline != 0 && Time.GetTicksUsec() >= _gpuTreeFrameDeadline))) break;
             if (_gpuTreeOutputs.TryGetValue(item.Key, out GpuTreeOutput? existing)
                 && _gpuTreeOutputGroups.TryGetValue(item.Key, out GpuTreeGroup? expected)
-                && (!ReferenceEquals(existing.SourceGroup, expected) || existing.TreeDitherData != UsesTreeDitherData(item.Key.Lod) || existing.FarQuad != UsesFarQuadMesh(item.Key.Lod))) RetireGpuOutput(item.Key);
+                && (!ReferenceEquals(existing.SourceGroup, expected) || existing.TreeDitherData != UsesTreeDitherData(item.Key.Lod) || existing.FarQuad != UsesFarQuadMesh(item.Key.Lod) || existing.RenderLodMesh != UsesRenderLodMesh(item.Key.Lod))) RetireGpuOutput(item.Key);
             if (_gpuTreeOutputs.ContainsKey(item.Key)) continue;
             if (CreateGpuTreeOutput(item.Key)) uploaded++;
         }
@@ -695,7 +696,7 @@ public partial class RingBiomeDecorationLayer
                 if (!_gpuTreeOutputs.TryGetValue(key, out GpuTreeOutput? wantedOutput)
                     || !_gpuTreeOutputGroups.TryGetValue(key, out GpuTreeGroup? wantedSource)
                     || !ReferenceEquals(wantedOutput.SourceGroup, wantedSource)
-                    || wantedOutput.TreeDitherData != UsesTreeDitherData(key.Lod) || wantedOutput.FarQuad != UsesFarQuadMesh(key.Lod)
+                    || wantedOutput.TreeDitherData != UsesTreeDitherData(key.Lod) || wantedOutput.FarQuad != UsesFarQuadMesh(key.Lod) || wantedOutput.RenderLodMesh != UsesRenderLodMesh(key.Lod)
                     || !wantedOutput.Ready || !wantedOutput.CachedVisibility) { allWantedReady = false; break; }
         _gpuFrameCacheComplete = allWantedReady;
         if (_gpuFrameCacheComplete) ClearGpuTreeFallbackOutputs(budgeted: true);
@@ -834,12 +835,16 @@ public partial class RingBiomeDecorationLayer
         }
         else
         {
-            var templates = key.Lod switch { 0 => _lod1AuthoredTemplates, 1 => _lod2AuthoredTemplates, 2 => _lod3AuthoredTemplates, _ => _lod4AuthoredTemplates };
+            // Render LODs (TR-5): slot 1 draws the authored LOD2 (template 2) and slot 2 the decimated LOD2b; otherwise slot N draws template N.
+            bool renderLods = EffectiveTreeRenderLods;
+            var templates = key.Lod switch { 0 => _lod1AuthoredTemplates, 1 => renderLods ? _lod3AuthoredTemplates : _lod2AuthoredTemplates, 2 => _lod3AuthoredTemplates, _ => _lod4AuthoredTemplates };
             if (templates == null || key.Group.Variant < 0 || key.Group.Variant >= templates.Length) return false;
             MultiMeshInstance3D template = templates[key.Group.Variant];
             if (template.Multimesh?.Mesh is not Mesh templateMesh) return false;
             mesh = templateMesh; material = template.MaterialOverride; castsShadow = key.Lod < 3;
-            if (key.Lod == 2 && UsingAuthoredTreeMeshes) mesh = ImportedTreeRenderMaterials.GetSimplifiedMesh(mesh);
+            if (UsesRenderLodMesh(key.Lod) && UsingAuthoredTreeMeshes && templates.Length == ImportedTreeCatalog.VariantCount)
+                mesh = ImportedTreeRenderLodCatalog.GetLod2b(ImportedTreeCatalog.Load()[key.Group.Variant]);
+            if ((key.Lod == 2 || (key.Lod == 1 && renderLods)) && UsingAuthoredTreeMeshes) mesh = ImportedTreeRenderMaterials.GetSimplifiedMesh(mesh);
         }
         ConfigureGpuTreeOutputMeshMaterials(key, mesh);
         ConfigureGpuTreeOutputMaterial(key, group, ref material);
@@ -849,7 +854,7 @@ public partial class RingBiomeDecorationLayer
         int id = _gpuTreeCompute!.RegisterBatch(new RingGpuVegetationCompute.BatchRegistration(renderer.Name, renderer.Multimesh!, mesh,
             group.Rows, group.Metadata, group.RootCount, group.Bounds, false, group.SharedImpostor, UsesTreeDitherData(key.Lod), group.Expansion));
         if (id < 0) { UnregisterTreeSunShadowRenderer(renderer); renderer.QueueFree(); return false; }
-        _gpuTreeOutputs[key] = new GpuTreeOutput { Renderer = renderer, BatchId = id, SourceGroup = group, TreeDitherData = UsesTreeDitherData(key.Lod), FarQuad = UsesFarQuadMesh(key.Lod) };
+        _gpuTreeOutputs[key] = new GpuTreeOutput { Renderer = renderer, BatchId = id, SourceGroup = group, TreeDitherData = UsesTreeDitherData(key.Lod), FarQuad = UsesFarQuadMesh(key.Lod), RenderLodMesh = UsesRenderLodMesh(key.Lod) };
         if (material is ShaderMaterial) renderer.SetInstanceShaderParameter("vegetation_haze_slot", _gpuTreeCompute.GetHazeSlot(id));
 		MarkTreeSunShadowPolicyDirty();
         return true;
@@ -1017,7 +1022,7 @@ public partial class RingBiomeDecorationLayer
         uint middle = (uint)Mathf.Clamp(MaximumLod2Trees, 64, 4096);
         uint third = (uint)Mathf.Clamp(MaximumLod3Trees, 128, 8192);
         if (EffectiveCompactTreeLodProfile)
-            return new[] { near, 0u, near + middle + third, (uint)Mathf.Clamp(MaximumLod4Trees, 256, 16384), (uint)Mathf.Clamp(MaximumTreeBillboards, 256, 65536) };
+            return new[] { near, EffectiveTreeRenderLods ? middle : 0u, near + middle + third, (uint)Mathf.Clamp(MaximumLod4Trees, 256, 16384), (uint)Mathf.Clamp(MaximumTreeBillboards, 256, 65536) };
         return new[] { near, middle, third, (uint)Mathf.Clamp(MaximumLod4Trees, 256, 16384), (uint)Mathf.Clamp(MaximumTreeBillboards, 256, 65536) };
     }
     private static void WriteGpuTreeTransform(float[] rows, int i, Transform3D t)

@@ -26,7 +26,7 @@ const FILL_SCOPES := ["Trees build", "Trees disk load", "Grass build"]
 const TREE_LOD_CASES := ["baseline", "trees_hidden", "tree_slot0_hidden", "tree_slot2_hidden", "tree_slot3_hidden", "tree_slot4_hidden", "tree_shadows_off", "baseline_repeat"]
 const TREE_LOD_POSES := ["forest_interior_eye", "forest_edge_eye", "forest_clearing_eye", "coast_eye"]
 const TREE_LOD_EXTRA := [["forest_edge_eye", "sun_8_set"]]
-const TREE_FADE_PROPERTIES := ["TreeNearDetailFadeStartMeters", "TreeNearDetailFadeEndMeters", "TreeBillboardFadeStartMeters", "TreeBillboardFadeEndMeters"]
+const TREE_FADE_PROPERTIES := ["TreeNearDetailFadeStartMeters", "TreeNearDetailFadeEndMeters", "TreeBillboardFadeStartMeters", "TreeBillboardFadeEndMeters", "TreeMidDetailFadeStartMeters", "TreeMidDetailFadeEndMeters"]
 const RS_SUFFIX := "@rs50"
 const RS_SCALE := 0.5
 const STRIP_SPECIES := ["Maple", "Pine", "Fir"]
@@ -1466,10 +1466,17 @@ static func run_strip(ctx: Dictionary) -> Dictionary:
 	for name in config_names:
 		var fades: Dictionary = original.duplicate()
 		if name == "f1":
-			fades = {"TreeNearDetailFadeStartMeters": 25.0, "TreeNearDetailFadeEndMeters": 40.0, "TreeBillboardFadeStartMeters": 300.0, "TreeBillboardFadeEndMeters": 350.0}
+			fades = {"TreeNearDetailFadeStartMeters": 25.0, "TreeNearDetailFadeEndMeters": 40.0, "TreeBillboardFadeStartMeters": 300.0, "TreeBillboardFadeEndMeters": 350.0,
+				"TreeMidDetailFadeStartMeters": 130.0, "TreeMidDetailFadeEndMeters": 150.0}
 		elif name != "user":
 			return {"status": "FAIL", "failure": "unknown --strip-configs entry %s (user|f1)" % name}
 		var distances := _strip_distances(float(fades["TreeBillboardFadeStartMeters"]), float(fades["TreeBillboardFadeEndMeters"]))
+		# `--strip-distances=a,b,c,d,e` replaces the five distances (TR-5: 110,130,140,150,170 across the LOD2 to reduced-detail hand-off).
+		var distance_override := harness_csv("--strip-distances=")
+		if distance_override.size() == 5:
+			distances = []
+			for entry in distance_override:
+				distances.append(float(entry))
 		for distance in distances:
 			all_distances.append(float(distance))
 		configs.append({"name": name, "fades": fades, "distances": distances})

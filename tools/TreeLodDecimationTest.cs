@@ -9,10 +9,14 @@ using RingworldTechDemo.Vegetation;
 
 namespace RingworldTechDemo.Tools;
 
-/// <summary>TR-4 gate: level-B targets, bark share, coverage and AABB rules, determinism, wind attachments, the stored hash and the loader fallback.</summary>
+/// <summary>TR-4/TR-5 gate: level-A (the shipped level, user answer D2) targets, bark share, coverage and AABB rules, determinism, wind attachments, the stored hash and the loader fallback.</summary>
 public partial class TreeLodDecimationTest : RefCounted
 {
-    private static readonly HashSet<int> BestEffort = new() { 3, 4, 5, 6, 12, 13, 14 };
+    // Variants that miss the coverage rule even at level A keep their authored LOD2 (D2): the small firs.
+    private static readonly HashSet<int> AuthoredFallback = new() { 13, 14 };
+
+    private static int Target(int index) => TreeLodDecimator.LevelTarget(TreeLodDecimator.TargetFor(index), PrepareTreeRenderLods.ShippedLevel);
+    private static bool StoresSource(TreeLodDecimator.Result r) => r.IsSource || !r.WithinRule;
 
     private static void Require(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
 
@@ -39,8 +43,8 @@ public partial class TreeLodDecimationTest : RefCounted
                 var first = new Dictionary<int, TreeLodDecimator.Result>(); var second = new Dictionary<int, TreeLodDecimator.Result>();
                 foreach (int index in new[] { 11, 14, 24 })
                 {
-                    first[index] = TreeLodDecimator.Decimate(variants[index], TreeLodDecimator.TargetFor(index));
-                    second[index] = TreeLodDecimator.Decimate(variants[index], TreeLodDecimator.TargetFor(index));
+                    first[index] = TreeLodDecimator.Decimate(variants[index], Target(index));
+                    second[index] = TreeLodDecimator.Decimate(variants[index], Target(index));
                 }
                 string a = "res://.godot/tr4_det_a.res", b = "res://.godot/tr4_det_b.res";
                 Require(ResourceSaver.Save(PackSubset(variants, first), a) == Error.Ok && ResourceSaver.Save(PackSubset(variants, second), b) == Error.Ok, "save determinism files");
@@ -53,17 +57,14 @@ public partial class TreeLodDecimationTest : RefCounted
             }
 
             var results = new Dictionary<int, TreeLodDecimator.Result>();
-            int decimated = 0, withinRule = 0, bestEffort = 0;
-            var recorded = new Dictionary<int, JsonElement>();
-            using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(root + "resources/trees/prepared/lolipop_render_lods.manifest.json")))
-                foreach (JsonElement e in doc.RootElement.GetProperty("variants").EnumerateArray()) recorded[e.GetProperty("index").GetInt32()] = e.Clone();
+            int decimated = 0, withinRule = 0, fallbacks = 0;
             double sum = 0;
             foreach (ImportedTreeVariant v in variants)
             {
-                int target = TreeLodDecimator.TargetFor(v.Index);
+                int target = Target(v.Index);
                 var r = TreeLodDecimator.Decimate(v, target);
                 results[v.Index] = r;
-                sum += r.Triangles;
+                sum += StoresSource(r) ? r.SourceTriangles : r.Triangles;
                 string label = $"v{v.Index} {v.Name} ";
                 Require(r.Mesh.GetSurfaceCount() == 2, label + "surface layout");
                 if (r.IsSource)
@@ -75,17 +76,14 @@ public partial class TreeLodDecimationTest : RefCounted
                 Require(r.Triangles <= target, label + $"{r.Triangles} triangles over target {target}");
                 Require(r.BarkTriangles >= TreeLodDecimator.BarkMinTriangles && r.BarkTriangles <= target * TreeLodDecimator.BarkMaxShare,
                     label + $"bark {r.BarkTriangles} outside 24..40% of {target}");
-                Require(r.AabbOk, label + "AABB outside source + 2%");
-                if (r.MeanError <= TreeLodDecimator.MeanLimit && r.WorstError <= TreeLodDecimator.WorstLimit) withinRule++;
+                Require(r.AabbOk || AuthoredFallback.Contains(v.Index), label + "AABB outside source + 2%");
+                if (r.MeanError <= TreeLodDecimator.MeanLimit && r.WorstError <= TreeLodDecimator.WorstLimit) { withinRule++; Require(!AuthoredFallback.Contains(v.Index), label + "expected to miss the rule at level A"); }
                 else
                 {
-                    // TR-4 escalation: foliage that cannot reach the target within the rule is reported with its best value. Those variants are
-                    // listed here, and may not get worse than the value in the committed manifest.
-                    Require(BestEffort.Contains(v.Index), label + $"coverage error {r.MeanError:P1} mean / {r.WorstError:P1} worst breaks the rule");
-                    JsonElement entry = recorded[v.Index];
-                    Require(r.MeanError <= entry.GetProperty("coverage_mean_error").GetDouble() + .01 && r.WorstError <= entry.GetProperty("coverage_worst_error").GetDouble() + .01,
-                        label + $"best-effort coverage got worse: {r.MeanError:P1}/{r.WorstError:P1}");
-                    bestEffort++;
+                    // D2: a variant that fails the coverage rule even at level A keeps its authored LOD2 (stored as source).
+                    Require(AuthoredFallback.Contains(v.Index), label + $"coverage error {r.MeanError:P1} mean / {r.WorstError:P1} worst breaks the rule at level A");
+                    fallbacks++;
+                    continue;
                 }
                 CheckMesh(v, r.Mesh, label);
             }
@@ -94,7 +92,7 @@ public partial class TreeLodDecimationTest : RefCounted
             // determinism: decimate again and compare serialized arrays; save twice and compare file bytes
             foreach (int index in new[] { 3, 12, 18, 24, 27, 9 })
             {
-                var again = TreeLodDecimator.Decimate(variants[index], TreeLodDecimator.TargetFor(index));
+                var again = TreeLodDecimator.Decimate(variants[index], Target(index));
                 Require(ImportedTreeRenderLodCatalog.HashLod(again.Mesh) == ImportedTreeRenderLodCatalog.HashLod(results[index].Mesh),
                     $"v{index} decimation is not deterministic");
             }
@@ -102,15 +100,16 @@ public partial class TreeLodDecimationTest : RefCounted
             ImportedTreeRenderLodCatalog.ConfigureForDiagnostics(null);
             var stored = ResourceLoader.Load<PreparedTreeRenderLods>(ImportedTreeRenderLodCatalog.ResourcePath)
                 ?? throw new InvalidOperationException("lolipop_render_lods.res is missing");
-            Require(stored.VariantNames.Length == variants.Count && stored.Level == "B" && stored.ToolVersion == TreeLodDecimator.ToolVersion, "stored header");
+            Require(stored.VariantNames.Length == variants.Count && stored.Level == "A" && stored.ToolVersion == TreeLodDecimator.ToolVersion, "stored header");
             for (int i = 0; i < variants.Count; i++)
             {
                 ImportedTreeVariant v = variants[i];
                 Require(stored.VariantNames[i] == v.Name, $"stored name v{i}");
                 Require(stored.SourceHashes[i] == ImportedTreeRenderLodCatalog.HashLod((ArrayMesh)v.Lods[2]), $"stored source hash v{i}");
-                Require((stored.IsSource[i] == 1) == results[i].IsSource, $"stored source flag v{i}");
+                bool shippedSource = StoresSource(results[i]);
+                Require((stored.IsSource[i] == 1) == shippedSource, $"stored source flag v{i}");
                 Mesh lod = ImportedTreeRenderLodCatalog.GetLod2b(v);
-                if (results[i].IsSource) { Require(ReferenceEquals(lod, v.Lods[2]), $"v{i} source variant did not return the authored LOD2"); continue; }
+                if (shippedSource) { Require(ReferenceEquals(lod, v.Lods[2]), $"v{i} source variant did not return the authored LOD2"); continue; }
                 Require(!ReferenceEquals(lod, v.Lods[2]) && lod.GetSurfaceCount() == 2, $"v{i} loader returned the authored LOD2");
                 for (int s = 0; s < 2; s++) Require(ReferenceEquals(lod.SurfaceGetMaterial(s), v.Lods[2].SurfaceGetMaterial(s)), $"v{i} surface {s} material is not the shared one");
                 Require(ImportedTreeRenderLodCatalog.HashLod((ArrayMesh)lod) == ImportedTreeRenderLodCatalog.HashLod(results[i].Mesh), $"stored v{i} differs from a fresh decimation; rerun prepare_tree_render_lods");
@@ -129,7 +128,7 @@ public partial class TreeLodDecimationTest : RefCounted
             Require(ReferenceEquals(ImportedTreeRenderLodCatalog.GetLod2b(variants[3]), variants[3].Lods[2]) && ImportedTreeRenderLodCatalog.FallbackReason.Contains("missing"), "missing resource fallback");
             ImportedTreeRenderLodCatalog.ConfigureForDiagnostics(null);
 
-            GD.Print($"TREE_LOD_DECIMATION_TEST=PASS decimated={decimated} source={variants.Count - decimated} mean_triangles_B={sum / variants.Count:F0} within_rule={withinRule} best_effort={bestEffort}");
+            GD.Print($"TREE_LOD_DECIMATION_TEST=PASS decimated={decimated} source={variants.Count - decimated} level=A mean_triangles={sum / variants.Count:F0} within_rule={withinRule} authored_fallback={fallbacks}");
             return 0;
         }
         catch (Exception exception)
@@ -141,7 +140,7 @@ public partial class TreeLodDecimationTest : RefCounted
 
     private static PreparedTreeRenderLods PackSubset(IReadOnlyList<ImportedTreeVariant> variants, Dictionary<int, TreeLodDecimator.Result> results)
     {
-        var res = new PreparedTreeRenderLods { ToolVersion = TreeLodDecimator.ToolVersion, Level = "B" };
+        var res = new PreparedTreeRenderLods { ToolVersion = TreeLodDecimator.ToolVersion, Level = PrepareTreeRenderLods.ShippedLevel.ToString() };
         foreach (var (index, r) in results.OrderBy(kv => kv.Key))
         {
             res.VariantNames = res.VariantNames.Append(variants[index].Name).ToArray();

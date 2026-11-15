@@ -23,7 +23,7 @@ public partial class TreeLodSheetDriver : Node
         char key = level[0];
         if (!_levels.TryGetValue(key, out PreparedTreeRenderLods? res))
         {
-            string path = key == 'B' ? ImportedTreeRenderLodCatalog.ResourcePath : $"res://.godot/tr4/levels/lod2b_{key}.res";
+            string path = key == PrepareTreeRenderLods.ShippedLevel ? ImportedTreeRenderLodCatalog.ResourcePath : $"res://.godot/tr4/levels/lod2b_{key}.res";
             res = ResourceLoader.Load<PreparedTreeRenderLods>(path, cacheMode: ResourceLoader.CacheMode.Ignore);
             if (res == null) return null;
             _levels[key] = res;

@@ -17,7 +17,7 @@ public partial class RingLiveTuningDrawer
 	private SpinBox? _treeShadowSuspend, _treeShadowResume, _treeShadowHold, _treeShadowDistance, _treeShadowBatches;
     private SpinBox? _treeStreamingBudget;
     private SpinBox? _treeCullingMovementThreshold, _treeCullingMaximumInterval;
-    private SpinBox? _treeNearFadeStart, _treeNearFadeEnd, _treeBillboardFadeStart, _treeBillboardFadeEnd, _treeQuadStart, _treeMidBatchTileSpan;
+    private SpinBox? _treeNearFadeStart, _treeNearFadeEnd, _treeBillboardFadeStart, _treeBillboardFadeEnd, _treeQuadStart, _treeMidFadeStart, _treeMidFadeEnd, _treeMidBatchTileSpan;
     private Label? _treeStreamingStatus;
     private double _vegetationSaveDelay, _vegetationRetryDelay, _vegetationRefreshDelay;
     private string? _vegetationDefaultsPathOverride;
@@ -76,6 +76,8 @@ public partial class RingLiveTuningDrawer
         _vegetation.TreeBillboardFadeStartMeters = _vegetationDefaults.TreeBillboardFadeStartMeters;
         _vegetation.TreeBillboardFadeEndMeters = _vegetationDefaults.TreeBillboardFadeEndMeters;
         _vegetation.TreeQuadStartMeters = _vegetationDefaults.TreeQuadStartMeters;
+        _vegetation.TreeMidDetailFadeStartMeters = _vegetationDefaults.TreeMidDetailFadeStartMeters;
+        _vegetation.TreeMidDetailFadeEndMeters = _vegetationDefaults.TreeMidDetailFadeEndMeters;
         _vegetation.MergeMidGpuTreeBatches = _vegetationDefaults.MergeMidGpuTreeBatches;
         _vegetation.MidTreeBatchTileSpan = _vegetationDefaults.MidTreeBatchTileSpan;
         _vegetation.PruneEmptyGpuTreeBatches = _vegetationDefaults.PruneEmptyGpuTreeBatches;
@@ -159,6 +161,8 @@ public partial class RingLiveTuningDrawer
         RefreshVegetationSpin(_treeBillboardFadeStart, _vegetationDefaults.TreeBillboardFadeStartMeters, available);
         RefreshVegetationSpin(_treeBillboardFadeEnd, _vegetationDefaults.TreeBillboardFadeEndMeters, available);
         RefreshVegetationSpin(_treeQuadStart, _vegetationDefaults.TreeQuadStartMeters, available);
+        RefreshVegetationSpin(_treeMidFadeStart, _vegetationDefaults.TreeMidDetailFadeStartMeters, available);
+        RefreshVegetationSpin(_treeMidFadeEnd, _vegetationDefaults.TreeMidDetailFadeEndMeters, available);
         RefreshVegetationSpin(_treeMidBatchTileSpan, _vegetationDefaults.MidTreeBatchTileSpan, available);
         if (_treeStreamingStatus != null)
             _treeStreamingStatus.Text = _vegetation == null ? "Tree streaming is unavailable."
@@ -216,6 +220,10 @@ public partial class RingLiveTuningDrawer
         _treeCompactLodProfile.Toggled += value => SetVegetationValue("UseCompactTreeLodProfile", value); lod.AddChild(_treeCompactLodProfile);
         _treeNearFadeStart = AddVegetationSpin(lod, "TreeNearDetailFadeStartMeters", "Near-detail fade starts (m)", 0, 200, 1, _vegetationDefaults.TreeNearDetailFadeStartMeters);
         _treeNearFadeEnd = AddVegetationSpin(lod, "TreeNearDetailFadeEndMeters", "Near-detail fade ends (m)", 0, 200, 1, _vegetationDefaults.TreeNearDetailFadeEndMeters);
+        _treeMidFadeStart = AddVegetationSpin(lod, "TreeMidDetailFadeStartMeters", "Reduced-detail fade starts (m)", 0, 2000, 1, _vegetationDefaults.TreeMidDetailFadeStartMeters,
+            "Where trees start to hand over from the authored mid-range mesh to a reduced-triangle copy of it with the same outline. Never before the near-detail fade ends.");
+        _treeMidFadeEnd = AddVegetationSpin(lod, "TreeMidDetailFadeEndMeters", "Reduced-detail fade ends (m)", 0, 2000, 1, _vegetationDefaults.TreeMidDetailFadeEndMeters,
+            "Where the hand-over to the reduced-triangle mesh is complete. Never after the billboard fade starts.");
         _treeBillboardFadeStart = AddVegetationSpin(lod, "TreeBillboardFadeStartMeters", "Billboard fade starts (m)", 0, 2000, 1, _vegetationDefaults.TreeBillboardFadeStartMeters);
         _treeBillboardFadeEnd = AddVegetationSpin(lod, "TreeBillboardFadeEndMeters", "Billboard fade ends (m)", 0, 2000, 1, _vegetationDefaults.TreeBillboardFadeEndMeters);
         _treeQuadStart = AddVegetationSpin(lod, "TreeQuadStartMeters", "Far billboard start (m)", 0, 5000, 10, _vegetationDefaults.TreeQuadStartMeters,

@@ -14,6 +14,12 @@ public partial class RingBiomeDecorationLayer
     [Export(PropertyHint.Range, "0,200,1")] public float TreeNearDetailFadeEndMeters { get; set; } = 40;
     [Export(PropertyHint.Range, "0,2000,1")] public float TreeBillboardFadeStartMeters { get; set; } = 300;
     [Export(PropertyHint.Range, "0,2000,1")] public float TreeBillboardFadeEndMeters { get; set; } = 350;
+    // Decimated render LODs (TR-5): the authored LOD2 draws from the near fade to the reduced-detail hand-off (slot 1), then the decimated LOD2b mesh
+    // (ImportedTreeRenderLodCatalog) draws to the billboard fade (slot 2). The two meshes cross-dither over TreeMidDetailFadeStart/EndMeters.
+    // UseTreeRenderLods is a harness/A-B switch (no menu row): off draws the authored LOD2 in slot 2 alone, as before TR-5.
+    [Export] public bool UseTreeRenderLods { get; set; } = true;
+    [Export(PropertyHint.Range, "0,2000,1")] public float TreeMidDetailFadeStartMeters { get; set; } = 130;
+    [Export(PropertyHint.Range, "0,2000,1")] public float TreeMidDetailFadeEndMeters { get; set; } = 150;
     // Far billboard tier (TR-6): one camera-facing quad per tree from TreeQuadStartMeters to the far distance; the crossed cards hand over to it over
     // TreeQuadCrossFadeMeters, and card-band trees seen from steeply above hand over by elevation. UseFarTreeQuads is a harness/A-B switch (no menu row).
     // Off until TR-7 calibrates the quad's brightness (the camera-facing normal reads much darker than the cards at noon); TR-7 turns it on.
@@ -52,6 +58,12 @@ public partial class RingBiomeDecorationLayer
         return Math.Max(start, billboardEnd) + TreeQuadCrossFadeMeters;
     }
 
+    /// <summary>Slot 1 draws the authored LOD2 and slot 2 the decimated LOD2b (compact profile only).</summary>
+    internal bool EffectiveTreeRenderLods => UseTreeRenderLods && EffectiveCompactTreeLodProfile;
+
+    /// <summary>Slot 2 draws the decimated mesh instead of the authored LOD2.</summary>
+    private bool UsesRenderLodMesh(int lod) => lod == 2 && EffectiveTreeRenderLods;
+
     private int EffectiveMidTreeBatchTileSpan => Mathf.Clamp(MidTreeBatchTileSpan, 1, 4);
 
     private void CompactTreeFadeBounds(out float nearStart, out float nearEnd, out float billboardStart, out float billboardEnd)
@@ -62,15 +74,38 @@ public partial class RingBiomeDecorationLayer
         billboardEnd = float.IsFinite(TreeBillboardFadeEndMeters) ? Mathf.Clamp(TreeBillboardFadeEndMeters, billboardStart, 2000) : Math.Max(billboardStart, 350);
     }
 
-    private bool UsesTreeDitherData(int lod) => EffectiveCompactTreeLodProfile && (lod is 0 or 2 or 3 || (lod == 4 && EffectiveFarTreeQuads));
+    /// <summary>The LOD2 to LOD2b hand-off: starts no earlier than the near-detail fade end and ends no later than the billboard fade start.</summary>
+    private void CompactTreeMidFadeBounds(out float midStart, out float midEnd)
+    {
+        CompactTreeFadeBounds(out _, out float nearEnd, out float billboardStart, out _);
+        midStart = float.IsFinite(TreeMidDetailFadeStartMeters) ? Mathf.Clamp(TreeMidDetailFadeStartMeters, nearEnd, billboardStart) : Mathf.Clamp(130, nearEnd, billboardStart);
+        midEnd = float.IsFinite(TreeMidDetailFadeEndMeters) ? Mathf.Clamp(TreeMidDetailFadeEndMeters, midStart, billboardStart) : Mathf.Clamp(150, midStart, billboardStart);
+    }
 
-    private bool IsGpuTreeLodEnabled(int lod) => !EffectiveCompactTreeLodProfile || lod != 1;
+    private bool UsesTreeDitherData(int lod) => EffectiveCompactTreeLodProfile && (lod is 0 or 1 or 2 or 3 || (lod == 4 && EffectiveFarTreeQuads));
+
+    private bool IsGpuTreeLodEnabled(int lod) => !EffectiveCompactTreeLodProfile || lod != 1 || EffectiveTreeRenderLods;
+
+    /// <summary>Test hook (GDScript-callable): the compact profile's band and dither ranges of a slot as the compute frame receives them, with the render LODs on or off.</summary>
+    public Godot.Collections.Dictionary TreeLodIntervalForTests(int lod, bool renderLods)
+    {
+        bool force = ForceCompactTreeLodProfileForTests, previous = UseTreeRenderLods;
+        ForceCompactTreeLodProfileForTests = true; UseTreeRenderLods = renderLods;
+        try
+        {
+            GpuTreeLodInterval(lod, GpuTreeLodEdges(), out float near, out float far, out float inStart, out float inEnd, out float outStart, out float outEnd);
+            return new Godot.Collections.Dictionary { ["near"] = near, ["far"] = far, ["in_start"] = inStart, ["in_end"] = inEnd, ["out_start"] = outStart, ["out_end"] = outEnd, ["enabled"] = IsGpuTreeLodEnabled(lod) };
+        }
+        finally { ForceCompactTreeLodProfileForTests = force; UseTreeRenderLods = previous; }
+    }
 
     private int GpuTreeRenderPolicySignature()
     {
         CompactTreeFadeBounds(out float a, out float b, out float c, out float d);
+        CompactTreeMidFadeBounds(out float midStart, out float midEnd);
         return HashCode.Combine(HashCode.Combine(EffectiveCompactTreeLodProfile, MergeMidGpuTreeBatches, EffectiveMidTreeBatchTileSpan,
-            PruneEmptyGpuTreeBatches, a, b, c), d, EffectiveFarTreeQuads, EffectiveFarTreeQuads ? CompactTreeQuadCardFarEdge() : 0f);
+            PruneEmptyGpuTreeBatches, a, b, c), HashCode.Combine(d, EffectiveFarTreeQuads, EffectiveFarTreeQuads ? CompactTreeQuadCardFarEdge() : 0f),
+            EffectiveTreeRenderLods, EffectiveTreeRenderLods ? midStart : 0f, EffectiveTreeRenderLods ? midEnd : 0f);
     }
 
     private void GpuTreeLodInterval(int lod, float[] edges, out float near, out float far, out float fadeInStart, out float fadeInEnd, out float fadeOutStart, out float fadeOutEnd)
@@ -81,7 +116,16 @@ public partial class RingBiomeDecorationLayer
         switch (lod)
         {
             case 0: near = 0; far = nearEnd; fadeOutStart = nearStart; fadeOutEnd = nearEnd; break;
+            case 1 when EffectiveTreeRenderLods:
+                // Authored LOD2: in over the near fade, out over the reduced-detail hand-off to the decimated LOD2b (slot 2).
+                CompactTreeMidFadeBounds(out float midStart, out float midEnd);
+                near = nearStart; far = midEnd; fadeInStart = nearStart; fadeInEnd = nearEnd; fadeOutStart = midStart; fadeOutEnd = midEnd;
+                break;
             case 1: near = far = nearEnd; break;
+            case 2 when EffectiveTreeRenderLods:
+                CompactTreeMidFadeBounds(out float lowStart, out float lowEnd);
+                near = lowStart; far = farEnd; fadeInStart = lowStart; fadeInEnd = lowEnd; fadeOutStart = farStart; fadeOutEnd = farEnd;
+                break;
             case 2: near = nearStart; far = farEnd; fadeInStart = nearStart; fadeInEnd = nearEnd; fadeOutStart = farStart; fadeOutEnd = farEnd; break;
             case 3:
                 near = farStart; far = edges[4]; fadeInStart = farStart; fadeInEnd = farEnd;

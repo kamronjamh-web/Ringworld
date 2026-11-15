@@ -9,10 +9,12 @@ using RingworldTechDemo.Vegetation;
 
 namespace RingworldTechDemo.Tools;
 
-/// <summary>Writes lolipop_render_lods.res (level B) and its manifest; levels A and C go under a scratch folder for the contact sheets.</summary>
+/// <summary>Writes lolipop_render_lods.res (level A, the user's D2 answer; a variant that fails the coverage rule at A keeps its authored LOD2) and its manifest; levels B and C go under a scratch folder for the contact sheets.</summary>
 public partial class PrepareTreeRenderLods : RefCounted
 {
-    public int Run(string outputB, string manifestPath, string levelDir, string tablePath)
+    public const char ShippedLevel = 'A';
+
+    public int Run(string outputShipped, string manifestPath, string levelDir, string tablePath)
     {
         try
         {
@@ -22,7 +24,8 @@ public partial class PrepareTreeRenderLods : RefCounted
             table.AppendLine("|---|---|---|---|---|---|---|---|---|---|---|---|---|");
             var entries = new List<object>();
             var totals = new Dictionary<char, double>();
-            double sourceTotal = 0;
+            double sourceTotal = 0, shippedTotal = 0;
+            int fallbacks = 0;
             Directory.CreateDirectory(ProjectSettings.GlobalizePath(levelDir));
             var resources = new Dictionary<char, PreparedTreeRenderLods>();
             foreach (char level in "ABC")
@@ -37,12 +40,14 @@ public partial class PrepareTreeRenderLods : RefCounted
                     var r = TreeLodDecimator.Decimate(v, TreeLodDecimator.LevelTarget(classTarget, level));
                     results[level] = r;
                     totals[level] = totals.GetValueOrDefault(level) + r.Triangles;
+                    // The shipped level falls back to the authored LOD2 where it misses the coverage rule (D2).
+                    bool useSource = r.IsSource || (level == ShippedLevel && !r.WithinRule);
                     var res = resources[level];
                     res.VariantNames = res.VariantNames.Append(v.Name).ToArray();
                     res.SourceHashes = res.SourceHashes.Append(hash).ToArray();
-                    res.IsSource = res.IsSource.Append(r.IsSource ? 1 : 0).ToArray();
+                    res.IsSource = res.IsSource.Append(useSource ? 1 : 0).ToArray();
                     ArrayMesh? stored = null;
-                    if (!r.IsSource)
+                    if (!useSource)
                     {
                         stored = (ArrayMesh)r.Mesh.Duplicate(false);
                         for (int s = 0; s < stored.GetSurfaceCount(); s++) stored.SurfaceSetMaterial(s, null);
@@ -50,29 +55,34 @@ public partial class PrepareTreeRenderLods : RefCounted
                     res.Meshes.Add(stored!);
                 }
                 var b = results['B'];
+                var shipped = results[ShippedLevel];
+                bool shippedSource = shipped.IsSource || !shipped.WithinRule;
+                if (shippedSource && !shipped.IsSource) fallbacks++;
                 sourceTotal += b.SourceTriangles;
-                string Cell(char l) => results[l].IsSource ? $"{results[l].Triangles} source" : $"{results[l].Triangles} ({results[l].BarkTriangles}+{results[l].FoliageTriangles})";
+                shippedTotal += shippedSource ? shipped.SourceTriangles : shipped.Triangles;
+                string Cell(char l) => results[l].IsSource ? $"{results[l].Triangles} source" : l == ShippedLevel && !results[l].WithinRule ? $"{results[l].SourceTriangles} authored (A fails rule: {results[l].Triangles})" : $"{results[l].Triangles} ({results[l].BarkTriangles}+{results[l].FoliageTriangles})";
                 string Err(char l) => results[l].IsSource ? "-" : $"{results[l].MeanError * 100:F1}%/{results[l].WorstError * 100:F1}%";
                 table.AppendLine($"| {v.Index} | {v.Name} | {TreeLodDecimator.ClassFor(v.Index)} | {classTarget} | {b.SourceTriangles} | {Cell('A')} | {Cell('B')} | {Cell('C')} | "
                     + $"{(b.IsSource ? "-" : (b.MeanError * 100).ToString("F1") + "%")} | {(b.IsSource ? "-" : (b.WorstError * 100).ToString("F1") + "%")} | {Err('A')} | {Err('C')} | {b.Scale:F2} |");
                 entries.Add(new
                 {
-                    index = v.Index, name = v.Name, size_class = TreeLodDecimator.ClassFor(v.Index), target = classTarget, source_hash = hash,
-                    source_triangles = b.SourceTriangles, mode = b.IsSource ? "source" : "decimated",
-                    bark_triangles = b.BarkTriangles, foliage_triangles = b.FoliageTriangles,
-                    coverage_mean_error = Math.Round(b.MeanError, 5), coverage_worst_error = Math.Round(b.WorstError, 5),
-                    within_rule = b.IsSource || b.WithinRule, foliage_scale = Math.Round(b.Scale, 3), inner_bias = b.InnerBias, note = b.Note
+                    index = v.Index, name = v.Name, size_class = TreeLodDecimator.ClassFor(v.Index), target = TreeLodDecimator.LevelTarget(classTarget, ShippedLevel), source_hash = hash,
+                    source_triangles = shipped.SourceTriangles, mode = shippedSource ? "source" : "decimated",
+                    stored_triangles = shippedSource ? shipped.SourceTriangles : shipped.Triangles,
+                    bark_triangles = shipped.BarkTriangles, foliage_triangles = shipped.FoliageTriangles,
+                    coverage_mean_error = Math.Round(shipped.MeanError, 5), coverage_worst_error = Math.Round(shipped.WorstError, 5),
+                    within_rule = shipped.IsSource || shipped.WithinRule, foliage_scale = Math.Round(shipped.Scale, 3), inner_bias = shipped.InnerBias, note = shipped.Note
                 });
             }
             int n = variants.Count;
-            table.AppendLine($"| mean (unweighted, {n} variants) | | | | {sourceTotal / n:F0} | {totals['A'] / n:F0} | {totals['B'] / n:F0} | {totals['C'] / n:F0} | | | | | |");
+            table.AppendLine($"| mean (unweighted, {n} variants; shipped level {ShippedLevel} with {fallbacks} authored fallbacks: {shippedTotal / n:F0}) | | | | {sourceTotal / n:F0} | {totals['A'] / n:F0} | {totals['B'] / n:F0} | {totals['C'] / n:F0} | | | | | |");
             File.WriteAllText(ProjectSettings.GlobalizePath(tablePath), table.ToString());
-            foreach (char level in "AC")
-                if (ResourceSaver.Save(TreeLodDecimator.StampIds(resources[level]), $"{levelDir}/lod2b_{level}.res") != Error.Ok) throw new IOException("save level " + level);
-            if (ResourceSaver.Save(TreeLodDecimator.StampIds(resources['B']), outputB) != Error.Ok) throw new IOException("save " + outputB);
+            foreach (char level in "ABC")
+                if (level != ShippedLevel && ResourceSaver.Save(TreeLodDecimator.StampIds(resources[level]), $"{levelDir}/lod2b_{level}.res") != Error.Ok) throw new IOException("save level " + level);
+            if (ResourceSaver.Save(TreeLodDecimator.StampIds(resources[ShippedLevel]), outputShipped) != Error.Ok) throw new IOException("save " + outputShipped);
             var manifest = new
             {
-                schema_version = PreparedTreeRenderLods.CurrentSchemaVersion, tool_version = TreeLodDecimator.ToolVersion, level = "B",
+                schema_version = PreparedTreeRenderLods.CurrentSchemaVersion, tool_version = TreeLodDecimator.ToolVersion, level = ShippedLevel.ToString(),
                 engine_identity = PreparedImportedTreeCatalogIdentity.CurrentEngineIdentity, resource_path = "resources/trees/prepared/lolipop_render_lods.res",
                 simplifier = "SurfaceTool.GenerateLod (meshoptimizer) for bark; whole-component removal plus survivor scale for foliage",
                 variants = entries

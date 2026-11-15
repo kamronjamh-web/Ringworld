@@ -39,7 +39,7 @@ public partial class RingBiomeDecorationLayer
     // Register it at output creation as well as during policy refresh.
     private void ConfigureGpuTreeOutputMeshMaterials(GpuOutputKey key, Mesh mesh)
     {
-        if (key.Lod < 2) return;
+        if (key.Lod < 2 && !(key.Lod == 1 && EffectiveTreeRenderLods)) return;
         foreach (ShaderMaterial material in ImportedTreeRenderMaterials.ShaderMaterials(mesh))
         {
             material.SetShaderParameter("simplified_tree_shading", SimplifyDistantTreeMaterials);
@@ -95,7 +95,7 @@ public partial class RingBiomeDecorationLayer
             && GodotObject.IsInstanceValid(existing.Renderer)) return existing;
         if (_lod3AuthoredTemplates == null || _lod4AuthoredTemplates == null) return null;
         MultiMesh? source = output.Renderer.Multimesh;
-        Mesh? shadowSource = (key.Lod == 2 ? _lod4AuthoredTemplates : _lod3AuthoredTemplates)[key.Group.Variant].Multimesh?.Mesh;
+        Mesh? shadowSource = (key.Lod == 2 || (key.Lod == 1 && EffectiveTreeRenderLods) ? _lod4AuthoredTemplates : _lod3AuthoredTemplates)[key.Group.Variant].Multimesh?.Mesh;
         if (source == null || shadowSource == null || _gpuTreeCompute == null) return null;
         Mesh shadowMesh = ImportedTreeRenderMaterials.GetShadowMesh(shadowSource);
         foreach (ShaderMaterial material in ImportedTreeRenderMaterials.ShaderMaterials(shadowMesh))
@@ -110,7 +110,7 @@ public partial class RingBiomeDecorationLayer
         };
         var renderer = new MultiMeshInstance3D
         {
-            Name = $"{output.Renderer.Name}_ShadowLod{(key.Lod == 2 ? 3 : 2)}",
+            Name = $"{output.Renderer.Name}_ShadowLod{(key.Lod == 2 || (key.Lod == 1 && EffectiveTreeRenderLods) ? 3 : 2)}",
             Multimesh = shadowMultiMesh,
             CastShadow = GeometryInstance3D.ShadowCastingSetting.ShadowsOnly,
             Visible = false,

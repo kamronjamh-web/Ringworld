@@ -389,6 +389,8 @@ public partial class RingBiomeDecorationLayer : Node3D
 				// Compact LOD2 begins while LOD0 fades, rather than at the old
 				// authored-LOD1 boundary. Its shadow can therefore remain selected.
 				2 => distance > nearStart,
+				// TR-5: slot 1 draws the authored LOD2 over the near part of the same band, with the same (card) shadow proxy.
+				1 => EffectiveTreeRenderLods && distance > nearStart,
 				_ => false
 			};
 		}

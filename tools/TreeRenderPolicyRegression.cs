@@ -26,7 +26,7 @@ public partial class TreeRenderPolicyRegression : Node
         _layer = new RingBiomeDecorationLayer
         {
             Enabled = false, UseGpuCulling = true, EnableImportedForestCollisions = false,
-            UseCompactTreeLodProfile = true, MergeMidGpuTreeBatches = false, MergeFarGpuTreeBatches = false,
+            UseCompactTreeLodProfile = true, UseTreeRenderLods = false, MergeMidGpuTreeBatches = false, MergeFarGpuTreeBatches = false,
             PruneEmptyGpuTreeBatches = false, TreeNearDetailFadeStartMeters = 25, TreeNearDetailFadeEndMeters = 40,
             TreeBillboardFadeStartMeters = 300, TreeBillboardFadeEndMeters = 350, VisibilityRadiusMeters = 1000,
             MinimumLod5DistanceMeters = 700, MaximumLod5DistanceMeters = 1000
@@ -56,6 +56,41 @@ public partial class TreeRenderPolicyRegression : Node
         Dictionary<int, float[]> moved = await Snapshot();
         Check(moved[0].Length > 0, "protected near root was lost after reuse-region movement");
         await RunCapPruningCase(meshes);
+        await RunRenderLodsCase(meshes);
+    }
+
+    // TR-5: with the render LODs on, slot 1 draws the authored LOD2 from the near fade to the reduced-detail hand-off (130-150 m) and slot 2 the decimated
+    // LOD2b from 130 m to the billboard fade. Reuses the first fixture's roots at 10, 30, 100, 110, 320, 330 and 600 m.
+    private async Task RunRenderLodsCase(Mesh[] meshes)
+    {
+        Transform3D[][] roots = { new[] { T(10), T(30), T(100), T(320), T(600) }, new[] { T(110), T(330), T(140) } };
+        _layer!.MaximumLod1Trees = 256; _layer.MaximumLod2Trees = 640; _layer.MaximumLod3Trees = 1024;
+        _layer.MergeMidGpuTreeBatches = false; _layer.PruneEmptyGpuTreeBatches = false; _layer.UseTreeRenderLods = true;
+        _layer.TreeMidDetailFadeStartMeters = 130; _layer.TreeMidDetailFadeEndMeters = 150;
+        _layer.ConfigureGpuTreeFixtureGroups(meshes, roots,
+            new[] { new[] { 0f, 0f, 0f, 0f, 0f }, new[] { 0f, 0f, 0f } },
+            new[] { new[] { false, false, false, false, false }, new[] { false, false, false } },
+            new long[] { 0, 1 }, new[] { 0, 0 },
+            new[] { new[] { new Vector2I(10, 0), new Vector2I(30, 0), new Vector2I(100, 0), new Vector2I(320, 0), new Vector2I(600, 0) }, new[] { new Vector2I(110, 0), new Vector2I(330, 0), new Vector2I(140, 0) } });
+        await Settle(new RingCanonicalPosition(0, 0, 0));
+        Dictionary<int, float[]> slots = await Snapshot();
+        HashSet<float> s0 = Markers(slots[0], 16), s1 = Markers(slots[1], 16), s2 = Markers(slots[2], 16), s3 = Markers(slots[3], 16);
+        Check(s0.SetEquals(new[] { 10f, 30f }), "render LODs: slot 0 roots " + string.Join(",", s0));
+        Check(s1.SetEquals(new[] { 30f, 100f, 110f, 140f }), "render LODs: slot 1 (authored LOD2, 25 to 150 m) roots " + string.Join(",", s1));
+        Check(s2.SetEquals(new[] { 140f, 320f, 330f }), "render LODs: slot 2 (LOD2b, 130 to 350 m) roots " + string.Join(",", s2));
+        Check(s3.Contains(320f) && s3.Contains(330f) && s3.Contains(600f) && !s3.Contains(140f), "render LODs: card slot roots " + string.Join(",", s3));
+        // The hand-off ranges the compute frame receives must be one continuous chain, and a 10 m shift of one range must be seen as broken.
+        var chain = new Godot.Collections.Dictionary[4];
+        for (int lod = 0; lod < 4; lod++) chain[lod] = _layer.TreeLodIntervalForTests(lod, true);
+        for (int lod = 0; lod < 3; lod++)
+        {
+            Check(Mathf.IsEqualApprox((float)chain[lod]["out_start"], (float)chain[lod + 1]["in_start"]) && Mathf.IsEqualApprox((float)chain[lod]["out_end"], (float)chain[lod + 1]["in_end"]),
+                $"render LODs: hand-off {lod} to {lod + 1} ranges disagree");
+        }
+        Check(Mathf.IsEqualApprox((float)chain[1]["out_start"], 130) && Mathf.IsEqualApprox((float)chain[1]["out_end"], 150), "render LODs: mid hand-off is not 130-150 m");
+        Check(!Mathf.IsEqualApprox((float)chain[1]["out_start"] + 10, (float)chain[2]["in_start"]), "render LODs: negative control did not detect a 10 m shift");
+        Check((bool)_layer.TreeLodIntervalForTests(1, true)["enabled"] && !(bool)_layer.TreeLodIntervalForTests(1, false)["enabled"], "render LODs: slot 1 enable flag");
+        _layer.UseTreeRenderLods = false;
     }
 
     private static Transform3D T(float x) => new(Basis.Identity, new Vector3(x, 0, 0));

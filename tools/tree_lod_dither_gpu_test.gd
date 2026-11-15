@@ -43,6 +43,44 @@ func _run() -> void:
 		var overlap := await _render("overlap_%02d" % int(coverage * 100.0), [Vector4(0.0, coverage, 0.271, 2.0), Vector4(0.0, -(1.0 - coverage), 0.271, 2.0)], false)
 		_assert_same_coverage("complement %.2f" % coverage, legacy, overlap)
 	if _failed: return
+	# TR-5: coverage must stay continuous across every compact-profile hand-off (LOD0 to authored LOD2, authored LOD2 to decimated LOD2b, LOD2b to
+	# cards). The ranges come from the layer itself; each sample renders the outgoing and incoming rows the compute shader would emit at that distance.
+	var layer = load("res://scripts/Voxel/LOD/RingBiomeDecorationLayer.cs").new()
+	layer.set("TreeNearDetailFadeStartMeters", 25.0)
+	layer.set("TreeNearDetailFadeEndMeters", 40.0)
+	layer.set("TreeBillboardFadeStartMeters", 300.0)
+	layer.set("TreeBillboardFadeEndMeters", 350.0)
+	layer.set("TreeMidDetailFadeStartMeters", 130.0)
+	layer.set("TreeMidDetailFadeEndMeters", 150.0)
+	var ranges: Array = []
+	for lod: int in range(4):
+		ranges.append(layer.call("TreeLodIntervalForTests", lod, true))
+	var old_mapping: Dictionary = layer.call("TreeLodIntervalForTests", 1, false)
+	layer.free()
+	if bool(old_mapping["enabled"]):
+		_fail("slot 1 must stay disabled with UseTreeRenderLods off")
+		return
+	var pairs := [[0, 1], [1, 2], [2, 3]]
+	var sweep_holes := 0
+	var sweep_samples := 0
+	for pair: Array in pairs:
+		var outgoing: Dictionary = ranges[pair[0]]
+		var incoming: Dictionary = ranges[pair[1]]
+		if not is_equal_approx(float(outgoing["out_start"]), float(incoming["in_start"])) or not is_equal_approx(float(outgoing["out_end"]), float(incoming["in_end"])):
+			_fail("hand-off %d to %d ranges disagree: out %s-%s in %s-%s" % [pair[0], pair[1], outgoing["out_start"], outgoing["out_end"], incoming["in_start"], incoming["in_end"]])
+			return
+		var holes := await _handoff_holes(legacy, outgoing, incoming, 0.0)
+		sweep_samples += 9
+		sweep_holes += holes
+		if holes > 0:
+			_fail("hand-off %d to %d left %d uncovered pixels" % [pair[0], pair[1], holes])
+			return
+	# Negative control: shifting one slot's mid fade by 10 m must open holes at the same distances.
+	var control_holes := await _handoff_holes(legacy, ranges[1], ranges[2], -10.0)
+	if control_holes == 0:
+		_fail("negative control: a 10 m earlier mid fade did not break coverage")
+		return
+	if _failed: return
 	var detailed := await _render("detailed_shading", [Vector4(0.0, 1.0, 0.271, 2.0)], false)
 	var simple := await _render("simplified_shading", [Vector4(0.0, 1.0, 0.271, 2.0)], true)
 	_assert_visible("detailed shading", detailed)
@@ -64,7 +102,7 @@ func _run() -> void:
 		_fail("could not write JSON report")
 		return
 	file.store_string(JSON.stringify(report, "\t"))
-	print("TREE_LOD_DITHER_GPU_TEST=PASS output=%s detailed=%.5f simplified=%.5f" % [OUT, detailed_luma, simple_luma])
+	print("TREE_LOD_DITHER_GPU_TEST=PASS output=%s detailed=%.5f simplified=%.5f handoff_samples=%d holes=%d control_holes=%d" % [OUT, detailed_luma, simple_luma, sweep_samples, sweep_holes, control_holes])
 	quit(0)
 
 func _make_viewport() -> void:
@@ -98,7 +136,7 @@ func _make_viewport() -> void:
 	RenderingServer.global_shader_parameter_set("ringworld_solar_visibility", 1.0)
 	RenderingServer.global_shader_parameter_set("ring_local_wind_enabled", 0.0)
 
-func _render(label: String, rows: Array[Vector4], simplified: bool) -> Image:
+func _render(label: String, rows: Array[Vector4], simplified: bool, save: bool = true) -> Image:
 	var holder := Node3D.new()
 	_viewport.add_child(holder)
 	for row: Vector4 in rows:
@@ -120,7 +158,7 @@ func _render(label: String, rows: Array[Vector4], simplified: bool) -> Image:
 	if image == null or image.is_empty():
 		_fail("empty capture " + label)
 		return Image.new()
-	if image.save_png(OUT.path_join(label + ".png")) != OK:
+	if save and image.save_png(OUT.path_join(label + ".png")) != OK:
 		_fail("could not save capture " + label)
 	holder.queue_free()
 	await process_frame
@@ -176,6 +214,12 @@ func _assert_hidden(label: String, image: Image) -> void:
 		_fail(label + " retained visible pixels")
 
 func _assert_same_coverage(label: String, reference: Image, candidate: Image) -> void:
+	var counts := _count_holes(reference, candidate)
+	if counts.x < 100 or counts.y > 0:
+		_fail("%s coverage mismatch reference_pixels=%d holes=%d" % [label, counts.x, counts.y])
+
+## (reference pixels, holes) of the candidate against the fully covered reference.
+func _count_holes(reference: Image, candidate: Image) -> Vector2i:
 	var holes := 0
 	var reference_pixels := 0
 	for y: int in range(CROP.position.y, CROP.end.y):
@@ -185,8 +229,24 @@ func _assert_same_coverage(label: String, reference: Image, candidate: Image) ->
 			if base > 0.02:
 				reference_pixels += 1
 				if observed < base * 0.70: holes += 1
-	if reference_pixels < 100 or holes > 0:
-		_fail("%s coverage mismatch reference_pixels=%d holes=%d" % [label, reference_pixels, holes])
+	return Vector2i(reference_pixels, holes)
+
+## Total uncovered pixels over nine distances across one hand-off. outgoing/incoming are layer ranges; outgoing's fade is moved by shift_m.
+func _handoff_holes(reference: Image, outgoing: Dictionary, incoming: Dictionary, shift_m: float) -> int:
+	var out_start := float(outgoing["out_start"]) + shift_m
+	var out_end := float(outgoing["out_end"]) + shift_m
+	var in_start := float(incoming["in_start"])
+	var in_end := float(incoming["in_end"])
+	var low := minf(in_start, out_start) - 2.0
+	var high := maxf(in_end, out_end) + 2.0
+	var total := 0
+	for step: int in range(9):
+		var distance := lerpf(low, high, float(step) / 8.0)
+		var cover_in := smoothstep(in_start, in_end, distance)
+		var drop_out := smoothstep(out_start, out_end, distance)
+		var image := await _render("handoff_%d_%d_%d" % [int(in_start), step, int(shift_m)], [Vector4(0.0, cover_in, 0.271, 2.0), Vector4(0.0, -(1.0 - drop_out), 0.271, 2.0)], false, false)
+		total += _count_holes(reference, image).y
+	return total
 
 func _mean_luma(image: Image) -> float:
 	var total := 0.0

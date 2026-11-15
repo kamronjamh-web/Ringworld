@@ -53,6 +53,18 @@ public partial class VegetationSettingsSmoke : Node
         quadStart.Preset = RingTerrainLodCoordinator.QualityPreset.Low; if (!Mathf.IsEqualApprox(quadStart.TreeQuadStartMeters, 600)) throw new InvalidOperationException("far billboard start did not follow the Low preset");
         quadStart.Preset = RingTerrainLodCoordinator.QualityPreset.UltraVideo; if (!Mathf.IsEqualApprox(quadStart.TreeQuadStartMeters, 1200)) throw new InvalidOperationException("far billboard start did not follow the Ultra Video preset");
         quadStart.Set("TreeQuadStartMeters", 1500); if (!Mathf.IsEqualApprox(quadStart.TreeQuadStartMeters, 1500)) throw new InvalidOperationException("far billboard start override did not stick");
+        if (!GameplayVegetationDefaults.TryValidate("TreeMidDetailFadeEndMeters", 99999, out lodDistance) || !Mathf.IsEqualApprox((float)lodDistance.AsDouble(), 2000)) throw new InvalidOperationException("reduced-detail fade end was not clamped");
+        if (!GameplayVegetationDefaults.TryValidate("TreeMidDetailFadeStartMeters", -5, out lodDistance) || !Mathf.IsEqualApprox((float)lodDistance.AsDouble(), 0)) throw new InvalidOperationException("reduced-detail fade start low range was not clamped");
+        if (GameplayVegetationDefaults.TryValidate("TreeMidDetailFadeStartMeters", double.NaN, out _)) throw new InvalidOperationException("nonfinite reduced-detail fade start accepted");
+        var midFade = new GameplayVegetationDefaults(path); midFade.Load();
+        if (!Mathf.IsEqualApprox(midFade.TreeMidDetailFadeStartMeters, 130) || !Mathf.IsEqualApprox(midFade.TreeMidDetailFadeEndMeters, 150)) throw new InvalidOperationException("reduced-detail fade default is not the preset's 130-150 m");
+        midFade.Preset = RingTerrainLodCoordinator.QualityPreset.Low; if (!Mathf.IsEqualApprox(midFade.TreeMidDetailFadeStartMeters, 80) || !Mathf.IsEqualApprox(midFade.TreeMidDetailFadeEndMeters, 100)) throw new InvalidOperationException("reduced-detail fade did not follow the Low preset");
+        midFade.Preset = RingTerrainLodCoordinator.QualityPreset.Medium; if (!Mathf.IsEqualApprox(midFade.TreeMidDetailFadeStartMeters, 110) || !Mathf.IsEqualApprox(midFade.TreeMidDetailFadeEndMeters, 130)) throw new InvalidOperationException("reduced-detail fade did not follow the Medium preset");
+        midFade.Preset = RingTerrainLodCoordinator.QualityPreset.UltraVideo; if (!Mathf.IsEqualApprox(midFade.TreeMidDetailFadeStartMeters, 200) || !Mathf.IsEqualApprox(midFade.TreeMidDetailFadeEndMeters, 240)) throw new InvalidOperationException("reduced-detail fade did not follow the Ultra Video preset");
+        midFade.Set("TreeMidDetailFadeEndMeters", 260); if (!Mathf.IsEqualApprox(midFade.TreeMidDetailFadeEndMeters, 260)) throw new InvalidOperationException("reduced-detail fade override did not stick");
+        var render = new RingBiomeDecorationLayer();
+        try { if (!render.UseTreeRenderLods || !Mathf.IsEqualApprox(render.TreeMidDetailFadeStartMeters, 130) || !Mathf.IsEqualApprox(render.TreeMidDetailFadeEndMeters, 150)) throw new InvalidOperationException("layer render-LOD defaults differ from the High preset"); }
+        finally { render.Free(); }
         if (!GameplayVegetationDefaults.TryValidate("MidTreeBatchTileSpan", 99, out Variant tileSpan) || tileSpan.AsInt64() != 4) throw new InvalidOperationException("mid-tree batch span was not clamped");
         if (!GameplayVegetationDefaults.TryValidate("MidTreeBatchTileSpan", -1, out tileSpan) || tileSpan.AsInt64() != 1) throw new InvalidOperationException("mid-tree batch span low range was not clamped");
         var invalidPath = new GameplayVegetationDefaults("res://"); invalidPath.Set("UseGpuCulling", false);

@@ -273,15 +273,15 @@ public partial class RingGraphicsQualityController : Node
         _ => (true, 8, 300, 2),
     };
 
-    /// <summary>The preset's tree distances (metres): near-detail fade start/end, billboard fade start/end, tree sun-shadow distance and the start of the one-quad far billboard tier. Sparse vegetation overrides win.</summary>
-    public static (float NearStart, float NearEnd, float BillboardStart, float BillboardEnd, float SunShadow, float QuadStart) PresetTrees(RingTerrainLodCoordinator.QualityPreset preset) => preset switch
+    /// <summary>The preset's tree distances (metres): near-detail fade start/end, billboard fade start/end, tree sun-shadow distance, the start of the one-quad far billboard tier and the reduced-detail (decimated LOD2) fade start/end. Sparse vegetation overrides win.</summary>
+    public static (float NearStart, float NearEnd, float BillboardStart, float BillboardEnd, float SunShadow, float QuadStart, float MidStart, float MidEnd) PresetTrees(RingTerrainLodCoordinator.QualityPreset preset) => preset switch
     {
-        RingTerrainLodCoordinator.QualityPreset.Low => (15.0f, 25.0f, 200.0f, 240.0f, 160.0f, 600.0f),
-        RingTerrainLodCoordinator.QualityPreset.Medium => (20.0f, 30.0f, 250.0f, 300.0f, 240.0f, 900.0f),
-        RingTerrainLodCoordinator.QualityPreset.High => (25.0f, 40.0f, 300.0f, 350.0f, 360.0f, 900.0f),
-        RingTerrainLodCoordinator.QualityPreset.UltraVideo => (40.0f, 60.0f, 550.0f, 650.0f, 700.0f, 1200.0f),
-        RingTerrainLodCoordinator.QualityPreset.Cinematic5090 => (25.0f, 40.0f, 300.0f, 350.0f, 480.0f, 1200.0f),
-        _ => (25.0f, 40.0f, 300.0f, 350.0f, 480.0f, 900.0f),
+        RingTerrainLodCoordinator.QualityPreset.Low => (15.0f, 25.0f, 200.0f, 240.0f, 160.0f, 600.0f, 80.0f, 100.0f),
+        RingTerrainLodCoordinator.QualityPreset.Medium => (20.0f, 30.0f, 250.0f, 300.0f, 240.0f, 900.0f, 110.0f, 130.0f),
+        RingTerrainLodCoordinator.QualityPreset.High => (25.0f, 40.0f, 300.0f, 350.0f, 360.0f, 900.0f, 130.0f, 150.0f),
+        RingTerrainLodCoordinator.QualityPreset.UltraVideo => (40.0f, 60.0f, 550.0f, 650.0f, 700.0f, 1200.0f, 200.0f, 240.0f),
+        RingTerrainLodCoordinator.QualityPreset.Cinematic5090 => (25.0f, 40.0f, 300.0f, 350.0f, 480.0f, 1200.0f, 130.0f, 150.0f),
+        _ => (25.0f, 40.0f, 300.0f, 350.0f, 480.0f, 900.0f, 130.0f, 150.0f),
     };
 
     /// <summary>Raised at the end of every preset application so drawer-owned sparse defaults can re-resolve their preset fallbacks.</summary>
