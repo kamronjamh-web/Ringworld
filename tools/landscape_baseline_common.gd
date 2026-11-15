@@ -1570,3 +1570,181 @@ static func run_strip(ctx: Dictionary) -> Dictionary:
 	_save_json(out_dir.path_join("strip.json"), record)
 	print("%s output: %s" % [marker, out_dir])
 	return record
+
+
+# ------------------------------------------------------------------ TR-6 far billboard captures (docs/work-orders/terrain-vegetation/TR.md)
+
+const TR6_PINE_MOUNTAIN := {"tree_around": 894206.0, "tree_across": 159468.0, "bearing_deg": 30.0, "height": 29.07}
+
+
+static func _tr6_shot(ctx: Dictionary, out_dir: String, name: String, record: Array, extra: Dictionary, crop: Vector2i, scale: int) -> void:
+	var tree: SceneTree = ctx["tree"]
+	var settled := await _wait_trees_settled(ctx, 120.0)
+	for i in 8:
+		await RenderingServer.frame_post_draw
+	var image := tree.root.get_texture().get_image()
+	image.save_png(out_dir.path_join("%s.png" % name))
+	if crop != Vector2i.ZERO:
+		var centre := Vector2i(image.get_width() / 2, image.get_height() / 2)
+		var tight := image.get_region(Rect2i(centre.x - crop.x / 2, centre.y - crop.y / 2, crop.x, crop.y))
+		tight.resize(crop.x * scale, crop.y * scale, Image.INTERPOLATE_NEAREST)
+		tight.save_png(out_dir.path_join("%s_tight.png" % name))
+	var entry := {"name": name, "trees_settled": settled}
+	entry.merge(extra)
+	record.append(entry)
+
+
+## `--tr6`: far billboard captures, each with the quad tier on and off (UseFarTreeQuads). Output: .godot/captures/landscape/t0/tr6_far_quad/<stamp>/<name>_{quad,cards}.png (+ _tight).
+## Cases: ground_2km / ground_5km (an isolated rank <= 0.08 tree seen from that distance, centre crop), forest_ground (forest_edge_eye full frame), altitude_<m>_down<deg>
+## (over forest_interior_eye at 300 m and 2 km, looking down 30 and 70 degrees) and mountain_pine_<m> (the TR-1 mountainside pine at 350 and 400 m, shipped fades).
+static func run_tr6(ctx: Dictionary) -> Dictionary:
+	var tree: SceneTree = ctx["tree"]
+	var marker: String = ctx["marker"]
+	var trees: Node = ctx["trees"]
+	var game: Node = ctx["game"]
+	var world: RefCounted = ctx["booted"]["world_bridge"]
+	var out_dir := H.transient_dir("tr6_far_quad", ctx["booted"]["world_tag"])
+	var times: Dictionary = H.load_poses().get("times", {})
+	var original := {}
+	for property in TREE_FADE_PROPERTIES + ["UseFarTreeQuads"]:
+		original[property] = trees.get(property)
+	var f1 := {"TreeNearDetailFadeStartMeters": 25.0, "TreeNearDetailFadeEndMeters": 40.0, "TreeBillboardFadeStartMeters": 300.0, "TreeBillboardFadeEndMeters": 350.0}
+	_apply_tree_settings(trees, f1)
+	var hidden_layers: Array = []
+	for node in _all_nodes(game):
+		if node is CanvasLayer and (node.name == "TerrainMinimap" or (node.get_script() != null and "RingPresentationHud" in (node.get_script() as Script).resource_path)):
+			(node as CanvasLayer).visible = false
+			hidden_layers.append(str(node.name))
+	var record: Dictionary = (ctx["record"] as Dictionary).duplicate(true)
+	record.merge({"marker": marker, "tool": "landscape_lod_switch_capture --tr6", "output": out_dir, "frames": [], "fades": f1, "hidden_hud_layers": hidden_layers}, true)
+	var failures: Array = []
+	# --- ground views of one isolated tree
+	var finder: RefCounted = TIMING.new()
+	var cases: Array = []
+	var time_state: Dictionary = {}
+	for distance: float in [2000.0, 5000.0]:
+		var found := {}
+		for site in STRIP_SITES:
+			var at_site: Dictionary = finder.call("FindStripTrees", world, PackedFloat64Array([float(site[0])]), PackedFloat64Array([float(site[1])]), PackedFloat64Array([distance]), 0.1, 10.0)
+			for species in STRIP_SPECIES:
+				var candidate: Dictionary = at_site.get(species, {})
+				if bool(candidate.get("found", false)) and float(candidate["clearance_m"]) >= 4.0:
+					found = candidate
+					break
+			if not found.is_empty():
+				break
+		if found.is_empty():
+			failures.append("no isolated rank <= 0.1 tree with a clear %d m line found" % int(distance))
+			continue
+		var bearing: float = deg_to_rad(float(found["bearing_deg"]))
+		var tree_ground: float = float(world.call("GroundHeight", found["tree_around"], found["tree_across"]))
+		var target_y: float = tree_ground + 0.5 * float(found["height"])
+		var cam_a: float = float(found["tree_around"]) + cos(bearing) * distance
+		var cam_z: float = float(found["tree_across"]) + sin(bearing) * distance
+		var vertical: float = float(world.call("GroundHeight", cam_a, cam_z)) + EYE_M
+		cases.append({"name": "ground_%dkm" % int(distance / 1000.0), "around": cam_a, "across": cam_z, "vertical": vertical, "yaw": rad_to_deg(atan2(-sin(bearing), -cos(bearing))),
+			"pitch": rad_to_deg(atan2(target_y - vertical, distance)), "crop": Vector2i(128, 128), "scale": 6, "tree": found})
+	# --- forest from the ground, altitude views and the mountainside pine
+	var pose := H.pose_by_name("forest_edge_eye")
+	var forest_pose := H.pose_by_name("forest_interior_eye")
+	if not pose.is_empty():
+		cases.append({"name": "forest_ground", "pose": pose})
+	if not forest_pose.is_empty():
+		for altitude: float in [300.0, 2000.0]:
+			for down: float in [30.0, 70.0]:
+				cases.append({"name": "altitude_%dm_down%d" % [int(altitude), int(down)], "around": float(forest_pose["around_m"]), "across": float(forest_pose["across_m"]),
+					"vertical_above_ground": altitude, "yaw": float(forest_pose["yaw_deg"]), "pitch": -down})
+	var mountain := TR6_PINE_MOUNTAIN
+	var m_bearing: float = deg_to_rad(float(mountain["bearing_deg"]))
+	var m_ground: float = float(world.call("GroundHeight", mountain["tree_around"], mountain["tree_across"]))
+	var m_target: float = m_ground + 0.5 * float(mountain["height"])
+	for distance: float in [350.0, 400.0]:
+		var cam_a: float = float(mountain["tree_around"]) + cos(m_bearing) * distance
+		var cam_z: float = float(mountain["tree_across"]) + sin(m_bearing) * distance
+		var vertical: float = float(world.call("GroundHeight", cam_a, cam_z)) + EYE_M
+		cases.append({"name": "mountain_pine_%d" % int(distance), "around": cam_a, "across": cam_z, "vertical": vertical, "yaw": rad_to_deg(atan2(-sin(m_bearing), -cos(m_bearing))),
+			"pitch": rad_to_deg(atan2(m_target - vertical, distance)), "crop": Vector2i(192, 192), "scale": 3})
+	var exposure_disabled := false
+	for item in cases:
+		for quads in [true, false]:
+			_apply_tree_settings(trees, {"UseFarTreeQuads": quads})
+			var label := "%s_%s" % [item["name"], "quad" if quads else "cards"]
+			if item.has("pose"):
+				var info: Dictionary = await H.go_pose(tree, game, item["pose"], "noon", ctx["ground_model"])
+				if info.has("error"):
+					failures.append("%s: %s" % [label, str(info["error"])])
+					continue
+			else:
+				var vertical: float = float(item["vertical"]) if item.has("vertical") else float(world.call("GroundHeight", item["around"], item["across"])) + float(item["vertical_above_ground"])
+				_teleport_to(ctx, float(item["around"]), float(item["across"]), vertical, float(item["yaw"]), float(item["pitch"]))
+				await COMMON.settle(tree, 0.3)
+				await COMMON.wait_builds_idle(tree, game, 240.0)
+				if time_state.is_empty():
+					time_state = COMMON.apply_time(game, times["noon"])
+					await COMMON.settle(tree, 2.0)
+				_teleport_to(ctx, float(item["around"]), float(item["across"]), vertical, float(item["yaw"]), float(item["pitch"]))
+			if not exposure_disabled:
+				await _disable_auto_exposure(ctx)
+				exposure_disabled = true
+			var crop: Vector2i = item.get("crop", Vector2i.ZERO)
+			await _tr6_shot(ctx, out_dir, label, record["frames"], {"case": item["name"], "quads": quads, "yaw_deg": item.get("yaw", NAN), "pitch_deg": item.get("pitch", NAN)}, crop, int(item.get("scale", 1)))
+			print("%s tr6 %s done" % [marker, label])
+	_apply_tree_settings(trees, original)
+	record["failures"] = failures
+	record["status"] = "PASS" if failures.is_empty() and not (record["frames"] as Array).is_empty() else "FAIL"
+	_save_json(out_dir.path_join("tr6.json"), record)
+	print("%s output: %s" % [marker, out_dir])
+	return record
+
+
+## `--tr6-dolly`: a slow vertical rise (20 to 320 m over 240 frames, pitch fixed 20 degrees down) over forest_interior_eye with the shipped fades, so trees in the card band
+## (300 to 350 m and beyond) are seen from 4 to 45 degrees. One sequence with the quad tier on and one with UseFarTreeQuads off. Frames: <out>/{quad,cards}/frame%08d.png.
+static func run_tr6_dolly(ctx: Dictionary) -> Dictionary:
+	var tree: SceneTree = ctx["tree"]
+	var marker: String = ctx["marker"]
+	var trees: Node = ctx["trees"]
+	var game: Node = ctx["game"]
+	var world: RefCounted = ctx["booted"]["world_bridge"]
+	var out_dir := H.transient_dir("tr6_dolly", ctx["booted"]["world_tag"])
+	var times: Dictionary = H.load_poses().get("times", {})
+	var pose := H.pose_by_name("forest_interior_eye")
+	if pose.is_empty():
+		return {"status": "FAIL", "failure": "forest_interior_eye missing"}
+	var original := {}
+	for property in TREE_FADE_PROPERTIES + ["UseFarTreeQuads"]:
+		original[property] = trees.get(property)
+	_apply_tree_settings(trees, {"TreeNearDetailFadeStartMeters": 25.0, "TreeNearDetailFadeEndMeters": 40.0, "TreeBillboardFadeStartMeters": 300.0, "TreeBillboardFadeEndMeters": 350.0})
+	for node in _all_nodes(game):
+		if node is CanvasLayer and (node.name == "TerrainMinimap" or (node.get_script() != null and "RingPresentationHud" in (node.get_script() as Script).resource_path)):
+			(node as CanvasLayer).visible = false
+	var around: float = float(pose["around_m"])
+	var across: float = float(pose["across_m"])
+	var yaw: float = float(pose["yaw_deg"])
+	var ground: float = float(world.call("GroundHeight", around, across))
+	var info: Dictionary = await H.go_pose(tree, game, pose, "noon", ctx["ground_model"])
+	if info.has("error"):
+		return {"status": "FAIL", "failure": str(info["error"])}
+	await _disable_auto_exposure(ctx)
+	var frames := 240
+	var record: Dictionary = (ctx["record"] as Dictionary).duplicate(true)
+	record.merge({"marker": marker, "tool": "landscape_lod_switch_capture --tr6-dolly", "output": out_dir, "frames": frames, "rise_m": [20.0, 320.0], "pitch_deg": -20.0, "pose": pose["name"]}, true)
+	for quads in [true, false]:
+		_apply_tree_settings(trees, {"UseFarTreeQuads": quads})
+		var dir_path := out_dir.path_join("quad" if quads else "cards")
+		DirAccess.make_dir_recursive_absolute(dir_path)
+		for step in frames:
+			var height: float = 20.0 + 300.0 * float(step) / float(frames - 1)
+			_teleport_to(ctx, around, across, ground + height, yaw, -20.0)
+			if step == 0:
+				await COMMON.wait_builds_idle(tree, game, 240.0)
+				await _wait_trees_settled(ctx, 120.0)
+				_teleport_to(ctx, around, across, ground + height, yaw, -20.0)
+			await RenderingServer.frame_post_draw
+			await RenderingServer.frame_post_draw
+			tree.root.get_texture().get_image().save_png(dir_path.path_join("frame%08d.png" % step))
+		print("%s tr6 dolly %s done" % [marker, "quad" if quads else "cards"])
+	_apply_tree_settings(trees, original)
+	record["status"] = "PASS"
+	_save_json(out_dir.path_join("tr6_dolly.json"), record)
+	print("%s output: %s" % [marker, out_dir])
+	return record

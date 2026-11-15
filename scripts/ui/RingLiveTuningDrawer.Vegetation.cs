@@ -17,7 +17,7 @@ public partial class RingLiveTuningDrawer
 	private SpinBox? _treeShadowSuspend, _treeShadowResume, _treeShadowHold, _treeShadowDistance, _treeShadowBatches;
     private SpinBox? _treeStreamingBudget;
     private SpinBox? _treeCullingMovementThreshold, _treeCullingMaximumInterval;
-    private SpinBox? _treeNearFadeStart, _treeNearFadeEnd, _treeBillboardFadeStart, _treeBillboardFadeEnd, _treeMidBatchTileSpan;
+    private SpinBox? _treeNearFadeStart, _treeNearFadeEnd, _treeBillboardFadeStart, _treeBillboardFadeEnd, _treeQuadStart, _treeMidBatchTileSpan;
     private Label? _treeStreamingStatus;
     private double _vegetationSaveDelay, _vegetationRetryDelay, _vegetationRefreshDelay;
     private string? _vegetationDefaultsPathOverride;
@@ -75,6 +75,7 @@ public partial class RingLiveTuningDrawer
         _vegetation.TreeNearDetailFadeEndMeters = _vegetationDefaults.TreeNearDetailFadeEndMeters;
         _vegetation.TreeBillboardFadeStartMeters = _vegetationDefaults.TreeBillboardFadeStartMeters;
         _vegetation.TreeBillboardFadeEndMeters = _vegetationDefaults.TreeBillboardFadeEndMeters;
+        _vegetation.TreeQuadStartMeters = _vegetationDefaults.TreeQuadStartMeters;
         _vegetation.MergeMidGpuTreeBatches = _vegetationDefaults.MergeMidGpuTreeBatches;
         _vegetation.MidTreeBatchTileSpan = _vegetationDefaults.MidTreeBatchTileSpan;
         _vegetation.PruneEmptyGpuTreeBatches = _vegetationDefaults.PruneEmptyGpuTreeBatches;
@@ -157,6 +158,7 @@ public partial class RingLiveTuningDrawer
         RefreshVegetationSpin(_treeNearFadeEnd, _vegetationDefaults.TreeNearDetailFadeEndMeters, available);
         RefreshVegetationSpin(_treeBillboardFadeStart, _vegetationDefaults.TreeBillboardFadeStartMeters, available);
         RefreshVegetationSpin(_treeBillboardFadeEnd, _vegetationDefaults.TreeBillboardFadeEndMeters, available);
+        RefreshVegetationSpin(_treeQuadStart, _vegetationDefaults.TreeQuadStartMeters, available);
         RefreshVegetationSpin(_treeMidBatchTileSpan, _vegetationDefaults.MidTreeBatchTileSpan, available);
         if (_treeStreamingStatus != null)
             _treeStreamingStatus.Text = _vegetation == null ? "Tree streaming is unavailable."
@@ -216,6 +218,8 @@ public partial class RingLiveTuningDrawer
         _treeNearFadeEnd = AddVegetationSpin(lod, "TreeNearDetailFadeEndMeters", "Near-detail fade ends (m)", 0, 200, 1, _vegetationDefaults.TreeNearDetailFadeEndMeters);
         _treeBillboardFadeStart = AddVegetationSpin(lod, "TreeBillboardFadeStartMeters", "Billboard fade starts (m)", 0, 2000, 1, _vegetationDefaults.TreeBillboardFadeStartMeters);
         _treeBillboardFadeEnd = AddVegetationSpin(lod, "TreeBillboardFadeEndMeters", "Billboard fade ends (m)", 0, 2000, 1, _vegetationDefaults.TreeBillboardFadeEndMeters);
+        _treeQuadStart = AddVegetationSpin(lod, "TreeQuadStartMeters", "Far billboard start (m)", 0, 5000, 10, _vegetationDefaults.TreeQuadStartMeters,
+            "Where distant trees become one camera-facing quad each. The crossed-card billboards hand over to it across 150 m; never before the billboard fade ends.");
         VBoxContainer batching = TuningMenuUi.CreateSection(tab, "Tree draw batching");
         _treeMergeMid = new CheckButton { Name = "MergeMidGpuTreeBatches", Text = "Merge mid-range tree batches", ButtonPressed = _vegetationDefaults.MergeMidGpuTreeBatches, Disabled = _vegetation == null };
         _treeMergeMid.Toggled += value => SetVegetationValue("MergeMidGpuTreeBatches", value); batching.AddChild(_treeMergeMid);

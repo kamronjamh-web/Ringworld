@@ -534,6 +534,8 @@ public partial class RingBiomeDecorationLayer : Node3D
 		}
 		if (_sharedFarTreeMaterial != null && GodotObject.IsInstanceValid(_sharedFarTreeMaterial))
 			_sharedFarTreeMaterial.SetShaderParameter("simplified_tree_shading", SimplifyDistantTreeMaterials);
+		if (_sharedFarQuadMaterial != null && GodotObject.IsInstanceValid(_sharedFarQuadMaterial))
+			_sharedFarQuadMaterial.SetShaderParameter("simplified_tree_shading", SimplifyDistantTreeMaterials);
 		_appliedSimplifyDistantTreeMaterials = SimplifyDistantTreeMaterials;
 	}
 

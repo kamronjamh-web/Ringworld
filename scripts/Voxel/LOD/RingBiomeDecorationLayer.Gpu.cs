@@ -90,6 +90,7 @@ public partial class RingBiomeDecorationLayer
         public bool HasCachedVisibility;
         public bool CachedVisibility;
         public bool TreeDitherData;
+        public bool FarQuad;
     }
     private Dictionary<GpuGroupKey, GpuTreeGroup> _gpuTreeGroups = new();
     private Dictionary<int, Dictionary<GpuGroupKey, GpuTreeGroup>> _gpuTreeMergedGroups = new();
@@ -446,7 +447,9 @@ public partial class RingBiomeDecorationLayer
         {
             CompactTreeFadeBounds(out _, out float nearEnd, out _, out float billboardEnd);
             float far = Math.Max(Math.Max(VisibilityRadiusMeters, MaximumLod5DistanceMeters), billboardEnd);
-            float compactFourth = Mathf.Clamp(MinimumLod5DistanceMeters, billboardEnd, Math.Max(billboardEnd, MaximumLod5DistanceMeters));
+            float compactFourth = EffectiveFarTreeQuads
+                ? Math.Min(CompactTreeQuadCardFarEdge(), far)
+                : Mathf.Clamp(MinimumLod5DistanceMeters, billboardEnd, Math.Max(billboardEnd, MaximumLod5DistanceMeters));
             return new[] { 0f, nearEnd, nearEnd, billboardEnd, compactFourth, far };
         }
         float collision = EnableImportedForestCollisions ? Math.Max(1, ImportedForestCollisionRadiusMeters) + 4 : 1;
@@ -550,8 +553,12 @@ public partial class RingBiomeDecorationLayer
             if (!overlaps) continue;
             if (PruneEmptyGpuTreeBatches)
             {
-                if (!TryGpuTreeGroupPruneCounts(group, lod, lodNear, lodFar, gates[lod], reuseRadius, focus, circumference,
-                    compactProfile, out var counts)) continue;
+                // Quad mode: the quad slot also accepts steep trees of the card gate from the card near edge, so its candidate count uses the larger gate and
+                // only counts roots past its own start as guaranteed; the card slot loses steep trees, so none of its roots is guaranteed.
+                bool quadSlot = lod == 4 && EffectiveFarTreeQuads, cardSlot = lod == 3 && EffectiveFarTreeQuads;
+                GpuTreeLodInterval(4, edges, out _, out _, out float quadInStart, out _, out _, out _);
+                if (!TryGpuTreeGroupPruneCounts(group, lod, lodNear, lodFar, quadSlot ? Math.Max(gates[3], gates[4]) : gates[lod], reuseRadius, focus, circumference,
+                    compactProfile, out var counts, cardSlot ? -1f : quadSlot ? gates[4] : float.NaN, quadSlot ? quadInStart : float.NaN)) continue;
                 pruneCounts[key] = counts;
             }
             _gpuTreeOrder.Add((key, near, (compactProfile || lod == 0) && group.HasProtected)); _gpuTreeOutputGroups[key] = group;
@@ -602,7 +609,7 @@ public partial class RingBiomeDecorationLayer
         foreach (var item in _gpuTreeOrder)
         {
             bool needsReplacement = !_gpuTreeOutputs.TryGetValue(item.Key, out GpuTreeOutput? current)
-                || !ReferenceEquals(current.SourceGroup, _gpuTreeOutputGroups[item.Key]) || current.TreeDitherData != UsesTreeDitherData(item.Key.Lod);
+                || !ReferenceEquals(current.SourceGroup, _gpuTreeOutputGroups[item.Key]) || current.TreeDitherData != UsesTreeDitherData(item.Key.Lod) || current.FarQuad != UsesFarQuadMesh(item.Key.Lod);
             if (!needsReplacement) continue;
             // Guarantee progress even if mandatory selection consumed this
             // frame's soft budget. One Godot allocation cannot be interrupted.
@@ -611,7 +618,7 @@ public partial class RingBiomeDecorationLayer
                 || (_gpuTreeFrameDeadline != 0 && Time.GetTicksUsec() >= _gpuTreeFrameDeadline))) break;
             if (_gpuTreeOutputs.TryGetValue(item.Key, out GpuTreeOutput? existing)
                 && _gpuTreeOutputGroups.TryGetValue(item.Key, out GpuTreeGroup? expected)
-                && (!ReferenceEquals(existing.SourceGroup, expected) || existing.TreeDitherData != UsesTreeDitherData(item.Key.Lod))) RetireGpuOutput(item.Key);
+                && (!ReferenceEquals(existing.SourceGroup, expected) || existing.TreeDitherData != UsesTreeDitherData(item.Key.Lod) || existing.FarQuad != UsesFarQuadMesh(item.Key.Lod))) RetireGpuOutput(item.Key);
             if (_gpuTreeOutputs.ContainsKey(item.Key)) continue;
             if (CreateGpuTreeOutput(item.Key)) uploaded++;
         }
@@ -633,10 +640,12 @@ public partial class RingBiomeDecorationLayer
                 output.TransformCacheVersion = _gpuTreeFrameCacheVersion;
             }
             GpuTreeLodInterval(lod, edges, out float lodNear, out float lodFar, out float fadeInStart, out float fadeInEnd, out float fadeOutStart, out float fadeOutEnd);
+            GpuTreeSteepRule(lod, edges, gates, out int steepRole, out float steepSinLow, out float steepSinHigh, out float steepFadeEnd, out float steepRankGate);
             _gpuTreeFrameScratch.Add(new RingGpuVegetationCompute.BatchFrameParameters(output.BatchId, output.CachedGlobalTransform, false,
                 lod, lodNear, lodFar, 0, 1, 1, false, gates[lod], false, null, 0,
                 focus is RingCanonicalPosition canonical ? CanonicalCamera(group, canonical, circumference) : null, 0,
-                EffectiveCompactTreeLodProfile, fadeInStart, fadeInEnd, fadeOutStart, fadeOutEnd));
+                EffectiveCompactTreeLodProfile, fadeInStart, fadeInEnd, fadeOutStart, fadeOutEnd, null,
+                steepRole, steepSinLow, steepSinHigh, steepFadeEnd, steepRankGate));
             if (!output.Ready) output.Ready = _gpuTreeCompute.IsBatchReady(output.BatchId);
             if (!output.HasCachedVisibility || output.CachedVisibility != output.Ready)
             {
@@ -686,7 +695,7 @@ public partial class RingBiomeDecorationLayer
                 if (!_gpuTreeOutputs.TryGetValue(key, out GpuTreeOutput? wantedOutput)
                     || !_gpuTreeOutputGroups.TryGetValue(key, out GpuTreeGroup? wantedSource)
                     || !ReferenceEquals(wantedOutput.SourceGroup, wantedSource)
-                    || wantedOutput.TreeDitherData != UsesTreeDitherData(key.Lod)
+                    || wantedOutput.TreeDitherData != UsesTreeDitherData(key.Lod) || wantedOutput.FarQuad != UsesFarQuadMesh(key.Lod)
                     || !wantedOutput.Ready || !wantedOutput.CachedVisibility) { allWantedReady = false; break; }
         _gpuFrameCacheComplete = allWantedReady;
         if (_gpuFrameCacheComplete) ClearGpuTreeFallbackOutputs(budgeted: true);
@@ -718,15 +727,18 @@ public partial class RingBiomeDecorationLayer
     // budget order without a GPU readback; uncertain candidates stay resident.
     private bool TryGpuTreeGroupPruneCounts(GpuTreeGroup group, int lod, float near, float far, float gate, float reuse,
         RingCanonicalPosition? focus, double circumference, bool compactProfile,
-        out (int PotentialProtected, int PotentialOrdinary, int GuaranteedProtected, int GuaranteedOrdinary) counts)
+        out (int PotentialProtected, int PotentialOrdinary, int GuaranteedProtected, int GuaranteedOrdinary) counts,
+        float guaranteedGate = float.NaN, float guaranteedNearOverride = float.NaN)
     {
+        if (float.IsNaN(guaranteedGate)) guaranteedGate = gate;
+        if (float.IsNaN(guaranteedNearOverride)) guaranteedNearOverride = near;
         counts = default;
         if (focus is not RingCanonicalPosition canonical) return true;
         Vector2 camera = CanonicalCamera(group, canonical, circumference);
         bool legacyProtectedLod = !compactProfile && lod == 0;
         float potentialNearSquared = MathF.Max(0, near - reuse); potentialNearSquared *= potentialNearSquared;
         float potentialFar = far + reuse; float potentialFarSquared = potentialFar * potentialFar;
-        float guaranteedNear = near + reuse; float guaranteedNearSquared = guaranteedNear * guaranteedNear;
+        float guaranteedNear = guaranteedNearOverride + reuse; float guaranteedNearSquared = guaranteedNear * guaranteedNear;
         float guaranteedFar = far - reuse; float guaranteedFarSquared = guaranteedFar > 0 ? guaranteedFar * guaranteedFar : 0;
         int pp = 0, po = 0, gp = 0, go = 0;
         for (int i = 0; i < group.Metadata.Length; i++)
@@ -739,8 +751,8 @@ public partial class RingBiomeDecorationLayer
             float dx = meta.Z - camera.X, dz = meta.W - camera.Y, distanceSquared = dx * dx + dz * dz;
             bool potential = legacyProtected || (distanceSquared >= potentialNearSquared && distanceSquared < potentialFarSquared);
             if (!potential) continue;
-            bool guaranteed = legacyProtected || ((near <= 0 || distanceSquared >= guaranteedNearSquared)
-                && guaranteedFar > 0 && distanceSquared < guaranteedFarSquared);
+            bool guaranteed = legacyProtected || ((guaranteedNearOverride <= 0 || distanceSquared >= guaranteedNearSquared)
+                && guaranteedFar > 0 && distanceSquared < guaranteedFarSquared && (protectedRoot || meta.X <= guaranteedGate));
             if (protectedRoot) { pp++; if (guaranteed) gp++; }
             else { po++; if (guaranteed) go++; }
         }
@@ -778,6 +790,34 @@ public partial class RingBiomeDecorationLayer
             _gpuTreeOutputGroups[item.Key] = sources[item.Key];
     }
 
+    private bool UsesFarQuadMesh(int lod) => lod == 4 && EffectiveFarTreeQuads;
+    private bool _farQuadHandoffReported;
+
+    /// <summary>
+    /// Steep-view parameters of the two far slots (shader words p[78..82]). The card slot (role 1) and the quad slot (role 2) must share one set of numbers or the
+    /// three tiers stop partitioning the dither interval: the quad's steep ramp is the card's fade-in (start and end), and the card's fade-out is the quad's fade-in.
+    /// A mismatch is logged once and the rule is switched off.
+    /// </summary>
+    private void GpuTreeSteepRule(int lod, float[] edges, float[] gates, out int role, out float sinLow, out float sinHigh, out float fadeEnd, out float rankGate)
+    {
+        role = 0; sinLow = sinHigh = fadeEnd = 0; rankGate = 1;
+        if (lod is not (3 or 4) || !EffectiveFarTreeQuads) return;
+        GpuTreeLodInterval(3, edges, out float cardNear, out _, out float cardInStart, out float cardInEnd, out float cardOutStart, out float cardOutEnd);
+        GpuTreeLodInterval(4, edges, out float quadNear, out _, out float quadInStart, out float quadInEnd, out _, out _);
+        if (cardNear != quadNear || cardNear != cardInStart || cardOutStart != quadInStart || cardOutEnd != quadInEnd || !(cardInEnd > cardInStart))
+        {
+            if (!_farQuadHandoffReported)
+            {
+                _farQuadHandoffReported = true;
+                GD.PushError($"Far tree quad hand-off ranges disagree (card {cardNear}/{cardInStart}-{cardInEnd}/{cardOutStart}-{cardOutEnd}, quad {quadNear}/{quadInStart}-{quadInEnd}); the steep-view rule is off.");
+            }
+            return;
+        }
+        role = lod == 3 ? 1 : 2;
+        sinLow = MathF.Sin(Mathf.DegToRad(TreeSteepElevationLowDegrees)); sinHigh = MathF.Sin(Mathf.DegToRad(TreeSteepElevationHighDegrees));
+        fadeEnd = cardInEnd; rankGate = gates[3];
+    }
+
     private bool CreateGpuTreeOutput(GpuOutputKey key)
     {
         if (!_gpuTreeOutputGroups.TryGetValue(key, out GpuTreeGroup? group)) return false;
@@ -787,7 +827,9 @@ public partial class RingBiomeDecorationLayer
         if (group.SharedImpostor)
         {
             ImportedTreeImpostorCatalog far = ImportedTreeImpostorCatalog.Load();
-            mesh = far.Mesh; material = far.Material; castsShadow = false;
+            bool quad = UsesFarQuadMesh(key.Lod);
+            mesh = quad ? far.FarQuadMesh : far.Mesh; material = quad ? far.FarQuadMaterial : far.Material; castsShadow = false;
+            RegisterSharedFarTreeMaterial(far.FarQuadMaterial);
             RegisterSharedFarTreeMaterial(far.Material);
         }
         else
@@ -807,7 +849,7 @@ public partial class RingBiomeDecorationLayer
         int id = _gpuTreeCompute!.RegisterBatch(new RingGpuVegetationCompute.BatchRegistration(renderer.Name, renderer.Multimesh!, mesh,
             group.Rows, group.Metadata, group.RootCount, group.Bounds, false, group.SharedImpostor, UsesTreeDitherData(key.Lod), group.Expansion));
         if (id < 0) { UnregisterTreeSunShadowRenderer(renderer); renderer.QueueFree(); return false; }
-        _gpuTreeOutputs[key] = new GpuTreeOutput { Renderer = renderer, BatchId = id, SourceGroup = group, TreeDitherData = UsesTreeDitherData(key.Lod) };
+        _gpuTreeOutputs[key] = new GpuTreeOutput { Renderer = renderer, BatchId = id, SourceGroup = group, TreeDitherData = UsesTreeDitherData(key.Lod), FarQuad = UsesFarQuadMesh(key.Lod) };
         if (material is ShaderMaterial) renderer.SetInstanceShaderParameter("vegetation_haze_slot", _gpuTreeCompute.GetHazeSlot(id));
 		MarkTreeSunShadowPolicyDirty();
         return true;

@@ -98,6 +98,19 @@ bool card_keeps(float rank, float d, bool low) {
     return card_smooth(0.0, 1.0, (keep - rank) / max(0.02, 0.2 * keep)) >= p[74];
 }
 
+// Steep-view rule (trees, slots 3 and 4; TR-6). p[78] / p[79] = sin of the elevation where a card tree starts / finishes handing over to the far quad
+// (p[79] <= p[78] = rule off), p[80] = role (0 none, 1 crossed cards, 2 far quad), p[81] = end of the quad's steep near cross-dither (it starts at p[3]),
+// p[82] = rank gate for steep trees on the quad slot (the card gate). Returns 0..1, 1 = fully the quad. Elevation is measured from the tree's own up axis.
+float tree_steepness(uint base, vec3 world) {
+    if (!(p[79] > p[78])) return 0.0;
+    mat3 basis = mat3(vec3(p[16], p[17], p[18]), vec3(p[19], p[20], p[21]), vec3(p[22], p[23], p[24]));
+    vec3 up = basis * vec3(source[base + 1u], source[base + 5u], source[base + 9u]);
+    vec3 to_camera = vec3(p[0], p[1], p[2]) - world;
+    float up_length = length(up), camera_length = length(to_camera);
+    if (up_length < 1e-6 || camera_length < 1e-3) return 0.0;
+    return smoothstep(p[78], p[79], dot(up, to_camera) / (up_length * camera_length));
+}
+
 bool accepted(uint id) {
     bool grass = p[10] > .5;
     uint stride = grass ? 20u : (p[14] > .5 ? 16u : 12u);
@@ -114,8 +127,13 @@ bool accepted(uint id) {
         bool protected_profile = p[55] > .5;
         if (q.sweep == 0u) return protected_root && (protected_profile
             ? distance_to_camera >= p[3] && distance_to_camera < p[4] : int(p[11]) == 0);
-        if (protected_root || metadata[id].x > p[8]) return false;
-        return distance_to_camera >= p[3] && distance_to_camera < p[4];
+        if (protected_root) return false;
+        if (p[80] < .5) return metadata[id].x <= p[8] && distance_to_camera >= p[3] && distance_to_camera < p[4];
+        if (!(distance_to_camera >= p[3] && distance_to_camera < p[4])) return false;
+        float steep = tree_steepness(base, world);
+        if (p[80] < 1.5) return metadata[id].x <= p[8] && steep < 1.0; // cards: fully steep trees belong to the quad
+        if (metadata[id].x <= p[8] && distance_to_camera >= p[56]) return true; // the quad's own distance band
+        return steep > 0.0 && metadata[id].x <= p[82] && distance_to_camera < p[57]; // steep trees in the card band
     }
     if (p[62] > .5) {
         // Conservative card accept: the card vertex shader re-derives scale with the exact camera distance. Keep, grow-in and
@@ -215,6 +233,38 @@ void expand_tree_row(uint id) {
     if (stride > 12u) source[b + 12u] = root.w;
 }
 
+// Dither words of a tree row: x = coverage (output_row[13]), y = marker (output_row[15]). Draw while lo <= noise < hi. Fade-in c in [0,1) = hi, fade-out
+// c in (-1,0) = -(1 - lo), 1 = full, marker 2. A window (both lo > 0 and hi < 1, only the crossed-card slot with a steep tree at its near fade) is c = hi with
+// marker 2 + 0.2 * lo; the shaders accept any marker within 0.25 of 2 and only imported_tree_impostor.gdshader decodes the offset.
+vec2 tree_coverage_words(uint id, uint stride, float d) {
+    float hi = 1.0, lo = 0.0;
+    bool fade_in = false, fade_out = false;
+    if (p[57] > p[56] && d >= p[56] && d < p[57]) { hi = smoothstep(p[56], p[57], d); fade_in = true; }
+    if (p[59] > p[58] && d >= p[58] && d < p[59]) { lo = smoothstep(p[58], p[59], d); fade_out = true; }
+    if (!(p[80] > .5 && p[79] > p[78])) {
+        // No steep rule: the original encoding (a fade-out wins over a fade-in).
+        if (fade_out) return vec2(-(1.0 - lo), 2.0);
+        return vec2(hi, 2.0);
+    }
+    {
+        mat3 basis = mat3(vec3(p[16], p[17], p[18]), vec3(p[19], p[20], p[21]), vec3(p[22], p[23], p[24]));
+        vec3 world = basis * vec3(source[id * stride + 3u], source[id * stride + 7u], source[id * stride + 11u]) + vec3(p[25], p[26], p[27]);
+        float steep = tree_steepness(id * stride, world);
+        if (p[80] < 1.5) lo = max(lo, steep);
+        else {
+            float near_t = d < p[3] ? 0.0 : (d >= p[81] ? 1.0 : smoothstep(p[3], p[81], d));
+            float f_steep = metadata[id].x <= p[82] ? min(steep, near_t) : 0.0;
+            float f_dist = (metadata[id].x <= p[8] && d >= p[56]) ? hi : 0.0;
+            hi = max(f_dist, f_steep);
+        }
+    }
+    if (lo <= 0.0 && hi >= 1.0) return vec2(1.0, 2.0);
+    if (hi <= lo) return vec2(0.0, 2.0);
+    if (lo <= 0.0) return vec2(hi, 2.0);
+    if (hi >= 1.0) return vec2(-(1.0 - lo), 2.0);
+    return vec2(hi, 2.0 + 0.2 * lo);
+}
+
 void main() {
     uint id = gl_GlobalInvocationID.x;
     uint lane = gl_LocalInvocationID.x;
@@ -280,12 +330,10 @@ void main() {
         if (p[10] < .5 && p[60] > .5) {
             output_row[destination * output_stride + 12u] = p[14] > .5 ? source[id * input_stride + 12u] : 0.0;
             float distance_to_camera = tree_distance(id, input_stride);
-            float coverage = 1.0;
-            if (p[57] > p[56] && distance_to_camera >= p[56] && distance_to_camera < p[57]) coverage = smoothstep(p[56], p[57], distance_to_camera);
-            if (p[59] > p[58] && distance_to_camera >= p[58] && distance_to_camera < p[59]) coverage = -(1.0 - smoothstep(p[58], p[59], distance_to_camera));
-            output_row[destination * output_stride + 13u] = coverage;
+            vec2 dither_words = tree_coverage_words(id, input_stride, distance_to_camera);
+            output_row[destination * output_stride + 13u] = dither_words.x;
             output_row[destination * output_stride + 14u] = metadata[id].x;
-            output_row[destination * output_stride + 15u] = 2.0;
+            output_row[destination * output_stride + 15u] = dither_words.y;
         }
         return;
     }
@@ -345,11 +393,9 @@ void main() {
     if (p[10] < .5 && p[60] > .5) {
         output_row[destination * output_stride + 12u] = p[14] > .5 ? source[id * input_stride + 12u] : 0.0;
         float distance_to_camera = tree_distance(id, input_stride);
-        float coverage = 1.0;
-        if (p[57] > p[56] && distance_to_camera >= p[56] && distance_to_camera < p[57]) coverage = smoothstep(p[56], p[57], distance_to_camera);
-        if (p[59] > p[58] && distance_to_camera >= p[58] && distance_to_camera < p[59]) coverage = -(1.0 - smoothstep(p[58], p[59], distance_to_camera));
-        output_row[destination * output_stride + 13u] = coverage;
+        vec2 dither_words = tree_coverage_words(id, input_stride, distance_to_camera);
+        output_row[destination * output_stride + 13u] = dither_words.x;
         output_row[destination * output_stride + 14u] = metadata[id].x;
-        output_row[destination * output_stride + 15u] = 2.0;
+        output_row[destination * output_stride + 15u] = dither_words.y;
     }
 }

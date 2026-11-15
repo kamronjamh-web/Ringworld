@@ -31,6 +31,7 @@ public sealed class GameplayVegetationDefaults
     public float TreeNearDetailFadeEndMeters => (float)Get("TreeNearDetailFadeEndMeters", RingGraphicsQualityController.PresetTrees(Preset).NearEnd).AsDouble();
     public float TreeBillboardFadeStartMeters => (float)Get("TreeBillboardFadeStartMeters", RingGraphicsQualityController.PresetTrees(Preset).BillboardStart).AsDouble();
     public float TreeBillboardFadeEndMeters => (float)Get("TreeBillboardFadeEndMeters", RingGraphicsQualityController.PresetTrees(Preset).BillboardEnd).AsDouble();
+    public float TreeQuadStartMeters => (float)Get("TreeQuadStartMeters", RingGraphicsQualityController.PresetTrees(Preset).QuadStart).AsDouble();
     public bool MergeMidGpuTreeBatches => Get("MergeMidGpuTreeBatches", true).AsBool();
     public int MidTreeBatchTileSpan => (int)Get("MidTreeBatchTileSpan", 2).AsInt64();
     public bool PruneEmptyGpuTreeBatches => Get("PruneEmptyGpuTreeBatches", true).AsBool();
@@ -106,10 +107,10 @@ public sealed class GameplayVegetationDefaults
             clean = value.AsBool();
             return true;
         }
-		if (key is "TreeSunShadowSuspendSpeedMetersPerSecond" or "TreeSunShadowResumeSpeedMetersPerSecond" or "TreeSunShadowSettleHoldSeconds" or "TreeSunShadowDistanceMeters" or "TreeStreamingBudgetMilliseconds" or "TreeCullingMovementThresholdMeters" or "TreeCullingMaximumIntervalSeconds" or "TreeNearDetailFadeStartMeters" or "TreeNearDetailFadeEndMeters" or "TreeBillboardFadeStartMeters" or "TreeBillboardFadeEndMeters")
+		if (key is "TreeSunShadowSuspendSpeedMetersPerSecond" or "TreeSunShadowResumeSpeedMetersPerSecond" or "TreeSunShadowSettleHoldSeconds" or "TreeSunShadowDistanceMeters" or "TreeStreamingBudgetMilliseconds" or "TreeCullingMovementThresholdMeters" or "TreeCullingMaximumIntervalSeconds" or "TreeNearDetailFadeStartMeters" or "TreeNearDetailFadeEndMeters" or "TreeBillboardFadeStartMeters" or "TreeBillboardFadeEndMeters" or "TreeQuadStartMeters")
 		{
 			if (value.VariantType is not (Variant.Type.Int or Variant.Type.Float) || !double.IsFinite(value.AsDouble())) return false;
-			double floatMax = key is "TreeNearDetailFadeStartMeters" or "TreeNearDetailFadeEndMeters" ? 200 : key is "TreeBillboardFadeStartMeters" or "TreeBillboardFadeEndMeters" ? 2000 : key == "TreeCullingMovementThresholdMeters" ? 4 : key == "TreeCullingMaximumIntervalSeconds" ? .5 : key == "TreeStreamingBudgetMilliseconds" ? 8 : key == "TreeSunShadowSettleHoldSeconds" ? 5 : key == "TreeSunShadowDistanceMeters" ? 2000 : key == "TreeSunShadowResumeSpeedMetersPerSecond" ? 250 : 2000;
+			double floatMax = key is "TreeNearDetailFadeStartMeters" or "TreeNearDetailFadeEndMeters" ? 200 : key is "TreeBillboardFadeStartMeters" or "TreeBillboardFadeEndMeters" ? 2000 : key == "TreeQuadStartMeters" ? 5000 : key == "TreeCullingMovementThresholdMeters" ? 4 : key == "TreeCullingMaximumIntervalSeconds" ? .5 : key == "TreeStreamingBudgetMilliseconds" ? 8 : key == "TreeSunShadowSettleHoldSeconds" ? 5 : key == "TreeSunShadowDistanceMeters" ? 2000 : key == "TreeSunShadowResumeSpeedMetersPerSecond" ? 250 : 2000;
             double floatMin = key == "TreeStreamingBudgetMilliseconds" ? .25 : 0;
 			clean = Math.Clamp(value.AsDouble(), floatMin, floatMax); return true;
 		}

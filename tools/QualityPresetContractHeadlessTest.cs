@@ -44,6 +44,7 @@ public partial class QualityPresetContractHeadlessTest : RefCounted
     private static readonly float[] TreeBillboardStart = { 200f, 250f, 300f, 300f, 550f };
     private static readonly float[] TreeBillboardEnd = { 240f, 300f, 350f, 350f, 650f };
     private static readonly float[] TreeSunShadow = { 160f, 240f, 360f, 480f, 700f };
+    private static readonly float[] TreeQuadStart = { 600f, 900f, 900f, 900f, 1200f };
 
     private static void CheckMonotonic<T>(Action<bool, string> check, string name, IReadOnlyList<T> values) where T : IComparable<T>
     {
@@ -128,7 +129,7 @@ public partial class QualityPresetContractHeadlessTest : RefCounted
                     $"S2 {tag} wet world ripple layers={RingWetWorldSettings.Current.RippleLayers} drips={RingWetWorldSettings.Current.DripBudget} half-size SSR={RingWetWorldSettings.Current.HalfSizeSsr} want {RippleLayers[p]}/{DripBudget[p]}/{WetHalfSizeSsr[p]}");
                 Check(RingGustFrontDebris.PresetBudget == GustDebris[p] && RingGraphicsQualityController.PresetWeather(preset).debris == GustDebris[p], $"S3 {tag} gust debris budget={RingGustFrontDebris.PresetBudget} want {GustDebris[p]}");
                 var trees = RingGraphicsQualityController.PresetTrees(preset);
-                Check(trees.NearEnd == TreeNearEnd[p] && trees.BillboardStart == TreeBillboardStart[p] && trees.BillboardEnd == TreeBillboardEnd[p] && trees.SunShadow == TreeSunShadow[p] && trees.NearStart < trees.NearEnd && trees.NearEnd <= trees.BillboardStart,
+                Check(trees.NearEnd == TreeNearEnd[p] && trees.BillboardStart == TreeBillboardStart[p] && trees.BillboardEnd == TreeBillboardEnd[p] && trees.SunShadow == TreeSunShadow[p] && trees.QuadStart == TreeQuadStart[p] && trees.NearStart < trees.NearEnd && trees.NearEnd <= trees.BillboardStart,
                     $"WO3 {tag} trees near={trees.NearStart}-{trees.NearEnd} billboard={trees.BillboardStart}-{trees.BillboardEnd} shadow={trees.SunShadow}");
                 var vegetation = new GameplayVegetationDefaults(null) { Preset = preset };
                 Check(vegetation.TreeNearDetailFadeEndMeters == TreeNearEnd[p] && vegetation.TreeBillboardFadeStartMeters == TreeBillboardStart[p] && vegetation.TreeSunShadowDistanceMeters == TreeSunShadow[p], $"WO3 {tag} vegetation defaults do not follow the preset");
@@ -137,7 +138,7 @@ public partial class QualityPresetContractHeadlessTest : RefCounted
             CheckMonotonic(Check, "atlas", AtlasSizes); CheckMonotonic(Check, "sun distance", SunDistances); CheckMonotonic(Check, "planet distance", PlanetDistances); CheckMonotonic(Check, "planet cascades", PlanetCascades);
             CheckMonotonic(Check, "ssr steps", SsrSteps); CheckMonotonic(Check, "ssr ray", SsrRay); CheckMonotonic(Check, "ssr camera", SsrCamera); CheckMonotonic(Check, "ssao", SsaoDetail); CheckMonotonic(Check, "far scale", FarScale);
             CheckMonotonic(Check, "rain particles", RainParticles); CheckMonotonic(Check, "rain streaks", RainStreaks); CheckMonotonic(Check, "bolt branches", BoltBranches); CheckMonotonic(Check, "bolt depth", BoltDepth);
-            CheckMonotonic(Check, "tree near end", TreeNearEnd); CheckMonotonic(Check, "tree billboard start", TreeBillboardStart); CheckMonotonic(Check, "tree billboard end", TreeBillboardEnd); CheckMonotonic(Check, "tree sun shadow", TreeSunShadow); CheckMonotonic(Check, "ripple layers", RippleLayers); CheckMonotonic(Check, "drip budget", DripBudget); CheckMonotonic(Check, "gust debris", GustDebris);
+            CheckMonotonic(Check, "tree near end", TreeNearEnd); CheckMonotonic(Check, "tree billboard start", TreeBillboardStart); CheckMonotonic(Check, "tree billboard end", TreeBillboardEnd); CheckMonotonic(Check, "tree sun shadow", TreeSunShadow); CheckMonotonic(Check, "tree quad start", TreeQuadStart); CheckMonotonic(Check, "ripple layers", RippleLayers); CheckMonotonic(Check, "drip budget", DripBudget); CheckMonotonic(Check, "gust debris", GustDebris);
 
             // N1: height shadows + near sun map are preset-owned defaults on every preset (Low..Cinematic5090); an explicit override wins.
             string migrationPath = $"res://.godot/qp_contract_hs_{Time.GetTicksUsec()}.tres";

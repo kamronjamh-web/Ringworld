@@ -1,6 +1,7 @@
 using System;
 using Godot;
 using RingworldTechDemo.UI;
+using RingworldTechDemo.Voxel.LOD;
 
 /// <summary>Isolated persistence evidence for the saved GPU-tree preference.</summary>
 public partial class VegetationSettingsSmoke : Node
@@ -45,6 +46,13 @@ public partial class VegetationSettingsSmoke : Node
         if (!GameplayVegetationDefaults.TryValidate("TreeNearDetailFadeStartMeters", 99999, out Variant lodDistance) || !Mathf.IsEqualApprox((float)lodDistance.AsDouble(), 200)) throw new InvalidOperationException("near tree LOD distance was not clamped");
         if (!GameplayVegetationDefaults.TryValidate("TreeBillboardFadeEndMeters", 99999, out lodDistance) || !Mathf.IsEqualApprox((float)lodDistance.AsDouble(), 2000)) throw new InvalidOperationException("billboard tree LOD distance was not clamped");
         if (GameplayVegetationDefaults.TryValidate("TreeBillboardFadeEndMeters", double.NaN, out _)) throw new InvalidOperationException("nonfinite tree LOD distance accepted");
+        if (!GameplayVegetationDefaults.TryValidate("TreeQuadStartMeters", 99999, out lodDistance) || !Mathf.IsEqualApprox((float)lodDistance.AsDouble(), 5000)) throw new InvalidOperationException("far billboard start was not clamped");
+        if (GameplayVegetationDefaults.TryValidate("TreeQuadStartMeters", double.NaN, out _)) throw new InvalidOperationException("nonfinite far billboard start accepted");
+        var quadStart = new GameplayVegetationDefaults(path); quadStart.Load();
+        if (!Mathf.IsEqualApprox(quadStart.TreeQuadStartMeters, 900)) throw new InvalidOperationException("far billboard start default is not the preset's 900 m");
+        quadStart.Preset = RingTerrainLodCoordinator.QualityPreset.Low; if (!Mathf.IsEqualApprox(quadStart.TreeQuadStartMeters, 600)) throw new InvalidOperationException("far billboard start did not follow the Low preset");
+        quadStart.Preset = RingTerrainLodCoordinator.QualityPreset.UltraVideo; if (!Mathf.IsEqualApprox(quadStart.TreeQuadStartMeters, 1200)) throw new InvalidOperationException("far billboard start did not follow the Ultra Video preset");
+        quadStart.Set("TreeQuadStartMeters", 1500); if (!Mathf.IsEqualApprox(quadStart.TreeQuadStartMeters, 1500)) throw new InvalidOperationException("far billboard start override did not stick");
         if (!GameplayVegetationDefaults.TryValidate("MidTreeBatchTileSpan", 99, out Variant tileSpan) || tileSpan.AsInt64() != 4) throw new InvalidOperationException("mid-tree batch span was not clamped");
         if (!GameplayVegetationDefaults.TryValidate("MidTreeBatchTileSpan", -1, out tileSpan) || tileSpan.AsInt64() != 1) throw new InvalidOperationException("mid-tree batch span low range was not clamped");
         var invalidPath = new GameplayVegetationDefaults("res://"); invalidPath.Set("UseGpuCulling", false);

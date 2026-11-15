@@ -11,20 +11,29 @@ public sealed class ImportedTreeImpostorCatalog
     public const int TextureLayerSize = 256;
     public Mesh Mesh { get; }
     public ShaderMaterial Material { get; }
+    /// <summary>One camera-facing quad per tree (two triangles) drawn by the same shader with far_quad_mode on; texture, bounds and look come from the largest LOD3 plane (TR-6).</summary>
+    public Mesh FarQuadMesh { get; }
+    public ShaderMaterial FarQuadMaterial { get; }
+    /// <summary>The LOD3 card (largest plane component) each variant's far quad copies, as stored in variant_parameters rows 3 and 4.</summary>
+    public IReadOnlyList<FarQuadPlane> FarQuadPlanes { get; }
+    public const int FarQuadVertexCount = 6;
+    /// <summary>Row 3 of variant_parameters: (u at the plane's left edge, u at its right edge, v at its bottom, v at its top). Row 4: (width, bottom y, top y, 0), in catalog-normalized tree space.</summary>
+    public readonly record struct FarQuadPlane(float ULeft, float URight, float VBottom, float VTop, float Width, float BottomY, float TopY, int TriangleCount, float Area);
     public int VertexCount { get; }
     public int VariantCount { get; }
     /// <summary>Expanded, unindexed source vertex count for each authored LOD3 mesh.</summary>
     public IReadOnlyList<int> ExpandedVertexCounts { get; }
     /// <summary>CPU copies used by the structural asset regression; positions are in catalog-normalized space.</summary>
     public IReadOnlyList<Vector3[]> ExpandedPositions { get; }
+    public IReadOnlyList<Vector2[]> ExpandedUvs { get; }
 
     private static ImportedTreeImpostorCatalog? _cached;
-    private ImportedTreeImpostorCatalog(ArrayMesh mesh, ShaderMaterial material, int vertexCount,
-        IReadOnlyList<int> expandedVertexCounts, IReadOnlyList<Vector3[]> expandedPositions)
+    private ImportedTreeImpostorCatalog(ArrayMesh mesh, ShaderMaterial material, ArrayMesh quadMesh, ShaderMaterial quadMaterial, IReadOnlyList<FarQuadPlane> planes, int vertexCount,
+        IReadOnlyList<int> expandedVertexCounts, IReadOnlyList<Vector3[]> expandedPositions, IReadOnlyList<Vector2[]> expandedUvs)
     {
-        Mesh = mesh; Material = material; VertexCount = vertexCount;
+        Mesh = mesh; Material = material; FarQuadMesh = quadMesh; FarQuadMaterial = quadMaterial; FarQuadPlanes = planes; VertexCount = vertexCount;
         VariantCount = ImportedTreeCatalog.VariantCount;
-        ExpandedVertexCounts = expandedVertexCounts; ExpandedPositions = expandedPositions;
+        ExpandedVertexCounts = expandedVertexCounts; ExpandedPositions = expandedPositions; ExpandedUvs = expandedUvs;
     }
 
     public static ImportedTreeImpostorCatalog Load()
@@ -81,13 +90,19 @@ public sealed class ImportedTreeImpostorCatalog
         foreach (bool unit in PrepareMetallicRoughnessImages(variants, images)) yield return unit;
         Texture2DArray metallicRoughnessLayers = CreateTextureArray(images, "metallic/roughness"); yield return true;
 
-        ShaderMaterial material = CreateMaterial(variants, positions, normals, uvs, tangents, attachments, albedoLayers, normalLayers, metallicRoughnessLayers);
+        var planes = new List<FarQuadPlane>(geometries.Count);
+        foreach (Geometry geometry in geometries) planes.Add(geometry.LargestPlane());
+        ShaderMaterial material = CreateMaterial(variants, planes, positions, normals, uvs, tangents, attachments, albedoLayers, normalLayers, metallicRoughnessLayers);
         mesh.SurfaceSetMaterial(0, material);
+        ArrayMesh quadMesh = CreateFarQuadMesh(bounds);
+        var quadMaterial = (ShaderMaterial)material.Duplicate();
+        quadMaterial.SetShaderParameter("far_quad_mode", true);
+        quadMesh.SurfaceSetMaterial(0, quadMaterial);
 
         var counts = new List<int>(geometries.Count);
-        var expandedPositions = new List<Vector3[]>(geometries.Count);
-        foreach (Geometry geometry in geometries) { counts.Add(geometry.Positions.Length); expandedPositions.Add(geometry.Positions); }
-        _cached ??= new ImportedTreeImpostorCatalog(mesh, material, maxVertices, counts.AsReadOnly(), expandedPositions.AsReadOnly());
+        var expandedPositions = new List<Vector3[]>(geometries.Count); var expandedUvs = new List<Vector2[]>(geometries.Count);
+        foreach (Geometry geometry in geometries) { counts.Add(geometry.Positions.Length); expandedPositions.Add(geometry.Positions); expandedUvs.Add(geometry.Uvs); }
+        _cached ??= new ImportedTreeImpostorCatalog(mesh, material, quadMesh, quadMaterial, planes.AsReadOnly(), maxVertices, counts.AsReadOnly(), expandedPositions.AsReadOnly(), expandedUvs.AsReadOnly());
     }
 
     private static ArrayMesh CreateSharedMesh(int vertexCount, Aabb bounds)
@@ -105,7 +120,21 @@ public sealed class ImportedTreeImpostorCatalog
         return mesh;
     }
 
-    private static ShaderMaterial CreateMaterial(IReadOnlyList<ImportedTreeVariant> variants, Texture2D positions, Texture2D normals, Texture2D uvs, Texture2D tangents, Texture2D attachments,
+    private static ArrayMesh CreateFarQuadMesh(Aabb bounds)
+    {
+        // Positions are placeholders: the vertex shader builds the corners from VERTEX_ID.
+        var arrays = new Godot.Collections.Array(); arrays.Resize((int)Mesh.ArrayType.Max);
+        var normals = new Vector3[FarQuadVertexCount];
+        var uvs = new Vector2[FarQuadVertexCount];
+        var tangents = new float[FarQuadVertexCount * 4];
+        for (int i = 0; i < FarQuadVertexCount; i++) { normals[i] = Vector3.Up; tangents[i * 4] = 1; tangents[i * 4 + 3] = 1; }
+        arrays[(int)Mesh.ArrayType.Vertex] = new Vector3[FarQuadVertexCount]; arrays[(int)Mesh.ArrayType.Normal] = normals;
+        arrays[(int)Mesh.ArrayType.TexUV] = uvs; arrays[(int)Mesh.ArrayType.TexUV2] = new Vector2[FarQuadVertexCount]; arrays[(int)Mesh.ArrayType.Tangent] = tangents;
+        var mesh = new ArrayMesh(); mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays); mesh.CustomAabb = bounds;
+        return mesh;
+    }
+
+    private static ShaderMaterial CreateMaterial(IReadOnlyList<ImportedTreeVariant> variants, IReadOnlyList<FarQuadPlane> planes, Texture2D positions, Texture2D normals, Texture2D uvs, Texture2D tangents, Texture2D attachments,
         Texture2DArray albedoLayers, Texture2DArray normalLayers, Texture2DArray metallicRoughnessLayers)
     {
         Shader shader = ResourceLoader.Load<Shader>("res://materials/imported_tree_impostor.gdshader") ?? throw new InvalidOperationException("Missing imported-tree impostor shader.");
@@ -116,7 +145,7 @@ public sealed class ImportedTreeImpostorCatalog
         material.SetShaderParameter("albedo_layers", albedoLayers);
         material.SetShaderParameter("normal_layers", normalLayers);
         material.SetShaderParameter("metallic_roughness_layers", metallicRoughnessLayers);
-        material.SetShaderParameter("variant_parameters", CreateParameterTexture(variants));
+        material.SetShaderParameter("variant_parameters", CreateParameterTexture(variants, planes));
         CopySharedParameters(variants[0].Lods[3].SurfaceGetMaterial(0) as ShaderMaterial, material);
         return material;
     }
@@ -221,9 +250,9 @@ public sealed class ImportedTreeImpostorCatalog
         return ImageTexture.CreateFromImage(image);
     }
 
-    private static ImageTexture CreateParameterTexture(IReadOnlyList<ImportedTreeVariant> variants)
+    private static ImageTexture CreateParameterTexture(IReadOnlyList<ImportedTreeVariant> variants, IReadOnlyList<FarQuadPlane> planes)
     {
-        var image = Image.CreateEmpty(variants.Count, 3, false, Image.Format.Rgbaf);
+        var image = Image.CreateEmpty(variants.Count, 5, false, Image.Format.Rgbaf);
         for (int i = 0; i < variants.Count; i++)
         {
             ShaderMaterial? material = variants[i].Lods[3].SurfaceGetMaterial(0) as ShaderMaterial;
@@ -233,6 +262,9 @@ public sealed class ImportedTreeImpostorCatalog
             image.SetPixel(i, 2, new Color(material != null && material.GetShaderParameter("use_alpha_cutout").AsBool() ? 1 : 0,
                 material == null ? 2 : material.GetShaderParameter("tree_foliage_mode").AsInt32(),
                 material != null && material.GetShaderParameter("tree_foliage_attachments").AsBool() ? 1 : 0, 1));
+            FarQuadPlane plane = planes[i];
+            image.SetPixel(i, 3, new Color(plane.ULeft, plane.URight, plane.VBottom, plane.VTop));
+            image.SetPixel(i, 4, new Color(plane.Width, plane.BottomY, plane.TopY, 0));
         }
         return ImageTexture.CreateFromImage(image);
     }
@@ -265,6 +297,88 @@ public sealed class ImportedTreeImpostorCatalog
         private readonly List<Vector3> _positions = new(); private readonly List<Vector3> _normals = new(); private readonly List<Vector2> _uvs = new(); private readonly List<Vector2> _uv2s = new(); private readonly List<Vector4> _tangents = new();
         private readonly List<Vector4> _attachments = new();
         public Vector3[] Positions => _positions.ToArray();
+        public Vector2[] Uvs => _uvs.ToArray();
+
+        /// <summary>The largest card (connected coplanar triangles, the first on a tie), as a camera-facing quad: its horizontal extent along cross(up, normal), its vertical extent, and the UVs at its edges.</summary>
+        private static (float AtMin, float AtMax) FitEdges(List<int> triangles, Func<int, float> coordinate, Func<int, float> value, float min, float max)
+        {
+            double n = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+            foreach (int t in triangles)
+                for (int k = 0; k < 3; k++) { double x = coordinate(t + k), y = value(t + k); n++; sx += x; sy += y; sxx += x * x; sxy += x * y; }
+            double denominator = n * sxx - sx * sx;
+            if (Math.Abs(denominator) < 1e-12) return ((float)(sy / n), (float)(sy / n));
+            double slope = (n * sxy - sx * sy) / denominator, offset = (sy - slope * sx) / n;
+            return ((float)(offset + slope * min), (float)(offset + slope * max));
+        }
+
+        public FarQuadPlane LargestPlane()
+        {
+            var normals = new List<Vector3>(); var offsets = new List<float>(); var areas = new List<float>(); var triangles = new List<int>(); var members = new List<List<int>>();
+            for (int t = 0; t + 2 < _positions.Count; t += 3)
+            {
+                Vector3 cross = (_positions[t + 1] - _positions[t]).Cross(_positions[t + 2] - _positions[t]);
+                float area = cross.Length() * .5f;
+                if (area < 1e-9f) continue;
+                Vector3 n = cross.Normalized();
+                if (n.X < -1e-4f || (Mathf.Abs(n.X) <= 1e-4f && (n.Z < -1e-4f || (Mathf.Abs(n.Z) <= 1e-4f && n.Y < 0)))) n = -n;
+                float d = n.Dot(_positions[t]);
+                int group = -1;
+                for (int g = 0; g < normals.Count; g++)
+                    if (normals[g].Dot(n) > .9995f && Mathf.Abs(offsets[g] - d) < .01f) { group = g; break; }
+                if (group < 0) { normals.Add(n); offsets.Add(d); areas.Add(0); triangles.Add(0); members.Add(new List<int>()); group = normals.Count - 1; }
+                areas[group] += area; triangles[group]++; members[group].Add(t);
+            }
+            if (normals.Count == 0) return new FarQuadPlane(0, 1, 1, 0, 1, 0, 1, 0, 0);
+            // A "plane" of the LOD3 mesh holds several cards that share one plane but sample different atlas regions; the quad copies one card: the connected
+            // component (triangles sharing a vertex position and UV) of largest area, the first on a tie.
+            int best = 0; List<int> bestCard = new(); float bestArea = -1; int bestTriangles = 0;
+            bool anyUpright = false;
+            foreach (Vector3 n in normals) anyUpright |= Mathf.Abs(n.Y) <= .7f; // a near-horizontal disc has no side picture: only upright cards compete when there are any
+            for (int g = 0; g < normals.Count; g++)
+            {
+                if (anyUpright && Mathf.Abs(normals[g].Y) > .7f) continue;
+                List<int> tris = members[g]; var parent = new int[tris.Count]; for (int i = 0; i < parent.Length; i++) parent[i] = i;
+                int Find(int i) { while (parent[i] != i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; }
+                var owner = new Dictionary<(int, int, int, int, int), int>();
+                for (int i = 0; i < tris.Count; i++)
+                    for (int k = 0; k < 3; k++)
+                    {
+                        Vector3 p = _positions[tris[i] + k]; Vector2 uv = _uvs[tris[i] + k];
+                        var key = ((int)MathF.Round(p.X * 1000), (int)MathF.Round(p.Y * 1000), (int)MathF.Round(p.Z * 1000), (int)MathF.Round(uv.X * 1000), (int)MathF.Round(uv.Y * 1000));
+                        if (owner.TryGetValue(key, out int other)) parent[Find(i)] = Find(other); else owner[key] = i;
+                    }
+                var componentArea = new Dictionary<int, float>(); var componentOrder = new List<int>();
+                for (int i = 0; i < tris.Count; i++)
+                {
+                    int root = Find(i); int t = tris[i];
+                    if (!componentArea.ContainsKey(root)) { componentArea[root] = 0; componentOrder.Add(root); }
+                    componentArea[root] += (_positions[t + 1] - _positions[t]).Cross(_positions[t + 2] - _positions[t]).Length() * .5f;
+                }
+                foreach (int root in componentOrder)
+                    if (componentArea[root] > bestArea + 1e-7f)
+                    {
+                        bestArea = componentArea[root]; best = g; bestCard = new List<int>(); bestTriangles = 0;
+                        for (int i = 0; i < tris.Count; i++) if (Find(i) == root) { bestCard.Add(tris[i]); bestTriangles++; }
+                    }
+            }
+            areas[best] = bestArea; triangles[best] = bestTriangles; members[best] = bestCard;
+            Vector3 normal = normals[best];
+            var horizontal = new Vector3(normal.Z, 0, -normal.X);
+            horizontal = horizontal.LengthSquared() > 1e-8f ? horizontal.Normalized() : Vector3.Right;
+            float s0 = float.MaxValue, s1 = float.MinValue, y0 = float.MaxValue, y1 = float.MinValue;
+            foreach (int t in members[best])
+                for (int k = 0; k < 3; k++)
+                {
+                    float s = horizontal.Dot(_positions[t + k]), y = _positions[t + k].Y;
+                    s0 = Mathf.Min(s0, s); s1 = Mathf.Max(s1, s); y0 = Mathf.Min(y0, y); y1 = Mathf.Max(y1, y);
+                }
+            // The card UVs are a planar projection, so u is linear in the horizontal coordinate and v in the height: fit both by least squares over
+            // the plane's vertices and read the edges off the fit (the vertices at the extremes are tips of a cut-out outline, not the picture's edges).
+            (float left, float right) = FitEdges(members[best], t => horizontal.Dot(_positions[t]), t => _uvs[t].X, s0, s1);
+            (float bottom, float top) = FitEdges(members[best], t => _positions[t].Y, t => _uvs[t].Y, y0, y1);
+            float uLeft = left, uRight = right, vBottom = bottom, vTop = top;
+            return new FarQuadPlane(uLeft, uRight, vBottom, vTop, s1 - s0, y0, y1, bestTriangles, bestArea);
+        }
         public void Add(Vector3 p, Vector3 n, Vector2 uv, Vector2 uv2, Vector4 tangent, Vector4 attachment) { _positions.Add(p); _normals.Add(n); _uvs.Add(uv); _uv2s.Add(uv2); _tangents.Add(tangent); _attachments.Add(attachment); }
         public Color Get(DataChannel channel, int index) { if (index >= _positions.Count) return channel == DataChannel.Position || channel == DataChannel.Attachment ? new Color(0, 0, 0, 0) : new Color(0, 1, 0, 1); return channel switch { DataChannel.Position => new Color(_positions[index].X, _positions[index].Y, _positions[index].Z, 1), DataChannel.Normal => new Color(_normals[index].X, _normals[index].Y, _normals[index].Z, 1), DataChannel.Uv => new Color(_uvs[index].X, _uvs[index].Y, _uv2s[index].X, _uv2s[index].Y), DataChannel.Attachment => new Color(_attachments[index].X,_attachments[index].Y,_attachments[index].Z,_attachments[index].W), _ => new Color(_tangents[index].X, _tangents[index].Y, _tangents[index].Z, _tangents[index].W) }; }
     }

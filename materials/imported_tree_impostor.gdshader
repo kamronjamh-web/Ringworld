@@ -21,6 +21,10 @@ uniform bool vegetation_wind_enabled = true;
 uniform int tree_foliage_mode = 0;
 uniform bool tree_foliage_attachments = false;
 uniform bool simplified_tree_shading = false;
+// TR-6: one camera-facing quad per tree (6 vertices) instead of the crossed cards. The quad copies the largest LOD3 plane (variant_parameters rows 3 and 4),
+// turns about the tree's up axis towards the camera position, and has no wind.
+uniform bool far_quad_mode = false;
+const vec2 FAR_QUAD_CORNERS[6] = vec2[6](vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(1.0, 1.0), vec2(0.0, 0.0), vec2(1.0, 1.0), vec2(0.0, 1.0));
 // Main-viewport only: ray frame comes from global shader parameters.
 #define RING_ATMOSPHERE_FRAME_GLOBAL
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
@@ -40,7 +44,7 @@ varying vec2 tree_wet_state; // wet world, per vertex: (darkening amount, gloss)
 varying float tree_highlight_roughness; // wet world: the direct highlight keeps the full wet gloss (ROUGHNESS may be held at the SSR floor)
 varying flat int tree_variant;
 varying vec4 tree_parameters;
-varying flat float tree_dither_coverage;
+varying flat vec2 tree_dither_window; // the pixel is drawn while x <= noise < y (the coverage word of ring_gpu_vegetation_indirect.glsl, decoded in vertex())
 varying flat float tree_dither_seed;
 
 float tree_dither_noise(vec2 pixel, float seed) {
@@ -48,18 +52,63 @@ float tree_dither_noise(vec2 pixel, float seed) {
 }
 
 void apply_tree_dither(vec2 fragment_coordinate) {
-	if (tree_dither_coverage >= 1.0 || tree_dither_coverage <= -1.0) return;
+	if (tree_dither_window.x <= 0.0 && tree_dither_window.y >= 1.0) return;
 	float noise = tree_dither_noise(floor(fragment_coordinate), tree_dither_seed);
-	if (tree_dither_coverage >= 0.0) {
-		if (noise >= tree_dither_coverage) discard;
-	} else if (noise < 1.0 + tree_dither_coverage) discard;
+	if (noise < tree_dither_window.x || noise >= tree_dither_window.y) discard;
+}
+
+// Model-space direction of a world-space direction (the instance basis is a rotation times one uniform scale).
+vec3 far_quad_to_model_direction(mat4 model, float scale, vec3 world_direction) {
+	return vec3(dot(world_direction, model[0].xyz), dot(world_direction, model[1].xyz), dot(world_direction, model[2].xyz)) / max(scale, 0.000001);
 }
 
 void vertex() {
-	tree_dither_coverage = abs(INSTANCE_CUSTOM.w - 2.0) <= 0.25 ? INSTANCE_CUSTOM.y : 1.0;
+	float coverage_word = abs(INSTANCE_CUSTOM.w - 2.0) <= 0.25 ? INSTANCE_CUSTOM.y : 1.0;
+	vec2 dither_window = vec2(0.0, 1.0);
+	if (coverage_word >= 0.0 && coverage_word < 1.0) dither_window.y = coverage_word; // fade in
+	else if (coverage_word > -1.0 && coverage_word < 0.0) dither_window.x = 1.0 + coverage_word; // fade out
+	// Window (steep card tree at the near fade): the marker is 2 + 0.2 * low and the coverage word is the upper limit.
+	dither_window.x = max(dither_window.x, clamp((INSTANCE_CUSTOM.w - 2.0) * 5.0, 0.0, 1.0));
+	tree_dither_window = dither_window;
 	tree_dither_seed = INSTANCE_CUSTOM.z;
 	int variant = clamp(int(round(INSTANCE_CUSTOM.x)), 0, 29);
 	tree_variant = variant;
+	tree_parameters = texelFetch(variant_parameters, ivec2(variant, 1), 0);
+	vec3 root_world = MODEL_MATRIX[3].xyz;
+	if (far_quad_mode) {
+		float model_scale = length(MODEL_MATRIX[1].xyz);
+		vec3 tree_up = MODEL_MATRIX[1].xyz / max(model_scale, 0.000001);
+		vec4 plane_uv = texelFetch(variant_parameters, ivec2(variant, 3), 0);
+		vec4 plane_size = texelFetch(variant_parameters, ivec2(variant, 4), 0);
+		float quad_width = plane_size.x * model_scale;
+		float quad_height = max((plane_size.z - plane_size.y) * model_scale, 0.0001);
+		vec3 quad_centre = root_world + tree_up * (0.5 * (plane_size.y + plane_size.z) * model_scale);
+		vec3 to_camera = ring_atmosphere_camera_world_position - quad_centre;
+		vec3 camera_dir = to_camera / max(length(to_camera), 0.001);
+		float sin_elevation = clamp(dot(tree_up, camera_dir), -1.0, 1.0);
+		// Horizontal axis: cross(up, direction). Directly above or below (up . direction beyond 0.999) it blends to the ring-axis direction (world Y)
+		// instead of switching, so the picture does not twist.
+		vec3 across = cross(tree_up, camera_dir);
+		vec3 axis_direction = dot(across, vec3(0.0, 1.0, 0.0)) < 0.0 ? vec3(0.0, -1.0, 0.0) : vec3(0.0, 1.0, 0.0);
+		across += axis_direction * (1.0 - smoothstep(0.0, 0.0447, length(across)));
+		across -= camera_dir * dot(across, camera_dir);
+		across = normalize(across);
+		vec3 quad_up = cross(camera_dir, across);
+		// Outline of an ellipsoid of the tree's size: the side view from the ground, a W x W patch from straight above, no enlargement.
+		float height_scale = sqrt(max(1.0 - sin_elevation * sin_elevation, 0.0) + (quad_width / quad_height) * (quad_width / quad_height) * sin_elevation * sin_elevation);
+		vec2 corner = FAR_QUAD_CORNERS[VERTEX_ID % 6];
+		bool mirrored = fract(INSTANCE_CUSTOM.z * 7919.0) > 0.5;
+		float u_at_left = mirrored ? plane_uv.y : plane_uv.x;
+		float u_at_right = mirrored ? plane_uv.x : plane_uv.y;
+		vec3 corner_world = quad_centre + across * ((corner.x - 0.5) * quad_width) + quad_up * ((corner.y - 0.5) * quad_height * height_scale);
+		vec3 offset = corner_world - root_world;
+		VERTEX = vec3(dot(offset, MODEL_MATRIX[0].xyz), dot(offset, MODEL_MATRIX[1].xyz), dot(offset, MODEL_MATRIX[2].xyz)) / max(model_scale * model_scale, 0.000001);
+		NORMAL = far_quad_to_model_direction(MODEL_MATRIX, model_scale, camera_dir);
+		TANGENT = far_quad_to_model_direction(MODEL_MATRIX, model_scale, across * (u_at_right >= u_at_left ? 1.0 : -1.0));
+		BINORMAL = far_quad_to_model_direction(MODEL_MATRIX, model_scale, quad_up * (plane_uv.w >= plane_uv.z ? 1.0 : -1.0));
+		UV = vec2(mix(u_at_left, u_at_right, corner.x), mix(plane_uv.z, plane_uv.w, corner.y));
+		UV2 = vec2(0.0);
+	} else {
 	vec4 packed_vertex = texelFetch(vertex_data, ivec2(VERTEX_ID, variant), 0);
 	VERTEX = packed_vertex.xyz;
 	NORMAL = normalize(texelFetch(normal_data, ivec2(VERTEX_ID, variant), 0).xyz);
@@ -69,8 +118,6 @@ void vertex() {
 	vec4 packed_tangent = texelFetch(tangent_data, ivec2(VERTEX_ID, variant), 0);
 	TANGENT = normalize(packed_tangent.xyz);
 	BINORMAL = normalize(cross(NORMAL, TANGENT)) * packed_tangent.w;
-	tree_parameters = texelFetch(variant_parameters, ivec2(variant, 1), 0);
-	vec3 root_world = MODEL_MATRIX[3].xyz;
 	if (vegetation_wind_enabled) {
 		mat3 basis = mat3(MODEL_MATRIX);
 		vec3 offset; mat3 jacobian;
@@ -80,6 +127,7 @@ void vertex() {
 		NORMAL = ring_tree_deformed_normal(jacobian, NORMAL);
 		if (length(TANGENT) > .0001) TANGENT = normalize(jacobian * TANGENT);
 		if (length(BINORMAL) > .0001) BINORMAL = normalize(jacobian * BINORMAL);
+	}
 	}
 	vec3 world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	RingVegetationShadowInstance shadow_instance = ring_vegetation_shadow_instance(RING_VEGETATION_SHADOW_TREES, INSTANCE_ID);

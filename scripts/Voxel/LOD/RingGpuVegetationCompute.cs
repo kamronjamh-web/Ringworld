@@ -36,7 +36,8 @@ public sealed class RingGpuVegetationCompute : IDisposable
         Vector2? TreeCameraCanonicalLocal = null, long VisibilityRevision = 0,
         bool DistanceBasedTreeProtection = false, float TreeFadeInStart = -1, float TreeFadeInEnd = -1,
         float TreeFadeOutStart = -1, float TreeFadeOutEnd = -1,
-        RingGrassCardComputeParameters? GrassCard = null);
+        RingGrassCardComputeParameters? GrassCard = null,
+        int TreeSteepRole = 0, float TreeSteepSinLow = 0, float TreeSteepSinHigh = 0, float TreeSteepFadeEnd = 0, float TreeSteepRankGate = 1);
     public sealed record FrameRequest(Vector3 CameraWorld, uint[] LodBudgets,
         IReadOnlyList<BatchFrameParameters> Batches, bool SkipUnchanged = true,
         int MaximumBatchesPerDispatch = 0, int MaximumCandidatesPerDispatch = 0);
@@ -1422,6 +1423,13 @@ public sealed class RingGpuVegetationCompute : IDisposable
         data[56] = Finite(p.TreeFadeInStart, -1); data[57] = Finite(p.TreeFadeInEnd, -1);
         data[58] = Finite(p.TreeFadeOutStart, -1); data[59] = Finite(p.TreeFadeOutEnd, -1);
         data[60] = treeDitherData ? 1 : 0;
+        // Steep-view rule (trees, TR-6): p[78] / p[79] sin of the elevation band, p[80] role (1 cards, 2 far quad), p[81] end of the quad's steep near
+        // cross-dither, p[82] the quad's rank gate for steep trees. All zero = off.
+        if (!p.Grass && p.TreeSteepRole is 1 or 2 && p.TreeSteepSinHigh > p.TreeSteepSinLow)
+        {
+            data[78] = Mathf.Clamp(Finite(p.TreeSteepSinLow, 0), 0, 1); data[79] = Mathf.Clamp(Finite(p.TreeSteepSinHigh, 0), 0, 1);
+            data[80] = p.TreeSteepRole; data[81] = Finite(p.TreeSteepFadeEnd, 0); data[82] = Mathf.Clamp(Finite(p.TreeSteepRankGate, 1), 0, 1);
+        }
         // Grass-only: local mesh radius around its root. The shader combines
         // this with the source and parent transforms before frustum rejection.
         data[61] = p.Grass ? prototypeRadius : 0;

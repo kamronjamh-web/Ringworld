@@ -44,8 +44,9 @@ public partial class ImportedTreeImpostorCatalogRegressionSmoke : Node
             AssertLayerArray(catalog, "normal_layers");
             AssertLayerArray(catalog, "metallic_roughness_layers");
             Require(catalog.Material.GetShaderParameter("variant_parameters").AsGodotObject() is Texture2D parameters
-                && parameters.GetWidth() == ImportedTreeCatalog.VariantCount && parameters.GetHeight() == 3,
+                && parameters.GetWidth() == ImportedTreeCatalog.VariantCount && parameters.GetHeight() == 5,
                 "parameters");
+            AssertFarQuad(catalog, ((Texture2D)catalog.Material.GetShaderParameter("variant_parameters").AsGodotObject()).GetImage());
             GD.Print("IMPORTED_TREE_IMPOSTOR_CATALOG_SMOKE=PASS");
             GetTree().Quit(0);
         }
@@ -53,6 +54,75 @@ public partial class ImportedTreeImpostorCatalogRegressionSmoke : Node
         {
             GD.PushError($"IMPORTED_TREE_IMPOSTOR_CATALOG_SMOKE=FAIL: {exception}");
             GetTree().Quit(1);
+        }
+    }
+
+    // TR-6: the far quad is one 6-vertex surface on the same shader with far_quad_mode on, and variant_parameters rows 3 and 4 hold the largest LOD3 plane
+    // (found here with an independent rounded-key grouping): UV rectangle, width and vertical extent.
+    private static void AssertFarQuad(ImportedTreeImpostorCatalog catalog, Image parameters)
+    {
+        Require(catalog.FarQuadMesh.GetSurfaceCount() == 1 && catalog.FarQuadMesh.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array().Length == ImportedTreeImpostorCatalog.FarQuadVertexCount, "quad mesh has 6 vertices");
+        Require(catalog.FarQuadMaterial.Shader == catalog.Material.Shader && catalog.FarQuadMaterial.GetShaderParameter("far_quad_mode").AsBool()
+            && !catalog.Material.GetShaderParameter("far_quad_mode").AsBool(), "quad material is the same shader in quad mode, cards are not");
+        Require(catalog.FarQuadPlanes.Count == ImportedTreeCatalog.VariantCount, "one plane per variant");
+        for (int i = 0; i < ImportedTreeCatalog.VariantCount; i++)
+        {
+            Vector3[] p = catalog.ExpandedPositions[i]; Vector2[] uv = catalog.ExpandedUvs[i];
+            var area = new Dictionary<(int, int, int, int), float>(); var members = new Dictionary<(int, int, int, int), List<int>>();
+            var order = new List<(int, int, int, int)>();
+            for (int t = 0; t + 2 < p.Length; t += 3)
+            {
+                Vector3 c = (p[t + 1] - p[t]).Cross(p[t + 2] - p[t]); float a = c.Length() * .5f;
+                if (a < 1e-9f) continue;
+                Vector3 n = c.Normalized();
+                if (n.X < -1e-3f || (Mathf.Abs(n.X) <= 1e-3f && (n.Z < -1e-3f || (Mathf.Abs(n.Z) <= 1e-3f && n.Y < 0)))) n = -n;
+                var key = ((int)Mathf.Round(n.X * 200), (int)Mathf.Round(n.Y * 200), (int)Mathf.Round(n.Z * 200), (int)Mathf.Round(n.Dot(p[t]) * 50));
+                if (!area.ContainsKey(key)) { area[key] = 0; members[key] = new(); order.Add(key); }
+                area[key] += a; members[key].Add(t);
+            }
+            // Independent card search: flood fill over triangles of one plane that touch (same position and UV at a corner), largest area first.
+            List<int> card = new(); float cardArea = -1; var best = order[0];
+            bool anyUpright = false; foreach (var key in order) anyUpright |= Mathf.Abs(key.Item2 / 200f) <= .7f;
+            foreach (var key in order)
+            {
+                if (anyUpright && Mathf.Abs(key.Item2 / 200f) > .7f) continue;
+                var tris = members[key]; var seen = new bool[tris.Count];
+                for (int start = 0; start < tris.Count; start++)
+                {
+                    if (seen[start]) continue;
+                    var component = new List<int> { tris[start] }; seen[start] = true;
+                    for (int c = 0; c < component.Count; c++)
+                        for (int other = 0; other < tris.Count; other++)
+                        {
+                            if (seen[other]) continue;
+                            bool touches = false;
+                            for (int a = 0; a < 3 && !touches; a++) for (int b = 0; b < 3 && !touches; b++)
+                                touches = (p[component[c] + a] - p[tris[other] + b]).Length() < 2e-3f && (uv[component[c] + a] - uv[tris[other] + b]).Length() < 2e-3f;
+                            if (touches) { seen[other] = true; component.Add(tris[other]); }
+                        }
+                    float ca = 0; foreach (int t in component) ca += (p[t + 1] - p[t]).Cross(p[t + 2] - p[t]).Length() * .5f;
+                    if (ca > cardArea + 1e-6f) { cardArea = ca; card = component; best = key; }
+                }
+            }
+            members[best] = card; area[best] = cardArea;
+            Require(Mathf.Abs(cardArea - catalog.FarQuadPlanes[i].Area) <= 0.02f * cardArea, $"card area {i}");
+            var normal = new Vector3(best.Item1, best.Item2, best.Item3).Normalized();
+            var h = new Vector3(normal.Z, 0, -normal.X); h = h.LengthSquared() > 1e-8f ? h.Normalized() : Vector3.Right;
+            float s0 = float.MaxValue, s1 = float.MinValue, y0 = float.MaxValue, y1 = float.MinValue, uMin = float.MaxValue, uMax = float.MinValue, vMin = float.MaxValue, vMax = float.MinValue;
+            foreach (int t in members[best]) for (int k = 0; k < 3; k++)
+            {
+                s0 = Mathf.Min(s0, h.Dot(p[t + k])); s1 = Mathf.Max(s1, h.Dot(p[t + k])); y0 = Mathf.Min(y0, p[t + k].Y); y1 = Mathf.Max(y1, p[t + k].Y);
+                uMin = Mathf.Min(uMin, uv[t + k].X); uMax = Mathf.Max(uMax, uv[t + k].X); vMin = Mathf.Min(vMin, uv[t + k].Y); vMax = Mathf.Max(vMax, uv[t + k].Y);
+            }
+            Color row3 = parameters.GetPixel(i, 3), row4 = parameters.GetPixel(i, 4);
+            Require(Mathf.Abs(row4.R - (s1 - s0)) <= 0.03f * (s1 - s0) + 1e-4f && Mathf.Abs(row4.G - y0) <= 0.03f * (y1 - y0) + 1e-4f && Mathf.Abs(row4.B - y1) <= 0.03f * (y1 - y0) + 1e-4f, $"quad bounds {i}");
+            // Every vertex of the plane must land on the quad's UV rectangle (u linear in the horizontal coordinate, v in the height).
+            foreach (int t in members[best]) for (int k = 0; k < 3; k++)
+            {
+                float fu = Mathf.Lerp(row3.R, row3.G, (h.Dot(p[t + k]) - s0) / (s1 - s0)), fv = Mathf.Lerp(row3.B, row3.A, (p[t + k].Y - y0) / (y1 - y0));
+                Require(Mathf.Abs(fu - uv[t + k].X) < 0.01f && Mathf.Abs(fv - uv[t + k].Y) < 0.01f, $"quad UV rectangle reproduces the plane's UVs {i}: vertex {t + k} uv {uv[t + k]} rect ({fu}, {fv}) row3 {row3}");
+            }
+            Require(row4.R > 0 && row4.B > row4.G, $"quad size {i}");
         }
     }
 

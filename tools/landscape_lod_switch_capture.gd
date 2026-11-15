@@ -8,6 +8,7 @@ extends SceneTree
 ## TR-1 switch strip (docs/work-orders/terrain-vegetation/TR.md): --strip after -- or in the LANDSCAPE_HARNESS_ARGS environment variable. One isolated maple, pine and fir, watched from five
 ##   distances across the LOD2-to-cards fade at noon and at sun 8 degrees, per fade configuration [--strip-configs=user,f1]. Frames and strip.json go to
 ##   .godot/captures/landscape/t0/lod_switch_strip/<stamp>/<config>/<species>/{tight,wide}/; make one sheet per species with tools/media/ffmpeg_tools.ps1 sheet -Columns 5 -Rows 2 -TileWidth 576.
+## TR-6 far billboard captures: --tr6 (see run_tr6 in landscape_baseline_common.gd); output .godot/captures/landscape/t0/tr6_far_quad/<stamp>/.
 ## Test-only. The harness world directory is deleted at exit. Prints LANDSCAPE_LOD_SWITCH=PASS.
 const BASE := preload("res://tools/landscape_baseline_common.gd")
 const MARKER := "LANDSCAPE_LOD_SWITCH"
@@ -22,7 +23,8 @@ func _init() -> void:
 
 func _run() -> void:
 	var strip := BASE.harness_flag("--strip")
-	var limit := 2300.0 if strip else 1150.0
+	var tr6 := BASE.harness_flag("--tr6")
+	var limit := 2300.0 if (strip or tr6 or BASE.harness_flag("--tr6-dolly")) else 1150.0
 	var watchdog := create_timer(limit)
 	watchdog.timeout.connect(func() -> void: _fail("watchdog timeout (%.1f s)" % limit))
 	ctx = await BASE.setup(self, MARKER)
@@ -30,7 +32,11 @@ func _run() -> void:
 		_finish_failed()
 		return
 	var report: Dictionary
-	if strip:
+	if BASE.harness_flag("--tr6-dolly"):
+		report = await BASE.run_tr6_dolly(ctx)
+	elif tr6:
+		report = await BASE.run_tr6(ctx)
+	elif strip:
 		report = await BASE.run_strip(ctx)
 	else:
 		report = await BASE.run_lod(ctx)

@@ -14,6 +14,7 @@ public partial class RingBiomeDecorationLayer
 
     private readonly Dictionary<int, GpuTreeShadowProxy> _gpuTreeShadowProxies = new();
     private ShaderMaterial? _sharedFarTreeMaterial;
+    private ShaderMaterial? _sharedFarQuadMaterial;
 
     private bool HasGpuTreeShadowProxy(GpuTreeOutput output)
         => _gpuTreeShadowProxies.TryGetValue(output.BatchId, out GpuTreeShadowProxy? proxy)
@@ -28,7 +29,7 @@ public partial class RingBiomeDecorationLayer
     {
         if (material is ShaderMaterial shader && key.Lod >= 3)
         {
-            if (group.SharedImpostor) _sharedFarTreeMaterial = shader;
+            if (group.SharedImpostor) { if (UsesFarQuadMesh(key.Lod)) _sharedFarQuadMaterial = shader; else _sharedFarTreeMaterial = shader; }
             shader.SetShaderParameter("simplified_tree_shading", SimplifyDistantTreeMaterials);
         }
     }
