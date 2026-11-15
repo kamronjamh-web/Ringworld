@@ -9,22 +9,27 @@ extends SceneTree
 ## test-local copy that reads the albedo texture at mip 0, drawn in a 512 px viewport (512 and 1024 agree within 0.2 %): the model as it looks close up, seen from 325 m. It is not the
 ## shipped material because the model's own leaf-texture mips change its look with distance and resolution (a whole leaf cluster's alpha becomes one average tested against the cutoff, and
 ## its colour includes the texels under the cut-out), so "the model at 325 m at 1080p" is one point on a curve; a colour gate against it could not hold at 4K or at another hand-off
-## distance. The cards and the quad carry the close-up look outward. Covered area, which is the hand-off silhouette, is gated against the shipped model. Whether the model gets
-## distance-stable mips is the user's decision D7; no multiplier or enlargement is used here or allowed.
+## distance. The cards and the quad carry the close-up look outward. Covered area, which is the hand-off silhouette, is gated against the shipped model. TR-7c (user D7 and D8: yes) gives the model distance-stable leaf mips (the loader swaps the leaf atlases and the shader reads the cutout alpha isotropically), so the shipped model now has
+## gates of its own against the reference model, species means: covered area within 10 % at 128 px, its 64 and 46 px area within 15 and 20 % of the 128 px value, ambient luminance within 5 %
+## and channels within 8 % of the luminance, sun only within 10 / 10 / 15 %; the reference shader copy replaces the isotropic alpha read as well. No multiplier or enlargement is used here or allowed.
 ##
 ## Gates (card = the crossed cards at 325 m; quad = the far quad at 900 m with the lens narrowed so a tree keeps its 325 m pixel size):
+##   (TR-7c-2b: the cards' and quad's gates against the reference model carry the measured floor of cards thinned by an alpha threshold: cards species mean 12 / 10 / 15 %, card variants 25 / 25 / 25 %,
+##   ambient channels 10 % for cards and quad; the quad's species sun gates stay 10 / 10 / 15 %. See CARD_SUN_TOLERANCE.)
 ##   cards: covered area against the shipped model within 8 % per variant (ambient case, azimuth mean);
 ##   quad: covered area against the cards' covered area at 46 px (HANDOFF_SIZE, the hand-off pixel size; mean of 12 azimuths) within 8 % per variant; the shipped model at 46 px keeps too little
 ##         area to be a target, so the quad is calibrated down to the cards (the quad against the shipped model at 128 px is reported only, quad_over_shipped_model_128);
-##   both: ambient against the reference model: luminance within 5 % and each channel's difference within 8 % of the reference luminance (per variant);
-##   both: sun only against the reference model over 12 azimuths (15 + 30 k degrees) at noon, 30 and 8 degrees: the species mean of the variant ratios within 10 / 10 / 15 %;
-##         each variant within 20 / 20 / 25 % (cards) or 40 % (quad: one picture per tree);
+##   both: ambient against the reference model: luminance within 5 % and each channel's difference within 10 % of the reference luminance (per variant);
+##   both: sun only against the reference model over 12 azimuths (15 + 30 k degrees) at noon, 30 and 8 degrees: the species mean of the variant ratios within 12 / 10 / 15 % (cards) or 10 / 10 / 15 % (quad);
+##         each variant within 25 % (cards) or 40 % (quad: one picture per tree);
 ##   cards: scale stability: covered fraction in a 64 px viewport within 15 % and in a 46 px viewport within 20 % of the 128 px value (species mean, same lens);
 ##   quad: the camera-side check for seed 0 and for a mirrored seed (fract(seed * 7919) > 0.5); the mirror identity (seed 0 with the sun 90 degrees to the right of the camera
 ##         equals the mirrored seed with the sun 90 degrees to the left, within 3 %); scale: covered fraction at 46 px within 20 % of its 128 px value, and against the cards at 46 px within 10 %;
-##   reported and bounded: cards against the shipped model, sun only, species mean within 25 % (report json handoff_step; the step D7 is about);
+##   hand-off step: cards against the shipped model, sun only, species mean within 10 / 10 / 15 % (report json handoff_step; the step D7 was about; TR-7c tightened it from 25 %);
+##   shipped model (TR-7c): against the reference model, the species-mean gates above (report json model, model_scale); the quad / shipped model area at 128 px stays report only;
 ##   report only (TR-6b): camera 60 degrees above the horizon, noon and sun 30, reference model, cards and quad (report json top_view);
-##   control: with the bake swapped for the pack's pictures the card gates (ambient, noon) must fail for at least half of the variants (the test must be able to see the bake missing).
+##   control: with the bake swapped for the pack's pictures the card gates (ambient, noon) must fail for at least half of the variants (the test must be able to see the bake missing);
+##   control (TR-7c): with the importer's mips back on the model (UseLeafMips(false)) the model gates (coverage, ambient, noon) must fail for maple and pine (the test must be able to see the leaf mips missing).
 ## Modes (environment TREE_BILLBOARD_MATCH_ARGS, since run_tests.ps1 passes no arguments):
 ##   (none)        verify: the bake and the checked-in calibration (resources/trees/prepared/lolipop_impostor_calibration.res, version 3) must load, then the gates and the control.
 ##   --calibrate   per scan cutoff, apply it to both tiers and measure the cards (325 m) and the quad (900 m); each tier's cutoff is the crossing with the shipped model's covered area for the cards and
@@ -47,12 +52,17 @@ const AMBIENT_ENERGY := 1.0
 const AZIMUTHS := [30.0, 120.0, 210.0, 300.0] # camera azimuth around the tree relative to the sun azimuth, degrees (ambient case and coverage)
 const SPECIES := ["maple", "fir", "pine"]
 const SUN_TOLERANCE := [0.10, 0.10, 0.15] # species mean of the variant sun ratios, per sun elevation
-const CARD_VARIANT_SUN_TOLERANCE := [0.20, 0.20, 0.25]
+# The cards' bounds are the measured floor of cards thinned by an alpha threshold (docs/work-orders/terrain-vegetation/TR.md, "TR-7c-2 lead decision"): they go back to 10 %, 20 / 20 / 25 % and 8 % if TR-7d is built.
+const CARD_SUN_TOLERANCE := [0.12, 0.10, 0.15] # cards species mean of the variant sun ratios, per sun elevation
+const CARD_VARIANT_SUN_TOLERANCE := [0.25, 0.25, 0.25]
+const CARD_CHANNEL_TOLERANCE := 0.10 # of the reference luminance, cards and quad
 const QUAD_VARIANT_SUN_TOLERANCE := [0.40, 0.40, 0.40]
 const LUMINANCE_TOLERANCE := 0.05
 const CHANNEL_TOLERANCE := 0.08 # of the reference luminance
 const COVERAGE_TOLERANCE := 0.08
-const HANDOFF_TOLERANCE := 0.25
+const MODEL_COVERAGE_TOLERANCE := 0.10 # shipped model against the reference model, species mean covered area at 128 px
+const MODEL_SCALE_64_TOLERANCE := 0.15
+const MODEL_SCALE_46_TOLERANCE := 0.20
 const MIRROR_TOLERANCE := 0.03
 const SCALE_CARD_64_TOLERANCE := 0.15
 const SCALE_CARD_46_TOLERANCE := 0.20
@@ -70,6 +80,8 @@ const OUT := "res://.godot/tree_billboard_match"
 const UP := Vector3(0, 0, 1) # the tree's surface-up in the test world (ring_center lies far along +Z, so the shaders' surface_up is +Z)
 const MIP_ZERO_FROM := "texture(albedo_texture, UV)"
 const MIP_ZERO_TO := "textureLod(albedo_texture, UV, 0.0)"
+const ALPHA_MIP_ZERO_FROM := "textureLod(leaf_alpha_texture, UV, leaf_alpha_lod)" # TR-7c: the isotropic cutout alpha read of the shipped shader (the reference model still reads mip 0)
+const ALPHA_MIP_ZERO_TO := "textureLod(leaf_alpha_texture, UV, 0.0)"
 
 var failed := false
 var done := false
@@ -120,6 +132,9 @@ func _run() -> void:
 	if env_arguments.contains("--sweep"):
 		await _run_sweep()
 		return
+	if not driver.call("LeafMipsLoaded"):
+		_fail("the distance-stable leaf mips are not on the model (resource missing or stale); run tools/run_tests.ps1 -Tests prepare_tree_leaf_mips first")
+		return
 	var report := {"mode": mode_name, "fingerprint": driver.call("GetImpostorFingerprint")}
 	if calibrate:
 		await _run_calibration(report)
@@ -140,8 +155,8 @@ func _run() -> void:
 	var ship_targets := _ship_coverage(tables["ship"])
 	var quad_targets := await _cards_at_handoff()
 	if failed: return
-	var card_result := _evaluate(tables["ship"], tables["ref"], tables["card"], CARD_VARIANT_SUN_TOLERANCE, ship_targets, "the shipped model")
-	var quad_result := _evaluate(tables["ship"], tables["ref"], tables["quad"], QUAD_VARIANT_SUN_TOLERANCE, quad_targets, "the cards at %d px" % HANDOFF_SIZE)
+	var card_result := _evaluate(tables["ship"], tables["ref"], tables["card"], CARD_VARIANT_SUN_TOLERANCE, ship_targets, "the shipped model", CARD_SUN_TOLERANCE, CARD_CHANNEL_TOLERANCE)
+	var quad_result := _evaluate(tables["ship"], tables["ref"], tables["quad"], QUAD_VARIANT_SUN_TOLERANCE, quad_targets, "the cards at %d px" % HANDOFF_SIZE, SUN_TOLERANCE, CARD_CHANNEL_TOLERANCE)
 	report["card"] = card_result
 	report["quad"] = quad_result
 	report["quad_coverage_target_cards_at_46"] = quad_targets
@@ -149,14 +164,21 @@ func _run() -> void:
 	var failures: Array[String] = []
 	for entry: Array in [["card", card_result], ["quad", quad_result]]:
 		for message: String in entry[1]["failures"]: failures.append("%s: %s" % [entry[0], message])
-	# Hand-off step: cards against the shipped model, sun only (reported, and bounded at 25 % for the species mean).
+	# Hand-off step: cards against the shipped model, sun only (the species mean within the sun tolerances, TR-7c).
 	var handoff := _handoff_step(tables["ship"], tables["card"])
 	report["handoff_step"] = handoff
 	for species in 3:
 		for elevation in 3:
 			var step: float = handoff["species_mean"][species][elevation]
-			if absf(step - 1.0) > HANDOFF_TOLERANCE:
-				failures.append("handoff_step: %s sun%d cards/shipped model %.3f outside %.0f %%" % [SPECIES[species], int(ELEVATIONS[elevation]), step, HANDOFF_TOLERANCE * 100.0])
+			if absf(step - 1.0) > float(SUN_TOLERANCE[elevation]):
+				failures.append("handoff_step: %s sun%d cards/shipped model %.3f outside %.0f %%" % [SPECIES[species], int(ELEVATIONS[elevation]), step, float(SUN_TOLERANCE[elevation]) * 100.0])
+	# The shipped model against the reference model (TR-7c): covered area, ambient, sun, and its own scale stability.
+	var model_result := _evaluate_model(tables["ref"], tables["ship"])
+	report["model"] = model_result
+	for message: String in model_result["failures"]: failures.append("model: " + message)
+	var model_scale := await _model_scale(tables["ship"])
+	report["model_scale"] = model_scale
+	for message: String in model_scale["failures"]: failures.append(message)
 	# Scale stability: the covered fraction against the 128 px value, in smaller viewports with the same lens.
 	var scale := await _scale_stability(tables["card"], tables["quad"], quad_targets)
 	report["scale"] = scale
@@ -176,9 +198,17 @@ func _run() -> void:
 		_fail("the control could not switch the bake off")
 		return
 	tables["control"] = await _measure_kind("card", CARD_DISTANCE, SIZE, [AMBIENT, 0])
-	var control_result := _evaluate(tables["ship"], tables["ref"], tables["control"], SUN_TOLERANCE, ship_targets, "the shipped model")
+	var control_result := _evaluate(tables["ship"], tables["ref"], tables["control"], SUN_TOLERANCE, ship_targets, "the shipped model", SUN_TOLERANCE, CHANNEL_TOLERANCE)
 	report["control_pack_pictures"] = control_result
 	driver.call("UseImpostorBake", true)
+	# Control (TR-7c): the importer's mips and the anisotropic alpha read back on the model; the model gates must fail for maple and pine.
+	if driver.call("UseLeafMips", false):
+		_fail("the control could not switch the leaf mips off")
+		return
+	tables["control_model"] = await _measure_kind("ship", CARD_DISTANCE, SIZE, [AMBIENT, 0])
+	var control_model := _evaluate_model(tables["ref"], tables["control_model"])
+	driver.call("UseLeafMips", true)
+	report["control_importer_mips"] = control_model
 	_write_report(report, tables)
 	if dump: await _write_dump()
 	for entry: Array in [["card", card_result], ["quad", quad_result]]:
@@ -190,6 +220,13 @@ func _run() -> void:
 	print("TREE_BILLBOARD_MATCH handoff_step (cards / shipped model, sun only, species mean maple fir pine): noon %s, sun30 %s, sun8 %s" % [_fmt([step_means[0][0], step_means[1][0], step_means[2][0]]), _fmt([step_means[0][1], step_means[1][1], step_means[2][1]]), _fmt([step_means[0][2], step_means[1][2], step_means[2][2]])])
 	print("TREE_BILLBOARD_MATCH scale (species mean covered fraction against 128 px): cards 64 px %s, cards 46 px %s; quad 46 px %s; quad/cards at 46 px %s" % [_fmt(scale["cards_64"]), _fmt(scale["cards_46"]), _fmt(scale["quad_46"]), _fmt(scale["quad_over_cards_46"])])
 	print("TREE_BILLBOARD_MATCH camera side: quad lit from the camera in %d / %d of %d variants (seed 0 / mirrored; shipped model %d); mirror identity worst %.3f" % [camera_side["quad_ok"], camera_side["quad_ok_mirrored"], VARIANTS, camera_side["mesh_ok"], mirror["worst"]])
+	var model_means: Dictionary = model_result
+	print("TREE_BILLBOARD_MATCH model (shipped model against the reference model, species mean maple/fir/pine): coverage %s, ambient luminance %s, sun noon %s, sun30 %s, sun8 %s; scale 64 px %s, 46 px %s" % [_fmt(model_means["species_coverage"]), _fmt(model_means["species_ambient_luminance"]), _fmt(model_means["species_sun"][0]), _fmt(model_means["species_sun"][1]), _fmt(model_means["species_sun"][2]), _fmt(model_scale["model_64"]), _fmt(model_scale["model_46"])])
+	var control_species_failed: Array = control_model["species_failed"]
+	print("TREE_BILLBOARD_MATCH control (importer mips on the model, coverage/ambient/noon): species failing maple/fir/pine %s; coverage %s, ambient luminance %s, noon %s" % [control_species_failed, _fmt(control_model["species_coverage"]), _fmt(control_model["species_ambient_luminance"]), _fmt(control_model["species_sun"][0])])
+	if not (control_species_failed[0] and control_species_failed[2]):
+		_fail("the control with the importer mips on the model does not fail the model gates for both maple and pine (%s); the test cannot tell missing leaf mips" % [control_species_failed])
+		return
 	var control_fail_variants: int = control_result["failing_variants"]
 	print("TREE_BILLBOARD_MATCH control (pack pictures instead of the bake): failing variants %d/%d" % [control_fail_variants, VARIANTS])
 	if control_fail_variants < VARIANTS / 2:
@@ -413,15 +450,19 @@ func _swap_reference(enable: bool) -> bool:
 				_swap_reference(false)
 				_fail("the reference model's shader swap did not find '%s' in %s" % [MIP_ZERO_FROM, shader.resource_path])
 				return false
+			if not code.contains(ALPHA_MIP_ZERO_FROM):
+				_swap_reference(false)
+				_fail("the reference model's shader swap did not find '%s' in %s" % [ALPHA_MIP_ZERO_FROM, shader.resource_path])
+				return false
 			var modified := Shader.new()
-			modified.code = code.replace(MIP_ZERO_FROM, MIP_ZERO_TO)
+			modified.code = code.replace(MIP_ZERO_FROM, MIP_ZERO_TO).replace(ALPHA_MIP_ZERO_FROM, ALPHA_MIP_ZERO_TO)
 			made[shader] = modified
 		material.shader = made[shader]
 	return true
 
 ## Gates for one tier against the reference model (colour, sun) and a per-variant covered-area target (`cover_target`, named `target_name` in messages: the shipped model for the cards and the control,
 ## the cards at the hand-off size for the quad). The control reuses it with the species tolerance per variant (its table has no sun 8 case).
-func _evaluate(_ship: Array, ref: Array, table: Array, variant_sun_tolerance: Array, cover_target: Array, target_name: String) -> Dictionary:
+func _evaluate(_ship: Array, ref: Array, table: Array, variant_sun_tolerance: Array, cover_target: Array, target_name: String, species_sun_tolerance: Array, channel_tolerance: float) -> Dictionary:
 	var failing := {}
 	var failures: Array[String] = []
 	var rows := []
@@ -455,9 +496,9 @@ func _evaluate(_ship: Array, ref: Array, table: Array, variant_sun_tolerance: Ar
 		if absf(luminance_error) > LUMINANCE_TOLERANCE:
 			failing[variant] = true
 			failures.append("v%d ambient luminance %.3f of the reference model (limit %.2f)" % [variant, 1.0 + luminance_error, LUMINANCE_TOLERANCE])
-		if channel_error > CHANNEL_TOLERANCE:
+		if channel_error > channel_tolerance:
 			failing[variant] = true
-			failures.append("v%d ambient channel difference %.3f of the reference luminance (limit %.2f)" % [variant, channel_error, CHANNEL_TOLERANCE])
+			failures.append("v%d ambient channel difference %.3f of the reference luminance (limit %.2f)" % [variant, channel_error, channel_tolerance])
 		row["ambient"] = {"coverage_ratio": 1.0 + coverage_error, "luminance_ratio": 1.0 + luminance_error, "channel_error": channel_error, "r": ambient[1] / maxf(ref_ambient[1], 1e-6), "g": ambient[2] / maxf(ref_ambient[2], 1e-6), "b": ambient[3] / maxf(ref_ambient[3], 1e-6)}
 		for elevation in ELEVATIONS.size():
 			if not table[variant].has(elevation): continue
@@ -486,9 +527,89 @@ func _evaluate(_ship: Array, ref: Array, table: Array, variant_sun_tolerance: Ar
 				continue
 			var mean := _mean_of(sun_ratio[species][elevation])
 			species_sun[elevation].append(mean)
-			if absf(mean - 1.0) > SUN_TOLERANCE[elevation]:
-				failures.append("%s sun%d species mean luminance %.3f of the reference model (limit %.2f)" % [SPECIES[species], int(ELEVATIONS[elevation]), mean, SUN_TOLERANCE[elevation]])
+			if absf(mean - 1.0) > float(species_sun_tolerance[elevation]):
+				failures.append("%s sun%d species mean luminance %.3f of the reference model (limit %.2f)" % [SPECIES[species], int(ELEVATIONS[elevation]), mean, species_sun_tolerance[elevation]])
 	return {"failing_variants": failing.size(), "failing_variant_list": failing.keys(), "failures": failures, "species_coverage": species_coverage, "species_ambient_luminance": species_ambient_luminance, "species_ambient_rgb": species_ambient_rgb, "species_sun": species_sun, "worst_variant_sun": worst_variant_sun, "worst_coverage": worst_coverage, "worst_ambient_luminance": worst_ambient_luminance, "worst_channel": worst_channel, "rows": rows}
+
+## Gates of the shipped model (the LOD2 with the distance-stable leaf mips) against the reference model (the same meshes read at mip 0), species means of the variant values (TR-7c): covered area
+## (ambient, 128 px), ambient luminance and channels, sun only per elevation present in the table. `species_failed` marks the species that miss any gate (the control reads it).
+func _evaluate_model(ref: Array, ship: Array) -> Dictionary:
+	var cover := [[], [], []]
+	var luminance := [[], [], []]
+	var channel := [[], [], []]
+	var sun_ratio := [[[], [], []], [[], [], []], [[], [], []]]
+	var rows := []
+	for variant in VARIANTS:
+		var species := _species(variant)
+		var r := _mean_cases(ref[variant][AMBIENT])
+		var s := _mean_cases(ship[variant][AMBIENT])
+		var channel_error := 0.0
+		for c in [1, 2, 3]: channel_error = maxf(channel_error, absf(s[c] - r[c]) / maxf(r[4], 1e-6))
+		cover[species].append(s[0] / maxf(r[0], 1e-6))
+		luminance[species].append(s[4] / maxf(r[4], 1e-6))
+		channel[species].append(channel_error)
+		var row := {"variant": variant, "coverage_ratio": s[0] / maxf(r[0], 1e-6), "ambient_luminance_ratio": s[4] / maxf(r[4], 1e-6), "channel_error": channel_error}
+		for elevation in ELEVATIONS.size():
+			if not ship[variant].has(elevation): continue
+			var ratio: float = _mean_cases(ship[variant][elevation])[4] / maxf(_mean_cases(ref[variant][elevation])[4], 1e-6)
+			sun_ratio[species][elevation].append(ratio)
+			row["sun%d" % int(ELEVATIONS[elevation])] = ratio
+		rows.append(row)
+	var failures: Array[String] = []
+	var species_failed := [false, false, false]
+	var species_coverage := []
+	var species_luminance := []
+	var species_channel := []
+	var species_sun := [[], [], []]
+	for species in 3:
+		var coverage_mean := _mean_of(cover[species])
+		var luminance_mean := _mean_of(luminance[species])
+		var channel_mean := _mean_of(channel[species])
+		species_coverage.append(coverage_mean)
+		species_luminance.append(luminance_mean)
+		species_channel.append(channel_mean)
+		if absf(coverage_mean - 1.0) > MODEL_COVERAGE_TOLERANCE:
+			species_failed[species] = true
+			failures.append("%s covered area %.3f of the reference model (limit %.2f)" % [SPECIES[species], coverage_mean, MODEL_COVERAGE_TOLERANCE])
+		if absf(luminance_mean - 1.0) > LUMINANCE_TOLERANCE:
+			species_failed[species] = true
+			failures.append("%s ambient luminance %.3f of the reference model (limit %.2f)" % [SPECIES[species], luminance_mean, LUMINANCE_TOLERANCE])
+		if channel_mean > CHANNEL_TOLERANCE:
+			species_failed[species] = true
+			failures.append("%s ambient channel difference %.3f of the reference luminance (limit %.2f)" % [SPECIES[species], channel_mean, CHANNEL_TOLERANCE])
+		for elevation in ELEVATIONS.size():
+			if sun_ratio[species][elevation].is_empty():
+				species_sun[elevation].append(1.0)
+				continue
+			var mean := _mean_of(sun_ratio[species][elevation])
+			species_sun[elevation].append(mean)
+			if absf(mean - 1.0) > float(SUN_TOLERANCE[elevation]):
+				species_failed[species] = true
+				failures.append("%s sun%d luminance %.3f of the reference model (limit %.2f)" % [SPECIES[species], int(ELEVATIONS[elevation]), mean, SUN_TOLERANCE[elevation]])
+	return {"failures": failures, "species_failed": species_failed, "species_coverage": species_coverage, "species_ambient_luminance": species_luminance, "species_channel_error": species_channel, "species_sun": species_sun, "rows": rows}
+
+## The shipped model's covered fraction (ambient, mean over the 4 azimuths) in 64 and 46 px viewports against its 128 px value, species means, same lens (TR-7c: 15 % and 20 %).
+func _model_scale(ship: Array) -> Dictionary:
+	var failures: Array[String] = []
+	var model_64 := await _measure_kind("ship", CARD_DISTANCE, 64, [AMBIENT])
+	var model_46 := await _measure_kind("ship", CARD_DISTANCE, 46, [AMBIENT])
+	var ratios := {"model_64": [[], [], []], "model_46": [[], [], []]}
+	for variant in VARIANTS:
+		var base: float = _mean_cases(ship[variant][AMBIENT])[0]
+		ratios["model_64"][_species(variant)].append(_mean_cases(model_64[variant][AMBIENT])[0] / maxf(base, 1e-6))
+		ratios["model_46"][_species(variant)].append(_mean_cases(model_46[variant][AMBIENT])[0] / maxf(base, 1e-6))
+	var result := {}
+	var limits := {"model_64": MODEL_SCALE_64_TOLERANCE, "model_46": MODEL_SCALE_46_TOLERANCE}
+	for key: String in ratios:
+		var means := []
+		for species in 3:
+			var mean := _mean_of(ratios[key][species])
+			means.append(mean)
+			if absf(mean - 1.0) > float(limits[key]): failures.append("model scale %s: %s species mean %.3f (limit %.2f)" % [key, SPECIES[species], mean, limits[key]])
+		result[key] = means
+		result[key + "_per_variant"] = ratios[key]
+	result["failures"] = failures
+	return result
 
 ## Cards against the shipped model, sun only (the step at the hand-off from the model to the cards): species mean of the variant ratios per sun elevation, and every variant.
 func _handoff_step(ship: Array, card: Array) -> Dictionary:
@@ -503,7 +624,7 @@ func _handoff_step(ship: Array, card: Array) -> Dictionary:
 		rows.append(row)
 	var means := []
 	for species in 3: means.append([_mean_of(per_species[species][0]), _mean_of(per_species[species][1]), _mean_of(per_species[species][2])])
-	return {"species_mean": means, "per_variant_noon_30_8": rows, "bound": HANDOFF_TOLERANCE}
+	return {"species_mean": means, "per_variant_noon_30_8": rows, "bound": SUN_TOLERANCE}
 
 ## Covered fraction (ambient, mean over the 4 azimuths) in 64 and 46 px viewports against the 128 px value (species mean of the variant ratios), with the same lens. The quad at 46 px is also
 ## judged against the cards at 46 px over 12 azimuths (`quad_over_cards_target`, _cards_at_handoff).

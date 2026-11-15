@@ -3,7 +3,7 @@
   "tool_version": 1,
   "engine_identity": "4.8-dev7 (official)|c971f93e7",
   "resource_path": "resources/trees/prepared/lolipop_impostor_atlas.res",
-  "artifact_sha256": "0F1A94F0661628B4098EEF9C0CDF91607DA7EAD44BA52C6F6E471EB04D3C743C",
+  "artifact_sha256": "A0142845F8C4F235E6D402BC11BA7CF8501DA284BA485192AA333FC2785A8D4D",
   "layer_size": 256,
   "sub_samples": 3,
   "method": "orthographic CPU raster of the authored LOD2 along each LOD3 card normal into the card\u0027s UV region; normal mips selected (never averaged) per card by error diffusion on the six-axis clamped light response among the covered children",
@@ -11,7 +11,7 @@
     {
       "index": 0,
       "name": "Acer_Sapling_1",
-      "source_hash": "4333422767E018344C148AAF9954BBDBD313F7B7E7469EB3DC3905DE0715BEB3",
+      "source_hash": "37DE2A7183C01AB5032002A0765D7B75AEDF9271CDB51E47A406ED3941C61883",
       "cards": 9,
       "top_cards": 1,
       "owned_texels": 37274,
@@ -21,7 +21,7 @@
     {
       "index": 1,
       "name": "Acer_Sapling_2",
-      "source_hash": "A5E8E2677E9182AD0F9682DB1F70722BA5681EA81A62812E5A8314A9C6FBAB1B",
+      "source_hash": "81F589324E6E629062191E9B4A661D8898EAB6C1A8914637D9C97DCC1EBFE942",
       "cards": 9,
       "top_cards": 1,
       "owned_texels": 40035,
@@ -31,7 +31,7 @@
     {
       "index": 2,
       "name": "Acer_Sapling_3",
-      "source_hash": "80DE3F276D7658B4CAB2E6EE6765FA98C6C7D10D6F1427F4A4A9415FE26FB614",
+      "source_hash": "E86CC3AACAAB14DD1081B3B2966682A2E3F4D5F034599070BF6D00A96BD9668C",
       "cards": 9,
       "top_cards": 1,
       "owned_texels": 35878,
@@ -41,7 +41,7 @@
     {
       "index": 3,
       "name": "Acer_large_1",
-      "source_hash": "B5D3ACFA926C19A9B18B03599407598017992A8893E22725D4051E4C539C27B9",
+      "source_hash": "0C03EB440AF425FA4BB5B26AFFE1CD0B063A07FB29DE40156F41E60E3B48BFEC",
       "cards": 9,
       "top_cards": 1,
       "owned_texels": 50646,
@@ -51,7 +51,7 @@
     {
       "index": 4,
       "name": "Acer_large_2",
-      "source_hash": "AC8967EEFC35519B163FBFCFB2F8EDC4FA10B4313333D6F9920CC46A27C81C9F",
+      "source_hash": "008AFE47E3750DAB0CCB847EB994CC6C56EC4EBDD92B63BB19378CDF8028E106",
       "cards": 9,
       "top_cards": 1,
       "owned_texels": 39426,
@@ -61,7 +61,7 @@
     {
       "index": 5,
       "name": "Acer_large_3",
-      "source_hash": "9836A38458A2A1E4525E41E2C33659F88F2528A1BDE05184B772AB144E5563AE",
+      "source_hash": "10EB1700C8B9959DC09C6999D47FC49D4081D62A6AE74FA0CE56D6A1B27E7B8A",
       "cards": 9,
       "top_cards": 1,
       "owned_texels": 45871,
@@ -71,7 +71,7 @@
     {
       "index": 6,
       "name": "Acer_medium_1",
-      "source_hash": "B636EA69104C837D1DD10FDA7C159E76B16539996F1F83B4223A559FC72A6A53",
+      "source_hash": "214BEAE3551659A715E9E5A3413E34CA2CB73433E8D1D8F84A59D425347D5F1B",
       "cards": 9,
       "top_cards": 1,
       "owned_texels": 46106,
@@ -81,7 +81,7 @@
     {
       "index": 7,
       "name": "Acer_medium_2",
-      "source_hash": "62A6FCD00B1BC6E1C62D5F0FFDCDBD6F97258305A5D952B0DF8141DFCC4B0030",
+      "source_hash": "3209B02B5BA9D9E3A3E061FC7DE6C291F4F08ECCA69AD886395CC0D0F394E8E2",
       "cards": 9,
       "top_cards": 1,
       "owned_texels": 40856,
@@ -91,7 +91,7 @@
     {
       "index": 8,
       "name": "Acer_medium_3",
-      "source_hash": "55F759AA307A8A77153474DB723E477D22C42BF3EE404CF0C64404D706D85168",
+      "source_hash": "3CACC6AB2E89012F7F655207E9CDD346E57CB467C2B766F4195CB640FEBD5977",
       "cards": 9,
       "top_cards": 1,
       "owned_texels": 38759,
@@ -101,7 +101,7 @@
     {
       "index": 9,
       "name": "Acer_small_1",
-      "source_hash": "6CFBD3F47328E05F3463668FA4397D6023C1EB117DACECBAC5D35877036F38CC",
+      "source_hash": "B7AA30D6CE254BD3A94AD51B47D9BB37417C64CB69989B66BC3965F11DC30983",
       "cards": 9,
       "top_cards": 1,
       "owned_texels": 38074,
@@ -111,7 +111,7 @@
     {
       "index": 10,
       "name": "Acer_small_2",
-      "source_hash": "CBCA1243D90FB6A707B819338FB578F3E4B8EB3EAF6E8B67712BB3CAA1A54175",
+      "source_hash": "994209866A1D9EDF6624670FEEB17CF2D57BC450CFFB2917133841B8DF3E42D3",
       "cards": 9,
       "top_cards": 1,
       "owned_texels": 43796,
@@ -121,7 +121,7 @@
     {
       "index": 11,
       "name": "Acer_small_3",
-      "source_hash": "5C7608B726A9EEB66A7F3061638CBA57813BC343AE427FB133449374766443B8",
+      "source_hash": "D46CD969233DD834980128C7858B29D79CCA5388FE8D409709C7689E54BDBD49",
       "cards": 9,
       "top_cards": 1,
       "owned_texels": 39020,
@@ -131,7 +131,7 @@
     {
       "index": 12,
       "name": "Christmas tree",
-      "source_hash": "BFFD4B38EA21606420E337B51A57291D0A956205DD4C1421429BB0392641E0CB",
+      "source_hash": "CCDB9D0BB5780E359512AD6A76C8D8E1D5855556F35D2944BFC166C5189920C8",
       "cards": 5,
       "top_cards": 1,
       "owned_texels": 34914,
@@ -141,7 +141,7 @@
     {
       "index": 13,
       "name": "Christmas tree_2",
-      "source_hash": "EF4C1FF03354BA2B5FFCF886A7526DFF4F45C0410379232F8DA7E2B587373162",
+      "source_hash": "99F2B469F91A165B3E03E931C610EB61BA2983EE9A8F9DB87047449153C5B566",
       "cards": 5,
       "top_cards": 1,
       "owned_texels": 40317,
@@ -151,7 +151,7 @@
     {
       "index": 14,
       "name": "Christmas tree_3",
-      "source_hash": "993109DCE58A6757DD03DA0FE5AADF5D0AF1189B8C5B8BA61F4D5BE24820CC31",
+      "source_hash": "9F42B8B9711DC1A6D2626920219EB28A9A3F1EAACD629B95C5188DB0771544DE",
       "cards": 5,
       "top_cards": 1,
       "owned_texels": 28678,
@@ -161,7 +161,7 @@
     {
       "index": 15,
       "name": "Pine_big_1",
-      "source_hash": "21E25576C538478F4911C40C5605042A3A2F5F0F7D9E30D836868E15259FB445",
+      "source_hash": "2325683392C5F3B587DD412EA7C61D192359E41FAA2AFFFBCD626C342E5ACBB2",
       "cards": 4,
       "top_cards": 1,
       "owned_texels": 37819,
@@ -171,7 +171,7 @@
     {
       "index": 16,
       "name": "Pine_big_2",
-      "source_hash": "788AB18BE41B8C9F5B060B326972FDC3B2D8B699FC1E5A18BB6440A877C12DC5",
+      "source_hash": "B59A1134FFD582F6EFC755F41AE5C23FA5D018E083936EFD71944CFC73C6D497",
       "cards": 4,
       "top_cards": 1,
       "owned_texels": 36372,
@@ -181,7 +181,7 @@
     {
       "index": 17,
       "name": "Pine_big_3",
-      "source_hash": "6E391185E26626EDA2AA9A74B2629FD29013A2D4D8E5B649EDA34EE2AA2D0E0B",
+      "source_hash": "24582680FB8D8F279CE7A6E959C43FC72543EC5536954AAE28FE3485699317A1",
       "cards": 4,
       "top_cards": 1,
       "owned_texels": 36503,
@@ -191,7 +191,7 @@
     {
       "index": 18,
       "name": "Pine_large_1",
-      "source_hash": "B46454FA0CF5BC75E868F6D20B5F8CC6A6E82A3FBD9F030BBBCA3E9D51ECA3D5",
+      "source_hash": "30ED9393BF2A82139D550FAE8051621A86E8E9AA61514C7F0C9C049F4B6BCD8E",
       "cards": 4,
       "top_cards": 1,
       "owned_texels": 36780,
@@ -201,7 +201,7 @@
     {
       "index": 19,
       "name": "Pine_large_2",
-      "source_hash": "5E0720A85B3CC18C497BC8F1B95ECBC15A854AAF5FA2370ED4F7779EFBC484A4",
+      "source_hash": "0383E36842DE864D3E96DA132E6B2A53726A6ED66CDD91A94BAB2B39DAC060A2",
       "cards": 4,
       "top_cards": 1,
       "owned_texels": 38947,
@@ -211,7 +211,7 @@
     {
       "index": 20,
       "name": "Pine_large_3",
-      "source_hash": "05165341075DEFB722F1E8EB17A7F0A11C4F3F975083849E3177DB6E07571CD6",
+      "source_hash": "0DD2B8DC00CEF3AFE51BB09440C8692D8C97314680EB43FECB5A32E6A4BFD2AC",
       "cards": 4,
       "top_cards": 1,
       "owned_texels": 38572,
@@ -221,7 +221,7 @@
     {
       "index": 21,
       "name": "Pine_medium_1",
-      "source_hash": "31BDF3D3EE66472CA8B6D4BA0364E4AE13EC2AD710CF2767A5444E625B806073",
+      "source_hash": "02FC1FFE7BEA1893BA07FD0E7B216E5FB6F60E77FA0E84244D26AE69F19655C7",
       "cards": 4,
       "top_cards": 1,
       "owned_texels": 36364,
@@ -231,7 +231,7 @@
     {
       "index": 22,
       "name": "Pine_medium_2",
-      "source_hash": "FFB49C2CC69D04490E45B6E83AF68EE437F36BCD7642ACDE5CC9CBA3B53CC57D",
+      "source_hash": "FC491338969A4074C95D677C215426BEE30D50530005E37E71EBBAD2D51980F2",
       "cards": 4,
       "top_cards": 1,
       "owned_texels": 40834,
@@ -241,7 +241,7 @@
     {
       "index": 23,
       "name": "Pine_medium_3",
-      "source_hash": "7CFAE8836C1103E5C9D7CBBC524D809FEF806FDBA9F95A31F81C646BA7AEB32B",
+      "source_hash": "FF4F0AFACB94F846B17A83EDE1F6C24DA52672901534541BBDD6734204A558ED",
       "cards": 4,
       "top_cards": 1,
       "owned_texels": 38493,
@@ -251,7 +251,7 @@
     {
       "index": 24,
       "name": "Pine_sapling_1",
-      "source_hash": "C5F41E1ABC88E4F63761BF3CECEDFC84C42A78891D714B863739ADA87E9A4C38",
+      "source_hash": "04078E3DFA44C90F4F290D147162EEC92C96916BF36D4BB8FEAF87389724D9F2",
       "cards": 4,
       "top_cards": 1,
       "owned_texels": 34892,
@@ -261,7 +261,7 @@
     {
       "index": 25,
       "name": "Pine_sapling_2",
-      "source_hash": "A2C102B32B0225637A9378FE2336D25A34F1E74DBC2E8D18AC06B05D4E81F082",
+      "source_hash": "8393AA597CA1E12588AABCE9BED49406A4FD018825C01C21C12B24DFF9FA8B7B",
       "cards": 4,
       "top_cards": 1,
       "owned_texels": 33543,
@@ -271,7 +271,7 @@
     {
       "index": 26,
       "name": "Pine_sapling_3",
-      "source_hash": "1FDE86DF0A568F7F8898C3714E3825058F4C9423DE28AE2472A2DE29FAE6B65D",
+      "source_hash": "852F9890B9D490A33400818C0DAB8C389DB785B464157E7E1A88298EF02C1288",
       "cards": 4,
       "top_cards": 1,
       "owned_texels": 35403,
@@ -281,7 +281,7 @@
     {
       "index": 27,
       "name": "Pine_small_1",
-      "source_hash": "FD0AB22C34BB2C836A17EFC895095C0486305717DE52666EFF30EC9BE239C353",
+      "source_hash": "322AB8226294FEBCA14917A308C04D440DEEB68ED4D613B560E6DE46FB6FB5CB",
       "cards": 4,
       "top_cards": 1,
       "owned_texels": 37055,
@@ -291,7 +291,7 @@
     {
       "index": 28,
       "name": "Pine_small_2",
-      "source_hash": "5E9353E268C157873020A4D88D863E36D4BA4388E5900AF7B8E50841A5D7C631",
+      "source_hash": "1CCE09BA1EB81E3A3CCBEDC2E208ED490D8108B7764E3C96F40CAACE599B2D25",
       "cards": 4,
       "top_cards": 1,
       "owned_texels": 36016,
@@ -301,7 +301,7 @@
     {
       "index": 29,
       "name": "Pine_small_3",
-      "source_hash": "A5A9C5536E9D925DAD8BCDDF4CD8EEBA9D8AEAA1E93EC82220611333F7439412",
+      "source_hash": "871A0D4717E9CAC72A68316DB5CD9AF6839CDFF02044CEFFEEDA4E12DC6F4335",
       "cards": 4,
       "top_cards": 1,
       "owned_texels": 33357,

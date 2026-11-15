@@ -478,6 +478,18 @@
       "expected_s": 180,
       "timeout_s": 900
     },
+    "tree_leaf_mips_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation",
+        "render-core"
+      ],
+      "marker": "TREE_LEAF_MIPS_TEST",
+      "expected_s": 150,
+      "timeout_s": 600
+    },
     "tree_leaf_mip_preview": {
       "kind": "tool",
       "mode": "gpu",

@@ -48,18 +48,20 @@ public static partial class ImportedTreeCatalog
             string? source = DevelopmentIdentity()?.GetAwaiter().GetResult().Fingerprint;
             var resource = ResourceLoader.Load<PreparedImportedTreeCatalog>(_preparedPath)
                 ?? throw new InvalidOperationException("prepared resource could not be loaded");
-            variants = HydratePrepared(resource, source);
+            variants = HydratePrepared(resource, source, ImportedTreeLeafMipCatalog.Load());
             LoadedFrom = "prepared";
             return true;
         }
         catch (Exception exception) { FallbackReason = exception.Message; return false; }
     }
 
-    private static IReadOnlyList<ImportedTreeVariant> HydratePrepared(PreparedImportedTreeCatalog resource, string? source)
+    private static IReadOnlyList<ImportedTreeVariant> HydratePrepared(PreparedImportedTreeCatalog resource, string? source, PreparedTreeLeafMips? leafMips)
     {
         _unsafeSourceFallback = source != null && resource.SourceFingerprint != source;
         var variants = PreparedImportedTreeCatalogValidation.Hydrate(resource, PreparedImportedTreeCatalogIdentity.CurrentEngineIdentity,
             PreparedImportedTreeCatalogIdentity.ImplementationIdentity, source);
+        // TR-7c: distance-stable leaf mips replace the leaf atlases' textures before anything duplicates materials; missing or stale keeps the import's mips (the loader warns).
+        ImportedTreeLeafMipCatalog.Apply(variants, leafMips, resource.SourceFingerprint);
         FallbackReason = "";
         return variants;
     }
@@ -71,6 +73,8 @@ public static partial class ImportedTreeCatalog
         Task<PreparedTreeSourceIdentity>? identity = DevelopmentIdentity();
         Error error = claims.Request(_preparedPath);
         if (error != Error.Ok) { FallbackReason = "prepared request failed: " + error; yield break; }
+        string? leafPath = ImportedTreeLeafMipCatalog.RequestPath();
+        if (leafPath != null && claims.Request(leafPath) != Error.Ok) leafPath = null; // the catalog does not depend on it; the import's mips stay
         while (true)
         {
             ResourceLoader.ThreadLoadStatus status = ResourceLoader.LoadThreadedGetStatus(_preparedPath);
@@ -82,13 +86,20 @@ public static partial class ImportedTreeCatalog
             }
             yield return true;
         }
+        PreparedTreeLeafMips? leafMips = null;
+        if (leafPath != null)
+        {
+            while (ResourceLoader.LoadThreadedGetStatus(leafPath) == ResourceLoader.ThreadLoadStatus.InProgress) yield return true;
+            if (ResourceLoader.LoadThreadedGetStatus(leafPath) == ResourceLoader.ThreadLoadStatus.Loaded)
+                leafMips = ImportedTreeLeafMipCatalog.Validate(claims.Take(leafPath) as PreparedTreeLeafMips);
+        }
         while (identity != null && !identity.IsCompleted) yield return true;
         IReadOnlyList<ImportedTreeVariant>? prepared = null;
         try
         {
             var resource = claims.Take(_preparedPath) as PreparedImportedTreeCatalog
                 ?? throw new InvalidOperationException("prepared resource has wrong type");
-            prepared = HydratePrepared(resource, identity?.GetAwaiter().GetResult().Fingerprint);
+            prepared = HydratePrepared(resource, identity?.GetAwaiter().GetResult().Fingerprint, leafMips);
         }
         catch (Exception exception) { FallbackReason = exception.Message; }
         if (prepared == null) yield break;

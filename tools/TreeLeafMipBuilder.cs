@@ -6,7 +6,8 @@ namespace RingworldTechDemo.Tools;
 /// <summary>TR-7c-PV: the distance-stable leaf mip rule (docs/work-orders/terrain-vegetation/TR.md, TR-7c, design B and C), a C# port of .godot/tr7c_lead/leaf_mips_reference.py.
 /// Pure CPU, fixed iteration order, doubles for the bisection: two builds on one machine give the same bytes. Preview only: nothing here is used by the game.
 /// Alpha: the covered fraction of each mip texel, scaled per leaf-cluster island and level so the usage-weighted area that passes the cutoff equals the close-up area.
-/// Colour: linear-light mean of the covered level-0 texels, smoothed, with pull-push into texels that have no covered texel under them.</summary>
+/// Colour (TR-7c-2b, TR.md "TR-7c-2 lead decision"): linear-light mean of the covered level-0 texels, weighted by usage from the 512-texel level down; smoothed (2 passes, 4 at 32 texels) down to 32 texels, the
+/// leaf-cluster island's mean colour at 16, 8 and 4 texels and the atlas mean at 2 x 2 and 1 x 1; pull-push into texels that have no covered texel under them. With a colour codec the flat colours are snapped on the block-compression round trip.</summary>
 public static class TreeLeafMipBuilder
 {
     public const int Grid = 512;
@@ -187,7 +188,7 @@ public static class TreeLeafMipBuilder
     }
 
     /// <summary>Builds the stable mip chain (levels 1 to log2(size)) from level-0 RGBA8 bytes (sRGB colour), the cutoff, and the species usage map (512 x 512, any scale).</summary>
-    public static Built Build(byte[] rgba, int size, double cutoff, double[] usage, Func<byte[], int, byte[]>? codec = null, int codecMaxSize = 256)
+    public static Built Build(byte[] rgba, int size, double cutoff, double[] usage, Func<byte[], int, byte[]>? codec = null, int codecMaxSize = 256, Func<byte[], byte[]>? colourCodec = null, Func<byte[], byte[], int, (byte[] Alpha, byte[] Rgb)>? levelCodec = null)
     {
         int levels = Log2(size);
         if ((1 << levels) != size || size < Grid) throw new ArgumentException("atlas must be a power of two of at least " + Grid);
@@ -278,27 +279,134 @@ public static class TreeLeafMipBuilder
             else for (int i = 0; i < n; i++) alpha[i] = Q(cv[i], global);
             built.Alpha[l] = alpha; built.Scales[l] = scale;
         }
-        // colour
+        // colour: usage-weighted sums from the 512-texel level down
+        int weightLevel = Log2(size / Grid);
+        double usageMean = 0; int usageCount = 0;
+        for (int c = 0; c < Grid * Grid; c++) if (usage[c] > 0) { usageMean += usage[c]; usageCount++; }
+        usageMean = usageCount > 0 ? usageMean / usageCount : 1;
+        var wnum = new float[levels + 1][]; var wden = new float[levels + 1][];
+        wnum[weightLevel] = new float[Grid * Grid * 3]; wden[weightLevel] = new float[Grid * Grid];
+        for (int c = 0; c < Grid * Grid; c++)
+        {
+            float u = (float)(usage[c] / usageMean + 0.001);
+            wden[weightLevel][c] = den[weightLevel][c] * u;
+            for (int k = 0; k < 3; k++) wnum[weightLevel][c * 3 + k] = num[weightLevel][c * 3 + k] * u;
+        }
+        for (int l = weightLevel + 1; l <= levels; l++) { int sl = size >> (l - 1); wnum[l] = Box(wnum[l - 1], sl, 3); wden[l] = Box(wden[l - 1], sl); }
+        // flat colours: one per island and the atlas colour (sum of num over sum of den on the 512 grid), snapped once on the codec round trip
+        var islandNum = new double[islands + 1][]; var islandDen = new double[islands + 1];
+        for (int k = 0; k <= islands; k++) islandNum[k] = new double[3];
+        for (int c = 0; c < Grid * Grid; c++)
+        {
+            int k = ownG[c];
+            for (int ch = 0; ch < 3; ch++) { islandNum[k][ch] += wnum[weightLevel][c * 3 + ch]; islandNum[islands][ch] += wnum[weightLevel][c * 3 + ch]; }
+            islandDen[k] += wden[weightLevel][c]; islandDen[islands] += wden[weightLevel][c];
+        }
+        var flat = new byte[islands + 1][];
+        for (int k = 0; k <= islands; k++)
+        {
+            int src = islandDen[k] > 0 ? k : islands;
+            var target = new double[3];
+            for (int ch = 0; ch < 3; ch++) target[ch] = islandDen[src] > 0 ? islandNum[src][ch] / islandDen[src] : 0;
+            flat[k] = SnapColour(target, colourCodec);
+        }
         var col = new float[levels + 1][];
         for (int l = levels; l >= 1; l--)
         {
             int s = size >> l;
-            float[] sn = Smooth(num[l], s, 3), sd = Smooth(den[l], s, 1);
+            if (s <= 16)
+            {
+                col[l] = new float[s * s * 3]; // flat colours are stored as the snapped bytes below; the float field only serves the pull-push of finer levels
+                int[]? ot = s >= 4 ? Owners(own, islandGrid, s, islands) : null;
+                for (int i = 0; i < s * s; i++)
+                {
+                    byte[] f = flat[ot == null ? islands : ot[i]];
+                    for (int k = 0; k < 3; k++) col[l][i * 3 + k] = SrgbToLinear[f[k]];
+                }
+                continue;
+            }
+            bool weighted = s <= Grid;
+            float[] sn = Smooth(weighted ? wnum[l] : num[l], s, 3, s == 32 ? 4 : 2), sd = Smooth(weighted ? wden[l] : den[l], s, 1, s == 32 ? 4 : 2);
+            float floor = weighted ? 1e-12f : 1e-6f;
             var c = new float[s * s * 3];
             for (int i = 0; i < s * s; i++)
             {
-                if (sd[i] > 1e-6f) for (int k = 0; k < 3; k++) c[i * 3 + k] = sn[i * 3 + k] / sd[i];
+                if (sd[i] > floor) for (int k = 0; k < 3; k++) c[i * 3 + k] = sn[i * 3 + k] / sd[i];
                 else if (l < levels) { int px = i % s / 2, py = i / s / 2; int hs = s / 2; for (int k = 0; k < 3; k++) c[i * 3 + k] = col[l + 1][(py * hs + px) * 3 + k]; }
             }
             col[l] = c;
         }
         for (int l = 1; l <= levels; l++)
         {
-            int n = (size >> l) * (size >> l); var rgb = new byte[n * 3];
-            for (int i = 0; i < n * 3; i++) rgb[i] = LinearToSrgbByte(col[l][i]);
+            int s = size >> l; int n = s * s; var rgb = new byte[n * 3];
+            if (s <= 16)
+            {
+                int[]? ot = s >= 4 ? Owners(own, islandGrid, s, islands) : null;
+                for (int i = 0; i < n; i++) { byte[] f = flat[ot == null ? islands : ot[i]]; rgb[i * 3] = f[0]; rgb[i * 3 + 1] = f[1]; rgb[i * 3 + 2] = f[2]; }
+            }
+            else for (int i = 0; i < n * 3; i++) rgb[i] = LinearToSrgbByte(col[l][i]);
             built.Rgb[l] = rgb;
         }
+        // Colour closed on the codec (TR-7c-2b, primary decision): per level of 4 to 512 texels, a per-level linear RGB offset is iterated on the compress -> decode round trip (alpha bytes untouched) until the decoded
+        // usage-weighted colour of the passing area matches the intended one. The stored colour stays an estimate of the weighted mean of covered level-0 texels; iteration 0 (no offset) is a candidate, so it is never worse.
+        if (levelCodec != null)
+            for (int l = 1; l <= levels; l++)
+            {
+                int s = size >> l;
+                if (s > Grid || s < 4) continue;
+                var intended = built.Rgb[l]; var alphaBytes = built.Alpha[l];
+                var tlin = new float[intended.Length];
+                for (int i = 0; i < tlin.Length; i++) tlin[i] = SrgbToLinear[intended[i]];
+                var first = levelCodec(intended, alphaBytes, s);
+                double[]? target = PassColour(first.Alpha, intended, s, cutoff, usage);
+                if (target == null) continue;
+                double yt = Math.Max(Luminance(target), 1e-9);
+                var offset = new double[3]; byte[] best = intended; double bestE = double.MaxValue;
+                for (int iteration = 0; iteration < 5; iteration++)
+                {
+                    byte[] trial = intended;
+                    if (iteration > 0)
+                    {
+                        trial = new byte[intended.Length];
+                        for (int i = 0; i < trial.Length; i++) trial[i] = LinearToSrgbByte(tlin[i] + offset[i % 3]);
+                    }
+                    var decoded = iteration == 0 ? first : levelCodec(trial, alphaBytes, s);
+                    double[]? got = PassColour(decoded.Alpha, decoded.Rgb, s, cutoff, usage);
+                    if (got == null) break;
+                    double e = Math.Abs(Luminance(got) / yt - 1) + 0.5 * Math.Max(Math.Abs(got[0] - target[0]), Math.Max(Math.Abs(got[1] - target[1]), Math.Abs(got[2] - target[2]))) / yt;
+                    if (e < bestE) { bestE = e; best = trial; }
+                    for (int c = 0; c < 3; c++) offset[c] += target[c] - got[c];
+                }
+                built.Rgb[l] = best;
+            }
         return built;
+    }
+
+    /// <summary>The sRGB byte triple of a flat linear colour. Without a codec: the nearest byte triple. With one: among the triples within 4 steps of it per channel (clamped), the one whose decoded 4 x 4 flat block has the
+    /// smallest E = |Yd - Yt| / Yt + 0.5 max |cd - ct| / Yt in linear light; ties to the smallest |i| + |j| + |k|, then the first in loop order.</summary>
+    private static byte[] SnapColour(double[] target, Func<byte[], byte[]>? codec)
+    {
+        var near = new[] { LinearToSrgbByte(target[0]), LinearToSrgbByte(target[1]), LinearToSrgbByte(target[2]) };
+        if (codec == null) return near;
+        double yt = Math.Max(0.2126 * target[0] + 0.7152 * target[1] + 0.0722 * target[2], 1e-6);
+        byte[] best = near; double bestE = double.MaxValue; int bestCost = int.MaxValue;
+        for (int i = -4; i <= 4; i++)
+            for (int j = -4; j <= 4; j++)
+                for (int k = -4; k <= 4; k++)
+                {
+                    var t = new[] { (byte)Math.Clamp(near[0] + i, 0, 255), (byte)Math.Clamp(near[1] + j, 0, 255), (byte)Math.Clamp(near[2] + k, 0, 255) };
+                    var block = new byte[48];
+                    for (int p = 0; p < 16; p++) { block[p * 3] = t[0]; block[p * 3 + 1] = t[1]; block[p * 3 + 2] = t[2]; }
+                    byte[] decoded = codec(block);
+                    var d = new double[3];
+                    for (int p = 0; p < 16; p++) for (int c = 0; c < 3; c++) d[c] += SrgbToLinear[decoded[p * 3 + c]] / 16.0;
+                    double yd = 0.2126 * d[0] + 0.7152 * d[1] + 0.0722 * d[2];
+                    double worst = Math.Max(Math.Abs(d[0] - target[0]), Math.Max(Math.Abs(d[1] - target[1]), Math.Abs(d[2] - target[2])));
+                    double e = Math.Abs(yd - yt) / yt + 0.5 * worst / yt;
+                    int cost = Math.Abs(i) + Math.Abs(j) + Math.Abs(k);
+                    if (e < bestE || (e == bestE && cost < bestCost)) { bestE = e; bestCost = cost; best = t; }
+                }
+        return best;
     }
 
     private static double Dot(float[] grid, int[] cells, double[] w)
@@ -308,11 +416,11 @@ public static class TreeLeafMipBuilder
         return s > 0 ? t / s : 0;
     }
 
-    /// <summary>Two passes of [1 2 1] / 4 in each axis, wrapping (the atlas is sampled with repeat).</summary>
-    private static float[] Smooth(float[] a, int s, int channels)
+    /// <summary>Passes (two by default) of [1 2 1] / 4 in each axis, wrapping (the atlas is sampled with repeat).</summary>
+    private static float[] Smooth(float[] a, int s, int channels, int passes = 2)
     {
         float[] cur = a;
-        for (int pass = 0; pass < 2; pass++)
+        for (int pass = 0; pass < passes; pass++)
         {
             var tmp = new float[cur.Length]; var dst = new float[cur.Length];
             for (int y = 0; y < s; y++)
@@ -357,6 +465,68 @@ public static class TreeLeafMipBuilder
                     + taps.F[cy] * ((1 - taps.F[cx]) * a[taps.I1[cy] * s + taps.I0[cx]] + taps.F[cx] * a[taps.I1[cy] * s + taps.I1[cx]]) / 255.0;
         return r;
     }
+
+    /// <summary>Usage-weighted mean linear colour (r, g, b) of the 512-grid cells where the level's bilinear (repeat) alpha passes the cutoff, the colour sampled bilinearly from the level's sRGB bytes. Null where nothing passes.</summary>
+    public static double[]? PassColour(byte[] alpha, byte[] rgb, int s, double cutoff, double[] usage)
+        => PassColourOnGrid(OnGrid(alpha, s), OnGridColour(rgb, s), cutoff, usage);
+
+    /// <summary>The same halfway to the next level: both the alpha and the linear colour are the mean of the two levels' grid values.</summary>
+    public static double[]? PassColourHalfway(byte[] a, byte[] rgbA, int sa, byte[] b, byte[] rgbB, int sb, double cutoff, double[] usage)
+    {
+        double[] ua = OnGrid(a, sa), ub = OnGrid(b, sb), ca = OnGridColour(rgbA, sa), cb = OnGridColour(rgbB, sb);
+        var alpha = new double[Grid * Grid]; var colour = new double[Grid * Grid * 3];
+        for (int c = 0; c < alpha.Length; c++) alpha[c] = 0.5 * ua[c] + 0.5 * ub[c];
+        for (int c = 0; c < colour.Length; c++) colour[c] = 0.5 * ca[c] + 0.5 * cb[c];
+        return PassColourOnGrid(alpha, colour, cutoff, usage);
+    }
+
+    private static double[]? PassColourOnGrid(double[] alpha, double[] colour, double cutoff, double[] usage)
+    {
+        var sum = new double[3]; double w = 0;
+        for (int c = 0; c < Grid * Grid; c++)
+        {
+            if (usage[c] <= 0 || alpha[c] < cutoff) continue;
+            w += usage[c];
+            for (int k = 0; k < 3; k++) sum[k] += usage[c] * colour[c * 3 + k];
+        }
+        if (w <= 0) return null;
+        return new[] { sum[0] / w, sum[1] / w, sum[2] / w };
+    }
+
+    private static double[] OnGridColour(byte[] rgb, int s)
+    {
+        var r = new double[Grid * Grid * 3];
+        var taps = new Taps(s);
+        for (int cy = 0; cy < Grid; cy++)
+            for (int cx = 0; cx < Grid; cx++)
+                for (int k = 0; k < 3; k++)
+                    r[(cy * Grid + cx) * 3 + k] = (1 - taps.F[cy]) * ((1 - taps.F[cx]) * SrgbToLinear[rgb[(taps.I0[cy] * s + taps.I0[cx]) * 3 + k]] + taps.F[cx] * SrgbToLinear[rgb[(taps.I0[cy] * s + taps.I1[cx]) * 3 + k]])
+                        + taps.F[cy] * ((1 - taps.F[cx]) * SrgbToLinear[rgb[(taps.I1[cy] * s + taps.I0[cx]) * 3 + k]] + taps.F[cx] * SrgbToLinear[rgb[(taps.I1[cy] * s + taps.I1[cx]) * 3 + k]]);
+        return r;
+    }
+
+    /// <summary>The usage-weighted mean linear colour of the covered level-0 texels (the close-up colour): per grid cell the mean of mask x colour over the mean of mask, weighted by usage.</summary>
+    public static double[] BaselineColour(byte[] rgba, int size, double cutoff, double[] usage)
+    {
+        int b = size / Grid; var num = new double[3]; double den = 0;
+        for (int c = 0; c < Grid * Grid; c++)
+        {
+            if (usage[c] <= 0) continue;
+            int cy = c / Grid, cx = c % Grid;
+            for (int y = 0; y < b; y++)
+                for (int x = 0; x < b; x++)
+                {
+                    int px = (((cy * b + y) * size) + cx * b + x) * 4;
+                    if (rgba[px + 3] / 255.0 < cutoff) continue;
+                    den += usage[c];
+                    for (int k = 0; k < 3; k++) num[k] += usage[c] * SrgbToLinear[rgba[px + k]];
+                }
+        }
+        return den > 0 ? new[] { num[0] / den, num[1] / den, num[2] / den } : new double[3];
+    }
+
+    /// <summary>Luminance of a linear colour (Rec. 709).</summary>
+    public static double Luminance(double[] c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
 
     /// <summary>The level-0 covered area on the 512 grid (the close-up baseline), weighted by usage.</summary>
     public static double BaselineArea(byte[] rgba, int size, double cutoff, double[] usage)

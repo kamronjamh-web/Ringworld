@@ -31,7 +31,11 @@ public static class ImportedTreeImpostorAtlasBake
             Color tint = m.GetShaderParameter("albedo_tint").AsColor();
             sha.AppendData(BitConverter.GetBytes(tint.R)); sha.AppendData(BitConverter.GetBytes(tint.G)); sha.AppendData(BitConverter.GetBytes(tint.B)); sha.AppendData(BitConverter.GetBytes(tint.A));
             if (m.GetShaderParameter("albedo_texture").AsGodotObject() is Texture2D texture && texture.GetImage() is Image image && !image.IsEmpty())
-                sha.AppendData(image.GetData());
+            {
+                byte[] data = image.GetData();
+                int length = image.HasMipmaps() ? (int)image.GetMipmapOffset(1) : data.Length; // level 0 only: TR-7c swaps the mips of the leaf atlases, never level 0
+                sha.AppendData(data, 0, Math.Min(length, data.Length));
+            }
         }
         return Convert.ToHexString(sha.GetHashAndReset());
     }

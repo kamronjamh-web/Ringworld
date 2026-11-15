@@ -50,6 +50,20 @@ public partial class ImportedTreeCatalogDriver : Node
     /// <summary>The control of the test: false swaps the pack's own card pictures in for the bake, true swaps the bake back. Returns whether the bake is in use afterwards.</summary>
     public bool UseImpostorBake(bool enabled) => ImportedTreeImpostorCatalog.Load().UseBake(enabled);
 
+    /// <summary>TR-7c: true when the catalog's leaf materials carry the distance-stable mips (resource present and fresh).</summary>
+    public bool LeafMipsLoaded()
+    {
+        ImportedTreeCatalog.Load();
+        return ImportedTreeLeafMipCatalog.AppliedCount > 0;
+    }
+
+    /// <summary>The control of the match test: false puts the importer's mips and the anisotropic alpha read back on the catalog's leaf materials, true the stable mips. Returns whether they are in use afterwards.</summary>
+    public bool UseLeafMips(bool enabled)
+    {
+        ImportedTreeCatalog.Load();
+        return ImportedTreeLeafMipCatalog.SetActive(enabled);
+    }
+
     public float[] GetImpostorDefaultCutoffs() => new List<float>(ImportedTreeImpostorCatalog.Load().DefaultCutoffs).ToArray();
 
     public float[] GetImpostorCalibrationCutoffs() => ImportedTreeImpostorCatalog.Load().Calibration?.Cutoffs ?? GetImpostorDefaultCutoffs();

@@ -28,7 +28,7 @@ var sun: DirectionalLight3D
 var driver: Node
 var instance: MeshInstance3D
 var report := {"gates": {}, "failures": []}
-var stages := "gate,sheets,numbers,dolly"
+var stages := "gate,sheets,numbers,dolly2"
 
 func _initialize() -> void:
 	if RenderingServer.get_rendering_device() == null:
@@ -62,6 +62,9 @@ func _run() -> void:
 		if failed: return
 	if "dolly" in stages:
 		await _dolly()
+		if failed: return
+	if "dolly2" in stages:
+		await _dolly_far()
 		if failed: return
 	var file := FileAccess.open(DIR.path_join("preview_report.json"), FileAccess.WRITE)
 	file.store_string(JSON.stringify(report, "\t"))
@@ -411,6 +414,47 @@ func _ref_metrics(table: Dictionary, name: String, ref: String, species: int) ->
 		dg.append(absf(a[2] - ra[2]) / maxf(ra[4], 1e-9))
 		db.append(absf(a[3] - ra[3]) / maxf(ra[4], 1e-9))
 	return {"cov": _mean(cov), "amb_lum": _mean(al), "noon_lum": _mean(nl), "amb_dr": _mean(dr), "amb_dg": _mean(dg), "amb_db": _mean(db)}
+
+# --- far dolly (TR-7c-2b) ---------------------------------------------------------------------------------------------------------------------------------
+
+## v13 and v19, 300 m to 1,000 m in 300 frames (the far model, LOD2b) with wind on (the field-less sway of ring_local_wind_displacement, advancing per frame at 30 fps), at the 1080p scale: stable mips with the isotropic
+## alpha read unlimited (leaf_alpha_max_lod 16, "stable16") beside the same with the 4 x 4 limit ("stable"). Frames under dolly_far/<variant>/{unlimited,limited,both}.
+func _dolly_far() -> void:
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(DIR.path_join("dolly_far")))
+	var strip_items := [{"text": "STABLE, isotropic alpha, no level limit (max lod 16)", "pos": Vector2(8, 4)}, {"text": "STABLE, alpha limited to the 4x4 level", "pos": Vector2(548, 4)}]
+	await _layout(Vector2i(1080, 30), strip_items, DIR.path_join("dolly_far/strip.png"), "")
+	var strip := Image.load_from_file(ProjectSettings.globalize_path(DIR.path_join("dolly_far/strip.png")))
+	strip.convert(Image.FORMAT_RGBA8)
+	RenderingServer.global_shader_parameter_set("ring_local_wind_enabled", 1.0)
+	RenderingServer.global_shader_parameter_set("ring_local_wind_axis", Vector3(1, 0, 0))
+	RenderingServer.global_shader_parameter_set("ring_local_wind_center", Vector3(0, 0, 100000))
+	RenderingServer.global_shader_parameter_set("ring_local_wind_vector", Vector2(14.0, 6.0))
+	var frames := 300
+	for variant: int in [13, 19]:
+		var base := DIR.path_join("dolly_far/v%d" % variant)
+		for sub in ["unlimited", "limited", "both"]: DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(base.path_join(sub)))
+		for i in frames:
+			var t := float(i) / float(frames - 1)
+			var dist := 300.0 + 700.0 * t
+			var clock := float(i) / 30.0
+			RenderingServer.global_shader_parameter_set("ring_local_wind_wave", Vector4(sin(clock * 1.9), cos(clock * 1.9), sin(clock * 0.9), cos(clock * 0.9)))
+			var halves := []
+			for look in ["stable16", "stable"]:
+				var half: Image = await _shot(variant, "lod2b", look, Vector2i(540, 1080), dist, 70.0, MIXED, 120.0, 0.0, 0.5, Color(0.62, 0.66, 0.72))
+				half.convert(Image.FORMAT_RGBA8)
+				halves.append(half)
+			var both := Image.create(1080, 1110, false, Image.FORMAT_RGBA8)
+			both.fill(Color(0.1, 0.1, 0.1))
+			both.blit_rect(strip, Rect2i(0, 0, 1080, 30), Vector2i(0, 0))
+			both.blit_rect(halves[0], Rect2i(0, 0, 540, 1080), Vector2i(0, 30))
+			both.blit_rect(halves[1], Rect2i(0, 0, 540, 1080), Vector2i(540, 30))
+			var name := "frame%08d.png" % i
+			halves[0].save_png(ProjectSettings.globalize_path(base.path_join("unlimited/" + name)))
+			halves[1].save_png(ProjectSettings.globalize_path(base.path_join("limited/" + name)))
+			both.save_png(ProjectSettings.globalize_path(base.path_join("both/" + name)))
+		print("TREE_LEAF_MIP_PREVIEW far dolly v%d: %d frames in %s" % [variant, frames, ProjectSettings.globalize_path(base)])
+	RenderingServer.global_shader_parameter_set("ring_local_wind_enabled", 0.0)
+	report["dolly_far"] = {"variants": [13, 19], "frames": frames, "distance_m": [300, 1000], "wind": true}
 
 # --- dolly -------------------------------------------------------------------------------------------------------------------------------------------------------
 

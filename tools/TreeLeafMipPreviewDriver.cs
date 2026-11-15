@@ -16,8 +16,11 @@ public partial class TreeLeafMipPreviewDriver : Node
     private readonly Dictionary<string, ImageTexture> _chains = new();
     private readonly Dictionary<string, string> _names = new();
     private readonly Dictionary<(ulong, string), ShaderMaterial> _cache = new();
-    private readonly Dictionary<Shader, Shader> _iso = new(), _mip0 = new();
+    private readonly Dictionary<Shader, Shader> _mip0 = new();
     private Vector3 _sun = new(1, 0, 0);
+
+    // The catalog must hand out the import textures (look "today"): the shipped loader would otherwise swap them.
+    public TreeLeafMipPreviewDriver() => ImportedTreeLeafMipCatalog.ConfigureForDiagnostics(null, false);
 
     /// <summary>Loads the chains of one set (suffix "_cl" = closed loop, "" = open loop) and checks each against the manifest (level count and hash of the loaded image data). Returns "" or the error.</summary>
     public string Init(string dir, string suffix)
@@ -159,15 +162,14 @@ public partial class TreeLeafMipPreviewDriver : Node
                 m.Shader = Swap(_mip0, orig.Shader, "texture(albedo_texture, UV)", "textureLod(albedo_texture, UV, 0.0)", null);
                 break;
             case "stable":
+            case "stable16": // the isotropic read without the level limit (leaf_alpha_max_lod 16): the dolly's comparison
             case "ship":
                 if (Leaf(orig, out string path) && _chains.TryGetValue(path, out ImageTexture? tex))
                 {
                     m.SetShaderParameter("albedo_texture", tex);
-                    if (look == "stable")
-                    {
-                        m.Shader = Swap(_iso, orig.Shader, "ALPHA = albedo.a;", "ALPHA = texture(leaf_alpha_texture, UV).a * albedo_tint.a;", "uniform sampler2D leaf_alpha_texture : filter_linear_mipmap, repeat_enable;\n");
-                        m.SetShaderParameter("leaf_alpha_texture", tex);
-                    }
+                    m.SetShaderParameter("leaf_alpha_texture", tex);
+                    m.SetShaderParameter("leaf_alpha_isotropic", look != "ship"); // TR-7c: the shipped shader carries the isotropic read; "ship" keeps the anisotropic one
+                    m.SetShaderParameter("leaf_alpha_max_lod", look == "stable" ? ImportedTreeLeafMipCatalog.MaxLod(tex) : 16f);
                 }
                 break;
         }

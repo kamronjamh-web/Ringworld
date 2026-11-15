@@ -2,6 +2,11 @@ shader_type spatial;
 render_mode cull_disabled, depth_draw_opaque;
 
 uniform sampler2D albedo_texture : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+// TR-7c: the cutout alpha of the distance-stable leaf mips is read isotropically (an anisotropic tap set reads a finer level averaged along one axis, which changes the covered area with the view angle). The loader sets both with the texture; off elsewhere.
+uniform sampler2D leaf_alpha_texture : filter_linear_mipmap, repeat_enable;
+uniform bool leaf_alpha_isotropic = false;
+// The coarsest mip level the isotropic cutout read may use. The loader sets the 4 x 4 level: coarser levels cannot carry the covered area, and a card seen at an angle reaches them first.
+uniform float leaf_alpha_max_lod = 16.0;
 uniform sampler2D normal_texture : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2D metallic_texture : filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2D roughness_texture : filter_linear_mipmap_anisotropic, repeat_enable;
@@ -102,7 +107,12 @@ void fragment() {
 	apply_tree_dither(FRAGCOORD.xy);
 	vec4 albedo = texture(albedo_texture, UV) * albedo_tint;
 	if (use_alpha_cutout) {
-		ALPHA = albedo.a;
+		if (leaf_alpha_isotropic) {
+			float leaf_alpha_lod = min(textureQueryLod(leaf_alpha_texture, UV).y, leaf_alpha_max_lod);
+			ALPHA = textureLod(leaf_alpha_texture, UV, leaf_alpha_lod).a * albedo_tint.a;
+		} else {
+			ALPHA = albedo.a;
+		}
 		ALPHA_SCISSOR_THRESHOLD = alpha_cutoff;
 	}
 	ALBEDO = albedo.rgb * mix(night_tint, vec3(1.0), tree_day_factor) * (1.0 - tree_cloud_occlusion * tree_day_factor * 0.34);

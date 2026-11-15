@@ -12,14 +12,16 @@ using RingworldTechDemo.Vegetation;
 
 namespace RingworldTechDemo.Tools;
 
-/// <summary>TR-7c-PV (preview only, nothing shipped): builds the distance-stable leaf mips of the three leaf atlases (TreeLeafMipBuilder), compresses them level by level into the import's format,
-/// gates the result and writes ImageTextures, manifest.json and leaf_mips_table.md under res://.godot/ (it refuses any other output folder).</summary>
+/// <summary>TR-7c: builds the distance-stable leaf mips of the three leaf atlases (TreeLeafMipBuilder), compresses them level by level into the import's format and gates the result (the scale bisection is
+/// closed on the DXT5 round trip, TR.md "TR-7c-PV DXT5 note"). Preview mode (shippedPath empty) writes both the open-loop and the closed-loop ImageTextures, manifest.json and leaf_mips_table.md under res://.godot/
+/// (it refuses any other output folder). Shipped mode builds the closed loop only and, when every gate passes, stages and promotes resources/trees/prepared/lolipop_leaf_mips.res and its manifest.</summary>
 public partial class PrepareTreeLeafMips : RefCounted
 {
-    public const string ToolVersion = "tr7c-pv-1";
+    public const string ToolVersion = "tr7c-2";
     private const string ReferenceOutput = "res://.godot/tr7c_lead/leaf_mips_reference_output.txt";
+    private const string ColourReferenceOutput = "res://.godot/tr7c_lead2/colour_rule_reference_output.txt";
 
-    private sealed class Atlas
+    internal sealed class Atlas
     {
         public string Name = "", Path = "";
         public float Cutoff; public bool HasCutoff;
@@ -28,21 +30,28 @@ public partial class PrepareTreeLeafMips : RefCounted
         public readonly Dictionary<int, double[]> Usage = new();
     }
 
-    public int Run(string outDir, string reportPath)
+    public int Run(string outDir, string reportPath, string shippedPath, string manifestPath)
     {
         var failures = new List<string>();
         var openMisses = new List<string>();
+        bool shipped = !string.IsNullOrEmpty(shippedPath);
         try
         {
             if (!outDir.StartsWith("res://.godot/")) throw new ArgumentException("output folder must be under res://.godot/: " + outDir);
             Directory.CreateDirectory(ProjectSettings.GlobalizePath(outDir));
+            ImportedTreeLeafMipCatalog.ConfigureForDiagnostics(null, false); // the catalog must hand out the import's own textures: they are what is rebuilt
             IReadOnlyList<ImportedTreeVariant> variants = ImportedTreeCatalog.Load();
+            if (shipped && ImportedTreeCatalog.LoadedFrom != "prepared") throw new InvalidOperationException("the shipped resource is built against the prepared catalog; it loaded from " + ImportedTreeCatalog.LoadedFrom + " (" + ImportedTreeCatalog.FallbackReason + ")");
+            string catalogFingerprint = shipped ? ResourceLoader.Load<PreparedImportedTreeCatalog>(ImportedTreeCatalog.PreparedResourcePath).SourceFingerprint : "";
+            var product = new PreparedTreeLeafMips { ToolVersion = ToolVersion, CatalogFingerprint = catalogFingerprint };
+            var tableRows = new List<object>(); var colourRows = new List<object>();
             var atlases = Group(variants, failures);
             var manifest = new List<object>();
             var md = new StringBuilder();
             md.AppendLine("# TR-7c-PV leaf mip table (stable mips; per-variant passing area against level 0, usage weighted)");
             md.AppendLine();
             var reference = ParseReference();
+            var colourReference = ParseColourReference();
             foreach (Atlas atlas in atlases)
             {
                 var clock = Stopwatch.StartNew();
@@ -62,11 +71,11 @@ public partial class PrepareTreeLeafMips : RefCounted
                 double cutoff = atlas.Cutoff;
                 double[] species = new double[TreeLeafMipBuilder.Grid * TreeLeafMipBuilder.Grid];
                 foreach (var pair in atlas.Usage) { double sum = pair.Value.Sum(); for (int i = 0; i < species.Length; i++) species[i] += pair.Value[i] / sum; }
-                foreach (bool closed in new[] { false, true })
+                foreach (bool closed in shipped ? new[] { true } : new[] { false, true })
                 {
                 var sink = closed ? failures : openMisses;
-                var built = TreeLeafMipBuilder.Build(rgba, size, cutoff, species, closed ? Codec : null);
-                var again = TreeLeafMipBuilder.Build(rgba, size, cutoff, species, closed ? Codec : null);
+                var built = TreeLeafMipBuilder.Build(rgba, size, cutoff, species, closed ? Codec : null, 256, closed ? ColourCodec : null, closed ? LevelCodec : null);
+                var again = TreeLeafMipBuilder.Build(rgba, size, cutoff, species, closed ? Codec : null, 256, closed ? ColourCodec : null, closed ? LevelCodec : null);
                 string buildHash = HashBuilt(built);
                 if (buildHash != HashBuilt(again)) sink.Add($"{atlas.Name}: a second build gives another hash");
                 // compress level by level and concatenate behind the import's level 0
@@ -92,11 +101,19 @@ public partial class PrepareTreeLeafMips : RefCounted
                     if (!slice.SequenceEqual(levelBytes[l])) { sink.Add($"{atlas.Name}: level {l} was not kept by the loaded chain"); break; }
                 }
                 // decompressed alpha of every built level
-                var decodedAlpha = new byte[levels + 1][];
-                for (int l = 1; l <= levels; l++) decodedAlpha[l] = DecodeAlpha(levelBytes[l], size >> l);
+                var decodedAlpha = new byte[levels + 1][]; var decodedRgb = new byte[levels + 1][];
+                for (int l = 1; l <= levels; l++) DecodeLevel(levelBytes[l], size >> l, out decodedAlpha[l], out decodedRgb[l]);
                 var texture = ImageTexture.CreateFromImage(output);
                 string file = $"atlas_{atlas.Name}{(closed ? "_cl" : "")}.res";
-                if (ResourceSaver.Save(texture, $"{outDir}/{file}") != Error.Ok) sink.Add($"{atlas.Name}: could not save {file}");
+                if (shipped)
+                {
+                    product.AtlasNames = product.AtlasNames.Append(atlas.Name).ToArray();
+                    product.SourcePaths = product.SourcePaths.Append(atlas.Path).ToArray();
+                    product.Cutoffs = product.Cutoffs.Append((float)cutoff).ToArray();
+                    product.Sizes = product.Sizes.Append(size).ToArray();
+                    product.Textures.Add(texture);
+                }
+                else if (ResourceSaver.Save(texture, $"{outDir}/{file}") != Error.Ok) sink.Add($"{atlas.Name}: could not save {file}");
                 // the table
                 md.AppendLine($"## {atlas.Name} ({(closed ? "closed loop: scales solved on the DXT5 round trip" : "open loop: the rule as specified")}): {size} px, cutoff {cutoff:0.###}, islands {built.Islands}, variants {string.Join(",", atlas.Variants)}");
                 md.AppendLine();
@@ -119,20 +136,42 @@ public partial class PrepareTreeLeafMips : RefCounted
                             dhalf1.Add(TreeLeafMipBuilder.AreaHalfway(decodedAlpha[l], s, decodedAlpha[l + 1], s / 2, cutoff, atlas.Usage[v]) / b);
                         }
                     }
+                    tableRows.Add(new { atlas = atlas.Name, level = l, texels = s, built_mean = Math.Round(built1.Average(), 4), built_min = Math.Round(built1.Min(), 4), built_max = Math.Round(built1.Max(), 4), dxt5_mean = Math.Round(dec1.Average(), 4), dxt5_min = Math.Round(dec1.Min(), 4), dxt5_max = Math.Round(dec1.Max(), 4) });
                     md.AppendLine($"L{l} | {s} | {Fmt(built1)} | {Fmt(half1)} | {Fmt(dec1)} | {Fmt(dhalf1)} | {string.Join(" ", built.Scales[l].Select(x => x.ToString("0.00")))}");
                     double mean = dec1.Average();
-                    // TR.md "TR-7c-PV DXT5 note (2026-11-15)": two gates are bounded at the measured DXT5 floor (maple 8x8 species mean 3 %, pine 4x4 per variant 20 %).
-                    double meanTolerance = atlas.Name == "maple" && s == 8 ? 0.03 : 0.02, variantTolerance4 = atlas.Name == "pine" ? 0.20 : 0.10;
-                    if (s >= 8)
-                    {
-                        if (Math.Abs(mean - 1) > meanTolerance) sink.Add($"{atlas.Name} L{l} ({s}x{s}): species mean {mean:0.000} is off by more than {meanTolerance * 100:0} % after DXT5");
-                        if (dec1.Any(r => Math.Abs(r - 1) > 0.05)) sink.Add($"{atlas.Name} L{l} ({s}x{s}): a variant is off by more than 5 % after DXT5 ({dec1.Min():0.000}..{dec1.Max():0.000})");
-                    }
-                    else if (s == 4 && dec1.Any(r => Math.Abs(r - 1) > variantTolerance4)) sink.Add($"{atlas.Name} L{l} (4x4): a variant is off by more than {variantTolerance4 * 100:0} % after DXT5 ({dec1.Min():0.000}..{dec1.Max():0.000})");
-                    if (s >= 8 && reference.TryGetValue((atlas.Name, s), out double refMean) && Math.Abs(mean - refMean) > meanTolerance)
+                    foreach (string miss in GateLevel(atlas.Name, s, dec1)) sink.Add(miss);
+                    if (s >= 8 && reference.TryGetValue((atlas.Name, s), out double refMean) && Math.Abs(mean - refMean) > MeanTolerance(atlas.Name, s))
                         sink.Add($"{atlas.Name} L{l} ({s}x{s}): table mean {mean:0.000} differs from the reference table's {refMean:0.000} by more than 2 points");
                 }
                 if (decodedAlpha[levels][0] / 255.0 >= cutoff || built.Alpha[levels][0] / 255.0 >= cutoff) sink.Add($"{atlas.Name}: the 1x1 level passes the cutoff");
+                md.AppendLine();
+                // colour table: the passing area's colour against the close-up colour, on the decoded chain (and the built, undecoded colours for the reference comparison), at the level and halfway to the next
+                double[] closeUp = TreeLeafMipBuilder.BaselineColour(rgba, size, cutoff, species);
+                if (closed) md.AppendLine($"Close-up colour (linear rgb, usage weighted): decoded import level 0 (the gates' baseline) {FmtRgb(closeUp)}; source PNG {FmtRgb(SourceBaseline(atlas.Path, size, cutoff, species))}");
+                var plain = closed ? TreeLeafMipBuilder.Build(rgba, size, cutoff, species) : built; // the rule's own colours (no codec, no snap): what the colour reference describes
+                md.AppendLine($"### {atlas.Name} colour of the passing area against the close-up colour (decoded DXT5; luminance, then each channel's difference over the close-up luminance; species usage)");
+                md.AppendLine();
+                md.AppendLine("level | texels | at the level: lum (dr dg db) | halfway to next: lum (dr dg db) | built, undecoded: lum");
+                md.AppendLine("--- | --- | --- | --- | ---");
+                for (int l = 1; l <= levels; l++)
+                {
+                    int s = size >> l;
+                    if (s > TreeLeafMipBuilder.Grid || s < 2) continue;
+                    double[]? at = TreeLeafMipBuilder.PassColour(decodedAlpha[l], decodedRgb[l], s, cutoff, species);
+                    double[]? half = l < levels ? TreeLeafMipBuilder.PassColourHalfway(decodedAlpha[l], decodedRgb[l], s, decodedAlpha[l + 1], decodedRgb[l + 1], s / 2, cutoff, species) : null;
+                    double[]? undecoded = TreeLeafMipBuilder.PassColour(plain.Alpha[l], plain.Rgb[l], s, cutoff, species);
+                    md.AppendLine($"L{l} | {s} | {FmtColour(at, closeUp)} | {FmtColour(half, closeUp)} | {(undecoded == null ? "-" : (TreeLeafMipBuilder.Luminance(undecoded) / TreeLeafMipBuilder.Luminance(closeUp)).ToString("0.000"))}");
+                    if (at != null)
+                    {
+                        colourRows.Add(new { atlas = atlas.Name, mode = closed ? "closed" : "open", level = l, texels = s, luminance = Math.Round(TreeLeafMipBuilder.Luminance(at) / TreeLeafMipBuilder.Luminance(closeUp), 4), dr = Math.Round(ChannelError(at, closeUp, 0), 4), dg = Math.Round(ChannelError(at, closeUp, 1), 4), db = Math.Round(ChannelError(at, closeUp, 2), 4) });
+                        foreach (string miss in GateColour(atlas.Name, s, at, closeUp)) sink.Add(miss);
+                    }
+                    if (closed && undecoded != null && colourReference.TryGetValue((atlas.Name, s), out double refLum))
+                    {
+                        double mine = TreeLeafMipBuilder.Luminance(undecoded) / TreeLeafMipBuilder.Luminance(closeUp);
+                        if (Math.Abs(mine - refLum) > 0.02) sink.Add($"{atlas.Name} L{l} ({s}x{s}): undecoded colour luminance {mine:0.000} differs from the colour reference's hyb {refLum:0.000} by more than 2 points");
+                    }
+                }
                 md.AppendLine();
                 manifest.Add(new
                 {
@@ -143,11 +182,12 @@ public partial class PrepareTreeLeafMips : RefCounted
                 GD.Print($"PREPARE_TREE_LEAF_MIPS {atlas.Name} {(closed ? "closed" : "open")}: {size} px, islands {built.Islands}, chain {chainData.Length} bytes, {clock.Elapsed.TotalSeconds:0.0} s");
                 }
             }
+            if (atlases.Count != 3) failures.Add($"expected 3 leaf atlases, found {atlases.Count}");
             File.WriteAllText(ProjectSettings.GlobalizePath($"{outDir}/leaf_mips_table.md"), md.ToString());
             File.WriteAllText(ProjectSettings.GlobalizePath($"{outDir}/manifest.json"),
                 JsonSerializer.Serialize(new { tool_version = ToolVersion, atlases = manifest, failures, open_loop_gate_misses = openMisses }, new JsonSerializerOptions { WriteIndented = true }) + "\n");
             if (!string.IsNullOrEmpty(reportPath)) File.WriteAllText(ProjectSettings.GlobalizePath(reportPath), md.ToString());
-            if (atlases.Count != 3) failures.Add($"expected 3 leaf atlases, found {atlases.Count}");
+            if (failures.Count == 0 && shipped) Promote(product, shippedPath, manifestPath, manifest, tableRows, colourRows, catalogFingerprint);
             if (failures.Count > 0)
             {
                 foreach (string f in failures) GD.PushError("PREPARE_TREE_LEAF_MIPS gate: " + f);
@@ -155,7 +195,7 @@ public partial class PrepareTreeLeafMips : RefCounted
                 return 1;
             }
             foreach (string m in openMisses) GD.Print("PREPARE_TREE_LEAF_MIPS open-loop gate miss (information): " + m);
-            GD.Print("PREPARE_TREE_LEAF_MIPS=PASS (closed loop) atlases=" + atlases.Count + " out=" + outDir);
+            GD.Print("PREPARE_TREE_LEAF_MIPS=PASS (closed loop) atlases=" + atlases.Count + (shipped ? " shipped=" + shippedPath : " out=" + outDir));
             return 0;
         }
         catch (Exception exception)
@@ -165,7 +205,192 @@ public partial class PrepareTreeLeafMips : RefCounted
         }
     }
 
+    /// <summary>Species-mean tolerance of one level. TR.md "TR-7c-PV DXT5 note (2026-11-15)": maple's 8 x 8 level is bounded at the measured DXT5 floor (3 %).</summary>
+    internal static double MeanTolerance(string atlas, int texels) => atlas == "maple" && texels == 8 ? 0.03 : 0.02;
+
+    /// <summary>The gates of one level on the decoded passing-area ratios of all variants of an atlas (against level 0): species mean (2 %, maple 8 x 8 3 %) and variants (5 %) from 8 x 8 texels up,
+    /// variants at 4 x 4 within 10 % (pine 20 %, the measured DXT5 floor). Returns the misses.</summary>
+    internal static List<string> GateLevel(string atlas, int texels, List<double> ratios)
+    {
+        var misses = new List<string>();
+        double mean = ratios.Average(), tolerance = MeanTolerance(atlas, texels), variantTolerance4 = atlas == "pine" ? 0.20 : 0.10;
+        string range = $"{ratios.Min():0.000}..{ratios.Max():0.000}";
+        if (texels >= 8)
+        {
+            if (Math.Abs(mean - 1) > tolerance) misses.Add($"{atlas} ({texels}x{texels}): species mean {mean:0.000} is off by more than {tolerance * 100:0} % after DXT5");
+            if (ratios.Any(r => Math.Abs(r - 1) > 0.05)) misses.Add($"{atlas} ({texels}x{texels}): a variant is off by more than 5 % after DXT5 ({range})");
+        }
+        else if (texels == 4 && ratios.Any(r => Math.Abs(r - 1) > variantTolerance4)) misses.Add($"{atlas} (4x4): a variant is off by more than {variantTolerance4 * 100:0} % after DXT5 ({range})");
+        return misses;
+    }
+
+    /// <summary>Channel difference of a passing-area colour from the close-up colour over the close-up luminance (the match test's definition).</summary>
+    internal static double ChannelError(double[] pass, double[] closeUp, int channel) => Math.Abs(pass[channel] - closeUp[channel]) / Math.Max(TreeLeafMipBuilder.Luminance(closeUp), 1e-6);
+
+    /// <summary>Colour gates of one level (species usage, decoded): 16 texels and smaller luminance within 4 % and each channel within 8 % of the luminance (a flat colour sits on the 5:6:5 grid); 32 to 512 texels
+    /// luminance within 5 % and each channel within 6 % (fir is 2.7 to 3.4 % dark at 64 and 32 texels, limit F3, kept as a bound).</summary>
+    internal static List<string> GateColour(string atlas, int texels, double[] pass, double[] closeUp)
+    {
+        var misses = new List<string>();
+        bool small = texels <= 16;
+        double lumTolerance = small ? 0.04 : 0.05, channelTolerance = small ? 0.08 : 0.06;
+        double lum = TreeLeafMipBuilder.Luminance(pass) / TreeLeafMipBuilder.Luminance(closeUp);
+        if (Math.Abs(lum - 1) > lumTolerance) misses.Add($"{atlas} ({texels}x{texels}): colour luminance {lum:0.000} of the close-up is off by more than {lumTolerance * 100:0} % after DXT5");
+        for (int c = 0; c < 3; c++)
+            if (ChannelError(pass, closeUp, c) > channelTolerance) misses.Add($"{atlas} ({texels}x{texels}): colour channel {"rgb"[c]} differs by {ChannelError(pass, closeUp, c):0.000} of the close-up luminance (limit {channelTolerance:0.00}) after DXT5");
+        return misses;
+    }
+
+    private static string FmtRgb(double[]? c) => c == null ? "n/a" : $"({c[0]:0.0000} {c[1]:0.0000} {c[2]:0.0000}) lum {TreeLeafMipBuilder.Luminance(c):0.0000}";
+
+    /// <summary>The same baseline from the uncompressed source image next to the import, when there is one (information only).</summary>
+    private static double[]? SourceBaseline(string importPath, int size, double cutoff, double[] species)
+    {
+        try
+        {
+            string png = System.IO.Path.ChangeExtension(ProjectSettings.GlobalizePath(importPath), ".png");
+            if (!File.Exists(png)) return null;
+            Image image = Image.LoadFromFile(png);
+            if (image == null || image.GetWidth() != size) return null;
+            image.Convert(Image.Format.Rgba8);
+            return TreeLeafMipBuilder.BaselineColour(image.GetData(), size, cutoff, species);
+        }
+        catch (Exception) { return null; }
+    }
+
+    private static string FmtColour(double[]? pass, double[] closeUp)
+        => pass == null ? "-" : $"{TreeLeafMipBuilder.Luminance(pass) / TreeLeafMipBuilder.Luminance(closeUp):0.000} ({SignedChannel(pass, closeUp, 0):+0.000;-0.000} {SignedChannel(pass, closeUp, 1):+0.000;-0.000} {SignedChannel(pass, closeUp, 2):+0.000;-0.000})";
+
+    private static double SignedChannel(double[] pass, double[] closeUp, int channel) => (pass[channel] - closeUp[channel]) / Math.Max(TreeLeafMipBuilder.Luminance(closeUp), 1e-6);
+
+    /// <summary>Stages the resource and the manifest next to their targets and promotes both (move over the old file) only after the resource saved and re-loaded with the right shape.</summary>
+    private static void Promote(PreparedTreeLeafMips product, string shippedPath, string manifestPath, List<object> atlases, List<object> table, List<object> colourTable, string catalogFingerprint)
+    {
+        string target = ProjectSettings.GlobalizePath(shippedPath), staged = System.IO.Path.ChangeExtension(target, ".staged.res");
+        if (ResourceSaver.Save(product, ProjectSettings.LocalizePath(staged)) != Error.Ok) throw new IOException("could not stage " + staged);
+        var check = ResourceLoader.Load<PreparedTreeLeafMips>(ProjectSettings.LocalizePath(staged), null, ResourceLoader.CacheMode.Ignore);
+        if (check == null || check.Textures.Count != 3 || check.CatalogFingerprint != catalogFingerprint) throw new IOException("the staged resource does not load back");
+        string stagedManifest = manifestPath.Length > 0 ? ProjectSettings.GlobalizePath(manifestPath) + ".staged" : "";
+        string hash = Sha(File.ReadAllBytes(staged));
+        var manifest = new
+        {
+            schema_version = PreparedTreeLeafMips.CurrentSchemaVersion, tool_version = ToolVersion, catalog_fingerprint = catalogFingerprint,
+            engine_identity = PreparedImportedTreeCatalogIdentity.CurrentEngineIdentity, resource_path = "resources/trees/prepared/lolipop_leaf_mips.res",
+            artifact_sha256 = hash, artifact_bytes = new FileInfo(staged).Length,
+            note = "levels 1 and up are the stable mips (alpha: covered fraction scaled per leaf cluster on the DXT5 round trip; colour: linear-light mean of the covered texels, usage weighted, smoothed down to 32 texels, the leaf cluster's mean colour at 16 to 4 texels and the atlas mean at 2 and 1, flat colours snapped on the DXT5 round trip); level 0 is the import's bytes",
+            atlases, table, colour_table = colourTable
+        };
+        File.WriteAllText(stagedManifest, JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }) + "\n");
+        File.Move(staged, target, true);
+        File.Move(stagedManifest, ProjectSettings.GlobalizePath(manifestPath), true);
+        GD.Print($"PREPARE_TREE_LEAF_MIPS promoted {shippedPath} ({new FileInfo(target).Length} bytes, sha256 {hash})");
+    }
+
+    /// <summary>Level 0 of a DXT5 import decoded to RGBA8 (the builder's input).</summary>
+    internal static byte[] DecodeLevel0(Image import)
+    {
+        Image decoded = (Image)import.Duplicate();
+        decoded.Decompress();
+        decoded.ClearMipmaps();
+        decoded.Convert(Image.Format.Rgba8);
+        return decoded.GetData();
+    }
+
+    /// <summary>The usage map of a species: every variant's map, each normalised to 1, summed.</summary>
+    internal static double[] SpeciesUsage(Atlas atlas)
+    {
+        double[] species = new double[TreeLeafMipBuilder.Grid * TreeLeafMipBuilder.Grid];
+        foreach (var pair in atlas.Usage) { double sum = pair.Value.Sum(); for (int i = 0; i < species.Length; i++) species[i] += pair.Value[i] / sum; }
+        return species;
+    }
+
+    /// <summary>Alpha bytes of every level (index 1 and up) of a DXT5 chain, as the GPU decodes them.</summary>
+    internal static byte[][] DecodeChain(Image chain, int size) => DecodeChain(chain, size, out _);
+
+    /// <summary>Alpha bytes and sRGB colour bytes (s x s x 3) of every level (index 1 and up) of a DXT5 chain, as the GPU decodes them.</summary>
+    internal static byte[][] DecodeChain(Image chain, int size, out byte[][] rgb)
+    {
+        int levels = chain.GetMipmapCount();
+        byte[] data = chain.GetData();
+        var result = new byte[levels + 1][]; rgb = new byte[levels + 1][];
+        for (int l = 1; l <= levels; l++)
+        {
+            int offset = (int)chain.GetMipmapOffset(l), end = l == levels ? data.Length : (int)chain.GetMipmapOffset(l + 1);
+            DecodeLevel(data.AsSpan(offset, end - offset).ToArray(), size >> l, out result[l], out rgb[l]);
+        }
+        return result;
+    }
+
+    /// <summary>Per level (index 1 and up, 512 texels and smaller; others null) the colour of the passing area against the close-up colour: (luminance ratio, channel errors r, g, b), species usage, from decoded levels.</summary>
+    internal static double[]?[] ColourLevels(Atlas atlas, byte[] rgba, int size, byte[][] alphaLevels, byte[][] rgbLevels, out double[] closeUp)
+    {
+        double[] species = SpeciesUsage(atlas);
+        closeUp = TreeLeafMipBuilder.BaselineColour(rgba, size, atlas.Cutoff, species);
+        var result = new double[]?[alphaLevels.Length];
+        for (int l = 1; l < alphaLevels.Length; l++)
+        {
+            int s = size >> l;
+            if (s > TreeLeafMipBuilder.Grid || s < 2) continue;
+            double[]? at = TreeLeafMipBuilder.PassColour(alphaLevels[l], rgbLevels[l], s, atlas.Cutoff, species);
+            if (at == null) continue;
+            result[l] = new[] { TreeLeafMipBuilder.Luminance(at) / TreeLeafMipBuilder.Luminance(closeUp), ChannelError(at, closeUp, 0), ChannelError(at, closeUp, 1), ChannelError(at, closeUp, 2) };
+        }
+        return result;
+    }
+
+    /// <summary>The colour gates of a set of colour levels (from ColourLevels).</summary>
+    internal static List<string> GateColourLevels(string atlas, int size, double[]?[] levels)
+    {
+        var misses = new List<string>();
+        for (int l = 1; l < levels.Length; l++)
+        {
+            if (levels[l] == null) continue;
+            int s = size >> l; bool small = s <= 16;
+            double lumTolerance = small ? 0.04 : 0.05, channelTolerance = small ? 0.08 : 0.06;
+            if (Math.Abs(levels[l]![0] - 1) > lumTolerance) misses.Add($"{atlas} ({s}x{s}): colour luminance {levels[l]![0]:0.000} of the close-up");
+            for (int c = 0; c < 3; c++) if (levels[l]![1 + c] > channelTolerance) misses.Add($"{atlas} ({s}x{s}): colour channel {"rgb"[c]} differs by {levels[l]![1 + c]:0.000}");
+        }
+        return misses;
+    }
+
+    /// <summary>Per level (index 1 and up, levels from 2 x 2 up to the 512 grid; others null) the passing area of every variant of the atlas against level 0 (usage weighted), from decoded alpha levels.</summary>
+    internal static Dictionary<int, double>[] LevelRatios(Atlas atlas, byte[] rgba, int size, byte[][] alphaLevels)
+    {
+        var baseArea = atlas.Variants.ToDictionary(v => v, v => TreeLeafMipBuilder.BaselineArea(rgba, size, atlas.Cutoff, atlas.Usage[v]));
+        var result = new Dictionary<int, double>[alphaLevels.Length];
+        for (int l = 1; l < alphaLevels.Length; l++)
+        {
+            int s = size >> l;
+            if (s > TreeLeafMipBuilder.Grid || s < 2) continue;
+            result[l] = atlas.Variants.ToDictionary(v => v, v => TreeLeafMipBuilder.AreaOf(alphaLevels[l], s, atlas.Cutoff, atlas.Usage[v]) / baseArea[v]);
+        }
+        return result;
+    }
+
+    internal static string BuildAndDecode(Atlas atlas, byte[] rgba, int size, out byte[][] decodedAlpha, out byte[][] decodedRgb)
+    {
+        var built = TreeLeafMipBuilder.Build(rgba, size, atlas.Cutoff, SpeciesUsage(atlas), Codec, 256, ColourCodec, LevelCodec);
+        decodedAlpha = new byte[built.Levels + 1][]; decodedRgb = new byte[built.Levels + 1][];
+        for (int l = 1; l <= built.Levels; l++) DecodeLevel(CompressLevel(built.Rgb[l], built.Alpha[l], size >> l), size >> l, out decodedAlpha[l], out decodedRgb[l]);
+        return HashBuilt(built);
+    }
+
     private static byte[] Codec(byte[] alpha, int s) => DecodeAlpha(CompressLevel(new byte[s * s * 3], alpha, s), s);
+
+    /// <summary>The level codec of the builder's colour loop: a whole level through compress and decode (alpha and colour).</summary>
+    private static (byte[] Alpha, byte[] Rgb) LevelCodec(byte[] rgb, byte[] alpha, int s)
+    {
+        DecodeLevel(CompressLevel(rgb, alpha, s), s, out byte[] a, out byte[] c);
+        return (a, c);
+    }
+
+    /// <summary>The colour codec of the builder: a 4 x 4 block of sRGB bytes through the same compress call the chain uses (alpha opaque), decoded.</summary>
+    private static byte[] ColourCodec(byte[] block)
+    {
+        var alpha = new byte[16]; Array.Fill(alpha, (byte)255);
+        DecodeLevel(CompressLevel(block, alpha, 4), 4, out _, out byte[] rgb);
+        return rgb;
+    }
 
     private static string Fmt(List<double> v) => v.Count == 0 ? "-" : $"{v.Average():0.000} ({v.Min():0.000}..{v.Max():0.000})";
 
@@ -196,21 +421,28 @@ public partial class PrepareTreeLeafMips : RefCounted
     }
 
     /// <summary>Alpha bytes (s x s) of one DXT5 level as the GPU would decode it.</summary>
-    public static byte[] DecodeAlpha(byte[] dxt5, int s)
+    public static byte[] DecodeAlpha(byte[] dxt5, int s) { DecodeLevel(dxt5, s, out byte[] alpha, out _); return alpha; }
+
+    /// <summary>Alpha bytes (s x s) and sRGB colour bytes (s x s x 3) of one DXT5 level as the GPU would decode them.</summary>
+    public static void DecodeLevel(byte[] dxt5, int s, out byte[] alpha, out byte[] rgb)
     {
         int p = Math.Max(s, 4);
         Image image = Image.CreateFromData(p, p, false, Image.Format.Dxt5, dxt5);
         image.Decompress();
         image.Convert(Image.Format.Rgba8);
         byte[] rgba = image.GetData();
-        var alpha = new byte[s * s];
-        for (int y = 0; y < s; y++) for (int x = 0; x < s; x++) alpha[y * s + x] = rgba[(y * p + x) * 4 + 3];
-        return alpha;
+        alpha = new byte[s * s]; rgb = new byte[s * s * 3];
+        for (int y = 0; y < s; y++)
+            for (int x = 0; x < s; x++)
+            {
+                int src = (y * p + x) * 4, dst = y * s + x;
+                alpha[dst] = rgba[src + 3]; rgb[dst * 3] = rgba[src]; rgb[dst * 3 + 1] = rgba[src + 1]; rgb[dst * 3 + 2] = rgba[src + 2];
+            }
     }
 
     // ---- catalog grouping and usage -------------------------------------------------------------------------------------------------------------------
 
-    private static List<Atlas> Group(IReadOnlyList<ImportedTreeVariant> variants, List<string> failures)
+    internal static List<Atlas> Group(IReadOnlyList<ImportedTreeVariant> variants, List<string> failures)
     {
         var atlases = new Dictionary<string, Atlas>();
         foreach (ImportedTreeVariant v in variants)
@@ -296,6 +528,23 @@ public partial class PrepareTreeLeafMips : RefCounted
             }
             else foreach (int c in inside) map[c] += area / inside.Count;
         }
+    }
+
+    /// <summary>Luminance of the passing area against the close-up colour, rule hyb, per level of the lead's colour reference, keyed by (atlas, texels).</summary>
+    private static Dictionary<(string, int), double> ParseColourReference()
+    {
+        var result = new Dictionary<(string, int), double>();
+        string path = ProjectSettings.GlobalizePath(ColourReferenceOutput);
+        if (!File.Exists(path)) return result;
+        string atlas = "";
+        foreach (string line in File.ReadLines(path))
+        {
+            Match head = Regex.Match(line, @"^== (\w+):");
+            if (head.Success) { atlas = head.Groups[1].Value; continue; }
+            Match row = Regex.Match(line, @"^\s+L\d+\s+\(\s*(\d+)\).*\| hyb: ([0-9.]+) \(");
+            if (row.Success && atlas.Length > 0) result[(atlas, int.Parse(row.Groups[1].Value))] = double.Parse(row.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture);
+        }
+        return result;
     }
 
     /// <summary>Species mean per level of the lead's reference table, keyed by (atlas, texels).</summary>
