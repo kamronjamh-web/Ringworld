@@ -56,7 +56,7 @@ Verified 2026-11-13 against the `terrain-vegetation-revamp` working tree. TR-1 m
 | TR-8 review pack: before/after cost and look | sol_implementer | S | TR-5, TR-6, TR-7 (and TR-7c if D8 is yes) | none |
 | TR-9a cap fall-through: budget-derived band edges (added by TR-2, 2026-11-14) | sol_implementer | M | TR-5, TR-6; merged after TR-8's cost run | TR-7 |
 | TR-9 raise the tree count to the budget | sol_implementer | M | TR-8, TR-9a | none |
-| TR-10 tree shadows past the near range: canopy in the height shadow | sol_lead, then sol_implementer | M | TR-1 for the design and prototype (alongside TR-4 to TR-7); TR-9 for the prototype pictures and the implementation (TR-2 design H) | TR-4 to TR-7 |
+| TR-10 tree shadows past the near range: canopy in the height shadow (user asked 2026-11-15 for cheap tree shadows to 1 to 3 km) | sol_lead, then sol_implementer | M | TR-1 for the design and prototype (alongside TR-4 to TR-7); TR-9 for the prototype pictures and the implementation (TR-2 design H) | TR-4 to TR-7 |
 
 ## Work orders
 
@@ -1503,6 +1503,8 @@ DEPENDS ON: TR-1 (the tree-shadow-off case). It can run alongside TR-4 to TR-7.
 - Step 0 (added): with the TR-1 harness at R, measure the tree-shadow case at tree shadow distances 120, 240 and 360 m and with the LOD0 proxies and the card proxies hidden in turn, at `forest_edge_eye` noon and sun 8 degrees. This sets the hand-off distance of step 2 and says how much of the cost is caster batches.
 - Correction to the context below: the tree sun-shadow distance is a preset value (160 / 240 / 360 / 480 / 700 m, `RingGraphicsQualityController.PresetTrees`) limited by the near sun map; it is not 480 m at every preset. TR-1 measured with 240 m (Medium).
 - The canopy must be built from all tree records inside the far distance (gate 1.0, design B4), not from the roots a slot accepted.
+
+**User request (2026-11-15).** The user asked for simple, cheap tree shadows out to 1 to 3 km; this order is the chosen route (option A against forest-density darkening and an extra far-tree shadow layer). Range: the height-shadow L0 (4 m texels, about ±2 km) carries crown-scale shadows to about 2 km, L1 (16 m, about ±8 km) carries forest-mass shadows to 3 km and beyond. At 1 to 3 km a tree is 5 to 20 px tall at 1080p, so 4 m and 16 m texels are adequate. It is also a performance lever for the 90 fps pass: tree sun-map shadows cost 1.48 to 2.47 ms at R (TR-8), and step 2's hand-off can pull the sun-map tree shadow distance in once the canopy term covers the ground beyond it. Known limit: a heightfield has no light through gaps between crowns (the partial-transmittance term of step 1 is the answer); the strip across the hand-off is a user sign-off item.
 
 OBJECTIVE
 Trees cast real sun-map shadows only close to the camera. Beyond that, forests darken the ground through the existing shader-based shadow path, so a higher tree count (TR-9) does not raise shadow cost.
