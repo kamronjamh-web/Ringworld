@@ -199,6 +199,7 @@ public static partial class ImportedTreeCatalog
                     for (int i = 0; i + 2 < indices.Length; i += 3) (indices[i + 1], indices[i + 2]) = (indices[i + 2], indices[i + 1]);
                     arrays[(int)Mesh.ArrayType.Index] = indices;
                 }
+                RepairInvertedShading(arrays, baked);
                 output.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
                 Material? material = CreateProductionMaterial(instance.GetActiveMaterial(surface), species);
                 output.SurfaceSetMaterial(output.GetSurfaceCount() - 1, material);
@@ -207,6 +208,37 @@ public static partial class ImportedTreeCatalog
         }
         if (output.GetSurfaceCount() == 0) throw new InvalidOperationException($"{anchor.Name} has no mesh surfaces.");
         return ImportedTreeWindAttachments.Bake(output);
+    }
+
+    /// <summary>
+    /// Some authored surfaces (Christmas tree_3 foliage) carry shading normals that point against their triangle winding
+    /// (Godot front faces are clockwise), so every light reads inverted. When a surface's mean dot(normal, winding normal)
+    /// is negative its normals are negated and the tangent handedness is negated with them, which keeps the binormal
+    /// (cross(normal, tangent) * w) where it was. Surfaces that agree with their winding are untouched.
+    /// </summary>
+    internal static bool RepairInvertedShading(Godot.Collections.Array arrays, Vector3[] vertices)
+    {
+        if (arrays[(int)Mesh.ArrayType.Normal].VariantType == Variant.Type.Nil || arrays[(int)Mesh.ArrayType.Index].VariantType == Variant.Type.Nil) return false;
+        Vector3[] normals = arrays[(int)Mesh.ArrayType.Normal].AsVector3Array();
+        int[] indices = arrays[(int)Mesh.ArrayType.Index].AsInt32Array();
+        double sum = 0.0; int corners = 0;
+        for (int i = 0; i + 2 < indices.Length; i += 3)
+        {
+            Vector3 winding = (vertices[indices[i + 2]] - vertices[indices[i]]).Cross(vertices[indices[i + 1]] - vertices[indices[i]]);
+            if (winding.LengthSquared() < 1e-24f) continue;
+            winding = winding.Normalized();
+            for (int k = 0; k < 3; k++) { sum += winding.Dot(normals[indices[i + k]]); corners++; }
+        }
+        if (corners == 0 || sum >= 0.0) return false;
+        for (int i = 0; i < normals.Length; i++) normals[i] = -normals[i];
+        arrays[(int)Mesh.ArrayType.Normal] = normals;
+        if (arrays[(int)Mesh.ArrayType.Tangent].VariantType != Variant.Type.Nil)
+        {
+            float[] tangents = arrays[(int)Mesh.ArrayType.Tangent].AsFloat32Array();
+            for (int i = 3; i < tangents.Length; i += 4) tangents[i] = -tangents[i];
+            arrays[(int)Mesh.ArrayType.Tangent] = tangents;
+        }
+        return true;
     }
 
     private static void CopyChannel(Godot.Collections.Array source, Godot.Collections.Array destination, Mesh.ArrayType channel)

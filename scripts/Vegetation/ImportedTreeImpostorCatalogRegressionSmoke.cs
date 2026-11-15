@@ -41,10 +41,12 @@ public partial class ImportedTreeImpostorCatalogRegressionSmoke : Node
             }
 
             AssertLayerArray(catalog, "albedo_layers");
+            AssertLayerArray(catalog, "albedo_layers", catalog.FarQuadMaterial);
+            AssertCutoffRows(catalog, ((Texture2D)catalog.Material.GetShaderParameter("variant_parameters").AsGodotObject()).GetImage());
             AssertLayerArray(catalog, "normal_layers");
             AssertLayerArray(catalog, "metallic_roughness_layers");
             Require(catalog.Material.GetShaderParameter("variant_parameters").AsGodotObject() is Texture2D parameters
-                && parameters.GetWidth() == ImportedTreeCatalog.VariantCount && parameters.GetHeight() == 5,
+                && parameters.GetWidth() == ImportedTreeCatalog.VariantCount && parameters.GetHeight() == ImportedTreeImpostorCatalog.ParameterRowCount,
                 "parameters");
             AssertFarQuad(catalog, ((Texture2D)catalog.Material.GetShaderParameter("variant_parameters").AsGodotObject()).GetImage());
             GD.Print("IMPORTED_TREE_IMPOSTOR_CATALOG_SMOKE=PASS");
@@ -61,7 +63,8 @@ public partial class ImportedTreeImpostorCatalogRegressionSmoke : Node
     // (found here with an independent rounded-key grouping): UV rectangle, width and vertical extent.
     private static void AssertFarQuad(ImportedTreeImpostorCatalog catalog, Image parameters)
     {
-        Require(catalog.FarQuadMesh.GetSurfaceCount() == 1 && catalog.FarQuadMesh.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array().Length == ImportedTreeImpostorCatalog.FarQuadVertexCount, "quad mesh has 6 vertices");
+        Require(catalog.FarQuadMesh.GetSurfaceCount() == 1 && catalog.FarQuadMesh.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array().Length == ImportedTreeImpostorCatalog.FarQuadVertexCount, "quad mesh has 12 vertices (the camera-facing quad and the horizontal card)");
+        Require(catalog.FarQuadTops.Count == ImportedTreeCatalog.VariantCount, "one horizontal card per variant");
         Require(catalog.FarQuadMaterial.Shader == catalog.Material.Shader && catalog.FarQuadMaterial.GetShaderParameter("far_quad_mode").AsBool()
             && !catalog.Material.GetShaderParameter("far_quad_mode").AsBool(), "quad material is the same shader in quad mode, cards are not");
         Require(catalog.FarQuadPlanes.Count == ImportedTreeCatalog.VariantCount, "one plane per variant");
@@ -123,7 +126,54 @@ public partial class ImportedTreeImpostorCatalogRegressionSmoke : Node
                 Require(Mathf.Abs(fu - uv[t + k].X) < 0.01f && Mathf.Abs(fv - uv[t + k].Y) < 0.01f, $"quad UV rectangle reproduces the plane's UVs {i}: vertex {t + k} uv {uv[t + k]} rect ({fu}, {fv}) row3 {row3}");
             }
             Require(row4.R > 0 && row4.B > row4.G, $"quad size {i}");
+            AssertHorizontalCard(catalog, parameters, i);
         }
+    }
+
+    // TR-6b: every variant has exactly one horizontal LOD3 card (found here independently: triangles with |normal.y| > .7 joined where they share a vertex position and UV),
+    // and rows 5 to 7 describe a quad that reproduces that card's UVs from its XZ positions at the card's height.
+    private static void AssertHorizontalCard(ImportedTreeImpostorCatalog catalog, Image parameters, int i)
+    {
+        Vector3[] p = catalog.ExpandedPositions[i]; Vector2[] uv = catalog.ExpandedUvs[i];
+        var horizontal = new List<int>();
+        for (int t = 0; t + 2 < p.Length; t += 3)
+        {
+            Vector3 c = (p[t + 1] - p[t]).Cross(p[t + 2] - p[t]);
+            if (c.Length() * .5f >= 1e-9f && Mathf.Abs(c.Normalized().Y) > .7f) horizontal.Add(t);
+        }
+        var parent = new int[horizontal.Count]; for (int a = 0; a < parent.Length; a++) parent[a] = a;
+        int Find(int a) { while (parent[a] != a) a = parent[a]; return a; }
+        for (int a = 0; a < horizontal.Count; a++)
+            for (int b = a + 1; b < horizontal.Count; b++)
+            {
+                bool touches = false;
+                for (int x = 0; x < 3 && !touches; x++) for (int y = 0; y < 3 && !touches; y++)
+                    touches = (p[horizontal[a] + x] - p[horizontal[b] + y]).Length() < 2e-3f && (uv[horizontal[a] + x] - uv[horizontal[b] + y]).Length() < 2e-3f;
+                if (touches) parent[Find(a)] = Find(b);
+            }
+        var roots = new HashSet<int>(); for (int a = 0; a < horizontal.Count; a++) roots.Add(Find(a));
+        Require(roots.Count == 1, $"variant {i} has {roots.Count} horizontal LOD3 cards (expected exactly one)");
+        ImportedTreeImpostorCatalog.FarQuadTop top = catalog.FarQuadTops[i];
+        Require(top.CardCount == 1 && top.FrameCode >= 0, $"horizontal card found by the catalog {i}");
+        Color row5 = parameters.GetPixel(i, 5), row6 = parameters.GetPixel(i, 6), row7 = parameters.GetPixel(i, 7);
+        Require(row5.B > row5.R && row5.A > row5.G, $"horizontal card UV rectangle {i}");
+        // Every vertex of the card must land on the quad's parallelogram at the UVs the mesh gave it.
+        var p00 = new Vector2(row6.R, row6.G); var eu = new Vector2(row6.B - row6.R, row6.A - row6.G); var ev = new Vector2(row7.R - row6.R, row7.G - row6.G);
+        float det = eu.X * ev.Y - eu.Y * ev.X;
+        Require(Mathf.Abs(det) > 1e-9f, $"horizontal card quad is not degenerate {i}");
+        float yMin = float.MaxValue, yMax = float.MinValue;
+        foreach (int t in horizontal)
+        {
+            for (int k = 0; k < 3; k++)
+            {
+                Vector2 d = new Vector2(p[t + k].X, p[t + k].Z) - p00;
+                float a = (d.X * ev.Y - d.Y * ev.X) / det, b = (eu.X * d.Y - eu.Y * d.X) / det;
+                float fu = Mathf.Lerp(row5.R, row5.B, a), fv = Mathf.Lerp(row5.G, row5.A, b);
+                Require(Mathf.Abs(fu - uv[t + k].X) < 0.01f && Mathf.Abs(fv - uv[t + k].Y) < 0.01f, $"horizontal card quad reproduces the card's UVs {i}: vertex {t + k}");
+                yMin = Mathf.Min(yMin, p[t + k].Y); yMax = Mathf.Max(yMax, p[t + k].Y);
+            }
+        }
+        Require(row7.B >= yMin - 1e-4f && row7.B <= yMax + 1e-4f, $"horizontal card height {i}: {row7.B} outside [{yMin}, {yMax}]");
     }
 
     private static Image LookupImage(ImportedTreeImpostorCatalog catalog, string parameter) =>
@@ -133,9 +183,26 @@ public partial class ImportedTreeImpostorCatalogRegressionSmoke : Node
     private static void AssertLookupDimensions(Image image, ImportedTreeImpostorCatalog catalog, string label) =>
         Require(image.GetWidth() == catalog.VertexCount && image.GetHeight() == ImportedTreeCatalog.VariantCount && image.GetFormat() == Image.Format.Rgbaf, $"{label} lookup dimensions");
 
-    private static void AssertLayerArray(ImportedTreeImpostorCatalog catalog, string parameter)
+    // TR-7b-2: row 1 alpha is the card cutoff in use, row 2 alpha the far quad's (calibration version 3, or the authored one for both without it); the two tiers share one albedo array while their cutoffs are equal.
+    private static void AssertCutoffRows(ImportedTreeImpostorCatalog catalog, Image parameters)
     {
-        if (catalog.Material.GetShaderParameter(parameter).AsGodotObject() is not Texture2DArray array)
+        ImportedTreeImpostorCalibration? calibration = catalog.Calibration;
+        Require(calibration == null || (ImportedTreeImpostorCalibration.Version == 3 && calibration.Cutoffs.Length == ImportedTreeCatalog.VariantCount && calibration.QuadCutoffs.Length == ImportedTreeCatalog.VariantCount), "calibration is version 3 with both cutoff sets");
+        bool equal = true;
+        for (int i = 0; i < ImportedTreeCatalog.VariantCount; i++)
+        {
+            float card = calibration?.Cutoffs[i] ?? catalog.DefaultCutoffs[i], quad = calibration?.QuadCutoffs[i] ?? catalog.DefaultCutoffs[i];
+            Require(Mathf.IsEqualApprox(parameters.GetPixel(i, 1).A, card), $"row 1 alpha is the card cutoff {i}");
+            Require(Mathf.IsEqualApprox(parameters.GetPixel(i, 2).A, quad), $"row 2 alpha is the far quad cutoff {i}");
+            equal &= card == quad;
+        }
+        bool shared = ReferenceEquals(catalog.Material.GetShaderParameter("albedo_layers").AsGodotObject(), catalog.FarQuadMaterial.GetShaderParameter("albedo_layers").AsGodotObject());
+        Require(shared == equal, "cards and quad share one albedo array exactly when their cutoff sets are equal");
+    }
+
+    private static void AssertLayerArray(ImportedTreeImpostorCatalog catalog, string parameter, ShaderMaterial? material = null)
+    {
+        if ((material ?? catalog.Material).GetShaderParameter(parameter).AsGodotObject() is not Texture2DArray array)
             throw new InvalidOperationException($"missing {parameter}");
         Require(array.GetLayers() == ImportedTreeCatalog.VariantCount, $"{parameter} layer count");
         Require(array.GetWidth() == ImportedTreeImpostorCatalog.TextureLayerSize

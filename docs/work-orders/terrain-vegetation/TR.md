@@ -17,6 +17,8 @@ Freeze: none. This is a renderer change, not world content (see decision D1).
 | D4 | TR-9 | (Added by TR-2, 2026-11-14.) If a preset cannot draw every placed tree inside its far distance within the budget, should it end the trees sooner (shorter far distance) or keep the distance and draw only a share of the far trees (thinner forest)? | Shorten the far distance. Thinning shows as a sparser forest; a shorter distance hands over to the far canopy tint (T6-10) in new worlds. Design B4, F3. **Answered 2026-11-14: end the trees sooner (shorten the far distance).** |
 | D5 | none (deferred) | (Added by TR-2.) A lighter LOD0 mesh pays only with long near-detail fades such as the user's (LOD0 to 200 m: 1.8 to 2.5 ms for 256 trees). At the shipped fades LOD0 costs 0.1 to 0.5 ms. Build it? | Defer. Decide from TR-8's table at the user's preferences. Design C1. |
 | D6 | TR-6 | (Added by TR-2.) Seen from above, a far tree is one quad that faces the camera and is sized to the tree's real outline from that angle (its side-view picture squeezed to a crown-sized patch). Nothing is enlarged. Is that look acceptable? | Yes, judged from TR-6's altitude captures. Design D3. **Answered 2026-11-14: yes, judged from TR-6's altitude captures.** **Confirmed 2026-11-14 on the TR-6 captures: the upright shape is accepted (brightness is TR-7's).** |
+| D7 | none (TR-7b closes either way); a new order TR-7c if yes | (Added by TR-7b escalation 2, 2026-11-15.) The tree models change with distance because of their leaf-texture mips: at 325 m a maple crown covers 28 % more area and is 19 % brighter in direct sun than the same model close up, a pine covers 17 % more and is 14 % darker and less green, a fir covers 15 % less; a fir at 650 m keeps 36 % of the area it has at 325 m. The amount depends on distance and screen resolution. The far cards do not do this (they keep the close-up look), which leaves a step of about 10 % in brightness where the model hands over to the cards, and a larger step in crown fullness when the hand-off is moved out (the user's 550 to 900 m preference). Should the models get distance-stable mips (alpha that keeps the covered area, colour that ignores the cut-out texels), as the cards have? It changes the look of every tree from a few tens of metres outward: maples 12 to 22 % thinner and darker at noon, pines thinner and greener, firs fuller. Nothing is boosted or enlarged. | **User answer 2026-11-15: Yes, TR-7c** (after the `--dump` sheet). Was: Yes, but decide from pictures: TR-7b-2's `--dump` sheet shows three trees as drawn today, with stable mips, and as cards. If yes, TR-7c (size M, lead design first): build the mip chains in the tree prepare step, then recalibrate the cards. If no, the step stays as measured and TR-7b's switch strip is the judge. |
+| D8 | TR-7c-1, TR-7c-2 | (Added 2026-11-15; the user: "Hold off on this change until I see it first myself.") TR-7c-PV builds the stable mips into `.godot/tr7c/preview/` only and draws a before/after sheet (maple, fir, pine at 20 m, 80 m, 325 m, 650 m and 900 m, in ambient light and at noon, today beside stable mips) and a dolly video. Nothing shipped changes until the user approves. Note that the change is visible from about 10 m outward, not only far away, and that leaf outlines seen edge-on get softer close up. Go ahead with the shipped change? | Decide from the sheet and the video. Open. |
 
 ## Phase facts
 
@@ -49,7 +51,8 @@ Verified 2026-11-13 against the `terrain-vegetation-revamp` working tree. TR-1 m
 | TR-6 camera-facing far billboard tier | sol_implementer | M | TR-2, user D1 | TR-4, TR-7 |
 | TR-6b top-down crown card for the far tier (user request 2026-11-14; rewritten by the TR-7 escalation) | implementer | S | TR-6, TR-7b | TR-9a |
 | TR-7 billboard match, as TR-7a (card atlas bake from LOD2) then TR-7b (shader, catalog, test); see "TR-7 escalation (2026-11-14)" | sol_implementer, lead checks the TR-7a contact sheet | M | TR-2, TR-3, user D1 | TR-4, TR-6 |
-| TR-8 review pack: before/after cost and look | sol_implementer | S | TR-5, TR-6, TR-7 | none |
+| TR-7c distance-stable leaf mips for the tree models (user D7 yes, 2026-11-15): TR-7c-PV preview only, then after user D8 TR-7c-1 (resource, loader, shader) and TR-7c-2 (match test, recalibration); see "TR-7c. Distance-stable leaf mips for the tree models (design and order, 2026-11-15)" | implementer; lead design done | M (preview), then M and S | D7; TR-7c-1 and TR-7c-2 also need D8 and TR-7b-3 | TR-9a |
+| TR-8 review pack: before/after cost and look | sol_implementer | S | TR-5, TR-6, TR-7 (and TR-7c if D8 is yes) | none |
 | TR-9a cap fall-through: budget-derived band edges (added by TR-2, 2026-11-14) | sol_implementer | M | TR-5, TR-6; merged after TR-8's cost run | TR-7 |
 | TR-9 raise the tree count to the budget | sol_implementer | M | TR-8, TR-9a | none |
 | TR-10 tree shadows past the near range: canopy in the height shadow | sol_lead, then sol_implementer | M | TR-1 for the design and prototype (alongside TR-4 to TR-7); TR-9 for the prototype pictures and the implementation (TR-2 design H) | TR-4 to TR-7 |
@@ -813,7 +816,7 @@ No brightness multiplier remains anywhere in the card path.
 2. Per variant and per LOD3 card (the horizontal one included): fit the card's UV-to-position map (as `LargestPlane` does), and rasterise the authored LOD2 (bark and foliage, the foliage alpha-tested at its authored cutoff) orthographically along the card's normal into the card's UV rectangle of a 256 x 256 layer, nearest surface wins. The LOD3 mesh, its UVs and its vertex count do not change.
 3. Albedo layer: the mesh's albedo texture times its tint, averaged in linear light over at least 3 x 3 sub-samples; alpha is the covered fraction. Dilate colour into uncovered texels. The alpha mips stay coverage-preserving (`PreserveAlphaCoverage`, design E4).
 4. Normal layer: the normal the mesh shader would shade with (interpolated vertex normal, reversed where the triangle is back-facing to the bake direction, Godot's clockwise front face), written in the card's own tangent frame from `tangent_data` and `normal_data`, so the existing `NORMAL_MAP` path reproduces it. One surface sample per texel, never an average. Dilated like the colour.
-5. Normal mips are selected, not averaged: each mip texel takes the normal of its most-covered child (fixed order on ties). The tool prints, per variant and mip level 0 to 3, the mean of max(n.L, 0) over covered texels for noon, 30 and 8 degrees against the full-resolution value; levels 0 to 3 must be within 3 %.
+5. Normal mips are selected, not averaged: each mip texel takes the normal of one covered child of its most-covered child's card, chosen by per-card error diffusion on the six-axis clamped light response (fixed order on ties; see the TR-7a lead check, fix 1). The tool prints, per variant and mip level 0 to 3, the mean of max(n.L, 0) over covered texels for noon, 30 and 8 degrees against the full-resolution value; levels 0 to 3 must be within 3 %.
 6. Contact sheet: per species, the old and new albedo and normal layers side by side.
 
 **TR-7b. Shader, catalog, test (implementer).**
@@ -844,9 +847,325 @@ No separate top-down bake. The top view is the LOD3 mesh's horizontal card, whic
 4. The catalog smoke asserts that every variant has exactly one horizontal LOD3 card.
 - Note: the card sits at the height the pack gave it, the same as in the crossed cards, so the hand-off at 900 m does not move it. If the user wants it at mid-crown instead, that is a one-line offset.
 
+**TR-6b implementation notes (untested).** The far quad mesh is 12 vertices; vertices 6 to 11 are the horizontal card, drawn by `imported_tree_impostor.gdshader` from `variant_parameters` rows 5 to 7 (UV rectangle; XZ corners of the parallelogram that covers it, found by inverting the card's affine UV map; height; frame code), which `ImportedTreeImpostorCatalog.FarQuadTop` / `Geometry.HorizontalCard()` fill. Visibility: smoothstep of sin(elevation) from sin 20 to sin 30 degrees (constants in the shader, matching the GLSL rule); zero collapses all six vertices to one point, otherwise the card fades in by screen-door through `tree_dither_window.y`. Lit by the baked normal layer through a frame built from the frame code, as the upright quad is. Smoke: `AssertHorizontalCard` (exactly one horizontal card, quad reproduces the UVs, height). To run when tests resume: `imported_tree_impostor_catalog_smoke`, `tree_billboard_match_gpu_test`, `tree_lod_dither_gpu_test`, `tree_shared_impostor_integration`, `tree_atmosphere_gpu_test`, plus the 20-30 degree dolly through `flicker`.
+
 Order from here: TR-7a, the lead's contact-sheet check, TR-7b, then TR-6b. TR-4 and TR-5 are unaffected. TR-8 adds the card-pixel cost to its table.
 
 **Not a decision, but the user should know:** matching the mesh changes the far forest. Cards at noon become sunlit instead of dark, cards at low sun become darker, and pine cards become about 1.5 times brighter in every light (all of it out to the far distance). That is the LOD2 look carried outward, with nothing added.
+
+#### TR-7a lead check (2026-11-15)
+
+Verdict: the bake is right at full resolution; two fixes are needed before TR-7b (one in the baker's mips, one in the test). Checked on the uncommitted TR-7a tree, headless only. Sheets: `.godot/tr7a/sheets/`; evidence: `.godot/tr7a/lead_check/`.
+
+**What is right.**
+- Albedo. Fully covered texels against the pack pictures, linear green: pine 1.52 to 1.65 times brighter (pack/bake 0.60 to 0.66, the 0.61 to 0.71 of the diagnosis), maple 1.05 to 1.12, fir 1.00 to 1.03. The pack's dark patches in the pine crowns are gone; no lighting is baked in.
+- Silhouettes and top cards. 183 cards, exactly one top card per variant, every card in the pack's rectangle. Coverage sum against the independent 5 x 5 silhouette: worst 1.11 %, mean signed 0.04 %.
+- Normals. Side-card binormal is world up in every variant, so green is up. Maple side cards (v0, v3, v6, v10 sampled): 47 to 61 % of the coverage points up, 28 to 35 % down (leaves seen from behind, flipped as the mesh shader flips them); their top cards have mean n.y 0.74 to 0.81. Side cards alone, all variants, give a noon response of 0.41 / 0.20 / 0.22 (maple / fir / pine) against the mesh probe's 0.478 / 0.181 / 0.198.
+- Determinism. Four runs, the same artifact hash (B2F1F1F0B4848F96).
+
+**The fit residual (v19) is real, not a baker bug.** The pack's side cards have three vertex rows. In four pine variants (v19, v22, v23, v27) the middle row's v is not midway between the outer rows (v19: 0.00487, 0.31772, 0.63937 at heights 0, 0.495, 0.99), so the UVs are piecewise affine. One affine map misses by 0.38 to 0.93 texel (v22 the worst); every other card fits to 1e-5. That is at most 0.5 % of the tree height, under half a pixel at 325 m. Done: the test's limit is now one atlas texel (`TreeImpostorAtlasTest.cs`), with the reason in a comment. A per-triangle bake would be exact and is not worth its code.
+
+**Fix 1 (baker): the mip rule fails, and it matters.** Worst mip 1 to 3 against level 0 is 14.53 % (limit 3 %); at noon the worst of level 1 / 2 / 3 is 3.9 / 8.0 / 14.5 %. The hand-off at 325 m draws about levels 1 to 2 (a card is 82 to 162 texels tall and the tree a few tens of pixels), so the drift would use most of TR-7b's 10 % gate. Cause: "most-covered child" prefers solid surfaces. Maple drifts up (11 of 12 variants), fir and pine drift down (bark wins over sparse needles). An unbiased hashed pick still leaves 10 % at level 3 from sample noise. Replace the selection in `BuildNormalMips`, still one surface normal per texel:
+- Parent texels in scan order. Per child an integer weight w = round(coverage x Sub x Sub x 4^(level - 1)).
+- The block's card is the card of the most-covered child, as now. Candidates are the covered children of that card.
+- Per candidate a six-vector f from its stored bytes, with (x, y, z) = 2 x byte - 255: max(x, 0), max(-x, 0), max(y, 0), max(-y, 0), max(z, 0), max(-z, 0). That is the clamped response to light along the six frame axes.
+- target = sum of w f over the candidates, S = sum of w. Pick the candidate that minimises |E + target - S f|^2 (integer arithmetic, first candidate on a tie), then E += target - S f. E is one running six-vector per card, zero at the start of each level.
+- Coverage and the no-covered-child case stay as they are. Update the doc comments, the manifest's `method` text and item 5 above.
+- Measured with a Python prototype on this bake's level-0 data (`lead_check/mip2.py`, `down()`, kept as the reference for the rule; the level-0 dump it reads was a temporary tool output and is not kept): worst over all variants, suns and levels 1.42 % (noon level 1 / 2 / 3: 0.16 / 0.48 / 1.26 %). `lead_check/v10_l2_max_vs_diffuse.png` shows level 2 before and after: no streaks. The 3 % limit stays.
+
+**Fix 2 (test): the fixed IoU limit of 0.9 measures sampling, not the bake.** 63 of 183 cards are below it (lowest 0.826, v19 card 1; pine side cards 0.83 to 0.89, top cards 0.89 to 0.96), while the coverage sums agree within 1.11 %. Half-coverage flips between 3 x 3 and 5 x 5 samples in sparse foliage. Replace it per card: the IoU against the silhouette must be above the highest IoU of the baked half-coverage mask against itself moved one texel (plus and minus x and y, inside the card's owned texels). Measured: all 183 cards pass, smallest margin 0.068, median 0.24. Keep the 3 % sum limit and the bake-without-foliage control (it still rejects).
+
+**After the two fixes.** Run `prepare_tree_impostor_atlas`, then `tree_impostor_atlas_test`, in separate runs (in one run they start together and the test reads the resource while the tool writes it). When the test passes TR-7a is done; no second lead check. The checks after the mip gate (repeat bake, saved bytes, manifest, stale detection) have not run yet.
+
+**To watch in TR-7b.**
+- `imported_tree_impostor.gdshader:214-219` assumes Godot negates TANGENT, BINORMAL and NORMAL on back faces and un-negates x and y there. If the engine negates only NORMAL, that line turns up into down on every card seen from behind. Not verified here. The noon sun-only gate shows it; check this first if noon fails.
+- Maple side cards read 0.41 at noon against the mesh probe's 0.478. If the noon gate misses by that amount for the whole species after fix 1, the likely cause is the mesh's leaf alpha at 325 m (read from a mip, so the crown is fuller than the full-resolution cutout the bake uses). Escalate with the per-azimuth rows.
+
+**For the user.** Christmas tree_3 (v14) has its shading normals against its winding (known from the diagnosis). The bake copies that faithfully: its top card points down (mean n.y -0.54, noon response 0.01) and its 30 degree response is 0.19 against 0.27 for the other two firs. The mesh is lit the same wrong way at every distance. Repairing v14's normals in the tree prepare step and re-baking is a separate small order; it changes how that variant looks up close. Sheets worth opening: `v19_Pine_large_2.png` (pine brightness), `v03_Acer_large_1.png`, `v13_Christmas tree_2.png`, `v14_Christmas tree_3.png` (the inverted top card).
+
+#### TR-7b escalation 2 (2026-11-15)
+
+The implementer's TR-7b run left the cards failing 21 / 14 / 4 variants (noon / sun 30 / sun 8), 28 variants on the ambient colour gate, and the far quad failing coverage (29) and the camera-side check (16). Measured on the RTX 4070 with the uncommitted TR-7b tree, through a temporary `--lead-diag` mode of the test (removed again; the test file is byte-identical to the implementer's). Evidence in `.godot/tree_billboard_match/escalation2/`: `table.csv` and `report.json` (the implementer's run), `diag1.csv` and `diag2.csv` (the lead's two passes), `analyse_diag.py`, `analyse_quad.py`, `analyse_table_per_azimuth.py`, and `lead_diag_mode.gd.txt` (the diagnostic mode, to rerun).
+
+**Verdicts.**
+1. Maple low, pine high: not a card error. The bake and the shader reproduce the tree model within 5 % (species mean) in every light. The step is in the reference: the model's own leaf-texture mips change its look with distance and resolution. No multiplier is needed or allowed; the gate's reference changes (fix order C), and whether the model is corrected is the user's decision D7.
+2. Blue channel: the same cause for pine (the model at 325 m has lost 30 % of its blue and 6 % of its green to its texture mips; the card has the model's close-up colour within 3 %). For maple the channel is too small to gate (0.005 linear, 0.6 % of the luminance). The implementer's "blue only" is not quite right: maple red is 9 to 13 % off as well, for the same reason. The gate changes to errors relative to the luminance.
+3. Far quad: one sign bug (found, fix verified: 13 to 29 of 30 lit from the camera side; the 30th is v14, whose mesh fails the same check). Coverage is not an azimuth problem: the gate already uses the azimuth mean. The quad covers too little because it uses the cutoff calibrated for the crossed cards; it needs its own.
+4. A new defect found on the way, in the uncommitted calibration: the calibrated cutoffs break the coverage-preserving alpha mips, so card forests would thin to 56 to 67 % of their area by 900 m. It must be fixed before TR-7b is committed (fix order B3).
+5. No fix here boosts, widens or enlarges anything.
+
+**Measurements.** All ratios are means over the variants of a species (maple v0-11, fir v12-14, pine v15-29), 4 azimuths, at the test's pixel scale unless a viewport size is given (128 px = 325 m at 1080p; 64 px = 650 m; 46 px = 900 m; 256 px = 325 m at 4K).
+
+"Reference model" below is the authored LOD2 with its albedo texture read at mip 0, 8 times supersampled (1024 px): the model as it looks close up, seen from 325 m. "Shipped model" is the LOD2 as the game draws it at 325 m.
+
+| | maple | fir | pine |
+|---|---|---|---|
+| Shipped model / reference model, covered area | 1.28 (1.14 to 1.44) | 0.85 (0.68 to 1.11) | 1.17 (1.02 to 1.30) |
+| Shipped / reference, ambient r, g, b | 1.10, 0.98, 0.85 | 0.97, 1.06, 1.02 | 1.02, 0.94, 0.70 |
+| Shipped / reference, sun-only luminance, noon / 30 / 8 | 1.19 / 1.14 / 1.04 | 1.04 / 1.07 / 1.05 | 0.86 / 0.92 / 0.95 |
+| Shipped model's covered area at 64 px, 256 px, 512 px against 128 px | 0.84, 0.99, 0.95 | 0.36, 1.28, 1.36 | 0.65, 1.04, 1.04 |
+| Cards / reference model, ambient r, g, b, luminance | 0.98, 1.00, 0.76, 0.99 | 0.99, 0.99, 0.99, 0.99 | 0.99, 1.00, 0.97, 0.99 |
+| Cards / reference model, sun-only luminance, noon / 30 / 8 | 1.04 / 1.01 / 0.98 | 0.99 / 1.00 / 1.02 | 0.95 / 1.01 / 1.01 |
+| Cards / shipped model, sun-only luminance (the implementer's table) | 0.87 / 0.88 / 0.94 | 0.95 / 0.93 / 0.97 | 1.12 / 1.09 / 1.07 |
+| Cards / shipped model at the game's light mix (sun 4.0, ambient 0.35) | 0.89 / 0.91 / 0.96 | 0.94 / 0.94 / 0.96 | 1.09 / 1.08 / 1.06 |
+| Card covered area at 256, 64, 46, 32 px against 128 px, calibrated cutoffs | 1.27, 0.69, 0.56, 0.42 | 1.20, 0.90, 0.63, 0.55 | 1.17, 0.74, 0.67, 0.54 |
+| The same with the authored cutoffs (what the alpha mips were built for) | 1.04, 0.95, 0.91, 0.87 | 1.03, 0.97, 0.93, 0.88 | 1.04, 0.89, 0.86, 0.81 |
+| Quad / shipped model, covered area: card-calibrated cutoff, authored cutoff | 0.65, 1.06 | 1.07, 1.61 | 0.80, 1.14 |
+| Quad / cards, covered area at 46 px, authored cutoffs | 0.85 | 1.15 | 0.89 |
+| Quad with the sign fix / reference model, sun-only luminance, noon / 30 / 8 | 1.01 / 1.02 / 1.03 | 1.02 / 1.00 / 1.03 | 1.00 / 1.04 / 1.02 |
+
+Per variant against the reference model: the cards' worst are v20 0.84 and v29 0.87 at noon and v25 0.86 at sun 30 (3 / 2 / 0 variants outside 10 / 10 / 15 %); the quad's are v24 1.36, v26 0.78 and v27 0.81 at noon.
+
+**Findings.**
+
+1. *The tree model changes with distance.* The leaf textures use the importer's plain mip chain. At 325 m the model reads mips where the alpha of a whole leaf cluster is one average, tested against a cutoff of about 0.2 to 0.3, and the colour includes the texels under the cut-out. With the albedo forced to mip 0 (same geometry, same pixels) the maple crown has 0.80 of its covered area, pine 0.88, fir 1.23, and the colours of row 2 appear. The effect moves with resolution and distance (row 4): a fir at 650 m keeps 36 % of the area it has at 325 m. So "the mesh at 325 m at 1080p" is one point on a curve, and a 10 % gate against it cannot hold at 4K or at another hand-off distance. The user's own fade preference puts the hand-off at 550 to 900 m, where the curve is steepest.
+2. *The cards are right.* Against the reference model the cards are within 1 % in ambient luminance, 3 % in red and green, and 5 % in sun-only luminance for every species and elevation. The guess of the TR-7a lead check (maple side cards 0.41 against the mesh probe's 0.478 because the mesh crown is fuller at a mip) is confirmed: 0.478 was the shipped model, and the reference model gives 0.39 (cards 0.41).
+3. *The decode fix is right.* Godot negates only `NORMAL` on a back face, so removing the in-plane negation was correct. All 183 cards have frame sign +1, so the baker's `* s` on all three components is harmless and stays. `tree_card_back` and `card_bake_side` are dead.
+4. *Calibration against preservation.* `PreserveAlphaCoverage` scales each alpha mip so the count at the authored cutoff (0.25) stays that of the base level. The calibration then moved the cutoff to 0.30 to 0.51, where that no longer holds (rows 9 and 10). The mips have to be built for the cutoff in use.
+5. *The quad's normal.* `imported_tree_impostor.gdshader:162` maps the baked card normal N0 to `toward_camera_flat * (frame_sign * hand * u_sign * v_sign)`. That product is the sign of (canonical plane normal . card vertex normal), which `LargestPlane` fixes by its x >= 0 rule, not by the card. For the cards whose vertex normal is the other way (16 variants) the quad shows the picture mirrored and, because the mapping is kept a rotation, turns the baked side away from the camera. The baked side must always face the camera; a mirrored picture mirrors only the across component, which `TANGENT`'s `u_sign` already does. With `toward_camera_flat * frame_sign` the quad is lit from the camera side in 29 of 30 variants and its sun-only means are within 4 % of the reference model. The horizontal card's frame (`:107-117`) is right as written (it is drawn in place, so its `top_hand` is needed).
+6. *The quad's coverage.* Crossed cards cover more than one picture (several pictures overlap on screen), so the cutoff that brings the cards down to the model's area erodes a single picture to 0.65 (maple) and 0.80 (pine) of it. At the authored cutoff the quad is at 1.06 / 1.61 / 1.14. It needs its own calibrated cutoff, and its own alpha mips built for that cutoff (finding 4).
+7. *One picture per tree.* The quad's per-variant brightness follows the one card it copies (0.78 to 1.36 at noon). The species means are within 4 %. This is accepted at 900 m and beyond (a tree is 17 pixels tall, the hand-off dithers over 150 m); the test gates the species mean and bounds the variant.
+8. *Not needed, noted for TR-8.* Maple and fir LOD3 have each side plane twice, back to back (8 and 4 side cards on 4 and 2 planes), meant to be drawn one-sided. With `cull_disabled` both are drawn on top of each other. Dropping the back-facing twin in the vertex stage changes the match by under 2 % for maple and +6 % for fir, lowers the maple cards' area by 6.5 % (recalibrate) and halves the card fill for 15 variants. Pine has single cards and needs both sides.
+
+**Decision.**
+- TR-7b's gates measure the cards and the quad against the reference model for colour and light, and against the shipped model for covered area (the hand-off silhouette). The step against the shipped model is reported and bounded, not gated at 10 %.
+- The model's own drift goes to the user as D7. Rejected: baking the model's 325 m look into the cards (it would freeze one resolution's artefact into every far tree and needs an emulation of the GPU's mip choice in the baker); any multiplier; a mip bias on the model (partial, and it shimmers).
+- Fix the quad sign, give the quad its own cutoff and alpha mips, and build both tiers' alpha mips for the cutoff in use.
+
+**Fix order TR-7b-2 (implementer, size M).** It continues the uncommitted TR-7b tree. Nothing in it waits for D7.
+
+A. `materials/imported_tree_impostor.gdshader`
+1. Line 162: `NORMAL = far_quad_to_model_direction(MODEL_MATRIX, model_scale, toward_camera_flat * frame_sign);`. Remove `hand` from the upright-quad block and rewrite its comment (lines 148 to 152): the baked side always faces the camera; mirroring flips the across component only. Do not touch the horizontal-card block.
+2. Remove `tree_card_back` and `card_bake_side` (lines 52, 84, 172, 191). Keep the decode and its comment.
+3. `ALPHA_SCISSOR_THRESHOLD = far_quad_mode ? flags.a : tree_parameters.a;` (row 2's alpha becomes the quad's cutoff).
+
+B. `ImportedTreeImpostorCatalog.cs`, `ImportedTreeImpostorCalibration.cs`, `ImportedTreeCatalogDriver.cs`
+1. Calibration version 3: `Cutoffs` (cards) and `QuadCutoffs`, both per variant; version 2 is stale.
+2. The fingerprint hashes the base level only (the bake's `AlbedoBase`, or the resized base level of the pack's pictures) and the variant count. It must not depend on mips or cutoffs.
+3. One function builds an albedo array for a given cutoff set: per layer the base level, `GenerateMipmaps`, then `PreserveAlphaCoverage(image, the cutoff in use for that variant)`. The card material gets the array for the card cutoffs, the quad material the array for the quad cutoffs; when the two sets are equal (no calibration) both share one array. `ApplyCalibration` and `UseBake` rebuild the arrays and republish the parameters. Cost: 10.5 MB more texture memory when calibrated, and 30 more 256 x 256 mip builds on the workers at load; report both for TR-8.
+4. `CreateParameterTexture`: row 1 alpha = the card cutoff in use, row 2 alpha = the quad cutoff in use (it was the constant 1).
+5. Driver: `ApplyImpostorCalibration(cards, quads)`, `GetImpostorCalibrationQuadCutoffs`, `SaveImpostorCalibration(cards, quads)`. Update `ImportedTreeImpostorCatalogRegressionSmoke` for version 3 and the second array.
+
+C. `tools/tree_billboard_match_gpu_test.gd`
+1. Two models. The shipped model as now (128 px, 325 m). The reference model: the same meshes with each material's shader swapped for a test-local copy (`Shader.new()`, `code = shader.code.replace("texture(albedo_texture, UV)", "textureLod(albedo_texture, UV, 0.0)")`; fail if the text is not found; put the shaders back afterwards), drawn in a 512 px viewport (512 and 1024 agree within 0.2 %). Say in the header why the reference is not the shipped material.
+2. Calibration: for each scan cutoff apply it to both tiers, measure the cards (325 m) and the quad (900 m, narrowed lens) over the azimuths, and take each tier's crossing with the shipped model's covered area. Save version 3.
+3. Cards, gated:
+   - covered area against the shipped model within 8 % per variant;
+   - ambient against the reference model: luminance within 5 %, and each channel's difference within 8 % of the reference luminance (the per-channel ratio is reported only);
+   - sun only against the reference model over 12 azimuths (15 + 30 k degrees): the species mean of the variant ratios within 10 / 10 / 15 %, each variant within 20 / 20 / 25 %;
+   - scale: the cards' covered fraction in a 64 px viewport within 15 % and in a 46 px viewport within 20 % of the 128 px value (species mean; same lens).
+4. Quad, gated (900 m, narrowed lens, 128 px unless stated):
+   - covered area against the shipped model within 8 % per variant; ambient as for the cards;
+   - sun only against the reference model: species mean within 10 / 10 / 15 %, each variant within 40 % (one picture per tree, finding 7);
+   - the camera-side check as now, for seed 0 and for a mirrored seed (`fract(z * 7919) > 0.5`); and the mirror identity: seed 0 with the sun 90 degrees to the right of the camera equals the mirrored seed with the sun 90 degrees to the left, within 3 %;
+   - scale: the quad's covered fraction at 46 px within 20 % of its 128 px value, and quad against cards at 46 px within 15 % (species means).
+5. Reported and bounded: cards against the shipped model, sun only, species mean within 25 % (today 0.87 / 0.88 / 0.94, 0.95 / 0.93 / 0.97, 1.12 / 1.09 / 1.07). This is the hand-off step D7 is about; put it in `report.json` as `handoff_step`.
+6. Control as now. Report only, for TR-6b: camera 60 degrees above the horizon, noon and sun 30, reference model, cards and quad.
+7. `--dump` also saves, for v3, v13 and v19 at 325 m in ambient and at noon, the shipped model, the reference model and the cards, as one contact sheet for D7 (`tools/media/ffmpeg_tools.ps1 sheet`). Each mode writes its own `table_<mode>.csv` and `report_<mode>.json` so a later run does not overwrite the evidence. Update `expected_s` in the manifest.
+
+Validation.
+- Build, then `tools/run_tests.ps1 -Tests tree_billboard_match_gpu_test -Label tr7b` with `TREE_BILLBOARD_MATCH_ARGS=--calibrate`, then again without it.
+- Then `-Tests imported_tree_impostor_catalog_smoke,tree_shared_impostor_integration,tree_impostor_atlas_test,tree_lod_dither_gpu_test,tree_atmosphere_gpu_test,tree_lighting_shadow_gpu_test`.
+- Then TR-7b items 5 and 6 as written (switch strip in both configurations, the 250 to 400 m dolly through `flicker`, `UseFarTreeQuads` on).
+
+Escalate if: a species mean misses a sun or ambient gate against the reference model; more than three variants miss the per-variant bound; the 64 px or 46 px scale gate misses after B3 (first try counting coverage in `PreserveAlphaCoverage` on a bilinear 4 x 4 sub-sample grid in place of whole texels; the authored-cutoff row above shows pine at 0.86 with texel counting); or the quad's covered area cannot be brought within 8 % by a cutoff between 0.05 and 0.95.
+
+Stop rule: 2 watchdog periods, 4 build-plus-test attempts.
+
+**For the user.**
+- D7 (new, in the decisions table): whether the tree models get distance-stable leaf-texture mips.
+- The cards now carry the model's close-up look outward. Against the model as it is drawn today at 325 m they are 11 % darker (maple) and 9 % brighter and greener (pine) at noon in the game's light; fir is within 6 %. TR-7b's switch strip will show whether that is visible.
+- Five pine models (v23 to v27) are 2.1 to 3.8 times brighter at noon from one side than from the other (v26 the most). The model shader reverses the up-pointing needle normals on faces seen from behind, and these models' needle planes mostly face one way. The cards show the average of the two sides, so single pines can change tone at the hand-off. It is a property of the models at every distance, like v14's inverted normals; changing it means changing how the near trees are lit, which is a separate question.
+- Texture memory: +10.5 MB for the quad's own alpha mips.
+
+#### 46 px gate decision (2026-11-15)
+
+Fix order TR-7b-2 was implemented (uncommitted). Every gate passes except quad against cards at 46 px: maple 1.150 / fir 1.117 / pine 1.097 against 15 %. Measured on the RTX 4070 through a temporary `--lead-diag` mode of the test (removed; the test file is byte-identical to the implementer's, sha1 465df89f). Ambient only, 12 azimuths (15 + 30 k) per variant. Evidence in `.godot/tree_billboard_match/lead46/`: `diag.csv`, `analyse.py`, `lead_diag_mode_patch.py.txt` (the mode, to rerun).
+
+**Decision: the quad comes down to the cards; the cards are not changed.** The quad's cutoff is calibrated against the cards' covered area at 46 px (the pixel size at which the cards hand over to it), not against the shipped model at 128 px. The gate stays and is tightened to 10 %. A change to the test's calibration and gates only: no shader or C# change, calibration version stays 3 (the resource is regenerated).
+
+**Measurements** (species means of the per-variant ratios, maple / fir / pine).
+
+| | maple | fir | pine |
+|---|---|---|---|
+| Cards, 46 px against 128 px | 0.894 | 0.937 | 0.890 |
+| Quad, 46 px against 128 px | 1.018 | 1.013 | 0.972 |
+| Quad / cards at 46 px (4 azimuths gave 1.150 / 1.117 / 1.097) | 1.148 | 1.055 | 1.102 |
+| Shipped model, 46 px against 128 px (64 px: 0.846 / 0.360 / 0.656) | 0.720 | 0.239 | 0.481 |
+| Reference model drawn at 46 px against its supersampled area | 0.937 | 0.999 | 0.925 |
+| Cards at 46 px / reference model (all 30: 1.050) | 1.136 | 0.820 | 1.028 |
+| Quad at 46 px / reference model (all 30: 1.173) | 1.304 | 0.870 | 1.129 |
+| Cards at 46 px / shipped model at 46 px (variants with any pixels) | 1.42 | 1.39 | 3.04 |
+| Quad at 46 px / shipped model at 46 px | 1.62 | 1.51 | 3.37 |
+| Cards, the 46 px mips sampled densely (128 px, mip bias 1.476) against plain 128 px | 0.891 | 0.927 | 0.910 |
+| Cards without anisotropic filtering, 46 px against 128 px | 0.918 | 0.921 | 0.891 |
+| Cards with the quad's cutoffs, 46 px against 128 px | 0.933 | 0.898 | 0.905 |
+| Quad with the cards' cutoffs, 46 px against 128 px | 0.967 | 0.990 | 0.952 |
+| One front-facing side card alone, 46 px against 128 px | 0.878 | 0.867 | 0.935 |
+
+One side card alone by the angle between the view and the card's normal, all variants: 15 degrees 0.961, 45 degrees 0.937, 75 degrees 0.783 (0.874 without anisotropic filtering).
+
+**Findings.**
+1. *The cards are the closer tier at 46 px.* Both tiers are calibrated at 128 px to the shipped model, which there covers 1.28 / 0.83 / 1.17 of the reference model. At 46 px the cards are closer than the quad to the reference model in 25 of 30 variants and to the shipped model in 25 of 30 (the quad is closer to the reference for v13, v16, v18, v19 and v20). The shipped model loses area towards 46 px for every species, and the reference model drawn at 46 px loses 6 to 8 % for maple and pine; only the quad keeps its 128 px area.
+2. *The cards' loss is not a defect of the calibrated mips, and not overlap.* A single card loses as much as all the cards together, so the crossed planes are not the cause. The loss is in the texture content (the dense sampling of the 46 px mips reproduces it), it remains at the quad's low cutoffs, and anisotropic filtering changes it by under 2.5 %. It grows with the card's angle to the view: 4 % nearly face-on, 22 % at 75 degrees. A card seen at an angle is filtered over a wider footprint than the bilinear tap `PreserveAlphaCoverage` builds for (anisotropic taps, or about two more mip levels without them, where a picture is 3 to 10 texels in a layer that holds 4 to 9 pictures), and averaged alpha at the crown edge falls under the cutoff. The quad shows one picture face-on and keeps its area. *Not verified:* which part of that footprint (taps, level blend, neighbouring pictures) carries most of it.
+3. *The gate was at its noise edge.* Maple is 1.150 with 4 azimuths and 1.148 with 12; fir is 1.117 and 1.055 (3 variants). The quad's picture is the same from every azimuth (spread 1.5 %), so at 46 px it is one sample of 40 to 100 pixels per variant.
+4. *Predicted after the change* (linear between each variant's two measured cutoffs; fir is an extrapolation): quad cutoffs about 0.44 / 0.69 / 0.47 (now 0.342 / 0.665 / 0.391), quad / cards at 46 px 1.01 / 1.01 / 0.97, quad at 128 px against the shipped model 0.89 / 0.98 / 0.88.
+
+**Rejected.**
+- Keeping the cards' area to 46 px (per-card coverage preservation, or a cutoff that follows the view angle): not small, and it moves the cards from 1.05 to about 1.17 of the reference model.
+- Leaving the gate, or widening it: the step has the same sign for every species (10 to 15 % more crown area beyond 900 m), and maple passes or fails on 0.0002.
+- Gating each tier against the model at 46 px: the shipped model at 46 px keeps 24 to 72 % of its area (v12 and v13 have no pixels at all), so it cannot be a target, and against the reference model both tiers carry the 128 px calibration (1.28 / 0.83 / 1.17).
+
+**Fix order TR-7b-3 (implementer, size S).** `tools/tree_billboard_match_gpu_test.gd` only; keep out of the `--dump` code (`capture_dump`, `dump_images`, `_write_dump`), which another order is changing. This replaces "the shipped model" as the quad's coverage target in C2 and C4 above; the cards' target and every other gate stand.
+1. Constants: `HANDOFF_SIZE := 46` (the viewport edge at which a 325 m tree has its 900 m pixel size); `QUAD_AGAINST_CARDS_TOLERANCE := 0.10`.
+2. New `_cards_at_handoff() -> Array[float]`: per variant, the mean over 12 azimuths (15 + 30 k) of `_measure("card", variant, CARD_DISTANCE, AMBIENT, azimuth, HANDOFF_SIZE)[0]`.
+3. `_run_calibration`: keep the joint scan. Then bracket and bisect the cards alone against `ship_cover` (7 steps, `ApplyImpostorCalibration(cutoffs, cutoffs)`), set the final card cutoffs, apply them, and take `handoff := await _cards_at_handoff()`. Then bracket the quad from `quad_cover` against `handoff[variant]` and bisect it (7 steps, `ApplyImpostorCalibration(cutoffs, quad_cutoffs)`, the quad measured at 128 px and 900 m as now). Add `quad_target_cards_at_46` to each `cutoff_note`. The quad is calibrated at 128 px because its 46 px image is too few pixels to bisect on (finding 3) and it holds its area between the two sizes.
+4. `_evaluate` takes the coverage target per variant and its name in place of reading the shipped table: the cards and the control get the shipped model's ambient covered fraction (as now), the quad gets `_cards_at_handoff()`, measured in `_run` after `capture_dump = false`. The 8 % per-variant limit stays for both.
+5. `_scale_stability` takes the same array and uses it for `quad_over_cards_46`; `cards_64`, `cards_46` and `quad_46` stay as they are.
+6. Report only: the quad at 128 px against the shipped model at 128 px, species means and per variant (`quad_over_shipped_model_128`), and the target array. Update the header's gate list, the `--calibrate` line and the summary print.
+7. Run `--calibrate`, then verify, then the other tests of the TR-7b-2 validation list. The card cutoffs must come out unchanged.
+
+Escalate if: quad against cards at 46 px misses 10 % for a species after the recalibration; a quad variant has no crossing inside the scan (0.05 to 0.88; v12 and v13 are the nearest, at 0.78 and 0.74 today); or a quad sun or ambient gate that passes today fails.
+
+**For the user.**
+- Nothing is boosted or widened. Beyond 900 m a far tree covers what its cards cover at 900 m, which is about 11 % less crown area than the uncommitted state for maple and pine and 2 to 6 % less for fir. `UseFarTreeQuads` has been off by default, so no shipped picture changes.
+- For D7: at the pixel size of 900 m the tree models as drawn today keep 72 % (maple), 24 % (fir) and 48 % (pine) of the area they have at 325 m, and the two small firs (v12, v13) draw no pixels at all. With the user's 550 to 900 m fade preference those are the models on screen at that distance.
+
+### TR-7c. Distance-stable leaf mips for the tree models (design and order, 2026-11-15)
+
+ROLE: lead design (this section), then implementer
+SIZE: M for the preview (TR-7c-PV); M plus S for the two orders behind the gate
+DEPENDS ON: user D7 (answered yes). TR-7c-PV depends on nothing else. TR-7c-1 and TR-7c-2 depend on **user D8** (approval of the preview) and on TR-7b-3 being handed back.
+
+**Gate (the user, 2026-11-15: "Hold off on this change until I see it first myself").** Only TR-7c-PV below is authorised. It writes under `.godot/tr7c/` and adds new files under `tools/`; it writes nothing to `resources/`, does not touch the prepared catalog, a shader, a runtime script or `tools/tree_billboard_match_gpu_test.gd`, and changes no shipped picture. TR-7c-1 (the shipped resource, loader and shader) and TR-7c-2 (test gates and recalibration) start only after the user has seen the preview sheet and said yes (D8).
+
+Checked headless on the uncommitted tree (TR-6b, TR-7a, TR-7b, TR-7b-2, TR-9a and the v14 repair in the working tree, TR-7b-3 in progress). No GPU run. Evidence in `.godot/tr7c_lead/`: `probe_uv.gd` (read-only probe of the prepared catalog), `lod2_tris.csv` (its output), `leaf_mips_reference.py` (the rule, kept as the reference for the C# builder) and `leaf_mips_reference_output.txt`.
+
+#### Facts
+
+1. *Three atlases, three cutoffs.* Every variant of a species reads one leaf atlas with one cutoff, in LOD0, the authored LOD2 and LOD2b alike (LOD2b has no materials of its own; the loader gives it the LOD2's):
+
+| | atlas | size | `alpha_cutoff` | variants | covered share of the area the LOD2 cards show |
+|---|---|---|---|---|---|
+| maple | `maple/textures/Cluster_Mat_baseColor.png` | 2048 | 0.25 | v0-11 | 0.371 |
+| fir | `fir/textures/Brunches_Mat_baseColor.png` | 4096 | 0.376 | v12-14 | 0.385 |
+| pine | `pine/textures/Clusters_Mat_baseColor.png` | 2048 | 0.25 | v15-29 | 0.313 |
+
+   So "textures shared between variants" needs no per-variant copies: one mip chain per atlas, three in all. The cutoff is the material's `alpha_cutoff`, which TR-3 passes to `ALPHA_SCISSOR_THRESHOLD`. The LOD3 billboard pictures are not involved (the cards have their own bake).
+2. *The atlases are far finer than the screen.* LOD2 foliage has 500 to 700 texels per metre (maple), 800 to 1,450 (pine; saplings 2,500) and 2,300 to 4,100 (fir). At 1080p (0.37 m per pixel at 325 m, the match test's lens) level 0 is on screen only closer than about 1.5 m (maple) and 0.3 m (fir). At 10 m a maple reads level 2.8, at 40 m level 4.8. At 325 m the whole atlas is 8 to 11 texels across for maple (level 7.5 to 8.0), 2 to 7 for pine (8.2 to 9.9) and 3 to 5 for fir (9.7 to 10.6); at 900 m add 1.5 levels. A leaf cluster is a quarter of an atlas, so at the distances D7 is about one cluster is one to three texels.
+3. *Why the model drifts.* At those levels the importer's alpha is close to the atlas mean (0.22, 0.27, 0.21) tested against 0.25, 0.376, 0.25: maple and pine sit near the cutoff and fill in, fir is under it and vanishes. Prototype, leaf-card surface area against the close-up cutout, isotropic sampling (before cards overlap on screen, so the on-screen change is smaller; the GPU measurements of escalation 2 are the on-screen ones):
+
+| distance | maple today / stable | fir today / stable | pine today / stable |
+|---|---|---|---|
+| 10 m | 1.12 / 1.00 | 1.24 / 1.00 | 1.33 / 1.00 |
+| 20 m | 1.24 / 1.00 | 1.33 / 1.00 | 1.41 / 1.00 |
+| 40 m | 1.41 / 1.00 | 1.43 / 0.98 | 1.52 / 1.00 |
+| 80 m | 1.64 / 1.01 | 1.39 / 1.02 | 1.57 / 1.00 |
+| 160 m | 1.77 / 1.00 | 1.05 / 1.03 | 1.50 / 1.00 |
+| 325 m | 1.70 / 1.01 | 0.31 / 1.05 | 1.09 / 0.92 |
+| 650 m | 1.14 / 0.98 | 0.00 / 0.91 | 0.74 / 0.68 |
+| 900 m | 0.57 / 0.89 | 0.00 / 0.43 | 0.13 / 0.56 |
+
+   The colour drift is reproduced as well: with the importer's mips the visible colour is 0.63 to 0.73 in blue for pine and 1.08 to 1.14 in red for maple at levels 6 to 9 (escalation 2 measured 0.70 and 1.10); with covered-only linear-light colour all three species are within 3 % in red and green and 2 % in luminance, except fir (limit 3 below).
+4. *The drift starts near the camera, not at a few tens of metres.* D7's text said "from a few tens of metres outward". The table shows the model already draws 12 to 33 % more leaf surface at 10 m than close up. The preview therefore shows near tiles, and the user should expect the near and middle forest to change too (maple and pine crowns more open, fir slightly more open up to about 80 m and fuller beyond 160 m).
+5. *Leaf albedo is an ordinary import, not a streamed one* (`docs/godot-48-native-texture-streaming.md`: alpha foliage is excluded because the importer has no alpha-coverage option). The three atlases are fully resident today: 5.6 + 22.4 + 5.6 MB as DXT5 with mips.
+6. *The world fingerprint and the tile cache do not see textures* (`tools/WorldGenerationFingerprint.cs:167-182` hashes names, sizes and array lengths; the tile cache mixes `CatalogVersion`). Decision D1 holds whatever is chosen here.
+
+#### Design
+
+**A. Where: offline, in a sibling prepare tool, as its own checked-in resource.** `tools/prepare_tree_leaf_mips.gd` (headless) writes `resources/trees/prepared/lolipop_leaf_mips.res` and a manifest, by the rules of design C4, exactly as TR-4 and TR-7a do. A loader swaps the leaf materials' `albedo_texture` when the catalog is hydrated. Missing or stale: the import's own mips are drawn, with one warning.
+- Not in `lolipop_catalog.res` or `tools/prepare_tree_assets.ps1`: that pipeline forces an editor reimport and stages and promotes the catalog, and every file in `tools/PreparedTreeAssets.targets` changes the implementation identity. The catalog already carries the uncommitted v14 repair; it stays byte-identical here. The hook goes in `ImportedTreeCatalog.Prepared.cs` (`HydratePrepared`), which is not in the identity list.
+- Not import settings: the importer has no coverage option, cannot ignore cut-out texels in the colour, knows nothing about the cutoff or the meshes, and any `.png.import` change stales the catalog's source fingerprint.
+- Not at load: a 4096 atlas would have to be decompressed, rebuilt and recompressed on every start (an estimated second or more, not measured). The cards can do it at load only because their layers are 256 px and uncompressed.
+- Texture type: an `ImageTexture` whose `Image` has the import's format and size (DXT5, full chain). Level 0 is the import's level 0, copied byte for byte, so nothing changes where level 0 is drawn and every tool that reads the base level (`TreeLodDecimator.Coverage`, the TR-7a atlas bake) reads the same bytes as today.
+- Memory: unchanged once loaded (the same format and size replace the import, which should be released when no material holds it; *unverified*, the preview reports texture memory). During load both exist (33.6 MB for a moment) and the import is still read from disk; a later catalog re-prepare could drop that dependency. Disk: about 34 MB more in the repository (less if the resource is saved compressed). Load time: one more threaded resource load; not measured (performance runs are paused), TR-8 and the load-time agenda measure it.
+- Determinism: CPU only, fixed iteration order, bisection on doubles, sRGB through a 256-entry table. The gate is "two builds on one machine give the same hash" plus properties of the stored resource (below); byte equality across the two machines is not gated (block compression may differ by CPU).
+
+**B. Alpha mips: the covered fraction, scaled per leaf cluster so the passing area is the close-up area.** The rule is `leaf_mips_reference.py`; the C# builder is a port of it.
+1. `mask` = level-0 alpha >= the cutoff in use. `cover_L` = box average of `mask` (the covered fraction of each mip texel). The mask, not the raw alpha, so half-transparent texels count the way the near shader cuts them.
+2. `usage` = a 512 x 512 map of foliage surface area per UV cell, from the LOD0 and LOD2 foliage triangles of every variant of the species, each (variant, LOD) normalised to 1. The cards show only part of the atlas (48 / 70 / 78 % of it); passing area outside the cards is never drawn and must not count. Without this weighting the 4 x 4 level of maple keeps 0.72 of the area.
+3. Islands = 4-connected components of the 64 x 64 `cover` grid (cells with any covered texel, no wrap); components under 1/256 of the covered mass join the nearest; every cell belongs to the nearest island (ties to the lower index). Maple has 5, fir 4, pine 4.
+4. Per level with at least 4 x 4 texels and per island: one scale s, found by bisection (26 steps on 0 to 64), so that the usage-weighted area where the bilinearly filtered (repeat) `clamp(round(255 cover_L s))` reaches the cutoff equals the usage-weighted covered area at level 0 inside that island. Three passes over the islands in index order (neighbours share texels at coarse levels). The 2 x 2 level gets one scale for the whole atlas. The 1 x 1 level is the largest byte below the cutoff: it never passes by itself (see limits).
+5. Why per island: one scale per level, as `PreserveAlphaCoverage` uses for the cards, keeps the species total but not each tree. The small pines (v27-29) use other clusters than the large ones and would keep 0.58 to 0.90 of their needles from 80 to 330 m, and two maple saplings would draw 1.2 times theirs beyond 600 m. Per island every variant is within 1 % down to 16 x 16 texels, 2 % at 8 x 8 and 7 % at 4 x 4.
+
+**C. Colour mips: linear-light mean of the covered level-0 texels.** Per mip texel, sum(linear colour x mask) / sum(mask), both sums smoothed with two passes of [1 2 1] in each axis before dividing; texels with no covered texel take the next coarser level (pull-push), so filtering across a cut edge never pulls in the dilated background colour. No multiplier anywhere. The importer's mips average gamma-encoded bytes over all texels, cut-out ones included; that is the source of the maple red and the lost pine blue.
+
+**D. Compression.** Each built level is compressed alone (`Image.Compress` to the import's format) and the bytes are concatenated behind the import's level 0 with `Image.CreateFromData(w, h, true, format, data)`; the total length must equal the import's. The tool then decompresses its own output and repeats the coverage table on it. This does not depend on whether `Image.Compress` keeps or regenerates mips. *Unverified:* that DXT5 keeps the scaled alpha within 2 % of coverage at every level; the tool gates it.
+
+**E. Shader: the leaf alpha is read isotropically.** `imported_tree.gdshader` samples with `filter_linear_mipmap_anisotropic` (`project.godot` does not set the level, so the engine default applies; 4x assumed, *unverified*). An anisotropic tap set reads a finer level averaged along one axis, and a coverage-preserving level is only right when read as built. Prototype, a footprint of 2 and 4 texels along one axis: maple keeps 0.90 and 0.67 at level 7 and 0.80 and 0.50 at level 8; fir 0.83 and 0.00 at level 10; pine 0.89 and 0.71 at level 7. For a crown with leaf cards at all angles that is roughly 9 % (maple, 325 m) to 18 % (fir, 325 m) less leaf surface, and it depends on the view angle (cards seen from above are face-on, from the side edge-on), which is the step the stable mips are meant to remove. It is the same erosion the far cards show at 46 px (46 px gate decision, finding 2).
+- Change (TR-7c-1): a second sampler on the same texture, `uniform sampler2D leaf_alpha_texture : filter_linear_mipmap, repeat_enable;` and `uniform bool leaf_alpha_isotropic = false;`. Where cutout is on and the flag is set, `ALPHA = texture(leaf_alpha_texture, UV).a * albedo_tint.a`; the colour keeps the anisotropic read. The loader sets both with the texture. The default keeps every other user of the shader (the dither test's solid texture, the source fallback) as it is. One more texture read per leaf pixel, in the colour and shadow passes; TR-8 measures it.
+- Near look: on leaf cards seen at a grazing angle the outline comes from a level one or two coarser than today, so it is softer close up. The preview shows it at 20 m. If the user dislikes it, the fallback is to fade the isotropic read in between levels 2 and 4 (`textureQueryLod`), not to drop it.
+- The preview measures the stable mips both ways. If the anisotropic read is within 5 % of the isotropic one for every species at 128, 64 and 46 px from the side and from 60 degrees above, the shader change is dropped.
+
+**F. Limits (nothing is added to hide them).**
+1. Below 4 x 4 texels the atlas cannot carry the coverage: alpha test on a 2 x 2 or 1 x 1 level is all or nothing per cluster. The 1 x 1 level is set to fail, so a tree whose clusters are under a pixel loses its leaves gradually and never gains area. That is trees 2 to 5 px tall: the saplings beyond about 300 m, the small pines and the two small firs (v13, v14) beyond 650 m (table above: fir 0.43 and pine 0.56 at 900 m, against 0.00 and 0.13 today; the large trees of both keep 0.9 or more). Setting it to pass would draw every card solid (2.6 to 3.2 times the leaf surface): a boost, rejected.
+2. Halfway between two levels the species area moves by up to 5 % down to 8 x 8 texels and 3 % between 8 x 8 and 4 x 4 (single variants 8 %). Between 4 x 4 and 2 x 2 it falls by up to 22 %, and below that further (limit 1).
+3. Fir is 3 to 6 % darker than close up between 20 and 200 m in the prototype (today 3 to 4 %): the texels that pass are the dense twig centres. The smoothing in C recovers 1 to 5 points at the two coarsest of those levels. If the preview shows more, widen that neighbourhood; never multiply.
+4. Level 0 does not change, so the magnified near look (closer than 0.3 to 1.5 m) is identical.
+
+**G. What it does to the neighbours.**
+- *TR-4 coverage rule and LOD2b.* The rule already measures the close-up cutout (level-0 alpha at the authored cutoff, `TreeLodDecimator.Coverage`). Today the drawn LOD2b departs from it because scaled survivor clusters read other mip levels than the authored ones; with stable mips the drawn model is what the rule measured. Rule, constants and `lolipop_render_lods.res` do not change (its hash is over the LOD2 arrays). v13 and v14 keep their authored LOD2. D2 was judged on sheets drawn with today's mips, so TR-7c-2 redraws three of them for the user.
+- *TR-5 dither test.* `tree_lod_dither_gpu_test` uses a solid opaque texture and the flag defaults to off: no change, it must pass as it is. In the game the 25 to 40 m and mid hand-offs get both sides at the same crown area by construction.
+- *TR-7a atlas bake.* Reads level 0: not regenerated.
+- *Billboard match test.* The shipped model comes to within the gates of the reference model, so: the shipped model gets the gates the cards have against the reference (area, ambient, sun, 64 and 46 px scale); `handoff_step` is tightened from 25 % to the sun tolerances; the reference shader copy must also replace the new alpha read. Calibration: `--calibrate` is rerun (version 3 stays); the cards' target, the shipped model's area at 128 px, moves by about -22 % (maple), +18 % (fir), -15 % (pine), so the card cutoffs move towards the authored ones, and the quad follows the cards at 46 px as TR-7b-3 defines.
+- *Tree shadows.* The shadow meshes duplicate the materials after the swap, so shadows cut with the same mips.
+- No grave-key row: this is not a tunable. The A/B is the loader's diagnostics switch.
+
+**Rejected.**
+- A mip bias or a mip clamp on the model: partial, and it shimmers.
+- Hashed (stochastic) alpha in the shader: it keeps area at every level without special mips, but it turns every leaf edge into per-pixel noise from a few metres on (there is no temporal anti-aliasing to hide it) and changes the near look far more than D7 describes.
+- One scale per level for the whole atlas: B5.
+- Building the far look into the cards instead: rejected in escalation 2.
+
+#### TR-7c-PV. Preview only (implementer, size M). The only step authorised.
+
+Objective: the stable mips in a scratch folder and a before/after contact sheet for the user. No shipped file changes.
+
+Files, all new: `tools/TreeLeafMipBuilder.cs` (the rule, B to D), `tools/PrepareTreeLeafMips.cs` and `tools/prepare_tree_leaf_mips.gd` (headless tool), `tools/TreeLeafMipPreviewDriver.cs` and `tools/tree_leaf_mip_preview.gd` (GPU tool), and two `tool` entries (tier manual) in `tools/test_manifest.json`, added after TR-7b-3 is handed back. Do not edit anything under `resources/`, `materials/`, `scripts/`, or `tools/tree_billboard_match_gpu_test.gd` (copy what is needed from it).
+
+1. Builder: a port of `leaf_mips_reference.py`. Input: level 0 of the imported texture decompressed to RGBA8, the cutoff, the usage map. Output: the mip chain and a table per level (per-variant passing area against level 0: mean, minimum, maximum; the same halfway to the next level; the same on the decompressed output).
+2. Tool: group the cutout foliage materials of `ImportedTreeCatalog.Load()` by albedo texture; fail if one atlas has two cutoffs. Build, compress (D), and save one `ImageTexture` per atlas plus `manifest.json` and `leaf_mips_table.md` under `res://.godot/tr7c/preview/` (the default output of this step; it refuses any path outside `res://.godot/`). It must fail when: level 0 differs from the import by a byte; the data length differs; a level with at least 8 x 8 texels is off by more than 2 % for the species mean or 5 % for a variant (decompressed output); the 4 x 4 level is off by more than 10 % for a variant; a second build in the same run gives another hash. Compare the table with `leaf_mips_reference_output.txt`: within 2 points at every level down to 8 x 8 (the reference used the PNG and LOD2 only).
+3. Preview (GPU): the match test's scene (its lens, haze off, white ambient and noon as in the D7 sheet), materials duplicated in the tool, never the catalog's own. Three looks: today (as shipped); stable (the preview texture, alpha through a tool-local shader copy with the isotropic sampler of E); stable with the shipped shader. The model is what the shipped defaults draw at each distance: LOD0 at 20 m, then the authored LOD2 or LOD2b (`ImportedTreeRenderLodCatalog.GetLod2b`) by TR-5's mid fade (`CompactTreeMidFadeBounds`).
+   - User sheet `.godot/tr7c/preview/tr7c_preview_sheet.png`: v3 (maple), v13 (fir), v19 (pine); per species two rows (ambient, noon) and ten columns: today and stable at 20 m (crown, 256 px), 80 m, 325 m (128 px), 650 m (64 px) and 900 m (46 px). Far tiles are drawn at their real pixel size and enlarged with nearest filtering; labelled.
+   - Detail sheet `tr7c_preview_detail.png` for the lead: at 325 m and 900 m, today, stable, stable with the shipped shader, and the reference model (albedo at level 0, 512 px).
+   - Numbers, all 30 variants, 12 azimuths: covered area, ambient colour and noon sun-only luminance of the three looks at 128, 64 and 46 px against the reference model; the same from 60 degrees above at 128 px; LOD2b against the authored LOD2 with stable mips at 128 px. `preview_table.csv`, `preview_report.json`.
+   - Dolly: v3 and v13, 15 m to 420 m in 300 frames, today beside stable; `mp4`, and `flicker` on each half. The stable half must not have larger spikes than today's.
+4. Expected (report, do not tune to reach them): stable against the reference model, species mean: covered area within 10 % at 128 px, 15 % at 64 px, 20 % at 46 px; ambient luminance within 5 %, each channel within 8 % of the luminance; noon within 10 %.
+5. Run: `tools/run_tests.ps1 -Tests prepare_tree_leaf_mips -Label tr7c`, then `-Tests tree_leaf_mip_preview -Label tr7c` (separate runs; the GPU queue decides when). Clean up as AGENTS.md says: keep the two sheets, the mp4, the tables and the scratch textures; delete the frames. `tools/prune_test_output.ps1 -Apply`.
+6. Hand the sheet, the mp4 and the species table to the primary agent for the user. Stop there.
+
+Escalate if: the concatenated chain does not load or does not keep the built levels; the stable look's level-0 colour differs from today's (the `ImageTexture` is not read as sRGB the way the import is); DXT5 breaks the 2 % gate; an expectation of item 4 is missed for a species; the anisotropic and isotropic looks differ by less than 5 % everywhere (the shader change is then dropped); or the dolly shows shimmer or steps the importer's mips do not have.
+
+Stop rule: 2 watchdog periods, 4 build-plus-test attempts.
+
+**TR-7c-PV DXT5 note (2026-11-15).** First run of `prepare_tree_leaf_mips`: the rule as specified (open loop: build the levels, then compress each alone) misses the DXT5 gates 13 times (species mean beyond 2 % at 16 x 16 and 8 x 8 for fir, maple and pine, e.g. fir 1.037, maple 0.976 and 1.031, pine 0.964 and 0.950; 4 x 4 variants beyond 10 % for fir 0.847..0.884 and pine 1.080..1.196). Cause: a DXT5 alpha block stores two endpoints and 8 interpolated values per 4 x 4 block, so values near the cutoff move by up to about a seventh of the block range, and an 8 x 8 level is only 4 blocks. Decision (primary): the scale bisection of design B is measured on the DXT5 round trip (compress, decode, measure) for levels up to 256 x 256, so the stored levels are the ones that were measured (closed loop; the preview set is `atlas_*_cl.res`, the open-loop set is kept for comparison). Closed loop leaves 3 misses: maple 8 x 8 species mean 0.978 (variants 0.967..0.986) and pine 4 x 4 one variant at 0.845 (0.845..1.017); fir passes everything. Those two gates are set to report-plus-bound at the measured DXT5 floor: maple 8 x 8 species mean within 3 % (also against the reference table, 2.4 points), pine 4 x 4 per variant within 20 %. Every other gate is as specified. TR-7c-1's builder and test inherit the closed loop and these two bounds.
+
+#### TR-7c-1. Shipped resource, loader, shader (implementer, size M). Not authorised until D8.
+
+1. `scripts/Vegetation/PreparedTreeLeafMips.cs` (schema and tool version, the catalog's `SourceFingerprint` it was built against, per atlas: source texture path, cutoff, size, texture) and `ImportedTreeLeafMipCatalog.cs`: `Apply(variants, resource)`, `ConfigureForDiagnostics(path, enabled)`, `FallbackReason`, one warning per cause. Stale means: fingerprint differs from the catalog resource's, a material's cutoff differs from the recorded one, or the size differs. Startup reads metadata only, never pixels.
+2. Hook in `ImportedTreeCatalog.Prepared.cs` only: `HydratePrepared` applies it to every cutout foliage material (all four LODs) before anything duplicates materials; `PreparePreparedCooperatively` requests the resource through `RingThreadedResourceClaims` beside the catalog. Do not edit a file listed in `tools/PreparedTreeAssets.targets`; `lolipop_catalog.res` must stay byte-identical. The source fallback keeps the import's mips and its warning says so.
+3. `materials/imported_tree.gdshader`: design E, unless the preview dropped it.
+4. The tool's default output becomes `resources/trees/prepared/lolipop_leaf_mips.res` with a manifest (tool version, fingerprint, cutoffs, the table, artifact hash), staged and promoted as `prepare_tree_render_lods` does.
+5. New headless `tree_leaf_mips_test` (tier gate, manifest entry): the stored resource against a fresh build (table within 0.5 points; hash equality reported, not gated); level 0 equals the import; stale and missing fall back; with the importer's mips the table must fail (the test can see the feature missing).
+6. Driver: `UseLeafMips(bool)` and `LeafMipsLoaded()` on `ImportedTreeCatalogDriver` for the match test's control.
+7. Validation: `tree_leaf_mips_test`, `imported_tree_prepared_catalog_test`, `imported_tree_gpu_regression`, `tree_lod_dither_gpu_test`, `tree_lod_decimation_test`, `tree_impostor_atlas_test`, `tree_lighting_shadow_gpu_test`, `vegetation_shadow_gpu_test`, `tree_atmosphere_gpu_test`, `gpu_tree_integration_test`, `native_texture_streaming_test`. `compare` at `forest_edge_eye` noon before and after: a visible change is expected and must be confined to tree crowns and their shadows; send the heatmap.
+
+Escalate if: the catalog's identity or bytes move; a shadow test fails; the heatmap shows change outside the trees.
+
+#### TR-7c-2. Match test and recalibration (implementer, size S). Not authorised until D8; after TR-7c-1 and after TR-7b-3 is committed.
+
+1. `tools/tree_billboard_match_gpu_test.gd`: the reference shader copy also replaces `texture(leaf_alpha_texture, UV)` (fail if not found). New gates for the shipped model against the reference model: covered area within 10 % per species at 128 px, its 64 and 46 px area within 15 and 20 % of its 128 px value, ambient luminance within 5 % and channels within 8 % of the luminance, sun only within 10 / 10 / 15 %. `handoff_step` tolerance 25 % becomes 10 / 10 / 15 %. Control: with `UseLeafMips(false)` the model gates must fail for maple and pine.
+2. `--calibrate`, then verify; the calibration resource is regenerated (version 3). Report the old and new card and quad cutoffs. Rerun `--dump`.
+3. For the user: `tree_lod_contact_sheets` for v3, v13 and v19 (D2 was judged with the old mips); the TR-1 switch strip in both configurations; the 250 to 400 m dolly through `flicker`.
+4. Tests: the TR-7b-2 validation list.
+
+Escalate if: a model gate misses for a species; the card cutoffs leave 0.05 to 0.95; or a card or quad gate that passes today fails after recalibration.
+
+**For the user.**
+- Nothing is boosted, widened or multiplied. Where the atlas cannot carry the area (trees 2 to 5 px tall) the leaves thin out; they are never filled in.
+- The change is not only far away. The models already draw more leaf surface than close up from about 10 m (fact 4). The preview's 20 m and 80 m tiles show what the near and middle forest will look like.
+- Leaf outlines on cards seen edge-on become softer close up if the isotropic alpha read is kept (design E); the preview shows it.
+- About 34 MB more in the repository; an 8 MB variant (levels 1 and up only, joined to the import at load) costs a texture read-back at every start and is not recommended.
 
 ### TR-8. Review pack: before and after cost and look
 
@@ -908,6 +1227,8 @@ The effective edge oscillates while the camera stands still, or the CPU gate is 
 
 STOP RULE
 2 watchdog periods, 4 build-plus-test attempts.
+
+TR-9a implementation notes (untested; build passes, no test has run, tests paused 2026-11-15). `UpdateGpuTreeEffectiveEdges` (Gpu.cs) runs at the top of a selection rebuild (compact profile, `PruneEmptyGpuTreeBatches`, canonical focus, `DisableGpuTreeEffectiveEdges` off) and stores the effective hand-off ends of slots 0 to 3. They travel in `edges[1..4]` (edges[2] is now the LOD2 to LOD2b end, the near fade end when the render LODs are off), so `GpuTreeLodEdges()` returns them to every consumer, `GpuTreeSelectionCanReuse` and `_gpuLastEdges` compare them (the selection signature), and `GpuTreeLodInterval` derives each band and fade from them with the configured widths (`HandOffStart`). Per slot a 64-bin histogram runs over [previous minimum end less its width, configured end); `ResolveGpuTreeEffectiveEnd` takes the upper edge of the last bin at 95 % of (cap minus protected roots in the band), with a one-bin hysteresis against the stored end. Slot 0's end never goes inside the farthest protected root. `RunEffectiveEdgeResolver` and `RunEffectiveEdgeCase` in `TreeRenderPolicyRegression` check it; `RunCapPruningCase` sets `DisableGpuTreeEffectiveEdges` because it tests the configured bands.
 
 ### TR-9. Raise the tree count to the budget
 

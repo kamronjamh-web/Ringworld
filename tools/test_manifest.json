@@ -467,6 +467,51 @@
       "expected_s": 160,
       "timeout_s": 600
     },
+    "prepare_tree_leaf_mips": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "PREPARE_TREE_LEAF_MIPS",
+      "expected_s": 180,
+      "timeout_s": 900
+    },
+    "tree_leaf_mip_preview": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "TREE_LEAF_MIP_PREVIEW",
+      "expected_s": 1800,
+      "timeout_s": 3600
+    },
+    "tree_impostor_atlas_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation",
+        "render-core"
+      ],
+      "marker": "TREE_IMPOSTOR_ATLAS_TEST",
+      "expected_s": 90,
+      "timeout_s": 300
+    },
+    "prepare_tree_impostor_atlas": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "PREPARE_TREE_IMPOSTOR_ATLAS",
+      "expected_s": 60,
+      "timeout_s": 300
+    },
     "tree_lod_contact_sheets": {
       "kind": "tool",
       "mode": "gpu",
@@ -6677,8 +6722,8 @@
         "atmosphere-haze"
       ],
       "marker": "TREE_BILLBOARD_MATCH_GPU_TEST",
-      "expected_s": 180,
-      "timeout_s": 900
+      "expected_s": 1500,
+      "timeout_s": 3600
     },
     "tree_compute_optimization_regression": {
       "kind": "test",

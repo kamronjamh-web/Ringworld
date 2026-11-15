@@ -1,0 +1,312 @@
+{
+  "schema_version": 1,
+  "tool_version": 1,
+  "engine_identity": "4.8-dev7 (official)|c971f93e7",
+  "resource_path": "resources/trees/prepared/lolipop_impostor_atlas.res",
+  "artifact_sha256": "0F1A94F0661628B4098EEF9C0CDF91607DA7EAD44BA52C6F6E471EB04D3C743C",
+  "layer_size": 256,
+  "sub_samples": 3,
+  "method": "orthographic CPU raster of the authored LOD2 along each LOD3 card normal into the card\u0027s UV region; normal mips selected (never averaged) per card by error diffusion on the six-axis clamped light response among the covered children",
+  "variants": [
+    {
+      "index": 0,
+      "name": "Acer_Sapling_1",
+      "source_hash": "4333422767E018344C148AAF9954BBDBD313F7B7E7469EB3DC3905DE0715BEB3",
+      "cards": 9,
+      "top_cards": 1,
+      "owned_texels": 37274,
+      "covered_texels": 11224,
+      "fit_residual": 9E-06
+    },
+    {
+      "index": 1,
+      "name": "Acer_Sapling_2",
+      "source_hash": "A5E8E2677E9182AD0F9682DB1F70722BA5681EA81A62812E5A8314A9C6FBAB1B",
+      "cards": 9,
+      "top_cards": 1,
+      "owned_texels": 40035,
+      "covered_texels": 12804,
+      "fit_residual": 6E-06
+    },
+    {
+      "index": 2,
+      "name": "Acer_Sapling_3",
+      "source_hash": "80DE3F276D7658B4CAB2E6EE6765FA98C6C7D10D6F1427F4A4A9415FE26FB614",
+      "cards": 9,
+      "top_cards": 1,
+      "owned_texels": 35878,
+      "covered_texels": 11145,
+      "fit_residual": 6E-06
+    },
+    {
+      "index": 3,
+      "name": "Acer_large_1",
+      "source_hash": "B5D3ACFA926C19A9B18B03599407598017992A8893E22725D4051E4C539C27B9",
+      "cards": 9,
+      "top_cards": 1,
+      "owned_texels": 50646,
+      "covered_texels": 26087,
+      "fit_residual": 6E-06
+    },
+    {
+      "index": 4,
+      "name": "Acer_large_2",
+      "source_hash": "AC8967EEFC35519B163FBFCFB2F8EDC4FA10B4313333D6F9920CC46A27C81C9F",
+      "cards": 9,
+      "top_cards": 1,
+      "owned_texels": 39426,
+      "covered_texels": 20849,
+      "fit_residual": 8E-06
+    },
+    {
+      "index": 5,
+      "name": "Acer_large_3",
+      "source_hash": "9836A38458A2A1E4525E41E2C33659F88F2528A1BDE05184B772AB144E5563AE",
+      "cards": 9,
+      "top_cards": 1,
+      "owned_texels": 45871,
+      "covered_texels": 20920,
+      "fit_residual": 6E-06
+    },
+    {
+      "index": 6,
+      "name": "Acer_medium_1",
+      "source_hash": "B636EA69104C837D1DD10FDA7C159E76B16539996F1F83B4223A559FC72A6A53",
+      "cards": 9,
+      "top_cards": 1,
+      "owned_texels": 46106,
+      "covered_texels": 25210,
+      "fit_residual": 9E-06
+    },
+    {
+      "index": 7,
+      "name": "Acer_medium_2",
+      "source_hash": "62A6FCD00B1BC6E1C62D5F0FFDCDBD6F97258305A5D952B0DF8141DFCC4B0030",
+      "cards": 9,
+      "top_cards": 1,
+      "owned_texels": 40856,
+      "covered_texels": 19398,
+      "fit_residual": 1.1E-05
+    },
+    {
+      "index": 8,
+      "name": "Acer_medium_3",
+      "source_hash": "55F759AA307A8A77153474DB723E477D22C42BF3EE404CF0C64404D706D85168",
+      "cards": 9,
+      "top_cards": 1,
+      "owned_texels": 38759,
+      "covered_texels": 17247,
+      "fit_residual": 6E-06
+    },
+    {
+      "index": 9,
+      "name": "Acer_small_1",
+      "source_hash": "6CFBD3F47328E05F3463668FA4397D6023C1EB117DACECBAC5D35877036F38CC",
+      "cards": 9,
+      "top_cards": 1,
+      "owned_texels": 38074,
+      "covered_texels": 15657,
+      "fit_residual": 9E-06
+    },
+    {
+      "index": 10,
+      "name": "Acer_small_2",
+      "source_hash": "CBCA1243D90FB6A707B819338FB578F3E4B8EB3EAF6E8B67712BB3CAA1A54175",
+      "cards": 9,
+      "top_cards": 1,
+      "owned_texels": 43796,
+      "covered_texels": 21133,
+      "fit_residual": 9E-06
+    },
+    {
+      "index": 11,
+      "name": "Acer_small_3",
+      "source_hash": "5C7608B726A9EEB66A7F3061638CBA57813BC343AE427FB133449374766443B8",
+      "cards": 9,
+      "top_cards": 1,
+      "owned_texels": 39020,
+      "covered_texels": 15527,
+      "fit_residual": 1E-05
+    },
+    {
+      "index": 12,
+      "name": "Christmas tree",
+      "source_hash": "BFFD4B38EA21606420E337B51A57291D0A956205DD4C1421429BB0392641E0CB",
+      "cards": 5,
+      "top_cards": 1,
+      "owned_texels": 34914,
+      "covered_texels": 20458,
+      "fit_residual": 7E-06
+    },
+    {
+      "index": 13,
+      "name": "Christmas tree_2",
+      "source_hash": "EF4C1FF03354BA2B5FFCF886A7526DFF4F45C0410379232F8DA7E2B587373162",
+      "cards": 5,
+      "top_cards": 1,
+      "owned_texels": 40317,
+      "covered_texels": 25149,
+      "fit_residual": 7E-06
+    },
+    {
+      "index": 14,
+      "name": "Christmas tree_3",
+      "source_hash": "993109DCE58A6757DD03DA0FE5AADF5D0AF1189B8C5B8BA61F4D5BE24820CC31",
+      "cards": 5,
+      "top_cards": 1,
+      "owned_texels": 28678,
+      "covered_texels": 15777,
+      "fit_residual": 6E-06
+    },
+    {
+      "index": 15,
+      "name": "Pine_big_1",
+      "source_hash": "21E25576C538478F4911C40C5605042A3A2F5F0F7D9E30D836868E15259FB445",
+      "cards": 4,
+      "top_cards": 1,
+      "owned_texels": 37819,
+      "covered_texels": 13896,
+      "fit_residual": 9E-06
+    },
+    {
+      "index": 16,
+      "name": "Pine_big_2",
+      "source_hash": "788AB18BE41B8C9F5B060B326972FDC3B2D8B699FC1E5A18BB6440A877C12DC5",
+      "cards": 4,
+      "top_cards": 1,
+      "owned_texels": 36372,
+      "covered_texels": 14465,
+      "fit_residual": 4E-06
+    },
+    {
+      "index": 17,
+      "name": "Pine_big_3",
+      "source_hash": "6E391185E26626EDA2AA9A74B2629FD29013A2D4D8E5B649EDA34EE2AA2D0E0B",
+      "cards": 4,
+      "top_cards": 1,
+      "owned_texels": 36503,
+      "covered_texels": 13137,
+      "fit_residual": 7E-06
+    },
+    {
+      "index": 18,
+      "name": "Pine_large_1",
+      "source_hash": "B46454FA0CF5BC75E868F6D20B5F8CC6A6E82A3FBD9F030BBBCA3E9D51ECA3D5",
+      "cards": 4,
+      "top_cards": 1,
+      "owned_texels": 36780,
+      "covered_texels": 12772,
+      "fit_residual": 6E-06
+    },
+    {
+      "index": 19,
+      "name": "Pine_large_2",
+      "source_hash": "5E0720A85B3CC18C497BC8F1B95ECBC15A854AAF5FA2370ED4F7779EFBC484A4",
+      "cards": 4,
+      "top_cards": 1,
+      "owned_texels": 38947,
+      "covered_texels": 14350,
+      "fit_residual": 0.002597
+    },
+    {
+      "index": 20,
+      "name": "Pine_large_3",
+      "source_hash": "05165341075DEFB722F1E8EB17A7F0A11C4F3F975083849E3177DB6E07571CD6",
+      "cards": 4,
+      "top_cards": 1,
+      "owned_texels": 38572,
+      "covered_texels": 14083,
+      "fit_residual": 9E-06
+    },
+    {
+      "index": 21,
+      "name": "Pine_medium_1",
+      "source_hash": "31BDF3D3EE66472CA8B6D4BA0364E4AE13EC2AD710CF2767A5444E625B806073",
+      "cards": 4,
+      "top_cards": 1,
+      "owned_texels": 36364,
+      "covered_texels": 13352,
+      "fit_residual": 8E-06
+    },
+    {
+      "index": 22,
+      "name": "Pine_medium_2",
+      "source_hash": "FFB49C2CC69D04490E45B6E83AF68EE437F36BCD7642ACDE5CC9CBA3B53CC57D",
+      "cards": 4,
+      "top_cards": 1,
+      "owned_texels": 40834,
+      "covered_texels": 13692,
+      "fit_residual": 0.003617
+    },
+    {
+      "index": 23,
+      "name": "Pine_medium_3",
+      "source_hash": "7CFAE8836C1103E5C9D7CBBC524D809FEF806FDBA9F95A31F81C646BA7AEB32B",
+      "cards": 4,
+      "top_cards": 1,
+      "owned_texels": 38493,
+      "covered_texels": 13814,
+      "fit_residual": 0.002762
+    },
+    {
+      "index": 24,
+      "name": "Pine_sapling_1",
+      "source_hash": "C5F41E1ABC88E4F63761BF3CECEDFC84C42A78891D714B863739ADA87E9A4C38",
+      "cards": 4,
+      "top_cards": 1,
+      "owned_texels": 34892,
+      "covered_texels": 13971,
+      "fit_residual": 6E-06
+    },
+    {
+      "index": 25,
+      "name": "Pine_sapling_2",
+      "source_hash": "A2C102B32B0225637A9378FE2336D25A34F1E74DBC2E8D18AC06B05D4E81F082",
+      "cards": 4,
+      "top_cards": 1,
+      "owned_texels": 33543,
+      "covered_texels": 13998,
+      "fit_residual": 7E-06
+    },
+    {
+      "index": 26,
+      "name": "Pine_sapling_3",
+      "source_hash": "1FDE86DF0A568F7F8898C3714E3825058F4C9423DE28AE2472A2DE29FAE6B65D",
+      "cards": 4,
+      "top_cards": 1,
+      "owned_texels": 35403,
+      "covered_texels": 17252,
+      "fit_residual": 5E-06
+    },
+    {
+      "index": 27,
+      "name": "Pine_small_1",
+      "source_hash": "FD0AB22C34BB2C836A17EFC895095C0486305717DE52666EFF30EC9BE239C353",
+      "cards": 4,
+      "top_cards": 1,
+      "owned_texels": 37055,
+      "covered_texels": 13689,
+      "fit_residual": 0.001504
+    },
+    {
+      "index": 28,
+      "name": "Pine_small_2",
+      "source_hash": "5E9353E268C157873020A4D88D863E36D4BA4388E5900AF7B8E50841A5D7C631",
+      "cards": 4,
+      "top_cards": 1,
+      "owned_texels": 36016,
+      "covered_texels": 15582,
+      "fit_residual": 7E-06
+    },
+    {
+      "index": 29,
+      "name": "Pine_small_3",
+      "source_hash": "A5A9C5536E9D925DAD8BCDDF4CD8EEBA9D8AEAA1E93EC82220611333F7439412",
+      "cards": 4,
+      "top_cards": 1,
+      "owned_texels": 33357,
+      "covered_texels": 13515,
+      "fit_residual": 9E-06
+    }
+  ]
+}

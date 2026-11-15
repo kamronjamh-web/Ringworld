@@ -8,7 +8,8 @@ uniform sampler2D uv_data : filter_nearest;
 uniform sampler2D tangent_data : filter_nearest;
 uniform sampler2D variant_parameters : filter_nearest;
 uniform sampler2DArray albedo_layers : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
-uniform sampler2DArray normal_layers : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
+// TR-7: baked tangent-space shading normals (n * 0.5 + 0.5). The mips are selected, not averaged, so they are sampled without blending between texels or levels.
+uniform sampler2DArray normal_layers : hint_normal, filter_nearest_mipmap, repeat_enable;
 uniform sampler2DArray metallic_roughness_layers : filter_linear_mipmap_anisotropic, repeat_enable;
 uniform vec3 ring_center = vec3(0.0);
 uniform vec3 sun_direction = vec3(1.0, 0.0, 0.0);
@@ -21,10 +22,14 @@ uniform bool vegetation_wind_enabled = true;
 uniform int tree_foliage_mode = 0;
 uniform bool tree_foliage_attachments = false;
 uniform bool simplified_tree_shading = false;
-// TR-6: one camera-facing quad per tree (6 vertices) instead of the crossed cards. The quad copies the largest LOD3 plane (variant_parameters rows 3 and 4),
+// TR-6: one camera-facing quad per tree (vertices 0 to 5; TR-6b adds the horizontal card as vertices 6 to 11) instead of the crossed cards. The quad copies the largest LOD3 plane (variant_parameters rows 3 and 4),
 // turns about the tree's up axis towards the camera position, and has no wind.
 uniform bool far_quad_mode = false;
-const vec2 FAR_QUAD_CORNERS[6] = vec2[6](vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(1.0, 1.0), vec2(0.0, 0.0), vec2(1.0, 1.0), vec2(0.0, 1.0));
+// Clockwise seen from the camera (x across to the right, y up): Godot's front face is clockwise, and a back face would have its normal reversed.
+const vec2 FAR_QUAD_CORNERS[6] = vec2[6](vec2(0.0, 0.0), vec2(1.0, 1.0), vec2(1.0, 0.0), vec2(0.0, 0.0), vec2(0.0, 1.0), vec2(1.0, 1.0));
+// TR-6b: sine of the camera elevations (20 and 30 degrees) between which the horizontal card fades in; the same values as RingBiomeDecorationLayer.TreeSteepElevationLow/HighDegrees.
+const float FAR_QUAD_TOP_SIN_LOW = 0.3420201;
+const float FAR_QUAD_TOP_SIN_HIGH = 0.5;
 // Main-viewport only: ray frame comes from global shader parameters.
 #define RING_ATMOSPHERE_FRAME_GLOBAL
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
@@ -75,7 +80,42 @@ void vertex() {
 	tree_variant = variant;
 	tree_parameters = texelFetch(variant_parameters, ivec2(variant, 1), 0);
 	vec3 root_world = MODEL_MATRIX[3].xyz;
-	if (far_quad_mode) {
+	if (far_quad_mode && VERTEX_ID >= 6) {
+		// TR-6b: the variant's horizontal LOD3 card (vertices 6 to 11), fixed in the tree's own frame (no turning, no wind), covering the card's UV rectangle.
+		// It is dropped at low angles (all six vertices on one point: no triangles, no pixels) and fades in by screen-door over the same 20 to 30 degrees of
+		// camera elevation as the steep-view rule of ring_gpu_vegetation_indirect.glsl (smoothstep of the sine, measured from the tree root along its up axis).
+		float model_scale = length(MODEL_MATRIX[1].xyz);
+		vec3 tree_up = MODEL_MATRIX[1].xyz / max(model_scale, 0.000001);
+		vec3 to_camera = ring_atmosphere_camera_world_position - root_world;
+		float steepness = smoothstep(FAR_QUAD_TOP_SIN_LOW, FAR_QUAD_TOP_SIN_HIGH, dot(tree_up, to_camera) / max(length(to_camera), 0.001));
+		vec4 top_uv = texelFetch(variant_parameters, ivec2(variant, 5), 0);
+		vec4 top_corners = texelFetch(variant_parameters, ivec2(variant, 6), 0);
+		vec4 top_extra = texelFetch(variant_parameters, ivec2(variant, 7), 0);
+		vec3 corner_00 = vec3(top_corners.x, top_extra.z, top_corners.y);
+		vec3 edge_u = vec3(top_corners.z - top_corners.x, 0.0, top_corners.w - top_corners.y);
+		vec3 edge_v = vec3(top_extra.x - top_corners.x, 0.0, top_extra.y - top_corners.y);
+		// Clockwise seen from above (Godot's front face): swap two corners of each triangle when the picture's (u, v) frame is clockwise from above.
+		int corner_index = VERTEX_ID - 6;
+		if (edge_u.z * edge_v.x - edge_u.x * edge_v.z < 0.0) corner_index = (corner_index % 3 == 1) ? corner_index + 1 : ((corner_index % 3 == 2) ? corner_index - 1 : corner_index);
+		vec2 corner = FAR_QUAD_CORNERS[corner_index];
+		bool top_present = top_extra.w >= 0.0 && steepness > 0.0;
+		VERTEX = top_present ? corner_00 + edge_u * corner.x + edge_v * corner.y : vec3(0.0);
+		dither_window.y = min(dither_window.y, steepness);
+		tree_dither_window = dither_window;
+		// Normal-layer frame from the frame code (see the upright quad below): the baked frame T0, B0, N0 against the picture's u and v directions, seen from above.
+		int top_code = int(round(max(top_extra.w, 0.0)));
+		float top_frame_sign = (top_code & 1) != 0 ? 1.0 : -1.0;
+		float top_t_sign = (top_code & 2) != 0 ? 1.0 : -1.0;
+		float top_b_sign = (top_code & 4) != 0 ? 1.0 : -1.0;
+		float top_hand = (top_code & 8) != 0 ? 1.0 : -1.0;
+		vec3 u_dir = normalize(edge_u + vec3(0.0, 0.0, 0.000001));
+		vec3 v_dir = normalize(edge_v + vec3(0.000001, 0.0, 0.0));
+		NORMAL = normalize(cross(u_dir, v_dir)) * (top_frame_sign * top_hand);
+		TANGENT = u_dir * (top_frame_sign * top_t_sign);
+		BINORMAL = v_dir * (top_frame_sign * top_b_sign);
+		UV = vec2(mix(top_uv.x, top_uv.z, corner.x), mix(top_uv.y, top_uv.w, corner.y));
+		UV2 = vec2(0.0);
+	} else if (far_quad_mode) {
 		float model_scale = length(MODEL_MATRIX[1].xyz);
 		vec3 tree_up = MODEL_MATRIX[1].xyz / max(model_scale, 0.000001);
 		vec4 plane_uv = texelFetch(variant_parameters, ivec2(variant, 3), 0);
@@ -103,9 +143,22 @@ void vertex() {
 		vec3 corner_world = quad_centre + across * ((corner.x - 0.5) * quad_width) + quad_up * ((corner.y - 0.5) * quad_height * height_scale);
 		vec3 offset = corner_world - root_world;
 		VERTEX = vec3(dot(offset, MODEL_MATRIX[0].xyz), dot(offset, MODEL_MATRIX[1].xyz), dot(offset, MODEL_MATRIX[2].xyz)) / max(model_scale * model_scale, 0.000001);
-		NORMAL = far_quad_to_model_direction(MODEL_MATRIX, model_scale, camera_dir);
-		TANGENT = far_quad_to_model_direction(MODEL_MATRIX, model_scale, across * (u_at_right >= u_at_left ? 1.0 : -1.0));
-		BINORMAL = far_quad_to_model_direction(MODEL_MATRIX, model_scale, quad_up * (plane_uv.w >= plane_uv.z ? 1.0 : -1.0));
+		// Normal-layer frame: the bake's own, not the tilted quad's: across, the tree's up axis, and the horizontal direction to the camera, so top light stays
+		// top light seen from above. The card the quad copies was baked with frame (T0, B0, N0) and sign s; row 4's w holds its relation to the picture:
+		// bit 0 s = +1, bit 1 T0 along +u, bit 2 B0 along +v. The picture is drawn with u along `across` times u_sign and v along up times v_sign (a mirrored
+		// picture flips only the across component, which u_sign does in TANGENT). The baked side always faces the camera, so N0 is the direction to the camera
+		// times s and does not depend on the mirroring. The quad is front-facing (see FAR_QUAD_CORNERS), so Godot does not negate the frame; s is applied here.
+		int frame_code = int(round(plane_size.w));
+		float frame_sign = (frame_code & 1) != 0 ? 1.0 : -1.0;
+		float t_sign = (frame_code & 2) != 0 ? 1.0 : -1.0;
+		float b_sign = (frame_code & 4) != 0 ? 1.0 : -1.0;
+		float u_sign = u_at_right >= u_at_left ? 1.0 : -1.0;
+		float v_sign = plane_uv.w >= plane_uv.z ? 1.0 : -1.0;
+		vec3 across_flat = normalize(across - tree_up * dot(across, tree_up));
+		vec3 toward_camera_flat = cross(across_flat, tree_up);
+		NORMAL = far_quad_to_model_direction(MODEL_MATRIX, model_scale, toward_camera_flat * frame_sign);
+		TANGENT = far_quad_to_model_direction(MODEL_MATRIX, model_scale, across_flat * (frame_sign * t_sign * u_sign));
+		BINORMAL = far_quad_to_model_direction(MODEL_MATRIX, model_scale, tree_up * (frame_sign * b_sign * v_sign));
 		UV = vec2(mix(u_at_left, u_at_right, corner.x), mix(plane_uv.z, plane_uv.w, corner.y));
 		UV2 = vec2(0.0);
 	} else {
@@ -151,11 +204,18 @@ void vertex() {
 }
 void fragment() {
 	apply_tree_dither(FRAGCOORD.xy);
+	// Baked shading normal in the card's tangent frame, read for every card pixel (simplified shading included; no brightness term anywhere in the card path).
+	// It is decoded by hand, not through NORMAL_MAP: NORMAL_MAP rebuilds z as +sqrt(1 - x^2 - y^2), and the bake stores a negative z on cards whose frame the
+	// mesh shader negates. On a back face (cull_disabled) Godot negates only NORMAL, not TANGENT/BINORMAL (measured in tree_billboard_match_gpu_test: also
+	// negating the in-plane part gave a worst noon luminance error of 0.72, this decode 0.31). The decode therefore already gives the baked normal mirrored
+	// through the card plane, which keeps its up component, so a card seen from behind shows the same lit crown top.
+	vec3 baked_normal = texture(normal_layers, vec3(UV, float(tree_variant))).rgb * 2.0 - 1.0;
+	NORMAL = normalize(TANGENT * baked_normal.x + BINORMAL * baked_normal.y + NORMAL * baked_normal.z);
 	vec4 albedo = texture(albedo_layers, vec3(UV, float(tree_variant))) * texelFetch(variant_parameters, ivec2(tree_variant, 0), 0);
 	vec4 flags = texelFetch(variant_parameters, ivec2(tree_variant, 2), 0);
 	if (flags.r > .5) {
 		ALPHA = albedo.a;
-		ALPHA_SCISSOR_THRESHOLD = tree_parameters.a;
+		ALPHA_SCISSOR_THRESHOLD = far_quad_mode ? flags.a : tree_parameters.a;
 	}
 	ALBEDO = albedo.rgb * mix(night_tint, vec3(1.0), tree_day_factor) * (1.0 - tree_cloud_occlusion * tree_day_factor * .34);
 	ALBEDO *= tree_haze_T;
@@ -173,8 +233,6 @@ void fragment() {
 		ROUGHNESS = 0.9;
 	} else {
 		vec4 mr = texture(metallic_roughness_layers, vec3(UV, float(tree_variant)));
-		NORMAL_MAP = texture(normal_layers, vec3(UV, float(tree_variant))).rgb;
-		NORMAL_MAP_DEPTH = tree_parameters.r;
 		METALLIC = mr.b * tree_parameters.g;
 		ROUGHNESS = mr.g * tree_parameters.b;
 	}

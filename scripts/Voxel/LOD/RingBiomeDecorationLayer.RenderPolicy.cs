@@ -105,28 +105,38 @@ public partial class RingBiomeDecorationLayer
         CompactTreeMidFadeBounds(out float midStart, out float midEnd);
         return HashCode.Combine(HashCode.Combine(EffectiveCompactTreeLodProfile, MergeMidGpuTreeBatches, EffectiveMidTreeBatchTileSpan,
             PruneEmptyGpuTreeBatches, a, b, c), HashCode.Combine(d, EffectiveFarTreeQuads, EffectiveFarTreeQuads ? CompactTreeQuadCardFarEdge() : 0f),
-            EffectiveTreeRenderLods, EffectiveTreeRenderLods ? midStart : 0f, EffectiveTreeRenderLods ? midEnd : 0f);
+            EffectiveTreeRenderLods, EffectiveTreeRenderLods ? midStart : 0f, EffectiveTreeRenderLods ? midEnd : 0f, DisableGpuTreeEffectiveEdges);
     }
+
+    /// <summary>Start of a hand-off whose end is <paramref name="end"/>: the configured start while the end is configured, else the end less the configured width.</summary>
+    private static float HandOffStart(float end, float configuredEnd, float configuredStart)
+        => end == configuredEnd ? configuredStart : Math.Max(0, end - (configuredEnd - configuredStart));
 
     private void GpuTreeLodInterval(int lod, float[] edges, out float near, out float far, out float fadeInStart, out float fadeInEnd, out float fadeOutStart, out float fadeOutEnd)
     {
         near = edges[lod]; far = edges[lod + 1]; fadeInStart = fadeInEnd = fadeOutStart = fadeOutEnd = -1;
         if (!EffectiveCompactTreeLodProfile) return;
-        CompactTreeFadeBounds(out float nearStart, out float nearEnd, out float farStart, out float farEnd);
+        CompactTreeFadeBounds(out float nearStart, out float nearEnd, out float billboardStart, out float billboardEnd);
+        // Hand-off ends (TR-9a): edges[1..4] are the ends of slots 0..3, the configured values unless a cap moved one inward. A moved hand-off keeps its
+        // configured fade width and ends at the effective edge; the next slot's near edge and fade-in follow it.
+        float e0 = edges[1], e1 = edges[2], e2 = edges[3];
+        float nearFadeStart = HandOffStart(e0, nearEnd, nearStart), farStart = HandOffStart(e2, billboardEnd, billboardStart), farEnd = e2;
         switch (lod)
         {
-            case 0: near = 0; far = nearEnd; fadeOutStart = nearStart; fadeOutEnd = nearEnd; break;
+            case 0: near = 0; far = e0; fadeOutStart = nearFadeStart; fadeOutEnd = e0; break;
             case 1 when EffectiveTreeRenderLods:
                 // Authored LOD2: in over the near fade, out over the reduced-detail hand-off to the decimated LOD2b (slot 2).
                 CompactTreeMidFadeBounds(out float midStart, out float midEnd);
-                near = nearStart; far = midEnd; fadeInStart = nearStart; fadeInEnd = nearEnd; fadeOutStart = midStart; fadeOutEnd = midEnd;
+                float midFadeStart = HandOffStart(e1, midEnd, midStart);
+                near = nearFadeStart; far = e1; fadeInStart = nearFadeStart; fadeInEnd = e0; fadeOutStart = midFadeStart; fadeOutEnd = e1;
                 break;
-            case 1: near = far = nearEnd; break;
+            case 1: near = far = e0; break;
             case 2 when EffectiveTreeRenderLods:
                 CompactTreeMidFadeBounds(out float lowStart, out float lowEnd);
-                near = lowStart; far = farEnd; fadeInStart = lowStart; fadeInEnd = lowEnd; fadeOutStart = farStart; fadeOutEnd = farEnd;
+                float lowFadeStart = HandOffStart(e1, lowEnd, lowStart);
+                near = lowFadeStart; far = farEnd; fadeInStart = lowFadeStart; fadeInEnd = e1; fadeOutStart = farStart; fadeOutEnd = farEnd;
                 break;
-            case 2: near = nearStart; far = farEnd; fadeInStart = nearStart; fadeInEnd = nearEnd; fadeOutStart = farStart; fadeOutEnd = farEnd; break;
+            case 2: near = nearFadeStart; far = farEnd; fadeInStart = nearFadeStart; fadeInEnd = e0; fadeOutStart = farStart; fadeOutEnd = farEnd; break;
             case 3:
                 near = farStart; far = edges[4]; fadeInStart = farStart; fadeInEnd = farEnd;
                 if (EffectiveFarTreeQuads) { fadeOutStart = edges[4] - TreeQuadCrossFadeMeters; fadeOutEnd = edges[4]; }

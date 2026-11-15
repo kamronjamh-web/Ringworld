@@ -3,9 +3,9 @@
     "bake_version":  1,
     "catalog_version":  1,
     "engine_identity":  "4.8-dev7 (official)|c971f93e7",
-    "implementation_identity":  "69F22BA4366CCCAA666D69DBC865A1032D5A0EB8365F1C6FD2211B8D43537BA1",
+    "implementation_identity":  "EDBED9A1C96E0C108A2463CAD4CAE5DFC523F4FB4FE1584FA406B044BD5A0E24",
     "source_fingerprint":  "4736F0F395ED0010A438269B9C982689601C2CD50D5FAC7107017D7B5DA8D3F0",
-    "artifact_sha256":  "B364E1EF801E24ECB71789BFC84E1E3BB0300E5B744D83D9EEA3E496F5C8582C",
+    "artifact_sha256":  "24FCAB9192BAB5359C41270630F606CADE6926D4C7E9A823BBC233ADA03BE16D",
     "artifact_path":  "resources/trees/prepared/lolipop_catalog.res",
     "parity_verified":  true,
     "inputs":  [

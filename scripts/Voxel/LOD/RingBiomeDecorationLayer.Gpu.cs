@@ -442,7 +442,30 @@ public partial class RingBiomeDecorationLayer
         }
     }
 
+    // Cap fall-through (TR-9a). In the compact profile edges[1..4] are the hand-off ends of slots 0..3 (edges[2] is the LOD2 to LOD2b end, equal to the near
+    // fade end when the render LODs are off, where slot 1 is unused). GpuTreeConfiguredEdges holds the configured values; GpuTreeLodEdges substitutes the
+    // stored effective ends (moved inward until each slot's cap holds its band) so every consumer, the selection signature included, sees them.
+    private float[]? _gpuTreeEffectiveBase, _gpuTreeEffectiveEnds;
+    /// <summary>Test switch: the configured hand-off ends are used as before TR-9a. No menu row.</summary>
+    internal bool DisableGpuTreeEffectiveEdges { get; set; }
+
     private float[] GpuTreeLodEdges()
+    {
+        float[] edges = GpuTreeConfiguredEdges();
+        if (EffectiveCompactTreeLodProfile && !DisableGpuTreeEffectiveEdges && _gpuTreeEffectiveEnds is { } ends
+            && _gpuTreeEffectiveBase is { } baseEdges && baseEdges.AsSpan().SequenceEqual(edges))
+            for (int i = 0; i < 4; i++) edges[1 + i] = ends[i];
+        return edges;
+    }
+
+    /// <summary>Test hook: the stored effective hand-off ends of slots 0..3, or null when none are in force.</summary>
+    internal float[]? GpuTreeEffectiveEndsForTests()
+    {
+        float[] edges = GpuTreeLodEdges();
+        return EffectiveCompactTreeLodProfile && !DisableGpuTreeEffectiveEdges && _gpuTreeEffectiveEnds is not null ? new[] { edges[1], edges[2], edges[3], edges[4] } : null;
+    }
+
+    private float[] GpuTreeConfiguredEdges()
     {
         if (EffectiveCompactTreeLodProfile)
         {
@@ -451,7 +474,9 @@ public partial class RingBiomeDecorationLayer
             float compactFourth = EffectiveFarTreeQuads
                 ? Math.Min(CompactTreeQuadCardFarEdge(), far)
                 : Mathf.Clamp(MinimumLod5DistanceMeters, billboardEnd, Math.Max(billboardEnd, MaximumLod5DistanceMeters));
-            return new[] { 0f, nearEnd, nearEnd, billboardEnd, compactFourth, far };
+            float midEnd = nearEnd;
+            if (EffectiveTreeRenderLods) CompactTreeMidFadeBounds(out _, out midEnd);
+            return new[] { 0f, nearEnd, midEnd, billboardEnd, compactFourth, far };
         }
         float collision = EnableImportedForestCollisions ? Math.Max(1, ImportedForestCollisionRadiusMeters) + 4 : 1;
         float first = Math.Max(collision, Lod1DistanceMeters), second = Math.Max(first, Lod2DistanceMeters), third = Math.Max(second, Lod3DistanceMeters);
@@ -523,6 +548,10 @@ public partial class RingBiomeDecorationLayer
         bool compactProfile = EffectiveCompactTreeLodProfile;
         float reuseRadius = guard * .25f + .001f;
         _gpuTreeGroupDistanceScratch.Clear();
+        // TR-9a: derive the hand-off ends from the caps before any band is used. Pruning and a canonical focus are required; otherwise the configured edges apply.
+        if (compactProfile && PruneEmptyGpuTreeBatches && !DisableGpuTreeEffectiveEdges && focus is RingCanonicalPosition effectiveFocus)
+            edges = UpdateGpuTreeEffectiveEdges(camera, effectiveFocus, circumference, caps, gates, guard);
+        else if (_gpuTreeEffectiveEnds is not null) { _gpuTreeEffectiveEnds = null; _gpuTreeEffectiveBase = null; edges = GpuTreeLodEdges(); }
         for (int lod = 0; lod < 5; lod++)
         {
         if (!IsGpuTreeLodEnabled(lod)) continue;
@@ -530,25 +559,7 @@ public partial class RingBiomeDecorationLayer
         GpuTreeLodInterval(lod, edges, out float lodNear, out float lodFar, out _, out _, out _, out _);
         foreach (GpuTreeGroup group in GroupsForGpuLod(lod))
         {
-            float near, far;
-            if (_gpuTreeGroupDistanceScratch.TryGetValue(group, out (float Near, float Far) cached)) { near = cached.Near; far = cached.Far; }
-            else
-            {
-            if (focus is RingCanonicalPosition canonical)
-            {
-                Vector2 local = CanonicalCamera(group, canonical, circumference);
-                near = local.DistanceTo(local.Clamp(group.CanonicalMin, group.CanonicalMax));
-                Vector2 delta = (local - group.CanonicalMin).Abs().Max((local - group.CanonicalMax).Abs());
-                far = delta.Length();
-            }
-            else
-            {
-                Aabb bounds = GlobalTransform * group.Bounds;
-                near = camera.DistanceTo(camera.Clamp(bounds.Position, bounds.End));
-                far = camera.DistanceTo(bounds.GetCenter()) + bounds.Size.Length() * .5f;
-            }
-            _gpuTreeGroupDistanceScratch[group] = (near, far);
-            }
+            (float near, float far) = GpuTreeGroupDistanceBounds(group, camera, focus, circumference);
             var key = new GpuOutputKey(group.Key, lod);
             bool overlaps = (lod == 0 && group.HasProtected && !compactProfile) || (far + guard >= lodNear && near - guard < lodFar);
             if (!overlaps) continue;
@@ -720,6 +731,149 @@ public partial class RingBiomeDecorationLayer
         }
         GpuTreeCullingStatus = _gpuTreeStatusText;
         return true;
+    }
+
+    // Nearest and farthest distance of a group to the camera, cached per selection rebuild.
+    private (float Near, float Far) GpuTreeGroupDistanceBounds(GpuTreeGroup group, Vector3 camera, RingCanonicalPosition? focus, double circumference)
+    {
+        if (_gpuTreeGroupDistanceScratch.TryGetValue(group, out (float Near, float Far) cached)) return cached;
+        float near, far;
+        if (focus is RingCanonicalPosition canonical)
+        {
+            Vector2 local = CanonicalCamera(group, canonical, circumference);
+            near = local.DistanceTo(local.Clamp(group.CanonicalMin, group.CanonicalMax));
+            Vector2 delta = (local - group.CanonicalMin).Abs().Max((local - group.CanonicalMax).Abs());
+            far = delta.Length();
+        }
+        else
+        {
+            Aabb bounds = GlobalTransform * group.Bounds;
+            near = camera.DistanceTo(camera.Clamp(bounds.Position, bounds.End));
+            far = camera.DistanceTo(bounds.GetCenter()) + bounds.Size.Length() * .5f;
+        }
+        _gpuTreeGroupDistanceScratch[group] = (near, far);
+        return (near, far);
+    }
+
+    private const int GpuTreeEffectiveBins = 64;
+    private const float GpuTreeEffectiveCapShare = .95f;
+
+    /// <summary>
+    /// Effective hand-off end of one slot (TR-9a). <paramref name="histogram"/> counts the slot's ordinary candidates in GpuTreeEffectiveBins equal bins over
+    /// [lo, hi); the slot owns the roots from <paramref name="start"/> (the previous hand-off's fade-in start) up to its end. The end is the upper edge of the
+    /// last bin whose running count is at most 95 % of <paramref name="available"/>; hi (the configured end) when the whole band fits; the minimum when not
+    /// even the first bin fits. It moves away from <paramref name="stored"/> only when the new value differs by more than one bin.
+    /// </summary>
+    internal static float ResolveGpuTreeEffectiveEnd(int[] histogram, float lo, float hi, float start, float available, float stored, float minimum)
+    {
+        float binWidth = (hi - lo) / histogram.Length;
+        if (!(binWidth > 0)) return hi;
+        int first = Math.Clamp((int)MathF.Floor((start - lo) / binWidth), 0, histogram.Length - 1);
+        float threshold = available * GpuTreeEffectiveCapShare;
+        long total = 0;
+        for (int b = first; b < histogram.Length; b++) total += histogram[b];
+        float raw;
+        if (total <= threshold) raw = hi;
+        else
+        {
+            long running = 0; int last = -1;
+            for (int b = first; b < histogram.Length; b++) { running += histogram[b]; if (running <= threshold) last = b; else break; }
+            raw = last >= 0 ? lo + (last + 1) * binWidth : minimum;
+        }
+        raw = Math.Clamp(raw, Math.Min(minimum, hi), hi);
+        if (float.IsNaN(stored) || MathF.Abs(raw - stored) <= binWidth) raw = float.IsNaN(stored) ? raw : Math.Clamp(stored, Math.Min(minimum, hi), hi);
+        return raw;
+    }
+
+    /// <summary>
+    /// Cap fall-through (TR-9a, design B2). One pass over the roots of the groups that can reach slots 0..3 fills a 64-bin distance histogram per slot (ordinary
+    /// roots that pass the slot's gate); protected roots are counted off the slot's cap (they keep first claim) and slot 0's end never goes inside the
+    /// farthest protected root. The ends are then resolved nearest slot first, each slot starting where the previous one now ends, so a tree that a cap
+    /// pushes out of one slot lands in the next. The ends are stored with a one-bin hysteresis and returned as the new edge array. Called only from a
+    /// selection rebuild, so nothing changes while the camera stands still.
+    /// </summary>
+    private float[] UpdateGpuTreeEffectiveEdges(Vector3 camera, RingCanonicalPosition focus, double circumference, uint[] caps, float[] gates, float guard)
+    {
+        float[] configured = GpuTreeConfiguredEdges();
+        bool renderLods = EffectiveTreeRenderLods;
+        CompactTreeFadeBounds(out float nearStart, out float nearEnd, out float billboardStart, out float billboardEnd);
+        int count = renderLods ? 4 : 3;
+        Span<int> slotOf = stackalloc int[4];
+        Span<float> widthOf = stackalloc float[4];
+        if (renderLods) { slotOf[0] = 0; slotOf[1] = 1; slotOf[2] = 2; slotOf[3] = 3; }
+        else { slotOf[0] = 0; slotOf[1] = 2; slotOf[2] = 3; }
+        for (int j = 0; j < count; j++)
+        {
+            float width = slotOf[j] switch
+            {
+                0 => nearEnd - nearStart,
+                1 => 0,
+                2 => billboardEnd - billboardStart,
+                _ => EffectiveFarTreeQuads ? TreeQuadCrossFadeMeters : 0f
+            };
+            if (slotOf[j] == 1) { CompactTreeMidFadeBounds(out float midStart, out float midEnd); width = midEnd - midStart; }
+            widthOf[j] = MathF.Max(0, width);
+        }
+        Span<float> lo = stackalloc float[4], hi = stackalloc float[4], minimum = stackalloc float[4];
+        float previousMinimum = 0, previousWidth = 0;
+        for (int j = 0; j < count; j++)
+        {
+            int edge = 1 + slotOf[j];
+            hi[j] = configured[edge];
+            lo[j] = j == 0 ? 0 : previousMinimum - previousWidth;
+            minimum[j] = Math.Min(previousMinimum + widthOf[j], hi[j]);
+            previousMinimum = minimum[j]; previousWidth = widthOf[j];
+        }
+        var histograms = new int[count][];
+        var protectedCount = new int[count];
+        float protectedFarthest = 0;
+        for (int j = 0; j < count; j++)
+        {
+            histograms[j] = new int[GpuTreeEffectiveBins];
+            int slot = slotOf[j];
+            if (!(hi[j] > lo[j])) continue;
+            float low = lo[j], high = hi[j], invBin = GpuTreeEffectiveBins / (high - low), gate = gates[slot];
+            float lowSquared = low * low, highSquared = high * high;
+            int[] histogram = histograms[j];
+            foreach (GpuTreeGroup group in GroupsForGpuLod(slot))
+            {
+                (float near, float far) = GpuTreeGroupDistanceBounds(group, camera, focus, circumference);
+                if (far + guard < low || near - guard >= high) continue;
+                Vector2 local = CanonicalCamera(group, focus, circumference);
+                Vector4[] metadata = group.Metadata;
+                for (int i = 0; i < metadata.Length; i++)
+                {
+                    Vector4 meta = metadata[i];
+                    bool protectedRoot = meta.Y > .5f;
+                    if (!protectedRoot && meta.X > gate) continue;
+                    float dx = meta.Z - local.X, dz = meta.W - local.Y, distanceSquared = dx * dx + dz * dz;
+                    if (distanceSquared < lowSquared || distanceSquared >= highSquared) continue;
+                    float distance = MathF.Sqrt(distanceSquared);
+                    if (protectedRoot) { protectedCount[j]++; if (slot == 0 && distance > protectedFarthest) protectedFarthest = distance; }
+                    else histogram[Math.Min(GpuTreeEffectiveBins - 1, (int)((distance - low) * invBin))]++;
+                }
+            }
+        }
+        bool sameBase = _gpuTreeEffectiveBase is { } previousBase && previousBase.AsSpan().SequenceEqual(configured) && _gpuTreeEffectiveEnds is not null;
+        var ends = new float[4] { configured[1], configured[2], configured[3], configured[4] };
+        float previousEnd = 0; previousWidth = 0;
+        for (int j = 0; j < count; j++)
+        {
+            int slot = slotOf[j], index = slot;
+            float floor = minimum[j];
+            if (j > 0) floor = Math.Min(hi[j], Math.Max(floor, previousEnd + widthOf[j]));
+            if (slot == 0) floor = Math.Min(hi[j], Math.Max(floor, protectedFarthest + (hi[j] - lo[j]) / GpuTreeEffectiveBins));
+            float start = j == 0 ? 0 : previousEnd - previousWidth;
+            float available = MathF.Max(0, caps[slot] - protectedCount[j]);
+            float stored = sameBase ? _gpuTreeEffectiveEnds![index] : float.NaN;
+            float end = ResolveGpuTreeEffectiveEnd(histograms[j], lo[j], hi[j], start, available, stored, floor);
+            // The hysteresis may keep a stored value that the moved previous end no longer allows.
+            end = Math.Clamp(end, floor, hi[j]);
+            ends[index] = end;
+            previousEnd = end; previousWidth = widthOf[j];
+        }
+        _gpuTreeEffectiveBase = configured; _gpuTreeEffectiveEnds = ends;
+        return GpuTreeLodEdges();
     }
 
     // Selection is reused while the camera remains inside the guard region. A
