@@ -27,6 +27,7 @@ public partial class PdaContextTest : RefCounted
             Changes(Check);
             Numbers(Check);
             PrecipitationAvailability(Check);
+            ReadingFormatting(Check);
             Knowledge(Check);
             Feed(host, Check);
         }
@@ -34,6 +35,21 @@ public partial class PdaContextTest : RefCounted
         if (failures.Count > 0) { Console.Error.WriteLine("PDA_CONTEXT=FAIL " + string.Join(" | ", failures.Take(20))); return 1; }
         Console.WriteLine("PDA_CONTEXT=PASS");
         return 0;
+    }
+
+    /// <summary>Readings the live feed formats must not be misreadable: ring-relative wind, in-game minutes, real zeros, depth wording.</summary>
+    private static void ReadingFormatting(Action<bool, string> check)
+    {
+        string wind = PdaContextFeed.WindDescription(18.49, 15.32, -10.35);
+        check(wind.StartsWith("18.49 m/s, blowing") && wind.Contains("15.32 m/s toward spinward") && wind.Contains("10.35 m/s toward the low-across") && wind.Contains("rim wall"), "wind lost speed or ring-relative direction: " + wind);
+        check(!Regex.IsMatch(wind, @"around|across component|\b(?:north|south|east|west)\b", RegexOptions.IgnoreCase), "wind exposed raw components or compass words: " + wind);
+        check(PdaContextFeed.WindDescription(3, -2, 0).Contains("2 m/s toward antispinward") && PdaContextFeed.WindDescription(0, 0, 0).Contains("essentially calm"), "negative around or calm wind misdescribed");
+        check(PdaReadingText.Minutes(750) == "12.5 game minutes" && PdaReadingText.Minutes(double.PositiveInfinity) == "an unknown time", "game-minute conversion or non-finite handling changed");
+        check(PdaReadingText.Zero(0).Contains("real reading of zero") && PdaReadingText.Zero(0).StartsWith("0 ") && !PdaReadingText.Zero(0.5).Contains("zero") && PdaReadingText.Zero(double.NaN) == "unavailable",
+            "a real zero must read as zero while a missing value reads unavailable");
+        check(PdaReadingText.Depth(-353.94) == "353.94 m above the terrain surface (no depth underground)" && PdaReadingText.Depth(60) == "60 m below the terrain surface" && PdaReadingText.Depth(0.2) == "at the terrain surface",
+            "negative depth was not translated into terrain-relative wording");
+        check(PdaReadingText.Phase("AstronomicalTwilight") == "astronomical twilight" && PdaReadingText.Phase("Afternoon") == "afternoon", "lighting phase wording changed");
     }
 
     private static PdaContextSnapshot Fixture() => new(7, DateTimeOffset.Parse("2026-11-05T12:00:00Z", CultureInfo.InvariantCulture),

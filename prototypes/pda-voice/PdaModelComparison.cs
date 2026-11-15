@@ -49,7 +49,7 @@ public static class PdaModelComparison
         try
         {
             PdaModelSpec spec = PdaModelCatalog.Get(key);
-            if (!spec.ComparisonOnly && key is not ("qwen3-8b-q4" or "gemma-3-4b-q4")) throw new InvalidOperationException("This harness accepts approved comparison model entries.");
+            if (!spec.ComparisonOnly && key is not ("qwen3-8b-q4" or "gemma-3-4b-q4" or "qwen3-4b-instruct-q4")) throw new InvalidOperationException("This harness accepts approved comparison model entries.");
             result.ModelCatalogEntry = spec;
             result.Parameters = RunParameters(threads, result.RequestedGpuLayers, Math.Min(spec.StartupTimeoutSeconds, StartupDeadlineCapSeconds));
             string candidatePath = Path.Combine(root, "resources", "pda", "model_artifacts.json");

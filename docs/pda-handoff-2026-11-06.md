@@ -2,7 +2,7 @@
 
 The F10 prototype now supports prepared game context, world-scoped conversation memory, narrow authored answer rules and opt-in Gemma images. **The reported slow Gemma response during gameplay is unresolved.** The user confirmed CUDA selection with **Attach current view** enabled. The isolated CPU measurements below do not explain that incident, and the synthetic CUDA checks do not certify live-game performance.
 
-Gemma 3 4B Q4_K_M and Qwen3 8B Q4_K_M are retained **for testing only**. The legacy `qwen3-0.6b` default remains intentional. There is one selected resident helper; inference and image capture happen on demand. This handoff does not introduce continuous inference, two concurrent LLMs, a new default, or a shipping-model decision.
+Gemma 3 4B Q4_K_M and Qwen3 8B Q4_K_M are retained **for testing only**. The default is now Qwen3 4B Instruct 2507 Q4_K_M (`qwen3-4b-instruct-q4`, user decision 2026-11-07; 13/13 on the live-question set at about 0.8 s full answer under game load); Gemma remains the image-capable choice and `qwen3-0.6b` stays selectable. There is one selected resident helper; inference and image capture happen on demand. This handoff does not introduce continuous inference or two concurrent LLMs.
 
 ## Entry points and architecture
 
@@ -92,3 +92,17 @@ Use one selected resident Gemma helper and the same world/save, camera pose, que
 4. Supplied context and final answer for separate factual review, including whether an image was actually used.
 
 Keep latency, factual quality and gameplay frame performance as separate verdicts. Complete this bounded A/B before changing the default, adding continuous inference, running two LLMs together or selecting a larger model. No live-world speed or FPS target is marked complete by this handoff.
+
+## Update 2026-11-07: speed and accuracy fixes
+
+Root cause of the slow live case: the game renderer saturates the shared GPU, so a resident helper that loses the time-slice decodes about 5x slower (Gemma 4B, 99 layers: about 9 tokens/s against about 80 idle-share). The helper itself was fine. What changed:
+
+- **Full offload by default**: the VRAM layer control now defaults to 99 (all layers); CPU is labelled a slow fallback; VRAM is the default placement when a CUDA 12 runtime exists and a window is open. The default model falls back to the first installed model (`PdaModelCatalog.ResolveDefaultKey`) when `qwen3-4b-instruct-q4` (the default) is missing, in the order Gemma 3 4B, Qwen3 8B, Qwen3 0.6B, then the small Qwens.
+- **Preload**: the helper starts when the panel is first opened (not at game start) and, for Gemma, verifies and loads the image projector at that time (`--vision-preload`), so neither the roughly 2 s helper start nor the projector hash lands on a question.
+- **Frame cap while answering**: `PdaDebugChatPanel.GenerationFrameCap` (30) caps the game's frame rate only while the helper generates. Measured under a saturating game: 9 t/s, first text 1.8 s uncapped; 80 t/s, first text 0.27 s at 30 fps; 33 t/s at a 60 fps cap; 56 t/s at 45. The game runs at 30 fps for the 0.5-1 s an answer takes.
+- **Streaming**: the helper sends `{"type":"partial","id","delta"}` envelopes before the one terminal `answer`/`error`/`cancelled`; `LocalPdaQaClient.AskAsync(..., onPartial)` accumulates them (`PdaQaReply.FirstPartialMilliseconds` is client-measured first text). The panel shows the text with a trailing `...`; the accepted final reply (after `GuardGeneratedAnswer`) replaces it and is the only text stored in memory.
+- **Readings cannot be misread**: ring-relative wind (spinward = increasing around), one cloud base with units and height above the player, depth reworded as terrain-relative, time of day as phase plus game minutes to sunrise/sunset, real zeros called out, thresholds labelled as cutoffs, hub light `ACTIVE (on)`/`INACTIVE (off)`.
+- **Deterministic lookups** in `PdaAnswerPolicy`: wind, cloud base, time of day, surface/underground, storms (megastorm and natural arrival), hub/eclipse, safety (never "safe"; unknown when readings are missing), and "what can you see" without an attached image. Explain/why questions still reach the model with `VERIFIED FACTS` first (`PdaAnswerPolicy.ComposeModelContext`) and a one-or-two-sentence instruction.
+- **Default model**: `qwen3-4b-instruct-q4` (Qwen3-4B-Instruct-2507 Q4_K_M, pinned unsloth revision) is the default (an ordinary, non-ComparisonOnly entry with 180 s timeouts); it renders as the non-thinking ChatML family. A plain `tools/install_pda_test_models.ps1` installs it (plus Qwen3 8B and Gemma 3 4B); to install only it use `-ModelKey qwen3-4b-instruct-q4` (run from `pwsh`, not Windows PowerShell 5.1).
+
+Measurement aids: `tools/PdaLoadProbe.cs` (a `.godot/pda_load/cap` file emulates the frame cap) and `qa-replay`. A model replay while the game ran uncapped once triggered `VK_ERROR_DEVICE_LOST` in the game when the helper reloaded repeatedly after a protocol error; keep the helper and protocol in step.

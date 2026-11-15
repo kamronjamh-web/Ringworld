@@ -22,11 +22,17 @@ public partial class PdaModelCatalogTest : RefCounted
         }
         try
         {
-            Check(PdaModelCatalog.DefaultModelKey == "qwen3-0.6b", "trial changed the current default");
-            Check(PdaModelCatalog.All.Count == 7 && PdaModelCatalog.All.Select(m => m.Key).Distinct().Count() == 7, "catalog ids are missing or duplicated");
-            Check(PdaModelCatalog.All.Count(m => !m.ComparisonOnly) == 3, "trial entries leaked into ordinary choices");
+            Check(PdaModelCatalog.DefaultModelKey == "qwen3-4b-instruct-q4", "default is not Qwen3 4B Instruct");
+            Check(PdaModelCatalog.All.Count == 8 && PdaModelCatalog.All.Select(m => m.Key).Distinct().Count() == 8, "catalog ids are missing or duplicated");
+            Check(PdaModelCatalog.All.Count(m => !m.ComparisonOnly) == 4, "trial entries leaked into ordinary choices");
             Check(PdaModelCatalog.DebugChoices.Select(m => m.Key).SequenceEqual(new[]
-                { "qwen3-0.6b", "qwen2.5-0.5b", "qwen2-0.5b", "qwen3-8b-q4", "gemma-3-4b-q4" }), "retained debug choices changed order or promoted excluded trials");
+                { "qwen3-4b-instruct-q4", "gemma-3-4b-q4", "qwen3-8b-q4", "qwen3-0.6b", "qwen2.5-0.5b", "qwen2-0.5b" }), "retained debug choices changed order or promoted excluded trials");
+            Check(PdaModelCatalog.ResolveDefaultKey(_ => true) == PdaModelCatalog.DefaultModelKey, "an installed default model stays the default");
+            Check(PdaModelCatalog.ResolveDefaultKey(spec => spec.Key == "gemma-3-4b-q4" || spec.Key == "qwen3-8b-q4") == "gemma-3-4b-q4", "a missing default falls back to the first installed model");
+            Check(PdaModelCatalog.ResolveDefaultKey(spec => spec.Key is "gemma-3-4b-q4" or "qwen3-4b-instruct-q4") == "qwen3-4b-instruct-q4", "the default 4B model is preferred over Gemma when both are installed");
+            Check(PdaModelCatalog.ResolveDefaultKey(spec => spec.Key == "qwen3-8b-q4") == "qwen3-8b-q4", "fallback skips uninstalled models");
+            Check(PdaModelCatalog.ResolveDefaultKey(_ => false) == PdaModelCatalog.DefaultModelKey, "with nothing installed the default key is kept so the panel reports the missing file");
+            Check(PdaModelCatalog.Get("qwen3-4b-instruct-q4") is { Family: PdaModelFamily.Qwen2, ComparisonOnly: false, StartupTimeoutSeconds: 180, RequestTimeoutSeconds: 180 }, "Qwen3 4B Instruct default uses the non-thinking ChatML family");
             foreach (string key in new[] { "qwen2-0.5b", "qwen2.5-0.5b", "qwen3-0.6b" })
             {
                 PdaModelSpec ordinary = PdaModelCatalog.Get(key);

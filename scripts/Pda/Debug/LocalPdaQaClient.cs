@@ -11,7 +11,8 @@ using System.Threading.Tasks;
 namespace RingworldTechDemo.Pda;
 
 public enum PdaMemoryMode { SystemRam, GpuVram }
-public sealed record PdaBackendInfo(string MemoryMode, string Backend, string Device, int OffloadedLayers, int TotalLayers);
+public sealed record PdaBackendInfo(string MemoryMode, string Backend, string Device, int OffloadedLayers, int TotalLayers,
+    string? ProjectorDevice = null, string? ProjectorError = null);
 public sealed record PdaImageInput(byte[] PngBytes, DateTimeOffset CapturedAtUtc, long SnapshotVersion);
 public sealed record PdaPngInfo(int Width, int Height);
 
@@ -74,6 +75,12 @@ public sealed record PdaQaReply(string Answer, string Model, double ElapsedMilli
     public double ModelReadyMilliseconds { get; init; }
     public double PrefillMilliseconds { get; init; }
     public double DecodeMilliseconds { get; init; }
+    /// <summary>[latency instrumentation] Native prompt-eval / token-eval counts; zero when the helper did not report them.</summary>
+    public int PromptEvalTokens { get; init; }
+    public int DecodeEvalTokens { get; init; }
+    public double ImageSetupMilliseconds { get; init; }
+    /// <summary>Client-measured time from sending the request until the first streamed text arrived (0 when nothing streamed).</summary>
+    public double FirstPartialMilliseconds { get; init; }
     public string? RenderedPrompt { get; init; }
     public string? RawAnswer { get; init; }
     /// <summary>Comparison-only retokenization of the raw text using retained model weights; decoded stream pieces are counted separately.</summary>
@@ -90,11 +97,12 @@ public sealed record PdaQaReply(string Answer, string Model, double ElapsedMilli
 /// <summary>Owns one resident local helper. All model work and protocol I/O happen away from the game thread.</summary>
 public sealed class LocalPdaQaClient : IDisposable
 {
-    public const int MaxQuestionChars = 512, MaxContextChars = 10000;
+    public const int MaxQuestionChars = 512, MaxContextChars = 10000, MaxPartialChars = 2800;
     private readonly string _projectRoot, _modelKey;
     private readonly int _threads;
     private readonly int _gpuLayers;
     private readonly bool _useComparisonHelper;
+    private readonly bool _preloadVision;
     private readonly PdaModelSpec _model;
     private readonly PdaMemoryMode _memoryMode;
     private PdaBackendInfo? _backendInfo;
@@ -127,12 +135,13 @@ public sealed class LocalPdaQaClient : IDisposable
     }
 
     public LocalPdaQaClient(string projectRoot, string modelKey = PdaModelCatalog.DefaultModelKey, int threads = 4,
-        PdaMemoryMode memoryMode = PdaMemoryMode.SystemRam, int gpuLayers = 99, bool useComparisonHelper = false)
+        PdaMemoryMode memoryMode = PdaMemoryMode.SystemRam, int gpuLayers = 99, bool useComparisonHelper = false, bool preloadVision = false)
     {
         _projectRoot = Path.GetFullPath(projectRoot);
         _modelKey = modelKey;
         _model = PdaModelCatalog.Get(modelKey);
         _useComparisonHelper = useComparisonHelper;
+        _preloadVision = preloadVision;
         _threads = Math.Clamp(threads, 1, 16);
         _memoryMode = memoryMode;
         if (memoryMode is not (PdaMemoryMode.SystemRam or PdaMemoryMode.GpuVram)) throw new ArgumentOutOfRangeException(nameof(memoryMode));
@@ -140,12 +149,13 @@ public sealed class LocalPdaQaClient : IDisposable
         _gpuLayers = memoryMode == PdaMemoryMode.GpuVram ? gpuLayers : 0;
     }
 
-    public Task<PdaQaReply> AskAsync(string question, string context, CancellationToken token, PdaImageInput? image = null)
+    /// <param name="onPartial">Called on a background thread with the answer text accumulated so far each time the helper streams more.</param>
+    public Task<PdaQaReply> AskAsync(string question, string context, CancellationToken token, PdaImageInput? image = null, Action<string>? onPartial = null)
     {
         int generation = Volatile.Read(ref _generation);
         PdaImageInput? owned = image;
         if (image?.PngBytes is { Length: <= PdaImageProtocol.MaxBytes }) owned = image with { PngBytes = (byte[])image.PngBytes.Clone() };
-        return Task.Run(() => AskCoreAsync(question, context, generation, token, owned), CancellationToken.None);
+        return Task.Run(() => AskCoreAsync(question, context, generation, token, owned, onPartial), CancellationToken.None);
     }
 
     public Task WarmAsync(CancellationToken token = default)
@@ -159,14 +169,15 @@ public sealed class LocalPdaQaClient : IDisposable
         }, CancellationToken.None);
     }
 
-    private async Task<PdaQaReply> AskCoreAsync(string question, string context, int generation, CancellationToken token, PdaImageInput? image)
+    private async Task<PdaQaReply> AskCoreAsync(string question, string context, int generation, CancellationToken token, PdaImageInput? image, Action<string>? onPartial)
     {
         bool entered = false;
         Process? process = null;
         string? imagePath = null;
         Task? imageOwnerExit = null;
         bool requestStarted = false, terminalReceived = false;
-        double queueMs = 0, modelReadyMs = 0;
+        double queueMs = 0, modelReadyMs = 0, firstPartialMs = double.NaN;
+        var partial = new StringBuilder();
         try
         {
             token.ThrowIfCancellationRequested();
@@ -214,28 +225,64 @@ public sealed class LocalPdaQaClient : IDisposable
             await process.StandardInput.FlushAsync(responseTimeout.Token).ConfigureAwait(false);
             var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             using var cancellation = token.Register(() => cancelled.TrySetResult());
-            Task<JsonDocument> responseTask = ReadMessageAsync(process.StandardOutput, responseTimeout.Token, _model.ComparisonOnly ? 131072 : 8192);
-            Task completed = await Task.WhenAny(responseTask, cancelled.Task).ConfigureAwait(false);
-            if (completed == cancelled.Task)
+            var sent = Stopwatch.StartNew();
+            JsonDocument? terminal = null;
+            Task<JsonDocument>? responseTask = null, pendingRead = null;
+            // The helper streams zero or more "partial" envelopes before exactly one terminal envelope.
+            while (terminal == null)
+            {
+                responseTask = ReadMessageAsync(process.StandardOutput, responseTimeout.Token, _model.ComparisonOnly ? 131072 : 8192);
+                Task completed = await Task.WhenAny(responseTask, cancelled.Task).ConfigureAwait(false);
+                if (completed == cancelled.Task) { pendingRead = responseTask; break; }
+                JsonDocument message = await responseTask.ConfigureAwait(false);
+                responseTask = null;
+                if (message.RootElement.GetProperty("type").GetString() == "partial")
+                {
+                    ValidateId(message.RootElement, id);
+                    string delta = message.RootElement.GetProperty("delta").GetString() ?? "";
+                    message.Dispose();
+                    if (delta.Length == 0 || partial.Length + delta.Length > MaxPartialChars) continue;
+                    if (double.IsNaN(firstPartialMs)) firstPartialMs = sent.Elapsed.TotalMilliseconds;
+                    partial.Append(delta);
+                    try { onPartial?.Invoke(partial.ToString()); } catch (Exception) { /* A faulty observer must not break the protocol. */ }
+                    continue;
+                }
+                terminal = message;
+            }
+            if (terminal == null)
             {
                 _status = "Cancelling question; keeping model loaded";
                 string cancel = JsonSerializer.Serialize(new { type = "cancel", id });
                 await process.StandardInput.WriteLineAsync(cancel.AsMemory(), responseTimeout.Token).ConfigureAwait(false);
                 await process.StandardInput.FlushAsync(responseTimeout.Token).ConfigureAwait(false);
-                // Keep consuming the one terminal reply before allowing the next request to use this pipe.
+                // Keep consuming until the one terminal reply (skipping streamed partials) before allowing the next request to use this pipe.
                 // A helper that cannot stop cooperatively gets terminated by this bounded watchdog.
-                try { using JsonDocument discarded = await responseTask.WaitAsync(TimeSpan.FromSeconds(8)).ConfigureAwait(false); ValidateId(discarded.RootElement, id); terminalReceived = true; }
+                Task<JsonDocument>? pending = null;
+                try
+                {
+                    while (true)
+                    {
+                        // The read that raced the cancellation is still in flight; it is the next message and must not be abandoned.
+                        pending = pendingRead ?? ReadMessageAsync(process.StandardOutput, responseTimeout.Token, _model.ComparisonOnly ? 131072 : 8192);
+                        pendingRead = null;
+                        using JsonDocument discarded = await pending.WaitAsync(TimeSpan.FromSeconds(8)).ConfigureAwait(false);
+                        ValidateId(discarded.RootElement, id);
+                        if (discarded.RootElement.GetProperty("type").GetString() == "partial") continue;
+                        terminalReceived = true;
+                        break;
+                    }
+                }
                 catch
                 {
                     StopOwned(process);
                     responseTimeout.Cancel();
-                    try { await responseTask.ConfigureAwait(false); } catch { }
+                    try { if (pending != null) await pending.ConfigureAwait(false); } catch { }
                     throw;
                 }
                 _status = "Ready: " + _modelKey;
                 throw new OperationCanceledException(token);
             }
-            using JsonDocument response = await responseTask.ConfigureAwait(false);
+            using JsonDocument response = terminal;
             JsonElement answer = response.RootElement;
             ValidateId(answer, id);
             terminalReceived = true;
@@ -245,7 +292,7 @@ public sealed class LocalPdaQaClient : IDisposable
             {
                 _status = "Answer rejected";
                 return ReadReplyMetrics(new PdaQaReply("", _modelKey, OptionalMilliseconds(answer, "elapsedMs"),
-                    answer.GetProperty("message").GetString() ?? "Local PDA answer failed."), answer, queueMs, modelReadyMs);
+                    answer.GetProperty("message").GetString() ?? "Local PDA answer failed.") { FirstPartialMilliseconds = double.IsNaN(firstPartialMs) ? 0 : firstPartialMs }, answer, queueMs, modelReadyMs);
             }
             if (type != "answer") throw new InvalidDataException("Unexpected PDA worker response type.");
             string text = answer.GetProperty("text").GetString() ?? "";
@@ -253,7 +300,7 @@ public sealed class LocalPdaQaClient : IDisposable
             if (string.IsNullOrWhiteSpace(text) || text.Length > 1400 || !double.IsFinite(elapsed) || elapsed < 0)
                 throw new InvalidDataException("Local PDA answer was malformed.");
             _status = "Ready: " + _modelKey;
-            PdaQaReply parsed = ReadReplyMetrics(new PdaQaReply(text, _modelKey, elapsed), answer, queueMs, modelReadyMs);
+            PdaQaReply parsed = ReadReplyMetrics(new PdaQaReply(text, _modelKey, elapsed) { FirstPartialMilliseconds = double.IsNaN(firstPartialMs) ? 0 : firstPartialMs }, answer, queueMs, modelReadyMs);
             return image != null && !parsed.ImageUsed ? parsed with
                 { Answer = "", Error = "The helper did not confirm processing the attached image. Build and reload the image-capable helper." } : parsed;
         }
@@ -324,7 +371,9 @@ public sealed class LocalPdaQaClient : IDisposable
             if (root.TryGetProperty("memoryMode", out JsonElement mode))
             {
                 backend = new PdaBackendInfo(mode.GetString() ?? "", root.GetProperty("backend").GetString() ?? "",
-                    root.GetProperty("device").GetString() ?? "", root.GetProperty("offloadedLayers").GetInt32(), root.GetProperty("totalLayers").GetInt32());
+                    root.GetProperty("device").GetString() ?? "", root.GetProperty("offloadedLayers").GetInt32(), root.GetProperty("totalLayers").GetInt32(),
+                    root.TryGetProperty("visionDevice", out JsonElement visionDevice) && visionDevice.ValueKind == JsonValueKind.String ? visionDevice.GetString() : null,
+                    root.TryGetProperty("visionError", out JsonElement visionError) && visionError.ValueKind == JsonValueKind.String ? visionError.GetString() : null);
                 bool gpu = _memoryMode == PdaMemoryMode.GpuVram;
                 if (backend.MemoryMode != (gpu ? "vram" : "ram") || backend.Backend != (gpu ? "cuda" : "cpu") || string.IsNullOrWhiteSpace(backend.Device)
                     || backend.OffloadedLayers < 0 || backend.TotalLayers < 0 || backend.OffloadedLayers > backend.TotalLayers
@@ -356,7 +405,7 @@ public sealed class LocalPdaQaClient : IDisposable
         if (message.GetProperty("id").GetInt64() != id)
             throw new InvalidDataException("PDA worker response id did not match the question.");
         string? type = message.GetProperty("type").GetString();
-        if (type is not ("answer" or "error" or "cancelled")) throw new InvalidDataException("Unexpected PDA worker response type.");
+        if (type is not ("answer" or "error" or "cancelled" or "partial")) throw new InvalidDataException("Unexpected PDA worker response type.");
     }
 
     private static double OptionalMilliseconds(JsonElement element, string property)
@@ -374,6 +423,8 @@ public sealed class LocalPdaQaClient : IDisposable
         PromptTokens = OptionalCount(value, "promptTokens"), OutputPieces = OptionalCount(value, "outputPieces"),
         FirstTokenMilliseconds = OptionalMilliseconds(value, "firstTokenMilliseconds"),
         PrefillMilliseconds = OptionalMilliseconds(value, "prefillMilliseconds"), DecodeMilliseconds = OptionalMilliseconds(value, "decodeMilliseconds"),
+        PromptEvalTokens = OptionalCount(value, "promptEvalTokens"), DecodeEvalTokens = OptionalCount(value, "decodeEvalTokens"),
+        ImageSetupMilliseconds = OptionalMilliseconds(value, "imageSetupMilliseconds"),
         QueueMilliseconds = queueMs, ModelReadyMilliseconds = modelReadyMs,
         RenderedPrompt = _model.ComparisonOnly ? OptionalEvidence(value, "renderedPrompt", 16000) : null,
         RawAnswer = _model.ComparisonOnly ? OptionalEvidence(value, "rawAnswer", 4096) : null,
@@ -435,6 +486,7 @@ public sealed class LocalPdaQaClient : IDisposable
         info.ArgumentList.Add("--threads"); info.ArgumentList.Add(_threads.ToString(System.Globalization.CultureInfo.InvariantCulture));
         info.ArgumentList.Add("--memory"); info.ArgumentList.Add(_memoryMode == PdaMemoryMode.GpuVram ? "vram" : "ram");
         info.ArgumentList.Add("--gpu-layers"); info.ArgumentList.Add(_gpuLayers.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        if (_preloadVision && _model.Family == PdaModelFamily.Gemma3) info.ArgumentList.Add("--vision-preload");
         info.Environment["DOTNET_ROOT"] = dotnet;
         info.Environment["DOTNET_ROOT_X64"] = dotnet;
         if (_memoryMode == PdaMemoryMode.GpuVram) ConfigureCudaRuntime(info);
@@ -459,7 +511,7 @@ public sealed class LocalPdaQaClient : IDisposable
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or KeyNotFoundException or InvalidOperationException) { }
         }
-        foreach (string variant in new[] { "pda-expressive", "pda-expressive-fast" })
+        foreach (string variant in new[] { "pda-expressive", "pda-expressive-fast", "audio-studio" })
         {
             string runtime = Path.Combine(_projectRoot, "artifacts", variant, "venv", "Lib", "site-packages", "torch", "lib");
             if (!HasCudaRuntime(runtime)) continue;
@@ -471,6 +523,25 @@ public sealed class LocalPdaQaClient : IDisposable
             return;
         }
         throw new DirectoryNotFoundException("A CUDA 12 runtime is unavailable. Select system RAM, or provide a compatible CUDA_PATH/runtime; this debug feature does not install CUDA or modify global environment settings.");
+    }
+
+    /// <summary>True when a CUDA 12 runtime the helper can use is present; mirrors <see cref="ConfigureCudaRuntime"/> without throwing.</summary>
+    public static bool CudaRuntimeAvailable(string projectRoot)
+    {
+        try
+        {
+            string? toolkit = Environment.GetEnvironmentVariable("CUDA_PATH");
+            if (!string.IsNullOrWhiteSpace(toolkit))
+            {
+                using JsonDocument version = JsonDocument.Parse(File.ReadAllText(Path.Combine(toolkit, "version.json")));
+                if (version.RootElement.GetProperty("cuda").GetProperty("version").GetString()?.StartsWith("12.", StringComparison.Ordinal) == true
+                    && HasCudaRuntime(Path.Combine(toolkit, "bin"))) return true;
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or KeyNotFoundException or InvalidOperationException) { }
+        foreach (string variant in new[] { "pda-expressive", "pda-expressive-fast", "audio-studio" })
+            if (HasCudaRuntime(Path.Combine(projectRoot, "artifacts", variant, "venv", "Lib", "site-packages", "torch", "lib"))) return true;
+        return false;
     }
 
     private static bool HasCudaRuntime(string directory) => File.Exists(Path.Combine(directory, "cublas64_12.dll"))

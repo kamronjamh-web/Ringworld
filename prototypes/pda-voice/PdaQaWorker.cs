@@ -19,6 +19,7 @@ public static class PdaQaWorker
     public const int ContextSize = 4096, MaxAnswerTokens = 160, MaxQuestionChars = 512, MaxContextChars = 10000;
     private const int MaxLineChars = 65536, MaxAnswerChars = 1400;
     private static readonly object LogLock = new();
+    private static readonly object WriteLock = new();
     private static readonly StringBuilder LoadLog = new();
     private static readonly StringBuilder ProjectorLog = new();
     private static readonly ProjectorLogCallback ProjectorLogger = CaptureProjectorLog;
@@ -26,7 +27,7 @@ public static class PdaQaWorker
     private static string? _projectorDevice;
     private const string SystemPrompt =
         "You are the player's suit PDA, a practical, observant assistant. Answer the game question using only the supplied live readings and authored knowledge. " +
-        "Give one to three short, clear sentences. Current readings take precedence over assumptions in the question. " +
+        "Give one or two short, clear sentences that answer exactly what was asked; never list readings. VERIFIED FACTS, when present, are authoritative: answer from them first. Current readings take precedence over assumptions in the question. " +
         "Explain a cause only when the context supports it. Do not invent measurements, hazards, locations, lore, equipment or completed actions. " +
         "An unavailable reading is unknown, never zero or absent. Potential and risk values are not observations or forecasts. " +
         "When a question needs a missing reading, explicitly say that reading is unavailable even if related metrics exist. " +
@@ -45,6 +46,7 @@ public static class PdaQaWorker
             return 2;
         }
         bool gpu = memoryMode == "vram";
+        bool preloadVision = args.Contains("--vision-preload");
         if (!int.TryParse(Cli.Value(args, "--gpu-layers") ?? (gpu ? "99" : "0"), out int gpuLayers)
             || (gpu ? gpuLayers < 1 || gpuLayers > 99 : gpuLayers != 0))
         {
@@ -87,9 +89,29 @@ public static class PdaQaWorker
             using var weights = LLamaWeights.LoadFromFile(parameters);
             var backend = VerifyBackend(weights, gpu);
             using var vision = new VisionResources(weights, gpu, threads);
+            // Image setup (projector hash + load) belongs to model load, not to the first image question.
+            string? visionError = null;
+            if (preloadVision && spec.Family == PdaModelFamily.Gemma3)
+            {
+                try { vision.Get(CancellationToken.None); }
+                catch (Exception error) { visionError = error.Message; Console.Error.WriteLine("PDA_VISION_PRELOAD_FAILED: " + error.Message); }
+            }
             var executor = new StatelessExecutor(weights, parameters);
+            if (Environment.GetEnvironmentVariable("PDA_LATENCY_PROBE") == "1")
+            {
+                // [latency instrumentation] Cost of the fresh 4096-token context every request creates (opt-in, before ready).
+                var creates = new List<string>();
+                for (int i = 0; i < 3; i++)
+                {
+                    var watch = Stopwatch.StartNew();
+                    using (weights.CreateContext(parameters)) { }
+                    creates.Add(watch.Elapsed.TotalMilliseconds.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture));
+                }
+                Console.Error.WriteLine("PDA_LATENCY_CTX_CREATE_MS=" + string.Join(",", creates));
+            }
             Write(new { type = "ready", protocol = 1, model = spec.Key, memoryMode, backend = backend.Backend,
-                device = backend.Device, offloadedLayers = backend.OffloadedLayers, totalLayers = backend.TotalLayers });
+                device = backend.Device, offloadedLayers = backend.OffloadedLayers, totalLayers = backend.TotalLayers,
+                visionDevice = vision.Device, visionError });
             Task<InputLine> reading = Task.Run(ReadInput);
             Task<object>? generation = null;
             CancellationTokenSource? requestCancellation = null;
@@ -171,6 +193,11 @@ public static class PdaQaWorker
         LLamaContext? imageContext = null;
         BoundedPdaVisionExecutor? imageExecutor = null;
         bool imageUsed = false;
+        // [latency instrumentation] Native counters supply token counts only: llama.cpp keeps no_perf=true by default and
+        // LLamaSharp 0.27 does not expose it, so native eval times are zero. Stream timestamps measure decode instead.
+        LLamaPerfContextTimings? nativeTimings = null;
+        double imageSetupMilliseconds = 0, firstPieceMilliseconds = 0, lastPieceMilliseconds = 0;
+        int streamedLength = 0;
 
         object Terminal(string type, string? text = null, string? message = null)
         {
@@ -188,6 +215,15 @@ public static class PdaQaWorker
             result["imagePromptTokens"] = imageExecutor?.PromptTokens ?? 0;
             result["projectorBackend"] = image == null ? null : resources.Backend;
             result["projectorDevice"] = image == null ? null : resources.Device;
+            // [latency instrumentation] Unavailable counters stay absent (never reported as zero work).
+            if (nativeTimings is { } native) result["promptEvalTokens"] = native.PrompTokensEvaluated;
+            if (outputPieces > 1)
+            {
+                // Streamed decode window: first piece to last piece, (pieces - 1) generated-token intervals.
+                result["decodeMilliseconds"] = lastPieceMilliseconds - firstPieceMilliseconds;
+                result["decodeEvalTokens"] = outputPieces - 1;
+            }
+            if (image != null) result["imageSetupMilliseconds"] = imageSetupMilliseconds;
             if (spec.ComparisonOnly)
             {
                 string raw = answer.ToString();
@@ -206,7 +242,7 @@ public static class PdaQaWorker
             token.ThrowIfCancellationRequested();
             var template = new LLamaTemplate(weights, strict: true) { AddAssistant = true };
             string system = SystemPrompt;
-            string user = "GAME CONTEXT:\n" + context + "\n\nPLAYER QUESTION:\n" + question + "\n\nAnswer from the supplied context only.";
+            string user = "GAME CONTEXT:\n" + context + "\n\nPLAYER QUESTION:\n" + question + "\n\nAnswer from the supplied context only, in one or two sentences, stating only what the question asks.";
             if (image != null)
             {
                 if (NativeApi.MtmdDefaultMarker() != PdaModelPromptFormat.MediaMarker) throw new InvalidDataException("The pinned image marker is unsupported by this runtime.");
@@ -239,6 +275,7 @@ public static class PdaQaWorker
                 try { imageExecutor.Embeds.Add(media); }
                 catch { media.Dispose(); throw; }
                 inference.OverflowStrategy = ContextOverflowStrategy.ThrowException;
+                imageSetupMilliseconds = timer.Elapsed.TotalMilliseconds; // [latency instrumentation] projector get + context + media load
                 pieces = imageExecutor.InferAsync(prompt, inference, token);
             }
             else pieces = executor.InferAsync(prompt, inference, token);
@@ -251,12 +288,24 @@ public static class PdaQaWorker
                 if (firstPiece) { Console.Error.WriteLine("PDA_QA_TOKENS:" + id); firstPiece = false; }
                 if (firstTokenMilliseconds == 0 && !string.IsNullOrWhiteSpace(piece)) firstTokenMilliseconds = timer.Elapsed.TotalMilliseconds;
                 outputPieces++;
+                lastPieceMilliseconds = timer.Elapsed.TotalMilliseconds;
+                if (outputPieces == 1) firstPieceMilliseconds = lastPieceMilliseconds;
+                // [latency instrumentation] The stateless executor's per-request context is only alive during enumeration.
+                try { nativeTimings = (image != null ? imageContext! : executor.Context).NativeHandle.GetTimings(); } catch (Exception) { }
                 token.ThrowIfCancellationRequested();
                 answer.Append(piece);
                 if (answer.Length > MaxAnswerChars * 2) throw new InvalidDataException("The model produced an oversized answer.");
+                // Stream only text that cannot be markup: everything before the first '<' once reasoning blocks are removed.
+                string visible = StreamableText(answer.ToString());
+                if (visible.Length > streamedLength)
+                {
+                    Write(new { type = "partial", id, delta = visible[streamedLength..] });
+                    streamedLength = visible.Length;
+                }
             }
             token.ThrowIfCancellationRequested();
             timer.Stop();
+            if (image != null && imageContext != null) try { nativeTimings = imageContext.NativeHandle.GetTimings(); } catch (Exception) { }
             string text = CleanAnswer(answer.ToString(), spec.Family);
             return Terminal("answer", text);
         }
@@ -453,6 +502,13 @@ public static class PdaQaWorker
         return text;
     }
 
+    private static string StreamableText(string raw)
+    {
+        string text = Regex.Replace(raw, @"<think>.*?</think>", "", RegexOptions.Singleline | RegexOptions.IgnoreCase).TrimStart();
+        int markup = text.IndexOf('<');
+        return markup >= 0 ? text[..markup] : text;
+    }
+
     private static string CleanAnswer(string raw, PdaModelFamily family)
     {
         string text = Regex.Replace(raw, @"<think>.*?</think>", "", RegexOptions.Singleline | RegexOptions.IgnoreCase);
@@ -483,7 +539,11 @@ public static class PdaQaWorker
 
     private static void Write(object value)
     {
-        Console.WriteLine(JsonSerializer.Serialize(value));
-        Console.Out.Flush();
+        string line = JsonSerializer.Serialize(value);
+        lock (WriteLock)
+        {
+            Console.WriteLine(line);
+            Console.Out.Flush();
+        }
     }
 }

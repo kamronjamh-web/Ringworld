@@ -46,5 +46,17 @@
     "Sha256": "882e8d2db44dc554fb0ea5077cb7e4bc49e7342a1f0da57901c0802ea21a0863",
     "RelativePath": "_comparison/gemma-3-4b-it-Q4_K_M.gguf",
     "Url": "https://huggingface.co/ggml-org/gemma-3-4b-it-GGUF/resolve/d0976223747697cb51e056d85c532013931fe52e/gemma-3-4b-it-Q4_K_M.gguf?download=true"
+  },
+  {
+    "Key": "qwen3-4b-instruct-q4",
+    "Repo": "unsloth/Qwen3-4B-Instruct-2507-GGUF",
+    "Revision": "a06e946bb6b655725eafa393f4a9745d460374c9",
+    "SourceFile": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+    "FileName": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+    "Family": "qwen2",
+    "Bytes": 2497281120,
+    "Sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+    "RelativePath": "_comparison/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+    "Url": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/a06e946bb6b655725eafa393f4a9745d460374c9/Qwen3-4B-Instruct-2507-Q4_K_M.gguf?download=true"
   }
 ]

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Opt-in installation of the two retained PDA test models, using tracked revision/size/SHA-256 pins.
+  Opt-in installation of the retained PDA models (default Qwen3 4B Instruct, plus Qwen3 8B and Gemma 3 4B), using tracked revision/size/SHA-256 pins.
 .EXAMPLE
   .\tools\install_pda_test_models.ps1 -VerifyOnly -IncludeVisionProjector
   .\tools\install_pda_test_models.ps1 -ModelKey gemma-3-4b-q4 -IncludeVisionProjector
@@ -10,8 +10,8 @@
 #>
 [CmdletBinding()]
 param(
-    [Alias('ModelKey')][ValidateSet('qwen3-8b-q4', 'gemma-3-4b-q4')][ValidateNotNullOrEmpty()]
-    [string[]]$ModelKeys = @('qwen3-8b-q4', 'gemma-3-4b-q4'),
+    [Alias('ModelKey')][ValidateSet('qwen3-8b-q4', 'gemma-3-4b-q4', 'qwen3-4b-instruct-q4')][ValidateNotNullOrEmpty()]
+    [string[]]$ModelKeys = @('qwen3-4b-instruct-q4', 'qwen3-8b-q4', 'gemma-3-4b-q4'),
     [switch]$IncludeVisionProjector,
     [switch]$VerifyOnly
 )

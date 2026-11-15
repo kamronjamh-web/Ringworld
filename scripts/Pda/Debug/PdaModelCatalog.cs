@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 
 namespace RingworldTechDemo.Pda;
@@ -8,25 +9,44 @@ public enum PdaModelFamily { Qwen2, Qwen3, Granite, Llama3, Gemma3 }
 public sealed record PdaModelSpec(string Key, string DisplayName, string RelativeFile, PdaModelFamily Family,
     bool ComparisonOnly = false, int StartupTimeoutSeconds = 45, int RequestTimeoutSeconds = 60);
 
-/// <summary>Shared by the game and its isolated comparison helper. Trial entries do not change the runtime default or UI choices.</summary>
+/// <summary>Shared by the game and its isolated comparison helper. Entries marked ComparisonOnly stay out of the ordinary runtime choices.</summary>
 public static class PdaModelCatalog
 {
-    public const string DefaultModelKey = "qwen3-0.6b";
+    public const string DefaultModelKey = "qwen3-4b-instruct-q4";
     public static IReadOnlyList<PdaModelSpec> All { get; } = Array.AsReadOnly(new[]
     {
         new PdaModelSpec("qwen2-0.5b", "Qwen2 0.5B", "qwen2-0_5b-instruct-q4_k_m.gguf", PdaModelFamily.Qwen2),
         new PdaModelSpec("qwen2.5-0.5b", "Qwen2.5 0.5B", "qwen2.5-0.5b-instruct-q4_k_m.gguf", PdaModelFamily.Qwen2),
-        new PdaModelSpec(DefaultModelKey, "Qwen3 0.6B", "Qwen3-0.6B-Q8_0.gguf", PdaModelFamily.Qwen3),
+        new PdaModelSpec("qwen3-0.6b", "Qwen3 0.6B", "Qwen3-0.6B-Q8_0.gguf", PdaModelFamily.Qwen3),
         new PdaModelSpec("qwen3-8b-q4", "Qwen3 8B Q4_K_M (trial)", "_comparison/Qwen3-8B-Q4_K_M.gguf", PdaModelFamily.Qwen3, true, 180, 180),
         new PdaModelSpec("granite-3.3-8b-q4", "Granite 3.3 8B Q4_K_M (trial)", "_comparison/granite-3.3-8b-instruct-Q4_K_M.gguf", PdaModelFamily.Granite, true, 180, 180),
         new PdaModelSpec("llama-3.1-8b-q4", "Llama 3.1 8B Q4_K_M (trial)", "_comparison/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf", PdaModelFamily.Llama3, true, 180, 180),
-        new PdaModelSpec("gemma-3-4b-q4", "Gemma3 4B Instruct Q4_K_M (trial)", "_comparison/gemma-3-4b-it-Q4_K_M.gguf", PdaModelFamily.Gemma3, true, 180, 180)
+        new PdaModelSpec("gemma-3-4b-q4", "Gemma3 4B Instruct Q4_K_M (trial)", "_comparison/gemma-3-4b-it-Q4_K_M.gguf", PdaModelFamily.Gemma3, true, 180, 180),
+        // Non-thinking ChatML model: rendered with the Qwen2 family (no /no_think suffix or empty think block).
+        new PdaModelSpec(DefaultModelKey, "Qwen3 4B Instruct 2507 Q4_K_M", "_comparison/Qwen3-4B-Instruct-2507-Q4_K_M.gguf", PdaModelFamily.Qwen2, false, 180, 180)
     });
 
     public static IReadOnlyList<PdaModelSpec> DebugChoices { get; } = Array.AsReadOnly(new[]
     {
-        Get(DefaultModelKey), Get("qwen2.5-0.5b"), Get("qwen2-0.5b"), Get("qwen3-8b-q4"), Get("gemma-3-4b-q4")
+        Get(DefaultModelKey), Get("gemma-3-4b-q4"), Get("qwen3-8b-q4"), Get("qwen3-0.6b"), Get("qwen2.5-0.5b"), Get("qwen2-0.5b")
     });
+
+    /// <summary>Order the panel falls back through when the default model is not installed: Gemma 3 4B (also the image-capable choice), then Qwen3 8B, then the small Qwens.</summary>
+    public static IReadOnlyList<string> FallbackOrder { get; } = Array.AsReadOnly(new[]
+    {
+        DefaultModelKey, "gemma-3-4b-q4", "qwen3-8b-q4", "qwen3-0.6b", "qwen2.5-0.5b", "qwen2-0.5b"
+    });
+
+    public static bool IsInstalled(string projectRoot, PdaModelSpec spec)
+        => File.Exists(Path.Combine(projectRoot, "prototypes", "pda-voice", "models", spec.RelativeFile));
+
+    /// <summary>The default key when its model is installed, otherwise the first installed fallback, otherwise the default (the panel then reports the missing file).</summary>
+    public static string ResolveDefaultKey(Func<PdaModelSpec, bool> isInstalled)
+    {
+        foreach (string key in FallbackOrder)
+            if (isInstalled(Get(key))) return key;
+        return DefaultModelKey;
+    }
 
     public static PdaModelSpec Get(string key) => All.FirstOrDefault(model => string.Equals(model.Key, key, StringComparison.Ordinal))
         ?? throw new ArgumentException("Unknown local PDA model: " + key, nameof(key));

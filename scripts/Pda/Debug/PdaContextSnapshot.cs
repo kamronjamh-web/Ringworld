@@ -16,9 +16,21 @@ public enum PdaAnswerKind { Model, Policy }
 public sealed record PdaConversationTurn(string Id, DateTimeOffset RecordedAtUtc, string Question, string Answer, string ModelKey,
     long SnapshotVersion, DateTimeOffset SnapshotCapturedAtUtc, PdaAnswerKind AnswerKind);
 public enum PdaPrecipitationMode { Negligible, Rain, Snow }
+/// <summary>Typed lookup readings for deterministic answers. Around is positive spinward; across is positive toward the high-across rim wall.</summary>
+public sealed record PdaWindEvidence(double SpeedMetersPerSecond, double AroundMetersPerSecond, double AcrossMetersPerSecond);
+/// <summary>Altitudes are canonical vertical metres; BaseAboveObserverMeters is negative when the base is below the observer.</summary>
+public sealed record PdaCloudEvidence(double BaseAltitudeMeters, double TopAltitudeMeters, double? BaseAboveObserverMeters, double CoveragePercent);
+public sealed record PdaTimeEvidence(string Phase, bool SunAboveHorizon, double SecondsUntilSunrise, double SecondsUntilSunset);
+/// <summary>DepthMeters is below the terrain surface; negative means above it.</summary>
+public sealed record PdaEnclosureEvidence(string Mode, double DepthMeters, double Openness, bool LightingApplied);
+public sealed record PdaStormEvidence(bool? MegastormTriggered = null, bool? MegastormActiveHere = null, string? MegastormPhase = null,
+    double? MegastormSecondsToArrival = null, double? MegastormSecondsToClear = null, double? MegastormDistanceToEdgeMeters = null,
+    string? WeatherKind = null, double? WeatherInfluence = null, string? NaturalArrivalPhase = null, double? NaturalSecondsToRain = null);
 public sealed record PdaStateEvidence(bool? HubActive = null, double? LocalEclipseCoverageFraction = null,
     bool? PrecipitationInitialized = null, double? PrecipitationDrive = null, PdaPrecipitationMode? PrecipitationMode = null,
-    bool? PrecipitationSuspended = null);
+    bool? PrecipitationSuspended = null, PdaWindEvidence? Wind = null, PdaCloudEvidence? Cloud = null, PdaTimeEvidence? Time = null,
+    PdaEnclosureEvidence? Enclosure = null, PdaStormEvidence? Storm = null, bool? HubRawActive = null, bool? HubProviderBound = null,
+    double? PrecipitationPotential = null);
 public sealed record PdaContextSnapshot(long Version, DateTimeOffset CapturedAtUtc,
     IReadOnlyList<PdaContextFact> Facts, IReadOnlyList<PdaKnowledgeEntry> Knowledge, IReadOnlyList<PdaRecentEvent> RecentEvents,
     PdaStateEvidence? StateEvidence = null);
@@ -182,7 +194,7 @@ public static class PdaContextComposer
         }
         if (weatherCauses)
         {
-            Include("weather", "weather.state", "weather.air", "weather.clouds", "weather.precipitation", "weather.effects.state", "weather.effects.precipitation");
+            Include("weather", "weather.state", "weather.air", "weather.clouds", "weather.precipitation", "weather.effects.state", "weather.effects.precipitation", "weather.arrival");
             Include("megastorm", "megastorm.state");
             if (rain || storm) ids.Add("megastorm.hazards");
         }
@@ -191,6 +203,7 @@ public static class PdaContextComposer
             topics.Add("megastorm");
             foreach (PdaContextFact fact in snapshot.Facts.Where(f => f.Topic == "megastorm")) ids.Add(fact.Id);
             Include("underground", "underground.state");
+            ids.Add("weather.arrival"); ids.Add("weather.state");
         }
         if (underground) Include("underground", "underground.state", "underground.enclosure");
         if (location)
@@ -273,6 +286,28 @@ public static class PdaContextComposer
 
     public static string Number(double value, string format = "0.##") => double.IsFinite(value)
         ? value.ToString(format, CultureInfo.InvariantCulture) : "unavailable";
+}
+
+/// <summary>Reading formatters shared by the live feed, deterministic answers and tests so one fact never reads two ways.</summary>
+public static class PdaReadingText
+{
+    public static string Minutes(double seconds) => double.IsFinite(seconds) ? PdaContextComposer.Number(seconds / 60d, "0.#") + " game minutes" : "an unknown time";
+    public static string Zero(double value, string format = "0.##") => PdaContextComposer.Number(value, format) + (double.IsFinite(value) && value == 0d ? " (a real reading of zero, not unavailable)" : "");
+
+    /// <summary>Ring-relative wind. Around is positive spinward; across is positive toward the high-across rim wall.</summary>
+    public static string Wind(double speed, double around, double across)
+    {
+        string N(double v) => PdaContextComposer.Number(v);
+        string along = Math.Abs(around) < .05 ? "" : $"{N(Math.Abs(around))} m/s toward {(around > 0 ? "spinward" : "antispinward")}";
+        string cross = Math.Abs(across) < .05 ? "" : $"{N(Math.Abs(across))} m/s toward the {(across > 0 ? "high-across" : "low-across (across 0)")} rim wall";
+        string parts = along.Length > 0 && cross.Length > 0 ? along + " and " + cross : along.Length > 0 ? along : cross.Length > 0 ? cross : "essentially calm";
+        return $"{N(speed)} m/s, blowing {parts}";
+    }
+
+    public static string Depth(double depthMeters) => depthMeters > .5 ? $"{PdaContextComposer.Number(depthMeters)} m below the terrain surface"
+        : depthMeters < -.5 ? $"{PdaContextComposer.Number(-depthMeters)} m above the terrain surface (no depth underground)" : "at the terrain surface";
+
+    public static string Phase(string phase) => Regex.Replace(phase, "(?<=[a-z])(?=[A-Z])", " ").ToLowerInvariant();
 }
 
 /// <summary>Sampled categorical transitions; the first observation and provider rebinds establish a baseline silently.</summary>

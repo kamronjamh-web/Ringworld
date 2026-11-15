@@ -23,8 +23,8 @@
     {
       "id": "knowledge.weather",
       "topic": "weather",
-      "model_text": "Local weather potential does not prove rain. Effects expose rain/snow drive and cloud-relative phase. Underground suspension can hide cached drive; nearby streaks may come from neighboring columns. No wetness/injury or whole-ring rain reading.",
-      "text": "Weather queries describe conditions at the player's canonical position, not the entire ring. Cloud coverage, wind and precipitation potential describe the local weather model. Precipitation potential is a propensity for precipitation, not a measurement proving rain or hail is currently falling. Initialized local-effects readings separately expose the smoothed precipitation drive and rain-versus-snow effect mode, with the observer's cloud-relative phase. Underground suspension can hide presentation while its cached drive remains nonzero. Nearby rain streaks can include neighboring columns, even with zero drive at the observer. These readings do not measure player wetness, injury or whole-ring rainfall. A disabled cloud renderer alone does not prove the weather simulation or precipitation system is disabled."
+      "model_text": "Local weather potential does not prove rain. Effects expose rain/snow drive and cloud-relative phase. Underground suspension can hide cached drive; nearby streaks may come from neighboring columns. No wetness/injury or whole-ring rain reading. Wind directions are ring-relative: spinward is increasing around-ring distance, not a compass point. A reading of zero is a real zero, not unavailable; a threshold is a cutoff, not a reading.",
+      "text": "Weather queries describe conditions at the player's canonical position, not the entire ring. Cloud coverage, wind and precipitation potential describe the local weather model. Precipitation potential is a propensity for precipitation, not a measurement proving rain or hail is currently falling. Initialized local-effects readings separately expose the smoothed precipitation drive and rain-versus-snow effect mode, with the observer's cloud-relative phase. Underground suspension can hide presentation while its cached drive remains nonzero. Nearby rain streaks can include neighboring columns, even with zero drive at the observer. These readings do not measure player wetness, injury or whole-ring rainfall. A disabled cloud renderer alone does not prove the weather simulation or precipitation system is disabled. Wind direction is ring-relative (spinward = increasing around-ring distance), never compass. Zero is a real reading, missing is unknown, and a threshold like 0.01 is a cutoff, not the value."
     },
     {
       "id": "knowledge.megastorm",
@@ -35,8 +35,14 @@
     {
       "id": "knowledge.underground",
       "topic": "underground",
-      "model_text": "Terrain depth/openness inform enclosure. Applied enclosure reduces sun/sky light and uses cave ambient; cave fog can limit visibility. Missing probe means cave location unknown.",
-      "text": "Underground mode uses terrain enclosure, openness and depth. When enclosure lighting is applied, direct sunlight and sky ambient are reduced and cave ambient is used. Cave fog can limit distant visibility. A missing or unavailable underground probe cannot establish that the player is inside a cave."
+      "model_text": "Terrain depth/openness inform enclosure. Depth is below the terrain surface; a negative depth means above it, so enclosure Surface means outdoors. Applied enclosure reduces sun/sky light and uses cave ambient; cave fog can limit visibility. Missing probe means cave location unknown.",
+      "text": "Underground mode uses terrain enclosure, openness and depth. When enclosure lighting is applied, direct sunlight and sky ambient are reduced and cave ambient is used. Cave fog can limit distant visibility. A missing or unavailable underground probe cannot establish that the player is inside a cave. Depth is measured below the terrain surface: a negative depth means the observer is above the terrain, and enclosure mode Surface means the player is outdoors, not underground."
+    },
+    {
+      "id": "knowledge.time_of_day",
+      "topic": "celestial",
+      "model_text": "Time of day is the natural lighting phase plus whether the real star is above the horizon. Sunrise and sunset times are game minutes (simulation-clock minutes). The elapsed game clock is not the time of day.",
+      "text": "Time of day is described by the natural lighting phase and whether the real star is above the local horizon. Predicted sunrise and sunset are given in game minutes, which are simulation-clock minutes. The elapsed game clock total is not the time of day, and it is separate from the weather clock."
     }
   ]
 }

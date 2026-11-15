@@ -13,6 +13,8 @@ switch (cmd)
         return await PdaQaWorker.Run(rest);
     case "qa-compare":
         return await PdaModelComparison.Run(rest);
+    case "qa-replay": // [latency instrumentation]
+        return await PdaLatencyReplay.Run(rest);
     case "qa-vision-smoke":
         return await PdaVisionSmoke.Run(rest);
     case "tts":

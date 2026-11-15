@@ -34,6 +34,8 @@ public partial class PdaDebugUiTest : RefCounted
             tree.Root.SetMeta(RingLiveTuningDrawer.MouseOwnershipMeta, false);
             tree.Root.SetMeta(PdaDebugChatPanel.InputOwnershipMeta, false);
             host.AddChild(fixture);
+            PdaDebugChatPanel.GpuDefaultOverride = () => false; // deterministic placement; the VRAM default is checked separately below
+            PdaDebugChatPanel.InstalledOverride = _ => true; // the default-model fallback has its own check in pda_model_catalog_test
             var feed = new PdaContextFeed { Name = "PdaContextFeed", AutoBind = false };
             fixture.AddChild(feed);
             var explorer = new QuietExplorer { Name = "Explorer" };
@@ -81,8 +83,8 @@ public partial class PdaDebugUiTest : RefCounted
             var gpuLayers = panel.FindChild("PdaGpuLayers", true, false) as SpinBox;
             Check(memory != null && models != null && gpuLayers != null && panel.RequestedMemoryMode == PdaMemoryMode.SystemRam, "system RAM is the default memory backend");
             if (memory == null || models == null || gpuLayers == null) throw new InvalidOperationException("Model placement controls are missing.");
-            Check(panel.SelectedGpuLayers == 0 && panel.RequestedGpuLayers == 0 && !gpuLayers!.Editable && gpuLayers.Value == 16,
-                "CPU effective GPU-layer request is zero while the disabled split selector retains its default 16");
+            Check(panel.SelectedGpuLayers == 0 && panel.RequestedGpuLayers == 0 && !gpuLayers!.Editable && gpuLayers.Value == 99,
+                "CPU effective GPU-layer request is zero while the disabled split selector retains its full-offload default 99");
             PdaModelSpec[] visibleModels = PdaModelCatalog.DebugChoices.ToArray();
             Check(models!.ItemCount == visibleModels.Length && Enumerable.Range(0, models.ItemCount)
                 .Select(index => models.GetItemText(index)).SequenceEqual(visibleModels.Select(model => model.DisplayName)),
@@ -91,22 +93,24 @@ public partial class PdaDebugUiTest : RefCounted
                 && visibleModels.Any(model => model.Family == PdaModelFamily.Gemma3)
                 && visibleModels.All(model => model.Family is not (PdaModelFamily.Granite or PdaModelFamily.Llama3)),
                 "debug choices retain the default, Qwen8B and Gemma while excluding deleted trials");
-            memory!.Select(1); models!.Select(1);
+            int altIndex = Array.FindIndex(visibleModels, model => model.Key == "qwen2.5-0.5b");
+            memory!.Select(1); models!.Select(altIndex);
             memory.EmitSignal(OptionButton.SignalName.ItemSelected, 1L);
             panel._Process(0);
             Check(panel.SelectedMemoryMode == PdaMemoryMode.GpuVram && panel.RequestedMemoryMode == PdaMemoryMode.SystemRam,
                 "changing memory selection does not silently change the running backend");
-            Check(gpuLayers.Editable && panel.SelectedGpuLayers == 16 && panel.RequestedGpuLayers == 0,
-                "VRAM enables the 16-layer split selection without applying it before reload");
-            Check(panel.RequestedModelKey == "qwen3-0.6b" && panel.StatusText.Contains("Selection pending"), "model changes remain pending until explicit reload");
+            Check(gpuLayers.Editable && panel.SelectedGpuLayers == 99 && panel.RequestedGpuLayers == 0,
+                "VRAM defaults to the full 99-layer offload without applying it before reload");
+            Check((memory.GetItemText(0)).Contains("slow fallback"), "CPU mode is labelled as the slow fallback");
+            Check(panel.RequestedModelKey == PdaModelCatalog.DefaultModelKey && panel.StatusText.Contains("Selection pending"), "model changes remain pending until explicit reload");
             var beforeReload = new TaskCompletionSource<PdaQaReply>(TaskCreationOptions.RunContinuationsAsynchronously);
             CancellationToken reloadToken = default;
             panel.AskOverride = (_, _, token) => { reloadToken = token; return beforeReload.Task; };
             panel.SubmitQuestion("What are the local conditions?");
             panel.ReloadModel();
             Check(reloadToken.IsCancellationRequested && !panel.IsBusy, "explicit reload cancels the previous request");
-            Check(panel.RequestedMemoryMode == PdaMemoryMode.GpuVram && panel.RequestedModelKey == "qwen2.5-0.5b" && panel.RequestedGpuLayers == 16,
-                "reload applies selected model, requested VRAM mode and 16-layer split");
+            Check(panel.RequestedMemoryMode == PdaMemoryMode.GpuVram && panel.RequestedModelKey == "qwen2.5-0.5b" && panel.RequestedGpuLayers == 99,
+                "reload applies selected model, requested VRAM mode and the full-offload layer request");
             beforeReload.SetResult(new PdaQaReply("STALE MODEL REPLY", "fixture", 1));
             panel._Process(0);
             Check(!panel.TranscriptText.Contains("STALE MODEL REPLY") && panel.StatusText.Contains("no real model loaded"), "reload discards old completion and does not claim fixture GPU readiness");
@@ -116,7 +120,7 @@ public partial class PdaDebugUiTest : RefCounted
             Check(panel.SelectedGpuLayers == 99, "GPU layer selector enforces the all-layer request bound");
             gpuLayers.Value = 8;
             panel._Process(0);
-            Check(panel.SelectedGpuLayers == 8 && panel.RequestedGpuLayers == 16 && panel.StatusText.Contains("Selection pending"),
+            Check(panel.SelectedGpuLayers == 8 && panel.RequestedGpuLayers == 99 && panel.StatusText.Contains("Selection pending"),
                 "changing GPU layer count remains pending until reload");
             panel.ReloadModel();
             Check(panel.RequestedGpuLayers == 8, "reload applies the changed partial GPU-layer request");
@@ -151,6 +155,44 @@ public partial class PdaDebugUiTest : RefCounted
             Check(!panel.TranscriptText.Contains(falseAction) && panel.ConversationTurns.Last().AnswerKind == PdaAnswerKind.Policy
                 && panel.ConversationTurns.Last().Answer == PdaAnswerPolicy.ReadOnlyReply,
                 "fake action claims are replaced before display or conversation recording");
+            // Streaming: partial text is shown while the answer is pending and swapped for the accepted final reply.
+            Action<string>? emit = null;
+            var streamGate = new TaskCompletionSource<PdaQaReply>(TaskCreationOptions.RunContinuationsAsynchronously);
+            panel.PartialAskOverride = (_, _, _, partial) => { emit = partial; return streamGate.Task; };
+            panel.SubmitQuestion("Describe the weather outlook.");
+            Check(panel.IsBusy && emit != null, "streaming provider received a partial callback");
+            emit!("The wind is calm");
+            panel._Process(0);
+            Check(panel.StreamingText == "The wind is calm" && panel.TranscriptText.Contains("PDA: The wind is calm ..."), "partial text is displayed while the answer is pending");
+            Check(panel.ConversationTurns.All(turn => !turn.Answer.Contains("The wind is calm")), "partial text is never stored as memory");
+            streamGate.SetResult(new PdaQaReply("Calm winds and clear skies.", "fixture", 5));
+            panel._Process(0);
+            Check(panel.StreamingText.Length == 0 && panel.TranscriptText.Contains("PDA: Calm winds and clear skies.") && !panel.TranscriptText.Contains("calm ...") && !panel.TranscriptText.Contains("The wind is calm"),
+                "final reply replaces the streamed text");
+            Check(panel.ConversationTurns.Last().Answer == "Calm winds and clear skies." && panel.ConversationTurns.Last().AnswerKind == PdaAnswerKind.Model, "accepted final reply is the stored turn");
+            var falseGate = new TaskCompletionSource<PdaQaReply>(TaskCreationOptions.RunContinuationsAsynchronously);
+            panel.PartialAskOverride = (_, _, _, partial) => { emit = partial; return falseGate.Task; };
+            panel.SubmitQuestion("Describe the sky outlook.");
+            emit!("I have disabled the weather");
+            panel._Process(0);
+            Check(panel.TranscriptText.Contains("I have disabled the weather ..."), "a streamed false action is visible until the post-check runs");
+            falseGate.SetResult(new PdaQaReply(falseAction, "fixture", 1));
+            panel._Process(0);
+            Check(!panel.TranscriptText.Contains("I have disabled the weather") && panel.TranscriptText.Contains(PdaAnswerPolicy.ReadOnlyReply)
+                && panel.ConversationTurns.Last().AnswerKind == PdaAnswerKind.Policy, "post-check swaps a false streamed claim for the read-only answer");
+            var cancelGate = new TaskCompletionSource<PdaQaReply>(TaskCreationOptions.RunContinuationsAsynchronously);
+            CancellationToken streamToken = default;
+            panel.PartialAskOverride = (_, _, token, partial) => { emit = partial; streamToken = token; return cancelGate.Task; };
+            panel.SubmitQuestion("Describe the haze outlook.");
+            emit!("Hazy to the");
+            panel._Process(0);
+            panel.CancelQuestion();
+            emit!("late partial after cancel");
+            panel._Process(0);
+            Check(streamToken.IsCancellationRequested && panel.StreamingText.Length == 0 && !panel.TranscriptText.Contains("Hazy to the") && !panel.TranscriptText.Contains("late partial"),
+                "cancellation clears streamed text and ignores late partials");
+            cancelGate.SetResult(new PdaQaReply("", "fixture", 0, "cancelled"));
+            panel.PartialAskOverride = null;
             Check(!panel.IsMemoryBound, "headless/unbound fixture does not automatically bind real user memory");
             panel._Input(new InputEventKey { Keycode = Key.Escape, Pressed = true });
             Check(!panel.Visible && !PdaDebugChatPanel.OwnsInput(panel), "Escape closes and releases text input");
@@ -179,11 +221,18 @@ public partial class PdaDebugUiTest : RefCounted
                 panel.AskOverride = (_, _, _) => Task.FromResult(new PdaQaReply("UI fixture: no live world providers are bound in this test scene. The context panel lists which readings are unavailable.", "fixture", 12));
                 panel.SubmitQuestion("What information can you read about this scene?");
                 panel._Process(0);
+                // A second, still-streaming answer shows the live partial text with its trailing ellipsis.
+                Action<string>? emitCapture = null;
+                panel.PartialAskOverride = (_, _, _, partial) => { emitCapture = partial; return new TaskCompletionSource<PdaQaReply>().Task; };
+                panel.SubmitQuestion("Why is it so bright here right now?");
+                emitCapture?.Invoke("It is afternoon and the real star is above the horizon, so the surface is in direct daylight. The hub light is inactive and no eclipse is");
+                panel._Process(0);
             }
         }
         catch (Exception ex) { failures.Add(ex.ToString()); }
         finally
         {
+            PdaDebugChatPanel.InstalledOverride = null; PdaDebugChatPanel.GpuDefaultOverride = null;
             if (!capture || failures.Count > 0)
             {
                 fixture.Free();

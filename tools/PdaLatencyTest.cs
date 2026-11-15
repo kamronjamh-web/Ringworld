@@ -79,7 +79,7 @@ public partial class PdaLatencyTest : Node
             }
             if (failures.Count > 0) return string.Join(" | ", failures);
 
-            _client = new LocalPdaQaClient(projectRoot, "qwen3-0.6b", 4, gpu ? PdaMemoryMode.GpuVram : PdaMemoryMode.SystemRam);
+            _client = new LocalPdaQaClient(projectRoot, PdaModelCatalog.DefaultModelKey, 4, gpu ? PdaMemoryMode.GpuVram : PdaMemoryMode.SystemRam);
             var timer = Stopwatch.StartNew();
             await _client.WarmAsync(token).ConfigureAwait(false);
             warmupMs = timer.Elapsed.TotalMilliseconds;
@@ -145,7 +145,7 @@ public partial class PdaLatencyTest : Node
                 scope = "Transport/backend/bounded-prompt/residency measurement only",
                 fixtureNotice = "Synthetic representative prepared snapshots, not captures of a running world. Both context variants use the identical snapshot.",
                 semanticQuality = "REVIEW every answer against its supplied context. No semantic correctness or speed threshold is asserted.",
-                model = "qwen3-0.6b", requestedMemoryMode = gpu ? "vram" : "ram", cpuThreads = 4,
+                model = PdaModelCatalog.DefaultModelKey, requestedMemoryMode = gpu ? "vram" : "ram", cpuThreads = 4,
                 backend, residentPid, warmupMs, primingWallMs, primingReply,
                 workerDiagnostics = _client?.DiagnosticTail,
                 outputPiecesNotice = "OutputPieces counts streamed text pieces; it is not an output-token count.",

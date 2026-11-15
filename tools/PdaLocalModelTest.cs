@@ -56,7 +56,7 @@ public partial class PdaLocalModelTest : Node
         void Check(bool condition, string message) { if (!condition) failures.Add(message); }
         try
         {
-            _client = new LocalPdaQaClient(projectRoot);
+            _client = new LocalPdaQaClient(projectRoot, memoryMode: PdaMemoryMode.GpuVram); // the in-game default is full GPU offload; CPU prefill of the 4B default is too slow for the cancellation window
             var warmTimer = Stopwatch.StartNew();
             await _client.WarmAsync(token).ConfigureAwait(false);
             double warmupMs = warmTimer.Elapsed.TotalMilliseconds;
@@ -137,7 +137,7 @@ public partial class PdaLocalModelTest : Node
             Directory.CreateDirectory(Path.GetDirectoryName(evidencePath)!);
             File.WriteAllText(evidencePath, JsonSerializer.Serialize(new { verdict = failures.Count == 0 ? "PASS" : "FAIL",
                 scope = "transport/lifecycle only", semanticQuality = "REVIEW generated answers against supplied context",
-                model = "qwen3-0.6b", events = _evidence, failures }, new JsonSerializerOptions { WriteIndented = true }));
+                model = PdaModelCatalog.DefaultModelKey, events = _evidence, failures }, new JsonSerializerOptions { WriteIndented = true }));
         }
         return failures.Count == 0 ? null : string.Join(" | ", failures);
     }

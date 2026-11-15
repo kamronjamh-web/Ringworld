@@ -73,6 +73,7 @@ public partial class PdaContextFeed : Node
         Read("celestial", facts, () => CaptureEclipse(Resolve<EclipseEventDirector>(EclipsePath, "eclipse"), facts));
         Read("weather", facts, () => CaptureWeather(Resolve<RingVolumetricCloudLayer>(WeatherPath, "weather"), explorer, facts));
         Read("weather", facts, () => CaptureWeatherEffects(Resolve<global::RingworldTechDemo.RingLocalWeatherEffects>(WeatherEffectsPath, "effects"), facts));
+        Read("weather", facts, () => AddCloudLayer(facts));
         Read("megastorm", facts, () => CaptureMegastorm(Resolve<RingMegastorm>(MegastormPath, "megastorm"), explorer, facts));
         Read("underground", facts, () => CaptureUnderground(Resolve<RingUndergroundModeController>(UndergroundPath, "underground"), facts));
         CurrentSnapshot = new PdaContextSnapshot(++_version, DateTimeOffset.UtcNow, Array.AsReadOnly(facts.ToArray()), _knowledge, _history.Events, _stateEvidence);
@@ -134,6 +135,9 @@ public partial class PdaContextFeed : Node
             $"Water depth {N(e.CurrentWaterDepthMeters)} m.");
     }
 
+    private static string Minutes(double seconds) => PdaReadingText.Minutes(seconds);
+    private static string Zero(double value, string format = "0.##") => PdaReadingText.Zero(value, format);
+
     private void CaptureCelestial(RingDayNightCycle? clock, List<PdaContextFact> facts)
     {
         if (clock == null || clock.CurrentFrame.ToSun.LengthSquared() < .01f)
@@ -141,16 +145,18 @@ public partial class PdaContextFeed : Node
         CelestialFrame f = clock.CurrentFrame;
         if (float.IsFinite(f.RawEclipseCoverage) && f.RawEclipseCoverage is >= 0f and <= 1f)
             _stateEvidence = _stateEvidence with { LocalEclipseCoverageFraction = f.RawEclipseCoverage };
-        Add(facts, "clocks.celestial", "clocks", $"Celestial simulation clock is {N(f.AbsoluteSeconds)} seconds. This is separate from the weather simulation clock.", "RingDayNightCycle.CurrentFrame.AbsoluteSeconds",
-            $"Celestial clock {N(f.AbsoluteSeconds)} simulation seconds.");
-        State(facts, "celestial.state", "celestial", $"Local natural lighting phase is {f.LightingPhase}; the real star is {(f.SunAboveHorizon ? "above" : "below")} the local horizon.", "RingDayNightCycle.CurrentFrame", "daynight.state", f.LightingPhase + ":" + f.SunAboveHorizon,
-            $"Natural light phase {f.LightingPhase}; real star {(f.SunAboveHorizon ? "above" : "below")} local horizon.");
+        _stateEvidence = _stateEvidence with { Time = new PdaTimeEvidence(f.LightingPhase.ToString(), f.SunAboveHorizon, f.SecondsUntilSunrise, f.SecondsUntilSunset) };
+        string next = f.SunAboveHorizon ? $"sunset in {Minutes(f.SecondsUntilSunset)}" : $"sunrise in {Minutes(f.SecondsUntilSunrise)}";
+        Add(facts, "clocks.celestial", "clocks", $"Celestial game clock has run {Minutes(f.AbsoluteSeconds)} since the world began. This elapsed total is not the time of day and is separate from the weather clock.", "RingDayNightCycle.CurrentFrame.AbsoluteSeconds",
+            $"Game clock {Minutes(f.AbsoluteSeconds)} elapsed total (not time of day).");
+        State(facts, "celestial.state", "celestial", $"Time of day: {f.LightingPhase}. The real star is {(f.SunAboveHorizon ? "above" : "below")} the local horizon; {next}. Game minutes are simulation-clock minutes.", "RingDayNightCycle.CurrentFrame", "daynight.state", f.LightingPhase + ":" + f.SunAboveHorizon,
+            $"Time of day {f.LightingPhase}; real star {(f.SunAboveHorizon ? "above" : "below")} horizon; {next}.");
         State(facts, "celestial.eclipse", "celestial", $"Local gas-giant eclipse is {f.EclipseType}; the giant covers {N(f.RawEclipseCoverage * 100d)} percent of the real star's disc at this observer. This reading does not describe every location on the ring.", "RingDayNightCycle.CurrentFrame", "daynight.eclipse", f.EclipseType.ToString(),
             $"Local giant eclipse {f.EclipseType}; real star covered {N(f.RawEclipseCoverage * 100d)} percent. Other ring locations may differ.");
         Add(facts, "celestial.horizon", "celestial", $"Real star elevation {N(f.SunElevationDegrees)} degrees; gas giant {(f.GiantAboveHorizon ? "above" : "below")} the local horizon.", "RingDayNightCycle.CurrentFrame",
             $"Real star elevation {N(f.SunElevationDegrees)} degrees; giant {(f.GiantAboveHorizon ? "above" : "below")} local horizon.");
-        Add(facts, "celestial.contacts", "celestial", $"Predicted local sunrise in {N(f.SecondsUntilSunrise)} celestial seconds; sunset in {N(f.SecondsUntilSunset)} celestial seconds. These durations are simulation time.", "RingDayNightCycle.CurrentFrame",
-            $"Local sunrise in {N(f.SecondsUntilSunrise)} celestial seconds; sunset in {N(f.SecondsUntilSunset)} celestial seconds.");
+        Add(facts, "celestial.contacts", "celestial", $"Predicted local sunrise in {Minutes(f.SecondsUntilSunrise)}; sunset in {Minutes(f.SecondsUntilSunset)}.", "RingDayNightCycle.CurrentFrame",
+            $"Local sunrise in {Minutes(f.SecondsUntilSunrise)}; sunset in {Minutes(f.SecondsUntilSunset)}.");
     }
 
     private void CaptureEclipse(EclipseEventDirector? eclipse, List<PdaContextFact> facts)
@@ -162,30 +168,66 @@ public partial class PdaContextFeed : Node
         var hub = eclipse.HubLight;
         bool active = hub.Active;
         bool overridden = eclipse.HubLevelOverrideActive || hub.Overridden;
+        _stateEvidence = _stateEvidence with { HubRawActive = active, HubProviderBound = eclipse.Bound };
         if (eclipse.Bound || overridden) _stateEvidence = _stateEvidence with { HubActive = active };
         string cause = overridden ? "A debug override controls it independently of the natural eclipse." : active ? "It is driven by the configured eclipse event timeline." : "No artificial hub illumination is currently reported.";
         string compactCause = overridden ? "Cause: debug override, independent of natural eclipse." : active ? "Cause: eclipse event timeline." : "No hub illumination reported.";
-        State(facts, "eclipse.hub", "celestial", $"Artificial hub-light output is {(active ? "active" : "inactive")}. {cause}", "EclipseEventDirector.HubLight/HubLevelOverrideActive", "eclipse.hub", active + ":" + overridden,
-            $"Artificial hub light {(active ? "active" : "inactive")}. {compactCause}");
+        string label = active ? "ACTIVE (on)" : "INACTIVE (off)";
+        State(facts, "eclipse.hub", "celestial", $"Artificial hub light state: {label}. {cause}", "EclipseEventDirector.HubLight/HubLevelOverrideActive", "eclipse.hub", active + ":" + overridden,
+            $"Artificial hub light: {label}. {compactCause}");
         if (active) Add(facts, "eclipse.level", "celestial", $"Artificial hub-light output level {N(hub.Level)}, daylight contribution {N(hub.Day)}. These are lighting model outputs; they do not prove a source is visible through terrain or clouds.", "EclipseEventDirector.HubLight",
             $"Modeled hub output level {N(hub.Level)}; daylight contribution {N(hub.Day)}.");
     }
 
+    internal static string WindDescription(double speed, double around, double across) => PdaReadingText.Wind(speed, around, across);
+
+    private (double Base, double Top, double Coverage, double Vertical)? _cloudModel;
+    private double _effectsCloudBase = double.NaN;
+
     private void CaptureWeather(RingVolumetricCloudLayer? weather, RingVoxelExplorerController? explorer, List<PdaContextFact> facts)
     {
+        _cloudModel = null;
         if (weather == null || explorer == null)
         { State(facts, "weather.state", "weather", "Local weather-model readings are unavailable because the weather provider or player position is missing. Cached precipitation effects are a separate provider.", "RingVolumetricClouds", "weather.state", "unavailable", "Local weather model unavailable; precipitation effects are separate."); return; }
-        Add(facts, "clocks.weather", "clocks", $"Weather simulation clock is {N(weather.CloudSimulationTimeSeconds)} seconds, {(weather.CloudSimulationPaused ? "paused" : "running")}; it is separate from celestial time.", "RingVolumetricCloudLayer.CloudSimulationTimeSeconds",
+        Add(facts, "clocks.weather", "clocks", $"Weather simulation clock has run {N(weather.CloudSimulationTimeSeconds)} seconds, {(weather.CloudSimulationPaused ? "paused" : "running")}; it is separate from celestial time.", "RingVolumetricCloudLayer.CloudSimulationTimeSeconds",
             $"Weather clock {N(weather.CloudSimulationTimeSeconds)} simulation seconds, {(weather.CloudSimulationPaused ? "paused" : "running")}.");
         var w = weather.QueryLocalWeather(explorer.CanonicalPosition);
+        _cloudModel = (w.CloudBaseAltitudeMeters, w.CloudTopAltitudeMeters, w.CloudCoverage * 100d, explorer.CanonicalPosition.VerticalMeters);
+        _stateEvidence = _stateEvidence with
+        {
+            Wind = new PdaWindEvidence(w.WindMetersPerSecond.Length(), w.WindMetersPerSecond.X, w.WindMetersPerSecond.Y),
+            PrecipitationPotential = w.PrecipitationPotential,
+            Storm = (_stateEvidence.Storm ?? new PdaStormEvidence()) with { WeatherKind = w.SystemKind.ToString(), WeatherInfluence = w.SystemInfluence }
+        };
         State(facts, "weather.state", "weather", $"At the player's position the local weather model reports {w.SystemKind}, influence {N(w.SystemInfluence)}. Cloud presentation switch is {(weather.Enabled ? "enabled" : "disabled")}; that switch alone does not determine whether simulated weather or rainfall is active.", "RingVolumetricCloudLayer.QueryLocalWeather/Enabled", "weather.state", w.SystemKind + ":" + weather.Enabled,
             $"Local weather {w.SystemKind}; influence {N(w.SystemInfluence)}. Cloud presentation {(weather.Enabled ? "enabled" : "disabled")}, not a rain/simulation switch.");
-        Add(facts, "weather.air", "weather", $"Local weather wind speed {N(w.WindMetersPerSecond.Length())} m/s; around component {N(w.WindMetersPerSecond.X)} m/s, across component {N(w.WindMetersPerSecond.Y)} m/s.", "RingVolumetricCloudLayer.QueryLocalWeather",
-            $"Local wind {N(w.WindMetersPerSecond.Length())} m/s; around {N(w.WindMetersPerSecond.X)} m/s, across {N(w.WindMetersPerSecond.Y)} m/s.");
-        Add(facts, "weather.clouds", "weather", $"Local model cloud coverage {N(w.CloudCoverage * 100d)} percent; cloud base {N(w.CloudBaseAltitudeMeters)} m and top {N(w.CloudTopAltitudeMeters)} m.", "RingVolumetricCloudLayer.QueryLocalWeather",
-            $"Local cloud coverage {N(w.CloudCoverage * 100d)} percent; base {N(w.CloudBaseAltitudeMeters)} m, top {N(w.CloudTopAltitudeMeters)} m.");
-        Add(facts, "weather.precipitation", "weather", $"Local precipitation potential is {N(w.PrecipitationPotential)} on the weather model scale. This is not an observed rain/hail reading; local precipitation-effect drive, when available, is reported separately.", "RingVolumetricCloudLayer.QueryLocalWeather.PrecipitationPotential",
-            $"Local precipitation potential {N(w.PrecipitationPotential)}; not observed rain/hail.");
+        string wind = WindDescription(w.WindMetersPerSecond.Length(), w.WindMetersPerSecond.X, w.WindMetersPerSecond.Y);
+        Add(facts, "weather.air", "weather", $"Local wind is {wind}. Spinward is the direction of increasing around-ring distance; directions are relative to the ring, not compass points.", "RingVolumetricCloudLayer.QueryLocalWeather",
+            $"Local wind {wind}. Directions are ring-relative (spinward = increasing around), not compass.");
+        Add(facts, "weather.precipitation", "weather", $"Local precipitation potential is {Zero(w.PrecipitationPotential)} on the weather model scale. This is not an observed rain/hail reading; local precipitation-effect drive, when available, is reported separately.", "RingVolumetricCloudLayer.QueryLocalWeather.PrecipitationPotential",
+            $"Local precipitation potential {Zero(w.PrecipitationPotential)}; not observed rain/hail.");
+        try
+        {
+            var arrival = weather.ObserverStormArrival;
+            string phase = arrival.Valid ? arrival.Phase.ToString() : "Clear";
+            double toRain = arrival.Valid && phase != "Clear" && float.IsFinite(arrival.TimeToRainSeconds) ? arrival.TimeToRainSeconds : double.NaN;
+            _stateEvidence = _stateEvidence with { Storm = (_stateEvidence.Storm ?? new PdaStormEvidence()) with { NaturalArrivalPhase = phase, NaturalSecondsToRain = double.IsFinite(toRain) ? toRain : null } };
+            string detail = phase == "Clear" ? "No natural storm front is arriving at your position." : $"A natural storm front is at arrival phase {phase}{(double.IsFinite(toRain) ? "; rain expected in " + Minutes(toRain) : "")}.";
+            Add(facts, "weather.arrival", "weather", detail + " This covers natural weather fronts, separate from the scripted megastorm.", "RingVolumetricCloudLayer.ObserverStormArrival", detail);
+        }
+        catch (Exception) { /* Arrival is optional evidence; the other weather readings stand without it. */ }
+    }
+
+    private void AddCloudLayer(List<PdaContextFact> facts)
+    {
+        if (_cloudModel is not { } c) return;
+        double baseAltitude = double.IsFinite(_effectsCloudBase) ? _effectsCloudBase : c.Base;
+        double? above = double.IsFinite(baseAltitude) && double.IsFinite(c.Vertical) ? baseAltitude - c.Vertical : null;
+        _stateEvidence = _stateEvidence with { Cloud = new PdaCloudEvidence(baseAltitude, c.Top, above, c.Coverage) };
+        string relation = above is { } a ? $", which is {N(Math.Abs(a))} m {(a >= 0 ? "above" : "below")} your position" : "";
+        string text = $"Cloud layer: coverage {N(c.Coverage)} percent; cloud base at {N(baseAltitude)} m altitude{relation}; cloud top at {N(c.Top)} m altitude. Altitudes share the vertical scale of your position (vertical {N(c.Vertical)} m).";
+        Add(facts, "weather.clouds", "weather", text, "RingVolumetricCloudLayer.QueryLocalWeather/LocalWeatherEffects.PrecipitationCloudBaseMeters",
+            $"Clouds: coverage {N(c.Coverage)} percent; base {N(baseAltitude)} m altitude{relation}; top {N(c.Top)} m altitude.");
     }
 
     internal static bool HasInitializedPrecipitationEffectReading(bool processing, bool hasCurrentWindSnapshot, double cloudBaseMeters, float intensity)
@@ -193,6 +235,7 @@ public partial class PdaContextFeed : Node
 
     private void CaptureWeatherEffects(global::RingworldTechDemo.RingLocalWeatherEffects? effects, List<PdaContextFact> facts)
     {
+        _effectsCloudBase = double.NaN;
         if (effects == null || !HasInitializedPrecipitationEffectReading(effects.IsProcessing(), effects.HasCurrentWindSnapshot,
             effects.PrecipitationCloudBaseMeters, effects.PrecipitationIntensity))
         {
@@ -203,6 +246,7 @@ public partial class PdaContextFeed : Node
             return;
         }
         float intensity = effects.PrecipitationIntensity;
+        _effectsCloudBase = effects.PrecipitationCloudBaseMeters;
         bool driven = intensity > .01f;
         _stateEvidence = _stateEvidence with
         {
@@ -211,13 +255,16 @@ public partial class PdaContextFeed : Node
             PrecipitationSuspended = effects.UndergroundSuspended
         };
         string mode = !driven ? "negligible or zero local precipitation drive" : effects.Snowing ? "snow" : "rain";
+        string shortMode = !driven ? "negligible (no rain or snow)" : effects.Snowing ? "snow" : "rain";
         string presentation = effects.UndergroundSuspended ? "suspended for underground mode; cached drive can remain nonzero" : "not suspended by underground mode";
-        State(facts, "weather.effects.state", "weather", $"Cached local precipitation-effect mode is {mode} (drive classification threshold 0.01). Its presentation is {presentation}. This reports effect drive, not player wetness or damage.",
+        string drive = Zero(intensity, "0.###");
+        State(facts, "weather.effects.state", "weather", $"Cached local precipitation-effect mode is {shortMode}. The measured effect drive is {drive}. Separately, 0.01 is only the classification threshold: drive must exceed 0.01 to count as rain or snow; the threshold is not the drive. Its presentation is {presentation}. This reports effect drive, not player wetness or damage.",
             "LocalWeatherEffects.PrecipitationIntensity/Snowing/UndergroundSuspended", "effects.mode", mode + ":" + effects.PrecipitationPhase + ":" + effects.UndergroundSuspended,
-            $"Local effect mode {mode}; drive threshold 0.01. Underground presentation {(effects.UndergroundSuspended ? "suspended; cached drive may remain" : "not suspended")}.");
-        Add(facts, "weather.effects.precipitation", "weather", $"Cached local smoothed precipitation-effect intensity is {PdaContextComposer.Number(intensity, "0.###")}; observer cloud-relative phase {effects.PrecipitationPhase}; local cloud base {N(effects.PrecipitationCloudBaseMeters)} canonical vertical metres. This is not a rain gauge, whole-ring rainfall or hail classification.",
-            "LocalWeatherEffects.PrecipitationIntensity/PrecipitationPhase/PrecipitationCloudBaseMeters",
-            $"Cached local effect intensity {PdaContextComposer.Number(intensity, "0.###")}; cloud-relative phase {effects.PrecipitationPhase}; cloud base {N(effects.PrecipitationCloudBaseMeters)} canonical vertical metres. No hail classification.");
+            $"Local precipitation effect: {shortMode}. Measured drive {drive}. (0.01 is only the classification threshold, not the drive.) Underground presentation {(effects.UndergroundSuspended ? "suspended; cached drive may remain" : "not suspended")}.");
+        string phase = effects.PrecipitationPhase.ToString();
+        Add(facts, "weather.effects.precipitation", "weather", $"Cached local smoothed precipitation-effect intensity is {drive}; observer cloud-relative phase {phase} (your position relative to the cloud layer). This is not a rain gauge, whole-ring rainfall or hail classification.",
+            "LocalWeatherEffects.PrecipitationIntensity/PrecipitationPhase",
+            $"Cached local effect intensity {drive}; cloud-relative phase {phase}. No hail classification.");
         Add(facts, "weather.effects.streaks", "weather", $"Nearby rain-streak presentation is {(effects.RainStreaksActive ? "active" : "inactive")}. It can include neighboring precipitation columns even when the observer's local effect drive is zero; it does not establish rain striking the player.",
             "LocalWeatherEffects.RainStreaksActive",
             $"Nearby rain streaks {(effects.RainStreaksActive ? "active" : "inactive")}; neighboring columns can show streaks with zero local drive. Not proof of rain striking player.");
@@ -225,18 +272,24 @@ public partial class PdaContextFeed : Node
 
     private void CaptureMegastorm(RingMegastorm? storm, RingVoxelExplorerController? explorer, List<PdaContextFact> facts)
     {
+        PdaStormEvidence Current() => _stateEvidence.Storm ?? new PdaStormEvidence();
         if (storm == null)
         { State(facts, "megastorm.state", "megastorm", "Megastorm readings are unavailable; activation and local hazards are unknown.", "RingMegastorm", "megastorm.state", "unavailable", "Megastorm unavailable; activation/hazards unknown."); return; }
         if (!storm.Triggered)
-        { State(facts, "megastorm.state", "megastorm", "No scripted megastorm is currently triggered. Its local hazard and arrival readings do not apply.", "RingMegastorm.Triggered", "megastorm.state", "inactive", "Megastorm inactive: not triggered; hazard/arrival readings do not apply."); return; }
+        {
+            _stateEvidence = _stateEvidence with { Storm = Current() with { MegastormTriggered = false } };
+            State(facts, "megastorm.state", "megastorm", "No scripted megastorm is currently triggered. Its local hazard and arrival readings do not apply.", "RingMegastorm.Triggered", "megastorm.state", "inactive", "Megastorm inactive: not triggered; hazard/arrival readings do not apply."); return;
+        }
         if (explorer == null)
         { State(facts, "megastorm.state", "megastorm", "A scripted megastorm is triggered, but its local phase and hazards are unknown because player position is unavailable.", "RingMegastorm.Triggered", "megastorm.state", "triggered_no_position", "Megastorm triggered; player position missing, so local phase/hazards unknown."); return; }
         MegastormSample s = storm.QueryNow(explorer.CanonicalPosition);
+        _stateEvidence = _stateEvidence with { Storm = Current() with { MegastormTriggered = true, MegastormActiveHere = s.Active, MegastormPhase = s.Phase.ToString(),
+            MegastormSecondsToArrival = s.Active ? s.TimeToArrivalSeconds : null, MegastormSecondsToClear = s.Active ? s.TimeToClearSeconds : null, MegastormDistanceToEdgeMeters = s.Active ? s.DistanceToEdgeMeters : null } };
         State(facts, "megastorm.state", "megastorm", $"Scripted megastorm is triggered; local sample is {(s.Active ? "active" : "inactive")}, phase {s.Phase}.", "RingMegastorm.QueryNow", "megastorm.state", s.Active + ":" + s.Phase,
             $"Megastorm triggered; locally {(s.Active ? "active" : "inactive")}, phase {s.Phase}.");
         if (!s.Active) return;
-        Add(facts, "megastorm.arrival", "megastorm", $"At the player, front-edge distance {N(s.DistanceToEdgeMeters)} m; arrival in {N(s.TimeToArrivalSeconds)} weather seconds; clearing in {N(s.TimeToClearSeconds)} weather seconds. Negative arrival time means the edge has passed.", "RingMegastorm.QueryNow",
-            $"Local front distance {N(s.DistanceToEdgeMeters)} m; arrival {N(s.TimeToArrivalSeconds)} weather seconds; clearing {N(s.TimeToClearSeconds)} weather seconds. Negative arrival means edge passed.");
+        Add(facts, "megastorm.arrival", "megastorm", $"At the player, front-edge distance {N(s.DistanceToEdgeMeters)} m; arrival in {Minutes(s.TimeToArrivalSeconds)} (weather clock); clearing in {Minutes(s.TimeToClearSeconds)}. Negative arrival time means the edge has passed.", "RingMegastorm.QueryNow",
+            $"Local front distance {N(s.DistanceToEdgeMeters)} m; arrival {Minutes(s.TimeToArrivalSeconds)}; clearing {Minutes(s.TimeToClearSeconds)}. Negative arrival means edge passed.");
         Add(facts, "megastorm.signals", "megastorm", $"Local storm danger index {N(s.Danger)}, structural hum {N(s.HumLevel)}, tremor {N(s.TremorLevel)}; airborne sound state {s.AirSound}.", "RingMegastorm.QueryNow",
             $"Local storm danger {N(s.Danger)}, structural hum {N(s.HumLevel)}, tremor {N(s.TremorLevel)}; airborne sound {s.AirSound}.");
         Add(facts, "megastorm.darkness", "megastorm", $"Local megastorm lighting-model extra-darkness weight is {N(s.ExtraDarkness)}; its darkness multiplier is {N(s.DarknessMultiplier)} (1 means neutral). These are this storm's modeled lighting contributions, not proof that the whole rendered scene or direct light has that brightness.", "RingMegastorm.QueryNow.ExtraDarkness/DarknessMultiplier",
@@ -254,9 +307,18 @@ public partial class PdaContextFeed : Node
     {
         if (underground == null || !underground.IsAvailable)
         { State(facts, "underground.state", "underground", "Underground enclosure readings are unavailable; the feed cannot establish that the player is in a cave.", "UndergroundMode.IsAvailable", "underground.state", "unavailable", "Enclosure unavailable; cave location unknown."); return; }
-        State(facts, "underground.state", "underground", $"Local enclosure mode is {underground.Mode}; underground lighting is {(underground.LightingDarkened ? "applied" : "not applied")}. Mode override is {underground.ModeOverride}.", "UndergroundMode.Mode/LightingDarkened/ModeOverride", "underground.state", underground.Mode + ":" + underground.LightingDarkened + ":" + underground.ModeOverride,
-            $"Local enclosure {underground.Mode}; underground darkening {(underground.LightingDarkened ? "applied" : "not applied")}; override {underground.ModeOverride}.");
-        Add(facts, "underground.enclosure", "underground", $"Local depth {N(underground.DepthMeters)} m; openness {N(underground.Openness)}; enclosure blend {N(underground.EnclosureBlend)}; cave fog weight {N(underground.CaveFogWeight)}.", "UndergroundMode.DepthMeters/Openness/EnclosureBlend/CaveFogWeight",
-            $"Local depth {N(underground.DepthMeters)} m; openness {N(underground.Openness)}; enclosure blend {N(underground.EnclosureBlend)}; cave fog weight {N(underground.CaveFogWeight)}.");
+        string where = underground.Mode switch
+        {
+            UndergroundMode.Surface => "on the surface (not underground)",
+            UndergroundMode.Underground => "UNDERGROUND (enclosed)",
+            UndergroundMode.Entering => "entering underground (in transition)",
+            _ => "exiting to the surface (in transition)"
+        };
+        _stateEvidence = _stateEvidence with { Enclosure = new PdaEnclosureEvidence(underground.Mode.ToString(), underground.DepthMeters, underground.Openness, underground.LightingDarkened) };
+        State(facts, "underground.state", "underground", $"Enclosure: you are {where}. Enclosure mode {underground.Mode}; underground lighting is {(underground.LightingDarkened ? "applied" : "not applied")}. Mode override is {underground.ModeOverride}.", "UndergroundMode.Mode/LightingDarkened/ModeOverride", "underground.state", underground.Mode + ":" + underground.LightingDarkened + ":" + underground.ModeOverride,
+            $"Enclosure: {where}; underground darkening {(underground.LightingDarkened ? "applied" : "not applied")}; override {underground.ModeOverride}.");
+        string depth = PdaReadingText.Depth(underground.DepthMeters);
+        Add(facts, "underground.enclosure", "underground", $"Position relative to terrain: {depth}; openness {N(underground.Openness)} (1 is open sky); enclosure blend {N(underground.EnclosureBlend)}; cave fog weight {N(underground.CaveFogWeight)}.", "UndergroundMode.DepthMeters/Openness/EnclosureBlend/CaveFogWeight",
+            $"Terrain-relative position: {depth}; openness {N(underground.Openness)} (1 open sky); enclosure blend {N(underground.EnclosureBlend)}; cave fog {N(underground.CaveFogWeight)}.");
     }
 }
