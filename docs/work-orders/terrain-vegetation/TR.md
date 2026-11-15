@@ -1,7 +1,7 @@
 # TR. Tree rendering: LOD triangles, far billboards, billboard match: work orders
 
 Parent: no plan section yet. This phase comes from the 2026-11-13 conversation with the user (tree cost, the LOD2-to-billboard switch, and the "tree rendering in Godot" video). It sits beside T6 and touches the same renderer, so read T6 "Phase facts" first. Prerequisite reading: `docs/landscape-audit-t0-spec.md` lines 1115-1220 (T0 cost baseline), `docs/terrain-vegetation-revamp-plan.md` section 7.1 (tree pack audit).
-Status: in progress. **TR-2 design written 2026-11-14** (section "Design (TR-2, 2026-11-14)"; it rewrites TR-4 to TR-7 and TR-9, adds TR-9a and decisions D4 to D6). **TR-6 done** (2026-11-14): camera-facing far quad (slot 4, from 900 m at Medium) with the steep-angle hand-off; 5 compute words p[78..82]; partition test in tree_lod_compute_regression; about 0.002 us per quad (vs 0.03-0.06 us per far card tree), all-trees 14-21 % lower at the cap run; `UseFarTreeQuads` default **off** until TR-7 fixes its brightness. No 5 km ground capture (no clear site). **TR-3 done** (2026-11-14): leaf cutout uses ALPHA_SCISSOR_THRESHOLD in both tree shaders; after vs before SSIM 0.9896 against a before-vs-before floor of 0.98-0.99 at forest_edge_eye noon (identical heatmaps), the 0.9 fail check 0.823; the four TR-3 tests pass. The harness's go_pose now re-issues a drifted pose (user mouse look reached the captured window) and records `pose_reached`. TR-1 running.
+Status: in progress. **TR-2 design written 2026-11-14** (section "Design (TR-2, 2026-11-14)"; it rewrites TR-4 to TR-7 and TR-9, adds TR-9a and decisions D4 to D6). **TR-6 done** (2026-11-14): camera-facing far quad (slot 4, from 900 m at Medium) with the steep-angle hand-off; 5 compute words p[78..82]; partition test in tree_lod_compute_regression; about 0.002 us per quad (vs 0.03-0.06 us per far card tree), all-trees 14-21 % lower at the cap run; `UseFarTreeQuads` default **off** until TR-7 fixes its brightness. No 5 km ground capture (no clear site). **TR-3 done** (2026-11-14): leaf cutout uses ALPHA_SCISSOR_THRESHOLD in both tree shaders; after vs before SSIM 0.9896 against a before-vs-before floor of 0.98-0.99 at forest_edge_eye noon (identical heatmaps), the 0.9 fail check 0.823; the four TR-3 tests pass. The harness's go_pose now re-issues a drifted pose (user mouse look reached the captured window) and records `pose_reached`. TR-1 running. **TR-7 escalated** (2026-11-14): design E cannot match the cards (cause: the cards are lit with their flat plane normal, the mesh with up-pointing leaf normals; pine card pictures are 0.65 times the mesh albedo). Decision in "TR-7 escalation (2026-11-14)": re-bake the card atlas (albedo and normals, top view included) from the authored LOD2; TR-7 is now TR-7a and TR-7b, TR-6b needs no bake of its own.
 Depends on: nothing. It can run alongside T1-T5. Coordinate with T6-8 (tint), T6-10 (far canopy) and T6-11 (LOD tail), which touch the same shaders.
 Freeze: none. This is a renderer change, not world content (see decision D1).
 
@@ -47,8 +47,8 @@ Verified 2026-11-13 against the `terrain-vegetation-revamp` working tree. TR-1 m
 | TR-4 offline decimation and contact sheets | sol_implementer | M | TR-2 | TR-6, TR-7 |
 | TR-5 wire the decimated LODs into the compact profile | sol_implementer | M | TR-4, user D1 and D2 | TR-6 |
 | TR-6 camera-facing far billboard tier | sol_implementer | M | TR-2, user D1 | TR-4, TR-7 |
-| TR-6b top-down crown card for the far tier (user request 2026-11-14) | implementer | M | TR-6, TR-7 | TR-9a |
-| TR-7 billboard match: crown normals, tint, alpha coverage | sol_implementer | M | TR-2, TR-3, user D1 | TR-4, TR-6 |
+| TR-6b top-down crown card for the far tier (user request 2026-11-14; rewritten by the TR-7 escalation) | implementer | S | TR-6, TR-7b | TR-9a |
+| TR-7 billboard match, as TR-7a (card atlas bake from LOD2) then TR-7b (shader, catalog, test); see "TR-7 escalation (2026-11-14)" | sol_implementer, lead checks the TR-7a contact sheet | M | TR-2, TR-3, user D1 | TR-4, TR-6 |
 | TR-8 review pack: before/after cost and look | sol_implementer | S | TR-5, TR-6, TR-7 | none |
 | TR-9a cap fall-through: budget-derived band edges (added by TR-2, 2026-11-14) | sol_implementer | M | TR-5, TR-6; merged after TR-8's cost run | TR-7 |
 | TR-9 raise the tree count to the budget | sol_implementer | M | TR-8, TR-9a | none |
@@ -474,6 +474,8 @@ Slot mapping in the compact profile (distance order kept, five slots as today):
 
 #### E. Billboard match (TR-2 item 5)
 
+**Items 2, 3 and 6 are replaced by "TR-7 escalation (2026-11-14)" under TR-7 (measured: the ellipsoid normal and one multiplier cannot match). Items 1, 4 and 5 stand.**
+
 The step has three parts (TR-1 section 7): count, brightness with the sign changing between noon and low sun, and crown openness.
 
 1. **Count.** Solved by B4: every LOD2b tree gets a card.
@@ -687,6 +689,8 @@ Seen from above, a far tree also shows a horizontal card through the middle of i
 CONTEXT
 The user asked for it after judging the TR-6 captures (D6 confirmed): "have the trees that face you have an intersecting texture running through the middle of them for when the player is above them". Reusing a side picture of the tree as the horizontal card would look like a tree lying on the ground, so the card gets its own top-down bake.
 
+**Superseded in part by "TR-7 escalation (2026-11-14)", section "TR-6b rewritten": items 1 and 4 are replaced there (no separate bake; the LOD3 top card, re-baked by TR-7a).**
+
 REQUIRED CHANGES
 1. An offline bake: render each variant's authored LOD2 from straight above (orthographic, the crown's bounds, the same atlas size and alpha rules as the LOD3 cards) into a new atlas layer per variant, stored beside the impostor atlas; deterministic, and the 30-variant catalog stays byte-identical.
 2. The far quad mesh gains a second, horizontal card at mid-crown height, sized to the crown's horizontal bounds (no enlargement).
@@ -715,6 +719,8 @@ The 300 to 350 m LOD2-to-cards step is hard to see in the switch strips at noon 
 FILES/SYMBOLS
 `materials/imported_tree_impostor.gdshader`, `ImportedTreeImpostorCatalog.cs` (`variant_parameters`, atlas build), and the card atlas mip generation.
 
+**Superseded in part by "TR-7 escalation (2026-11-14)" below: items 1 and 2 and the validation steps are replaced by TR-7a and TR-7b there; items 3 to 5 stand.**
+
 REQUIRED CHANGES (rewritten 2026-11-14 after TR-1 and the TR-2 design; this replaces the original list)
 TR-1 showed that the card look is one shader for everything from the LOD2 hand-off to the far distance (slot 3, and slot 4 in either mode), and that the step is count, brightness and crown openness together. The count part is TR-9's (gates at 1.0); this order does the other two. The mesh side of the match is LOD2b when TR-5 has landed, else the authored LOD2.
 1. Crown normal (design E2) in `imported_tree_impostor.gdshader`, for the cards and the quad mode: `normalize(mix(N_card, N_crown, w))`, w = 0.75 in the crown and 0 below the crown base; crown centre height and radii per variant from the authored LOD2 foliage bounds, in `variant_parameters`.
@@ -740,6 +746,107 @@ Matching at noon breaks the low-sun match, or the reverse.
 
 STOP RULE
 2 watchdog periods, 4 build-plus-test attempts.
+
+### TR-7 escalation (2026-11-14)
+
+The implementer reported that design E (ellipsoid crown normal plus one RGB multiplier per variant) cannot match the cards to the LOD2 mesh: card/mesh luminance 0.33 at noon, 0.80 at sun 30 degrees, 0.92 at sun 8 degrees. This section gives the cause, replaces design E and TR-7's steps, and rewrites TR-6b. Evidence is in `.godot/tree_billboard_match/escalation/` (`probe.txt`, `probe_nmap.txt`, the two probe scripts, `billboard_textures_sheet.png`), measured on the RTX 4070 with the test's scene.
+
+#### Diagnosis
+
+The two shaders have the same `light()` (`imported_tree.gdshader:149-176`, `imported_tree_impostor.gdshader:230-257`): plain `max(dot(NORMAL, LIGHT), 0)`, no wrap, no transmission, the same AO and day terms. Both are `cull_disabled`, so Godot flips the normal of back faces towards the viewer. The difference is in the inputs.
+
+**1. Normals (the main cause, and the reason the sign changes with the sun).** Lit by the sun alone (ambient 0), mean N.L over 4 azimuths:
+
+| | noon | sun 30 | sun 8 (includes the day factor) |
+|---|---|---|---|
+| LOD2 mesh, all 30 variants | 0.309 | 0.261 | 0.132 |
+| LOD2 mesh, maple / fir / pine | 0.478 / 0.181 / 0.198 | 0.312 / 0.257 / 0.222 | 0.125 / 0.151 / 0.134 |
+| crossed cards, card normal (w = 0) | **0.000** | 0.269 | 0.169 |
+| crossed cards, ellipsoid crown normal (w = 1) | 0.115 | 0.296 | 0.184 |
+| crossed cards, the pack's baked normal map switched on | 0.169 (maple 0.282, fir 0.039, pine 0.105) | 0.266 | 0.159 |
+
+- The LOD2 foliage normals are authored pointing up: area-weighted mean n.y 0.70 to 0.83 for maple and 0.49 to 0.76 for pine (fir 0.09 to 0.12; fir variant 14 has its normals against its winding). So at noon the mesh crown is sunlit.
+- The cards are vertical planes shaded with their geometric normal (phase fact F7), so at noon they receive no sun at all and are lit by the ambient only. At low sun a card that faces the sun is lit across its whole face, which the up-pointing mesh normals are not. That is the dark card at noon and the bright card at sun 8 degrees in TR-1's strip.
+- The card's normal map is skipped because `simplified_tree_shading` is on (`imported_tree_impostor.gdshader:202-211`; `SimplifyDistantTreeMaterials` defaults to true, `RingBiomeDecorationLayer.RenderPolicy.cs:29`, applied to the cards at `RingBiomeDecorationLayer.cs:535-538`).
+- The ellipsoid cannot supply the missing light: a tall crown seen from the side has few up-facing normals (0.115 against the mesh's 0.309).
+
+**2. The card picture is a separate bake, and for pine it is darker.** The card albedo is the pack's `*_Billboard_Mat_baseColor.png`, not the leaf atlas (`ImportedTreeImpostorCatalog.cs:229-230`). Lit by white ambient alone (so: mean albedo of the covered pixels), card/mesh in green is 0.97 for maple, 0.75 to 0.97 for fir and **0.61 to 0.71 for pine** (red 0.61 to 0.65). There is no lighting baked into the pictures; pine is simply a darker picture. This factor does not depend on the sun.
+
+**3. These two numbers reproduce the implementer's table.** With the test's ambient (linear luminance 0.378 times the energy) the ratio is albedo ratio x (ambient + card N.L) / (ambient + mesh N.L):
+
+| w = 0 | noon | sun 30 | sun 8 |
+|---|---|---|---|
+| predicted, maple / fir / pine | 0.29 / 0.48 / 0.33 | 0.84 / 0.83 / 0.77 | 1.11 / 0.86 / 0.80 |
+| measured (control_off rows of `table.csv`) | 0.28 / 0.48 / 0.34 | 0.82 / 0.82 / 0.78 | 1.09 / 0.86 / 0.81 |
+
+A single multiplier would have to be 3.0 at noon and 1.1 at sun 8 degrees, so no clamp range makes design E3 work. The "paler and bluer at noon" card is the same thing: the card shows only the blue ambient, the mesh shows white sun plus ambient.
+
+**4. The test's lighting understates the problem.** The test uses sun energy 1 with a flat ambient of energy 0.55; the game uses sun energy 4.0 with sky ambient of energy 0.35 (`scenes/Main.tscn:22-24, :51`). The ambient is what hides the missing sun on the card, so the game's noon step is larger than the test's 0.33 (TR-1 saw a "solid dark green silhouette"). Tree shadows do not enter: the casters end at 240 m (TR-1 section 2). A test that mixes sun and ambient into one luminance cannot be trusted at another ambient level; the two terms have to be gated separately.
+
+**5. The pack already ships an impostor bake with a top view.** Each billboard atlas holds 8 (maple), 4 (fir) or 3 (pine) side views plus one top-down view, each with a baked normal map (`billboard_textures_sheet.png`), and every LOD3 mesh has one horizontal card that shows the top view (one card in 9 / 5 / 4 has a vertical normal). Switching the pack's normal maps on is not enough, for three reasons:
+- They were not baked from our LOD2: noon N.L reaches 0.28 of the mesh's 0.48 for maple and 0.04 of 0.18 for fir.
+- The green channel favours "down" for fir and pine and "up" for maple, so the convention is not consistent between species.
+- Averaging loses the light: the maple map gives a noon response of 0.412 at full size, 0.326 after the 4x resize to the 256 atlas and 0.283 at the next mip (the measured 0.282). Neighbouring leaves have opposite normals and the average points at the viewer.
+
+**6. A TR-6 bug.** The far quad's normal points away from the camera. `FAR_QUAD_CORNERS` (`imported_tree_impostor.gdshader:30`) is counter-clockwise seen from the camera, Godot's front face is clockwise, and the back-face flip reverses the camera-facing normal set at `:110`. Sun alone at 30 degrees, w = 0: N.L 0.000 with the sun behind the camera and 0.750 with the sun behind the tree.
+
+#### Decision
+
+Replace the card pictures with our own bake of the authored LOD2, albedo and shading normal per card, in the pack's existing card layout. Rejected:
+- An elevation-dependent multiplier or an extra lighting term: it would be a fitted boost, and it cannot give the lit top and dark underside that the mesh shows at about 45 pixels.
+- Wider tolerances: the error is a factor of 3 at noon in the test and more in the game.
+- Switching on the pack's normal maps: item 5.
+- Keeping the ellipsoid: item 1.
+
+What the bake fixes, by construction: the card's albedo is the LOD2's (pine included), the card's normals are the LOD2's shading normals, the silhouette and crown openness are the LOD2's, and the top card is a top view of the same LOD2, which is the picture TR-6b needs. Cost:
+- Offline: a CPU tool that reuses the rasteriser of TR-4 (`tools/TreeLodDecimator.cs`, `Coverage.Raster`) with a depth buffer; no GPU, deterministic, seconds to run.
+- Disk: one checked-in resource with 30 layers of 256 x 256 albedo and normal.
+- Memory: none added. `albedo_layers` and `normal_layers` already exist at this size; only their content changes.
+- Frame time: one more texture read per card pixel while simplified shading is on, less the ellipsoid code that is removed. Not measured (performance runs are paused); TR-8 measures it with the slot 3 and slot 4 cases. TR-1 section 3 found the forest triangle-bound, so this is expected to be small.
+
+No brightness multiplier remains anywhere in the card path.
+
+#### TR-7 rewritten (this replaces design E items 2, 3 and 6 and TR-7's REQUIRED CHANGES 1 and 2; E4 and E5 stand)
+
+**TR-7a. Bake (implementer; the lead checks the contact sheet before TR-7b).**
+1. New offline step in the tree-LOD prepare tool (`tools/PrepareTreeRenderLods.cs` or a sibling) writing `resources/trees/prepared/lolipop_impostor_atlas.res` and a manifest (tool version, source LOD2 hash per variant), by the rules of design C4. `lolipop_catalog.res` stays byte-identical; a missing or stale resource falls back to the pack's pictures with one warning.
+2. Per variant and per LOD3 card (the horizontal one included): fit the card's UV-to-position map (as `LargestPlane` does), and rasterise the authored LOD2 (bark and foliage, the foliage alpha-tested at its authored cutoff) orthographically along the card's normal into the card's UV rectangle of a 256 x 256 layer, nearest surface wins. The LOD3 mesh, its UVs and its vertex count do not change.
+3. Albedo layer: the mesh's albedo texture times its tint, averaged in linear light over at least 3 x 3 sub-samples; alpha is the covered fraction. Dilate colour into uncovered texels. The alpha mips stay coverage-preserving (`PreserveAlphaCoverage`, design E4).
+4. Normal layer: the normal the mesh shader would shade with (interpolated vertex normal, reversed where the triangle is back-facing to the bake direction, Godot's clockwise front face), written in the card's own tangent frame from `tangent_data` and `normal_data`, so the existing `NORMAL_MAP` path reproduces it. One surface sample per texel, never an average. Dilated like the colour.
+5. Normal mips are selected, not averaged: each mip texel takes the normal of its most-covered child (fixed order on ties). The tool prints, per variant and mip level 0 to 3, the mean of max(n.L, 0) over covered texels for noon, 30 and 8 degrees against the full-resolution value; levels 0 to 3 must be within 3 %.
+6. Contact sheet: per species, the old and new albedo and normal layers side by side.
+
+**TR-7b. Shader, catalog, test (implementer).**
+1. `imported_tree_impostor.gdshader`: sample `normal_layers` for every card pixel, outside the `simplified_tree_shading` branch, with `filter_nearest_mipmap` on that sampler; metallic, roughness and the specular term stay inside the branch. Remove `crown_normal_weight`, `tree_crown_view_normal`, `tree_model_position` and the fragment block that uses them.
+2. Far quad: reorder `FAR_QUAD_CORNERS` to clockwise seen from the camera (item 6). Its normal-map frame is the bake's frame (across, tree up, horizontal direction to the camera), not the tilted quad's, so top light stays top light from above.
+3. `ImportedTreeImpostorCatalog`: build both arrays from the bake resource; remove `Crown`, `CrownOf` and the crown rows; remove the RGB multiplier from `CreateParameterTexture`. The calibration resource keeps the alpha cutoffs only (version 2); the fingerprint hashes the baked atlas.
+4. `tree_billboard_match_gpu_test`, per variant at 325 m, cards and quad against the mesh, 4 azimuths:
+   - white ambient only: each mean colour channel within 8 %; covered area within 8 %;
+   - sun only at noon, 30 and 8 degrees: the azimuth mean within 10 % (noon, 30) and 15 % (8); report each azimuth;
+   - the far quad lit from the camera side: N.L with the sun behind the camera above N.L with the sun behind the tree;
+   - control: with the bake resource absent (pack pictures) the test must fail.
+5. Rerun the TR-1 switch strip in both configurations and send the before and after sheets. A dolly from 250 to 400 m at noon through `flicker`: no new spike from the nearest-sampled normals.
+6. `UseFarTreeQuads` goes on by default when this passes.
+
+Escalate if: the sun-only gate fails at one elevation for a whole species; the mip rule of TR-7a item 5 cannot be met; or the dolly shows shimmer on the cards that the LOD2 mesh does not have.
+
+**The uncommitted TR-7 work.**
+- Keep: the test file and its manifest entry, the driver bridge (`ImportedTreeCatalogDriver.cs`), `MeasureForeground`, the cutoff calibration and `ApplyCalibration`, `DefaultCutoffs`, `PreserveAlphaCoverage`, the `--sweep` and `--dump` aids.
+- Revise: the test's cases and tolerances (item 4); the calibration resource (cutoffs only).
+- Revert: the crown-normal code in the shader, `Crown` / `CrownOf` / rows 5 and 6 in the catalog, the RGB multiplier, and `resources/trees/prepared/lolipop_impostor_calibration.res` (it is stale once the atlas changes; regenerate it at the end of TR-7b).
+
+#### TR-6b rewritten (this replaces TR-6b's REQUIRED CHANGES 1 and 4)
+
+No separate top-down bake. The top view is the LOD3 mesh's horizontal card, which the crossed cards already draw and which TR-7a re-bakes from the LOD2.
+1. The far quad mesh gains a second quad: the variant's horizontal LOD3 card (its UV rectangle, bounds and height from that card, in the `variant_parameters` rows the crown ellipsoid used). 12 vertices per tree.
+2. Visibility and the A/B export as in the original items 3 and 5.
+3. Lighting: the baked normal layer, like every card. No calibration.
+4. The catalog smoke asserts that every variant has exactly one horizontal LOD3 card.
+- Note: the card sits at the height the pack gave it, the same as in the crossed cards, so the hand-off at 900 m does not move it. If the user wants it at mid-crown instead, that is a one-line offset.
+
+Order from here: TR-7a, the lead's contact-sheet check, TR-7b, then TR-6b. TR-4 and TR-5 are unaffected. TR-8 adds the card-pixel cost to its table.
+
+**Not a decision, but the user should know:** matching the mesh changes the far forest. Cards at noon become sunlit instead of dark, cards at low sun become darker, and pine cards become about 1.5 times brighter in every light (all of it out to the far distance). That is the LOD2 look carried outward, with nothing added.
 
 ### TR-8. Review pack: before and after cost and look
 
