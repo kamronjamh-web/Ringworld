@@ -22,8 +22,8 @@ public partial class RingBiomeDecorationLayer
     [Export(PropertyHint.Range, "0,2000,1")] public float TreeMidDetailFadeEndMeters { get; set; } = 150;
     // Far billboard tier (TR-6): one camera-facing quad per tree from TreeQuadStartMeters to the far distance; the crossed cards hand over to it over
     // TreeQuadCrossFadeMeters, and card-band trees seen from steeply above hand over by elevation. UseFarTreeQuads is a harness/A-B switch (no menu row).
-    // Off until TR-7 calibrates the quad's brightness (the camera-facing normal reads much darker than the cards at noon); TR-7 turns it on.
-    [Export] public bool UseFarTreeQuads { get; set; } = false;
+    // On by default since TR-7b/TR-7c calibrated the quad against the cards (2026-11-15).
+    [Export] public bool UseFarTreeQuads { get; set; } = true;
     [Export(PropertyHint.Range, "0,20000,10")] public float TreeQuadStartMeters { get; set; } = 900;
     public const float TreeQuadCrossFadeMeters = 150;
     public const float TreeQuadFarFadeShare = 0.1f;
