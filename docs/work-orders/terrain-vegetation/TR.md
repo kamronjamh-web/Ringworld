@@ -11,8 +11,9 @@ Freeze: none. This is a renderer change, not world content (see decision D1).
 
 | # | Blocks | Question | Recommendation |
 |---|---|---|---|
-| D1 | TR-5 to TR-7 | These change how every world looks, generation 1 included, the same way the grass Cards default did. Is that allowed, or must they be gated by generation? | Allow it. Trees are placed the same way; only their meshes and shading change. The world fingerprint must not move. |
+| D1 | TR-5 to TR-7 | These change how every world looks, generation 1 included, the same way the grass Cards default did. Is that allowed, or must they be gated by generation? | Allow it. Trees are placed the same way; only their meshes and shading change. The world fingerprint must not move. **Answered 2026-11-14: all worlds.** |
 | D2 | TR-5 | How far may decimation go? It is judged by the TR-4 contact sheets at the distance each LOD is used. | Choose from the contact sheets. Gates in TR-2. |
+| D3 | TR-2 | Which fade distances are the reference for the tree budget and the TR-8 gates: the shipped defaults (LOD0 to 40 m, cards from 300-350 m) or the user's saved preferences (LOD0 to 200 m, cards from 550-900 m)? | **Answered 2026-11-14: the shipped defaults.** The user's preferences stay a heavier option on top. |
 
 ## Phase facts
 
