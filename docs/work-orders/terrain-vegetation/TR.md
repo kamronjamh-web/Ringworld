@@ -1394,6 +1394,8 @@ With the user's bands the saving is smaller at the interior (all trees -6 %, slo
 
 **Harness edits** (`tools/landscape_baseline_common.gd`, `tools/landscape_lod_switch_capture.gd`): `tree_slot1_hidden` added to `TREE_LOD_CASES` (its "no effect" check is skipped when `UseTreeRenderLods` is forced off); `--tr8-dolly` (with `--dolly-lift=<m>`) and `--tr8-shadow` modes (old renderer then new, F1 fades, `--tree-set` merged on top). Run: `$env:LANDSCAPE_HARNESS_ARGS = '--tr8-dolly --dolly-lift=40'; .\tools\run_tests.ps1 -Tests landscape_lod_switch_capture -Label tr8_dolly_hi`. Strips: `--strip --strip-configs=f1` and `--strip --strip-configs=f1 --strip-distances=110,130,140,150,170`.
 
+**User decisions (2026-11-15).** Strips, far sheet and 40 m dolly signed off. G3 interior miss accepted as is (option A): G1 and G2 pass, the triangle gate is a proxy for time; the LOD2b start stays at 130/150 m. D9 = yes: TR-7d goes ahead, lead prototype and preview first.
+
 **Odd things.** (1) `--tr6` reports FAIL for `ground_5km` (no isolated rank <= 0.1 tree with a clear 5,000 m line among `STRIP_SITES`); all other far and altitude frames were written, so the sheet lacks the 5 km ground view. (2) The first dolly is camera-dominated (see above), hence the second. (3) Draw calls rise by about 300 per frame. (4) `NaN` JSON warning from `_save_json` at the partial save is harmless.
 
 ### TR-9a. Cap fall-through: budget-derived band edges
