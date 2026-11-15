@@ -52,6 +52,7 @@ public partial class TestRunMouseRelease : Node
         _pid = GetCurrentProcessId();
         DisplayServer.WindowSetFlag(DisplayServer.WindowFlags.NoFocus, true);
         _hwnd = (IntPtr)DisplayServer.WindowGetNativeHandle(DisplayServer.HandleType.WindowHandle);
+        MoveToTestScreen();
         RefreshWindowRect();
         RestoreForeground();
         // Clip is process-wide state, so a timer thread also clears ours while the main thread is stalled in a synchronous load.
@@ -73,6 +74,30 @@ public partial class TestRunMouseRelease : Node
         ClearOwnClip();
         IntPtr cap = GetCapture();
         if (cap != IntPtr.Zero && GetWindowThreadProcessId(cap, out uint pid) != 0 && pid == _pid) ReleaseCapture();
+    }
+
+    // Puts the test window on a non-primary screen so the user keeps the main display. RINGWORLD_TEST_SCREEN overrides:
+    // "primary" leaves the window where Godot put it, a number picks that Godot screen index. The window keeps its size
+    // (captures keep their resolution); it is centred on the screen, clamped to the screen's top-left corner.
+    private void MoveToTestScreen()
+    {
+        int count = DisplayServer.GetScreenCount();
+        string choice = System.Environment.GetEnvironmentVariable("RINGWORLD_TEST_SCREEN") ?? "";
+        if (count < 2 || choice == "primary") return;
+        int primary = DisplayServer.GetPrimaryScreen();
+        int target = -1;
+        if (int.TryParse(choice, out int requested) && requested >= 0 && requested < count) target = requested;
+        else for (int i = 0; i < count; i++) if (i != primary) { target = i; break; }
+        if (target < 0 || target == DisplayServer.WindowGetCurrentScreen()) return;
+        if (DisplayServer.WindowGetMode() != DisplayServer.WindowMode.Windowed) return; // maximised/fullscreen runs size themselves to their screen
+        Vector2I origin = DisplayServer.ScreenGetPosition(target);
+        Vector2I area = DisplayServer.ScreenGetSize(target);
+        Vector2I size = DisplayServer.WindowGetSizeWithDecorations();
+        Vector2I pos = origin + new Vector2I(Math.Max(0, (area.X - size.X) / 2), Math.Max(0, (area.Y - size.Y) / 2));
+        Vector2I before = DisplayServer.WindowGetSize();
+        DisplayServer.WindowSetPosition(pos);
+        if (DisplayServer.WindowGetSize() != before) DisplayServer.WindowSetSize(before); // a DPI change between screens must not resize the viewport
+        GD.Print($"TestRunMouseRelease: window moved to screen {target} at {pos}, size {DisplayServer.WindowGetSize()}");
     }
 
     private void RefreshWindowRect()
