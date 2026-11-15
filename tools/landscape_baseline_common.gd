@@ -23,7 +23,7 @@ const MARKERS := ["GPU.TreeCulling", "GPU.GrassCulling", "GPU.Vegetation", "GPU.
 const FILL_SCOPES := ["Trees build", "Trees disk load", "Grass build"]
 ## TR-1 (docs/work-orders/terrain-vegetation/TR.md): tree LOD slot cases. A slot case hides that slot's main-pass renderers only (its shadow casters stay); tree_shadows_off
 ## removes the tree shadow casters only. A "@rs50" suffix measures the same case at 50 % 3D render scale (fill test).
-const TREE_LOD_CASES := ["baseline", "trees_hidden", "tree_slot0_hidden", "tree_slot2_hidden", "tree_slot3_hidden", "tree_slot4_hidden", "tree_shadows_off", "baseline_repeat"]
+const TREE_LOD_CASES := ["baseline", "trees_hidden", "tree_slot0_hidden", "tree_slot1_hidden", "tree_slot2_hidden", "tree_slot3_hidden", "tree_slot4_hidden", "tree_shadows_off", "baseline_repeat"]
 const TREE_LOD_POSES := ["forest_interior_eye", "forest_edge_eye", "forest_clearing_eye", "coast_eye"]
 const TREE_LOD_EXTRA := [["forest_edge_eye", "sun_8_set"]]
 const TREE_FADE_PROPERTIES := ["TreeNearDetailFadeStartMeters", "TreeNearDetailFadeEndMeters", "TreeBillboardFadeStartMeters", "TreeBillboardFadeEndMeters", "TreeMidDetailFadeStartMeters", "TreeMidDetailFadeEndMeters"]
@@ -1318,6 +1318,10 @@ static func run_tree_lod(ctx: Dictionary) -> Dictionary:
 		if str(label).begins_with("baseline"):
 			continue
 		case_effect[label] = 0
+		# TR-8: slot 1 is only drawn with the render LODs; the old renderer (UseTreeRenderLods:0) has nothing to hide there
+		if label == "tree_slot1_hidden" and overrides.has("UseTreeRenderLods") and not bool(trees.get("UseTreeRenderLods")):
+			case_effect[label] = 1
+			continue
 		for record in results:
 			for config_record in record.get("configs", []):
 				if bool(config_record["derived"]["classes"][label]["changed_submissions"]):
@@ -1753,5 +1757,126 @@ static func run_tr6_dolly(ctx: Dictionary) -> Dictionary:
 	_apply_tree_settings(trees, original)
 	record["status"] = "PASS"
 	_save_json(out_dir.path_join("tr6_dolly.json"), record)
+	print("%s output: %s" % [marker, out_dir])
+	return record
+
+
+# ------------------------------------------------------------------ TR-8 review pack captures (docs/work-orders/terrain-vegetation/TR.md)
+
+const TR8_F1 := {"TreeNearDetailFadeStartMeters": 25.0, "TreeNearDetailFadeEndMeters": 40.0, "TreeBillboardFadeStartMeters": 300.0, "TreeBillboardFadeEndMeters": 350.0,
+	"TreeMidDetailFadeStartMeters": 130.0, "TreeMidDetailFadeEndMeters": 150.0}
+## before = the old renderer (no render LODs, no far quads), after = the shipped one.
+const TR8_CASES := [["before", {"UseTreeRenderLods": false, "UseFarTreeQuads": false}], ["after", {"UseTreeRenderLods": true, "UseFarTreeQuads": true}]]
+
+
+static func _tr8_prepare(ctx: Dictionary) -> Dictionary:
+	var trees: Node = ctx["trees"]
+	var original := {}
+	for property in TREE_FADE_PROPERTIES + ["UseTreeRenderLods", "UseFarTreeQuads"]:
+		original[property] = trees.get(property)
+	var settings := TR8_F1.duplicate()
+	settings.merge(_parse_tree_settings(harness_arg("--tree-set=", "")), true)
+	var applied := _apply_tree_settings(trees, settings)
+	if applied.has("error"):
+		return applied
+	for node in _all_nodes(ctx["game"]):
+		if node is CanvasLayer and (node.name == "TerrainMinimap" or (node.get_script() != null and "RingPresentationHud" in (node.get_script() as Script).resource_path)):
+			(node as CanvasLayer).visible = false
+	return {"original": original, "applied": applied}
+
+
+## `--tr8-dolly`: a pull-back from 100 to 400 m behind the pose (`--pose=`, default forest_edge_eye; one metre per frame, looking along the pose heading, eye height 1.7 m),
+## once with the old renderer and once with the new one, the shipped fades forced (`--dolly-lift=<m>` raises the camera above the ground, default 1.7). Frames: <out>/{before,after}/frame%08d.png (run flicker on each).
+static func run_tr8_dolly(ctx: Dictionary) -> Dictionary:
+	var tree: SceneTree = ctx["tree"]
+	var marker: String = ctx["marker"]
+	var trees: Node = ctx["trees"]
+	var game: Node = ctx["game"]
+	var world: RefCounted = ctx["booted"]["world_bridge"]
+	var out_dir := H.transient_dir("tr8_dolly", ctx["booted"]["world_tag"])
+	var pose := H.pose_by_name(COMMON.arg_value("--pose=", "forest_edge_eye"))
+	if pose.is_empty():
+		return {"status": "FAIL", "failure": "pose missing from the fixture"}
+	var prepared := _tr8_prepare(ctx)
+	if prepared.has("error"):
+		return {"status": "FAIL", "failure": str(prepared["error"])}
+	var info: Dictionary = await H.go_pose(tree, game, pose, "noon", ctx["ground_model"])
+	if info.has("error"):
+		return {"status": "FAIL", "failure": str(info["error"])}
+	await _disable_auto_exposure(ctx)
+	var yaw := float(pose["yaw_deg"])
+	var pitch := float(pose["pitch_deg"])
+	var back_a := -cos(deg_to_rad(yaw))
+	var back_z := -sin(deg_to_rad(yaw))
+	var frames := 300
+	var record: Dictionary = (ctx["record"] as Dictionary).duplicate(true)
+	record.merge({"marker": marker, "tool": "landscape_lod_switch_capture --tr8-dolly", "output": out_dir, "frames": frames, "back_m": [100.0, 400.0], "pose": pose["name"], "overrides": prepared["applied"], "settled": {}}, true)
+	for item in TR8_CASES:
+		_apply_tree_settings(trees, item[1])
+		var dir_path := out_dir.path_join(str(item[0]))
+		DirAccess.make_dir_recursive_absolute(dir_path)
+		for step in frames:
+			var cam_a := float(pose["around_m"]) + back_a * (100.0 + float(step))
+			var cam_z := float(pose["across_m"]) + back_z * (100.0 + float(step))
+			var vertical := float(world.call("GroundHeight", cam_a, cam_z)) + float(harness_arg("--dolly-lift=", str(EYE_M)))
+			_teleport_to(ctx, cam_a, cam_z, vertical, yaw, pitch)
+			if step == 0:
+				await COMMON.wait_builds_idle(tree, game, 240.0)
+				record["settled"][item[0]] = await _wait_trees_settled(ctx, 180.0)
+				_teleport_to(ctx, cam_a, cam_z, vertical, yaw, pitch)
+			await RenderingServer.frame_post_draw
+			await RenderingServer.frame_post_draw
+			tree.root.get_texture().get_image().save_png(dir_path.path_join("frame%08d.png" % step))
+		print("%s tr8 dolly %s done" % [marker, item[0]])
+	_apply_tree_settings(trees, prepared["original"])
+	record["status"] = "PASS"
+	_save_json(out_dir.path_join("tr8_dolly.json"), record)
+	print("%s output: %s" % [marker, out_dir])
+	return record
+
+
+## `--tr8-shadow`: the shadow debug view (ShadowDebugMode 1, sun visibility) and the normal frame at `--pose=` (default forest_clearing_eye), noon and sun 8 degrees,
+## old renderer then new one. Files: <out>/<time>_<before|after>_{debug,normal}.png.
+static func run_tr8_shadow(ctx: Dictionary) -> Dictionary:
+	var tree: SceneTree = ctx["tree"]
+	var marker: String = ctx["marker"]
+	var trees: Node = ctx["trees"]
+	var game: Node = ctx["game"]
+	var graphics := game.get_node_or_null("GraphicsQuality")
+	if graphics == null:
+		return {"status": "FAIL", "failure": "no GraphicsQuality node"}
+	var out_dir := H.transient_dir("tr8_shadow", ctx["booted"]["world_tag"])
+	var pose := H.pose_by_name(COMMON.arg_value("--pose=", "forest_clearing_eye"))
+	if pose.is_empty():
+		return {"status": "FAIL", "failure": "pose missing from the fixture"}
+	var prepared := _tr8_prepare(ctx)
+	if prepared.has("error"):
+		return {"status": "FAIL", "failure": str(prepared["error"])}
+	var record: Dictionary = (ctx["record"] as Dictionary).duplicate(true)
+	record.merge({"marker": marker, "tool": "landscape_lod_switch_capture --tr8-shadow", "output": out_dir, "pose": pose["name"], "overrides": prepared["applied"], "frames": []}, true)
+	var exposure_disabled := false
+	for time_name in ["noon", "sun_8_set"]:
+		var info: Dictionary = await H.go_pose(tree, game, pose, time_name, ctx["ground_model"])
+		if info.has("error"):
+			return {"status": "FAIL", "failure": str(info["error"])}
+		if not exposure_disabled:
+			await _disable_auto_exposure(ctx)
+			exposure_disabled = true
+		for item in TR8_CASES:
+			_apply_tree_settings(trees, item[1])
+			var settled := await _wait_trees_settled(ctx, 240.0)
+			for mode in [["normal", 0], ["debug", 1]]:
+				graphics.call("SetShadowTuningOverride", "ShadowDebugMode", int(mode[1]))
+				await COMMON.settle(tree, 1.0)
+				for i in 8:
+					await RenderingServer.frame_post_draw
+				var name := "%s_%s_%s" % [time_name, item[0], mode[0]]
+				tree.root.get_texture().get_image().save_png(out_dir.path_join(name + ".png"))
+				(record["frames"] as Array).append({"name": name, "trees_settled": settled, "sun_elevation_deg": info.get("sun_elevation_deg", NAN)})
+			graphics.call("SetShadowTuningOverride", "ShadowDebugMode", 0)
+		print("%s tr8 shadow %s done" % [marker, time_name])
+	_apply_tree_settings(trees, prepared["original"])
+	record["status"] = "PASS"
+	_save_json(out_dir.path_join("tr8_shadow.json"), record)
 	print("%s output: %s" % [marker, out_dir])
 	return record

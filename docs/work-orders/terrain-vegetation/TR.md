@@ -1328,6 +1328,74 @@ VALIDATION STEPS
 STOP RULE
 1 watchdog period.
 
+#### TR-8 results (2026-11-15, implementer)
+
+Machine: RTX 4070 (reference configuration R), 1920 x 1080, Medium, Forward+, VSync off, clear weather, 2 rounds of 8 s windows per case (second reversed), noise floor = baseline against baseline_repeat. Tree layer forced with `--tree-set`: F1 fades (25/40, 300/350, mid 130/150, mid batch span 2), old caps and gates (nothing changed), `DisableGpuTreeEffectiveEdges:1` (TR-9a edges off so the hand-offs sit where TR-1 had them). BEFORE = `UseTreeRenderLods:0,UseFarTreeQuads:0` in the same session and build. HEAD ba1ab88 plus the harness edits below. All runs "pass"; the camera did not move in any window set. Harness switches via `LANDSCAPE_HARNESS_ARGS` (`--tree-lod=slots --poses=forest_edge_eye,forest_interior_eye --rs50=none --overdraw=none --tree-set=...`); the 1 / 0 spelling is needed for booleans (`_parse_tree_settings` reads `true` as 0).
+
+**Cost at R (noon unless stated; ms of root GPU; slot deltas are baseline minus case, slots 1 + 2 is the sum of the two cases).**
+
+| pose | renderer | root GPU | noise floor | all trees | slot 0 | slots 1 + 2 | tree shadows | slots 1 + 2 triangles (M) | draws | primitives (M) | trees drawn |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| forest_edge_eye | BEFORE (this session) | 10.69 | 0.03 | 4.25 | 0.10 | 2.31 (s1 0.03, s2 2.28) | 1.47 | 2.709 | 1,124 | 13.84 | 10,086 |
+| forest_edge_eye | AFTER (edges off) | 9.59 | 0.01 | 3.14 | 0.06 | 1.18 (s1 0.36, s2 0.81) | 1.48 | 1.299 | 1,440 | 12.32 | 14,252 |
+| forest_edge_eye | AFTER, effective edges on (reported) | 9.62 | 0.00 | 3.19 | 0.10 | 1.26 | 1.49 | 1.299 | 1,440 | 12.32 | 14,585 |
+| forest_edge_eye | TR-1 third run | 10.79 | 0.01 | 4.22 | 0.09 | 2.32 | 1.48 | 2.709 | 671 | 13.84 | 10,086 |
+| forest_interior_eye | BEFORE | 14.04 | 0.02 | 7.81 | 0.64 | 3.64 (s1 -0.03, s2 3.67) | 2.33 | 3.628 | 1,114 | 20.10 | 11,102 |
+| forest_interior_eye | AFTER (edges off) | 12.19 | 0.01 | 6.01 | 0.73 | 2.05 (s1 0.65, s2 1.39) | 2.47 | 1.919 | 1,395 | 16.45 | 15,246 |
+| forest_interior_eye | AFTER, effective edges on (reported) | 12.12 | 0.03 | 5.88 | 0.73 | 2.01 | 2.39 | 1.919 | 1,392 | 16.34 | 15,035 |
+| forest_interior_eye | TR-1 third run | 13.96 | 0.05 | 7.75 | 0.52 | 3.73 | 2.31 | 3.628 | 1,233 | 20.10 | 11,102 |
+| forest_edge_eye, sun 8 deg | BEFORE | 9.92 | 0.01 | 4.50 | 0.07 | 2.29 | 1.86 | 2.709 | 1,165 | 14.00 | 10,086 |
+| forest_edge_eye, sun 8 deg | AFTER (edges off) | 8.86 | 0.02 | 3.43 | 0.08 | 1.20 | 1.79 | 1.299 | 1,482 | 12.48 | 14,252 |
+| forest_edge_eye, sun 8 deg | TR-1 third run | 10.12 | 0.01 | 4.41 | 0.10 | 2.34 | 1.90 | 2.709 | 1,166 | 14.02 | 10,086 |
+
+Notes: BEFORE reproduces TR-1's third run within 0.1 ms (all trees 4.25 / 7.81 against 4.22 / 7.75). "Draws" is the baseline frame's draw-call count; TR-1's table of draws removed per case is a different quantity, so the TR-1 draws cell is the baseline draw count from its tree_lod.md (`.godot/audit_baseline/rtx4070/tr1/tree_lod_slots/2026-11-14_17-47-22/`). Triangles are the probe's `submitted_triangles` per slot (slot 2 before the change is the only LOD2 slot; after, slot 1 is authored LOD2 and slot 2 is LOD2b). Trees drawn is the sum of the probe's drawn counts over the five slots (the quad tier adds about 4,000 trees: slot 4 draws 7,443 against 3,327 at edge, 7,787 against 3,715 at interior; with effective edges on, slot 3 falls from 5,200 to 4,712 / 4,724 and slot 4 rises to 8,264 / 8,052).
+
+**Gates (design G, TR-8 items 1 to 3), at R, against BEFORE in the same session.**
+
+| gate | forest_edge_eye | forest_interior_eye | verdict |
+|---|---|---|---|
+| G1 slots 1 + 2 GPU down at least 35 % | 2.31 to 1.18 (-48.9 %) | 3.64 to 2.05 (-43.7 %) | PASS (floor 0.01 to 0.03 ms; against TR-1's 2.32 / 3.73: -49.1 % / -45.0 %); sun 8 deg edge -47.6 % |
+| G2 all-trees delta down at least 20 % | 4.25 to 3.14 (-26.1 %) | 7.81 to 6.01 (-23.0 %) | PASS (against TR-1's 4.22 / 7.75: -25.6 % / -22.5 %); sun 8 deg edge -23.8 % |
+| G3 slots 1 + 2 triangles down at least 50 % | 2.709 M to 1.299 M (-52.0 %) | 3.628 M to 1.919 M (-47.1 %) | PASS at edge, **MISS at interior by 2.9 points** |
+
+Where the G3 miss comes from (probe, interior): slot 1 (authored LOD2, 25 to 150 m) draws 383 trees and 0.635 M triangles (1,659 per tree); slot 2 (LOD2b) draws 1,841 trees and 1.284 M (697 per tree). BEFORE drew 2,152 LOD2 trees at 1,686 per tree. The interior pose has twice the trees inside 150 m that the edge has (383 against 189), and every one of them still draws the full authored LOD2; the LOD2b saving (2.4 times fewer triangles per tree) applies only beyond 150 m. Edge: slot 1 189 trees 0.281 M, slot 2 1,408 trees 1.018 M. Not fixed (stop rule).
+
+Other observations, not gates:
+- **Draw calls rise** (edge 1,124 to 1,440, interior 1,114 to 1,395) although primitives fall (-11 % and -18 %): slot 1 uses per-tile batches and the quad tier adds outputs. Trees drawn rise from 10,086 / 11,102 to 14,252 / 15,246 (the far quads).
+- **Tree shadows** edge 1.47 to 1.48 (noise), interior 2.33 to 2.47 ms (+0.14). The noise floor is 0.01 to 0.03 ms, but the same AFTER configuration measured 2.39 ms in the effective-edges-on run, so run-to-run is about 0.08 ms and the +0.14 is only one to two times that. Shadow casters (probe): slots 3 and 4 have no shadow proxies in either renderer. The new casters are slot 1's 48 to 53 proxy outputs; shadow draws go from 360 to 570 (edge) and 278 to 444 (interior), total caster triangles stay about 70,000 (edge) and 135,000 (interior). This fits TR-2 H: the shadow cost follows batches, not triangles. Far quads and cards do not cast.
+- Slot 4 (far tier) costs 0.0 to 0.3 ms in the main pass in both renderers (interior 0.28 before, 0.05 after).
+
+**Reported, not gated: the user's preferences** (LOD0 to 200 m, LOD2 to 900 m, cards 550 to 900 m; `--tree-set=DisableGpuTreeEffectiveEdges:1` only; old caps). BEFORE adds `UseTreeRenderLods:0,UseFarTreeQuads:0`. Noon, ms.
+
+| pose | renderer | root GPU | all trees | slot 0 | slots 1 + 2 | tree shadows | slots 1 + 2 triangles (M) | draws | trees drawn |
+|---|---|---|---|---|---|---|---|---|---|
+| forest_edge_eye | BEFORE | 15.03 | 8.56 | 1.86 | 4.81 | 1.65 | 4.451 | 1,197 | 11,479 |
+| forest_edge_eye | AFTER | 13.01 | 6.56 | 1.81 | 2.61 (s1 0.70, s2 1.91) | 1.83 | 2.223 | 1,494 | 15,952 |
+| forest_interior_eye | BEFORE | 16.08 | 9.87 | 2.57 | 3.93 | 2.51 | 3.777 | 1,026 | 11,867 |
+| forest_interior_eye | AFTER | 15.48 | 9.28 | 2.62 | 3.12 (s1 1.17, s2 1.95) | 2.90 | 2.964 | 1,386 | 15,802 |
+| forest_edge_eye, sun 8 deg | BEFORE | 15.98 | 10.51 | 1.80 | 4.69 | 3.75 | 4.451 | 1,217 | 11,479 |
+| forest_edge_eye, sun 8 deg | AFTER | 14.14 | 8.72 | 1.85 | 2.64 | 4.03 | 2.223 | 1,514 | 15,952 |
+
+With the user's bands the saving is smaller at the interior (all trees -6 %, slots 1 + 2 -21 %, triangles -21 %): slot 1 now holds 640 trees at 1,728 triangles each and slot 0 still draws 256 LOD0 trees out to 200 m (2.6 ms). Tree shadows rise 0.2 to 0.4 ms (more slot 1 proxies). F4's estimate (LOD2 4.8 to about 3.0 ms) is met at the edge (4.81 to 2.61) and not at the interior.
+
+**Look gates (G4, G5).**
+- `tree_billboard_match_gpu_test`, `tree_lighting_shadow_gpu_test`, `vegetation_shadow_gpu_test`: pass (`.godot/test_runs/tr8_look/20261115-152231/results.md`, 3 of 3).
+- Switch strips, quads on, shipped fades, noon (top row) and sun 8 deg (bottom row), five distances left to right: 250 / 300 / 325 / 350 / 400 m (`.godot/tr8/strips/f1_250-400_{maple,pine,fir}.png`) and 110 / 130 / 140 / 150 / 170 m across the LOD2 to LOD2b hand-off (`.godot/tr8/strips/mid_110-170_{maple,pine,fir}.png`; `strip.json` beside them). Reading the maple sheets: no pop at the LOD2 to LOD2b hand-off (leaf mass and silhouette continuous across the dither); at 250 to 400 m the maple changes smoothly into a smaller, brighter card/quad silhouette as in TR-7. **User sign-off pending.**
+- Dolly 100 to 400 m behind the `forest_edge_eye` pose (the harness backs the camera away along the pose heading, 1 m per frame, 300 frames; `--tr8-dolly`), old renderer against new, `flicker`:
+  - eye height 1.7 m (`.godot/tr8/dolly/`): largest spike before 33.087 (frame 1), after 33.151 (frame 1), ratio 1.002; the five largest spikes sit on the same frames in both. This path passes through tree crowns (frames 0 and 148 are inside leaves), so the mean change is 16.6 and the metric is dominated by the camera, not by the tree tiers.
+  - eye height 40 m above ground (`--dolly-lift=40`, `.godot/tr8/dolly_hi/`, mean change 5.4): largest spike before 8.295 (frame 267), after 8.259 (frame 271), ratio 0.996.
+  - Gate (no spike above 1.25 x the before maximum): PASS in both. The first run has low sensitivity (see above); the second is the cleaner evidence. mp4s: `dolly/dolly_{before,after}.mp4`, `dolly_hi/dolly_hi_{before,after}.mp4`, sheets beside them.
+- Shadow debug view (`ShadowDebugMode` 1) and normal frame at `forest_clearing_eye`, old renderer against new, `compare` (after against before): noon debug SSIM 0.9949 / PSNR 38.6 dB, noon normal 0.9930 / 36.9, sun 8 deg debug 0.9943 / 38.1, sun 8 deg normal 0.9939 / 39.0. Heatmaps (`.godot/tr8/shadow/compare_*.png`, x8): black everywhere in the near field and on the ground shadows; the only differences are the silhouettes of far trees (quads and cards against old cards) and the sky/cloud noise. PASS (noise-level, none in the 240 m shadow range).
+- Contact sheet for sign-off: `.godot/tr8/contact_sheet.png` (top to bottom: F1 strip maple, LOD2b strip maple, F1 pine, LOD2b pine, F1 fir, LOD2b fir, then the far and altitude sheet: forest ground, altitude 300 m, 2,000 m down 30 and 70 degrees, a 2 km ground view, mountain pine at 350 m; each pair is cards then quads, order listed in `.godot/tr8/far/contact_order.txt`; individual files in `.godot/tr8/far/`).
+
+**Verdict.** G1 and G2 pass at both poses; G3 passes at `forest_edge_eye` (-52.0 %) and misses at `forest_interior_eye` (-47.1 %). G4 and G5 evidence is in and clean by the numbers; the user's visual sign-off on the strips and contact sheet is outstanding. Nothing was changed in the renderer.
+
+**Evidence.** Cost runs (JSON and md, copied): `.godot/tr8/cost/tr8_{after,before,after_edges,user_after,user_before}.{json,md}` (originals under `.godot/audit_baseline/rtx4070/tr1/tree_lod_slots/2026-11-15_14-12-44, 14-23-03, 14-33-26, 14-43-44, 14-54-16`), table extractor `.godot/tr8/cost/tab.ps1`. Test runs: `.godot/test_runs/tr8_{after,before,after_edges,user_after,user_before,strip_f1,strip_mid,dolly,dolly_hi,shadow,far,look}/`.
+
+**Harness edits** (`tools/landscape_baseline_common.gd`, `tools/landscape_lod_switch_capture.gd`): `tree_slot1_hidden` added to `TREE_LOD_CASES` (its "no effect" check is skipped when `UseTreeRenderLods` is forced off); `--tr8-dolly` (with `--dolly-lift=<m>`) and `--tr8-shadow` modes (old renderer then new, F1 fades, `--tree-set` merged on top). Run: `$env:LANDSCAPE_HARNESS_ARGS = '--tr8-dolly --dolly-lift=40'; .\tools\run_tests.ps1 -Tests landscape_lod_switch_capture -Label tr8_dolly_hi`. Strips: `--strip --strip-configs=f1` and `--strip --strip-configs=f1 --strip-distances=110,130,140,150,170`.
+
+**Odd things.** (1) `--tr6` reports FAIL for `ground_5km` (no isolated rank <= 0.1 tree with a clear 5,000 m line among `STRIP_SITES`); all other far and altitude frames were written, so the sheet lacks the 5 km ground view. (2) The first dolly is camera-dominated (see above), hence the second. (3) Draw calls rise by about 300 per frame. (4) `NaN` JSON warning from `_save_json` at the partial save is harmless.
+
 ### TR-9a. Cap fall-through: budget-derived band edges
 
 Added 2026-11-14 by the TR-2 design (B1 to B3). It is TR-2 item 7's "fix that order first".

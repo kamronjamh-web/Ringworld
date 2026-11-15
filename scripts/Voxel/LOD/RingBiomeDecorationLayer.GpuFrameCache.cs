@@ -97,13 +97,20 @@ public partial class RingBiomeDecorationLayer
         void Place(float around) => group.Metadata[0] = new Vector4(0, 1, around, 0);
         void Want(params int[] lods) { _gpuTreeWanted.Clear(); foreach (int lod in lods) _gpuTreeWanted.Add(new GpuOutputKey(key, lod)); }
 
-        Place(5); Want(0, 2, 3, 4);
+        // TR-5: with the render LODs on, slot 1 (authored LOD2) is live from the near fade start, so a root at 5 m with a 32 m guard reaches slots 0 and 1.
+        Place(5); Want(0, 1, 2, 3, 4);
         if (GpuTreeProtectionAffectsSelection()) return "FAIL: protected root inside wanted outputs forced a selection rebuild";
-        Want(2, 3, 4);
+        Want(0, 2, 3, 4);
+        if (!GpuTreeProtectionAffectsSelection()) return "FAIL: protected root in absent slot 1 (authored LOD2) output kept a stale selection";
+        Want(1, 2, 3, 4);
         if (!GpuTreeProtectionAffectsSelection()) return "FAIL: protected root in absent LOD0 output kept a stale selection";
+        // Render LODs off (the layout before TR-5): slot 1 is unused and slot 2 starts at the near fade.
+        UseTreeRenderLods = false; _gpuTreeSelectionEdges = GpuTreeLodEdges(); Want(0, 2, 3, 4);
+        if (GpuTreeProtectionAffectsSelection()) return "FAIL: render LODs off: protected root inside wanted outputs forced a selection rebuild";
+        UseTreeRenderLods = true; _gpuTreeSelectionEdges = edges;
         Place(edges[5] + guard + 500); Want();
         if (GpuTreeProtectionAffectsSelection()) return "FAIL: protected root far outside every LOD interval forced a rebuild";
-        Place(5); Want(0, 2, 3, 4); _gpuTreeProtectionRemovedScratch = true; PruneEmptyGpuTreeBatches = true;
+        Place(5); Want(0, 1, 2, 3, 4); _gpuTreeProtectionRemovedScratch = true; PruneEmptyGpuTreeBatches = true;
         if (!GpuTreeProtectionAffectsSelection()) return "FAIL: removal with pruning kept a stale selection";
         _gpuTreeProtectionRemovedScratch = false;
         _gpuTreeSelectionTruncated = true;
