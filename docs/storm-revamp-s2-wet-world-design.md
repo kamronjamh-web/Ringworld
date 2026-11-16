@@ -346,3 +346,8 @@ No visible change from the tree edits (`compare` B vs map-only + foliage floor: 
 - `ring_storm_specular_keep` is now `(1 - F)^4`, on the same F(D) ramp.
 - The POI and construction-concrete sun highlights now use it too: POI roof puddles kept the 0.1 sun residual.
 - Widening the lobe with F was tried and rejected: it spread the glint into a large bright sheen.
+
+**Update 2026-11-16 (perf pass 0.14)**
+- Reach fade: wetness fades out between 5.2 km and 6.5 km from the camera (`ring_wet_clock.z` = `RingWetWorld.DefaultReachMeters`, `ring_wet_reach` in `ring_wetness.gdshaderinc`) and nothing is evaluated beyond it, so the far rain fallback no longer shows at long distance. `ring_wet_frame` column 3 `.w` is now the camera height above the surface point.
+- Cadence: the map dispatches every 2 s (was 0.5 s) and when the camera window corner has drifted 4 texels (256 m) from the published one (was: any texel step), or on a sim time jump. The shader uses the camera offset from the published corner, so a lagging window is exact.
+- Far viewport opt-out: the scaled far viewport terrain and water materials set `wet_world_receiver = false` (their positions are scaled far-world units, not main-world metres).

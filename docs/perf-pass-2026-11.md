@@ -311,6 +311,375 @@ Full study and plan: [`docs/occlusion-culling-plan.md`](occlusion-culling-plan.m
 - Recommended (Phase 1, orders OC-0 to OC-3): exact per-instance frustum culling of the tree camera lists, a second compaction after the budget-correct one, shadows untouched, byte-identical; about 0.7 to 1.0 ms in forest and 0.3 to 0.4 ms on the plains. Occlusion proper is a user decision and not recommended now: the exact colour-pass variant nets about 0.1 ms, the terrain-horizon variant (0.2 to 0.5 ms averaged) is exact only with correct LOD-error margins, and previous-frame Hi-Z is not invisible.
 - Side finding: Godot's primitive counter reports indirect multimeshes at full capacity; the "15 to 17 million tree primitives" in section 5.1 is inflated (about 5 million per camera pass are drawn).
 
+### 0.12 Waste audit: work that does not change the picture (2026-11-16)
+
+Question: is any work done far from the player, done twice, or done in many small pieces that could be one? Constraint: no pixel may change and no draw distance or density may drop. One small fix is in the working tree, not committed (W1). Everything else is measured and written up as orders.
+
+**Method.**
+- Slot 3 copy through the real-world driver (`.godot/perf_pass_real/real_world_perf_waste.gd` and `run_waste.ps1`, a copy of the E1 driver with an `occl_off` label, a still-capture A/B and a macro-shadow A/B). Optimized C# built from a sparse worktree, so the shared tree and the other lanes' work in progress stay untouched. 1600 x 900, VSync off, noon with the clocks running, RTX 4070 at P0.
+- Evidence: `RingPerformanceMonitor` scopes (mean per call, because the ring buffer drops events), per-frame wall, GPU, frame setup and viewport render CPU, draw and primitive counts, per-viewport GPU and CPU times.
+- Code was surveyed for global and material parameter writes, `_Process` nodes, timers, compute dispatches, readbacks, texture replacement and viewports.
+- **The save has moved.** The user's slot 3 save is now at around 20,295 km, across 124 km, 624 m up, on the ground near trees. That spot costs **22.5 ms of GPU** (44 fps), more than any pose in section 0.2.
+- **Caveat on run 1 and run 2.** Lane T's in-progress `ring_gpu_vegetation_indirect.glsl` was loaded at runtime with HEAD C#, so the GPU tree compute failed to initialize (`Binding (8), set (1) was not provided`). The absolute frame times of those runs are therefore not comparable with sections 0.2 to 0.10 (plains 17.2 ms against 14.0 ms). The A/B deltas below are for terrain and far-viewport material work, which does not depend on the tree path. Run 3 repeats the plains and forest A/Bs with consistent tree files: lane T's 10:35 snapshot (OC-1 work in progress) plus HEAD. Its plains baseline is 14.1 ms, as at HEAD. Its 240 m/s flights (41 to 52 ms, getting worse window by window) are not used: they may be the work-in-progress snapshot.
+
+**What the steady state looks like.**
+- At rest every ground pose is GPU-bound. The instrumented main-thread scopes add up to less than 0.6 ms per frame:
+  - far ring update 0.14 to 0.16 ms;
+  - water 0.06 to 0.09 ms, of which `Ocean material refresh` runs twice per frame at 0.014 to 0.027 ms per call;
+  - LOD coordinator 0.06 ms; diagnostics 0.06 ms;
+  - the 15 proxy levels together 0.045 ms (camera uniforms 0.000 to 0.006 ms, lighting uniforms 0.03 ms);
+  - POI haze tick 0.005 ms; tree lighting 0.005 ms.
+- Frame setup is 0.26 to 0.28 ms per frame. So no material has a texture re-bound every frame (that would show in setup).
+- CPU waste therefore cannot move the p50 at rest. It matters in three places:
+  - **hitches** (p95 and p99);
+  - **CPU-bound flight**;
+  - **once the GPU frame is under about 7 ms.**
+
+**Ranked candidates.** ms are measured unless marked "est.". "CPU" is main-thread or render-thread time; "GPU" is GPU time.
+
+| # | Candidate | Evidence | Saves | Image risk | Size | How to prove identity |
+|---|---|---|---|---|---|---|
+| W1 | **Macro shadow install re-binds both mask textures on all 37 receivers** (`RingTerrainMacroShadowProjector.ApplyAll`, at every 0.51 degree sun step, so every 5 to 7 s at noon). Setting a texture parameter, even to the same texture, makes Godot rebuild the material's uniform set and the cached surface data of every instance that uses it: all terrain proxy sectors, Terrain3D, the global LOD and the far-viewport materials. The mask texture is already updated in place (`ImageTexture.Update`). | Plains, 4 windows of 20 to 30 s, A-B-A-B-A. Legacy: 1.7 to 2.0 hitches per 10 s, each frame setup 13 to 14.7 ms, then 2 frames of 12.6 to 13.7 ms far-viewport render CPU. That is +23 to 26 ms of wall per hitch, max frame 35.7 ms. Fixed: **0 hitches** in 150 s with installs happening (46 installs in the run); max frame 20.7 to 22.9 ms; p99 18.33-18.43 → 18.09-18.12 ms. The E1 run (HEAD) shows the same signature every 7 s at the old save and the plains: setup 11.5 ms, far CPU 12 to 13 ms ×2, frames of 27 to 31 ms. | about 25 ms of wall every 5 to 7 s (CPU); p99 at rest; more while CPU-bound. Run 3, trees working: legacy 1.5 hitches per 10 s at +40 to 48 ms each (max frame 41.8 to 45.2 ms); fixed 0 (max 28 to 31 ms) | none | S, **done** (uncommitted) | By construction: a parameter is skipped only when the material already holds a bit-identical value (same texture object, same float, same vector), so every receiver ends in the same state as before. Measured: zero hitches with the mask still updating. A/B switch `GlobalTerrainLod3.LegacyMacroShadowApply`. |
+| W2 | **Godot occlusion culling raster with 512 bedrock occluders** (`project.godot` `use_occlusion_culling=true`, `RingTerrainGlobalLod.BuildTerrainOccluder`). The occluders sit under the bedrock; anything they hide is behind solid ring. | Main viewport render CPU p50 with `occl_off`: save spot 3.98-4.13 → 3.76; plains 3.40-3.49 → 3.00; forest 4.03-4.16 → 3.62; flight at 240 m/s and 300 m 3.59 → 3.20 ms. Wall unchanged at rest (GPU-bound). Flight p50 17.03-17.13 → 16.61 ms, p95 24.5-24.8 → 23.9 ms. Off adds 9 to 10 draws (55 k primitives) at the save spot and 1 on the plains: these are what it hid. Still compare at the save spot, clocks held: on against off SSIM 0.99940, on against on 0.99937, same heatmap (wind noise in the canopy only). Run 3, trees working: plains 3.34 → 2.93, forest 3.55-3.59 → 3.19 ms, wall unchanged. | 0.3 to 0.5 ms render CPU per frame, everywhere; about 0.4 ms of wall in CPU-bound flight | none (it can only reveal geometry hidden wrongly through a surface aperture) | S | Byte or heatmap A/B of stills at 4 poses with clocks held (done once at the save spot); draw-count delta must be only far geometry behind the ring. |
+| W3 | **Periodic +1.1 ms frame setup every 0.59 s** (17.5 per 10 s at every pose, at 44 to 107 fps, so on a timer, not on frames). Half of it follows `SunshineCloudBridge`: 8.7 per 10 s with its processing off. The other half is not `TerrainCloudSunVisibility`, `WetWorld`, `LocalVolumetricCloudRenderer`, `Rainbow`, the monitor or the far viewport node: none of them changes the count. | setup 1.3 to 1.9 ms against 0.27 median, one frame each | about 2 ms CPU per second; absorbed while GPU-bound | none if fixed by a stable texture | S (trace) + S/M | Attribute first (W3 order). If it is the cloud-shadow cascade publish swapping its ping-pong texture on the receivers, use the wet-world pattern: a stable front texture plus a copy, then a readback compare of the published texels. |
+| W4 | **Macro install itself** (after W1): `Image.SetData` and `ImageTexture.Update` of the 7,670 x 78 R8 mask, plus 444 parameter reads, on the main thread every 5 to 7 s | `Terrain macro shadow install` 1.9 to 6.6 ms per call (2.3 to 5.1 with W1) | 2 to 6 ms every 5 to 7 s, CPU | none | S | Update the RD texture in place (`RenderingServer.Texture2DUpdate` from a reused byte array) and keep per-receiver last-applied values instead of `GetShaderParameter`; readback of the mask texels. |
+| W5 | **`TerrainCloudSunVisibility` publishes new `Texture2DRD`s every generation** (0.5 s timer plus about 12 dispatch frames) and re-binds them on the far-viewport, cloud and Sunshine receivers | `proc_off` changes nothing measurable at rest (bump count, setup and wall all within noise); GPU 0.05 ms per dispatch, 0.01 to 0.02 ms per frame | ~0 at rest | none | M | Order E3(b) in 0.8.5 already designs it. Keep it parked: the texture swap reaches only a handful of materials, so its rebind is not measurable. |
+| W6 | **Ocean material refresh twice per frame** (`RingWaterFftController._Process`, `:151` and `:217`), also while the water is dormant | 0.014 to 0.027 ms per call | 0.01 to 0.03 ms CPU | none | S | Call once at the end, or skip when the version did not change; `water_*` contract tests. |
+| W7 | Proxy levels: all 15 run camera and lighting uniforms every frame, including the inactive ones | 0.000 to 0.006 + 0.03 ms per frame in total | < 0.04 ms | none | S | Not worth an order. |
+| W8 | Three far-ring SubViewports render every frame | 1.37 to 1.48 ms GPU, 0.2 ms CPU | — | **visual** (clouds, sun and the camera change every frame, so skipping a frame is a visible lag) | — | Not waste. Already in section 7 item 8 as a user decision. |
+| — | Minimap viewport | Hidden in the user's settings: its render-time counters are frozen at 1.153 / 0.046 ms in every window (min = max), so it does not render. Terrain3D mouse viewports 0.000 ms. | 0 | | | No order. |
+| — | Near cloud-shadow cascade refresh | `GPU.CloudShadowNear` 0.79 ms per dispatch, 0.3 to 0.6 ms per frame at rest | — | visual: clouds move, so its timed refresh is real work | | In `docs/cloud-perf-methods-plan.md`, not here. |
+| — | Same quantity computed by many systems | Sun direction is read about 30 times per frame, the camera ring frame about 10 times, weather at the camera 5 times, terrain height under the camera 6 times. Each costs microseconds, and all of them sit inside the 0.6 ms above. | < 0.05 ms est. | none | M | Not worth an order. A shared per-frame camera/sun snapshot is a cleanliness refactor, not a performance one. |
+| — | Unguarded per-frame global writes (`ringworld_solar_visibility`, `ringworld_night_light_scale`, `ringworld_height_shadow_frame`, `ring_surface_aperture_*`) | Non-texture globals only update the global uniform buffer; microseconds | < 0.01 ms est. | none | S | Not worth an order. |
+| — | Far collision and lights: emitter bore liners and plug lights live to 16 km, Weather Lung collision to 3 km | Static bodies with no queries; lights are clustered and frustum-culled | not measurable | none | | No order. |
+| — | Tree work (empty shadow batches, `CopyOutputMirrors` copying every mirror on every `Work` call, the 0.1 s forced re-cull) | Lane T owns these files. `GPU.TreeCulling` 0.03 to 0.09 ms per dispatch | ≤ 0.1 ms est. | none | | Pass to lane T after OC-2. |
+
+**Work orders.**
+
+**W1 (done, review and commit).** Diff: `scripts/RingTerrainMacroShadowProjector.cs` (+27 lines: `SkipUnchangedParameters`, an exact-equality `SameValue`, and the guard in `SetParameter`) and `scripts/Voxel/LOD/RingTerrainGlobalLod.cs` (+6 lines: the A/B property `LegacyMacroShadowApply`, not exported, no menu row).
+- Tests at the commit point: `tools/run_tests.ps1 -Tests terrain_macro_shadow_uv_gpu_test,certified_terrain_macro_shadow_visual_smoke,eclipse_hub_light_test,grass_card_style_test,shadow_compose_identity_gpu_test -Label waste`. The `-Files` selection is 109 tests, mostly terrain generation, which this change does not touch.
+- They were not run in this audit: the shared tree holds lane T's uncommitted tree files, and building it would have tested their work in progress.
+
+**W2: occlusion culling off (S, any lane, 30 min plus captures).**
+- Change: set `rendering/occlusion_culling/use_occlusion_culling=false` in `project.godot`, and default `RingTerrainGlobalLod.BuildTerrainOccluder` to false. That also removes the staged startup phase "occluders", 512 `OccluderInstance3D` builds.
+- Do not delete the builder: a debug switch may want it back.
+- Checks:
+  - Stills with clocks held at the save spot, the plains, the forest interior and 9 km noon, on against off: the heatmap must match an on/on pair.
+  - Draw counts: off may add only far geometry.
+  - Driver A/B for render CPU.
+- Tests: `-Tests world_loading_startup_contract,lod_altitude_activation_contract_test,terrain_lod_shadow_coverage_smoke_test`, plus whatever `-Files project.godot` selects (dry-run first).
+- Escalate if any still differs beyond the on/on pair.
+
+**W3: attribute and fix the 0.59 s setup bump (S trace, then S/M fix).**
+- Trace: add scopes around `RingCloudShadowProjector.ApplyAll` and the GPU cascade promote (`RingSunshineCloudBridge.cs:2262-2263`, `PromoteCompletedGpuShadowCascade`). Count texture-valued `SetShaderParameter` calls per frame, and log the frame numbers of setup > 1 ms against those counts.
+- Fix only if a texture swap is confirmed, by keeping one stable front texture per cascade and copying into it (as in a682cb1).
+- Identity: readback of the published cascade texels, old against new, at rest and after a cloud move.
+- Tests: `cloud_shadow_crossfade_test`, `sunshine_shadow_slice_equivalence_test`, `ring_cloud_shadow_receiver_cache_smoke_test`.
+
+**W4: macro install without image churn (S).**
+- In `RingTerrainGlobalLod.InstallMacroShadowMask` and `.PlanetShadows.cs`, keep the `Image`, write `mask.Pixels` with `RenderingServer.Texture2DUpdate`, or use a `Texture2DRD` with `rd.TextureUpdate`.
+- In the projector, cache the last-applied values per receiver instead of reading them back.
+- Identity: readback of the texture data before and after for one install.
+- Expected: `Terrain macro shadow install` from 2 to 6 ms to under 1 ms.
+
+**Not ordered:** W5 to W8 and the rows marked "—". Their measured cost is below 0.05 ms per frame, or the work changes the image.
+
+**Evidence** (all in `.godot/perf_pass_real/`):
+- Runs, each with `report.json` and `console.log`:
+  - `waste_run1/`: save spot, plains and forest ablations, the macro A/B, the 240 m/s flight A/B.
+  - `waste_run2/`: the occlusion still A/B, kept as the two heatmaps `cap_spawn_1_occl_off_diff.png` and `cap_spawn_2_none_diff.png`, plus the bump attribution.
+  - `waste_run3/`: the occlusion A/B with trees working.
+- Scripts: driver `real_world_perf_waste.gd`, runner `run_waste.ps1`. The runner refuses to start while any Godot runs, and restores the Debug slot only if nobody rebuilt it during the run.
+
+### 0.13 Close-up trees: which LODs are drawn and where the triangles go (2026-11-16)
+
+Question from the user: "what LOD levels are being used for the close up trees? where can we reduce tris up close". Study only: nothing in the game changed.
+
+**Method.**
+- Slot 3 copy, real start menu, Continue. Optimized C# built from a separate worktree at HEAD `d8cbb55`, so lane T's work in progress (frustum culling) was not loaded. 1600 x 900, VSync off (display asleep), noon with the clocks running, RTX 4070 at P0, the user's own `.tres` files.
+- Poses:
+  - **the save**: around 20,295.0 km, across 123.9 km, 624 m, yaw 144.5, a maple trunk 4.5 m away;
+  - **forest interior** and **forest edge** from section 0.1.
+- **Census.** Every tree renderer and shadow proxy was read back: the indirect instance count, every instance row (position, scale, dither coverage), the triangles of its mesh per surface, and the sun cascades its box touches.
+- **Timing.** A-X-A cases, 6 s windows, two rounds (the second in reverse order). Each case is compared with the baselines on either side of it. The main-viewport GPU time is split by compositor timestamps:
+  - "prepass": from the start of the viewport to `PRE_OPAQUE`;
+  - "colour": from `PRE_OPAQUE` to `POST_OPAQUE`. This span also holds the sun shadow maps.
+
+  Noise: the two rounds agree within 0.05 to 0.2 ms. Copying the tree draws unchanged costs -0.12 to +0.07 ms.
+- **Copy oracles.** A tree renderer is hidden and redrawn from its own rows by a CPU copy with another mesh or a subset of rows. This is the same method as the occlusion study (section 0.11).
+- **Main-viewport GPU at baseline:** 17.1 ms at the save (18.8 ms over all viewports, wall 19.1 ms), 16.8 ms in the interior and 16.3 ms at the edge.
+  - Section 0.12 gave 22.5 ms at the save. That run had lane T's half-edited compute shader loaded (its caveat), so its figure does not describe HEAD.
+
+**1. LOD bands at the user's settings.** The user's saved fades are: near detail 25 to 200 m, billboard 550 to 900 m, mid-tier batch span 3. The tree sun-shadow distance is 700 m, but the sun map ends at 400 m.
+
+The slot caps (256 / 640 / 2,696 / 5,200) bind at every pose. So the cap fall-through of TR-9a moves each hand-off inward and keeps its configured width. Effective bands, as read from the layer:
+
+| slot | mesh | save | interior | edge | shadow caster |
+|---|---|---|---|---|---|
+| 0 | authored LOD0, full material | 0-178 m, **dithers out over 3-178 m** | 0-175 m, out over 0-175 m | 0-175 m, out over 0-175 m | authored LOD2 (shadow material) |
+| 1 | authored LOD2, simplified material | 3-240 m (in 3-178, out 200-240) | 0-215 m | 0-240 m | LOD3 crossed cards |
+| 2 | LOD2b (TR-5 decimated) | 200-605 m, **dithers out over 255-605 m** | 175-565 m | 200-590 m | LOD3 crossed cards |
+| 3 | shared impostor, crossed cards (16-36 tris) | 255-1,261 m | 215-1,066 m | 240-942 m | none |
+| 4 | far quad (4 tris) | from 1,111-1,261 m to 5,500 m | from 916-1,066 m | from 792-942 m | none |
+
+- **Near trees are drawn twice.** The configured LOD0 fade is 175 m wide (25 to 200 m). The 256 cap pulls its end to 175-178 m, and the fade keeps its width, so it starts at 0-3 m. Every tree within about 175 m is drawn as LOD0 and as authored LOD2, each partly dissolved.
+  - Godot has no automatic mesh LODs on the tree meshes: the surfaces carry no `lods`.
+- **Sun shadows.** The sun uses PSSM with 2 splits: cascades 0-160 m and 160-400 m. The proxies are 240 m tiles, so every one touches both cascades.
+
+**2. Triangles per tree per LOD** (bark / foliage; from the catalog):
+
+| species, size | LOD0 | authored LOD1 (unused) | authored LOD2 | LOD2b | cards |
+|---|---|---|---|---|---|
+| maple large (3 variants) | 12,987-22,490 (31-34 % bark) | 5,541-9,487 | 2,825-5,321 | 1,438-1,440 | 36 |
+| maple medium | 4,750-14,577 (40-51 % bark) | 2,201-5,469 | 1,052-2,584 | 758-797 | 36 |
+| maple small, sapling | 465-3,442 | 300-1,233 | 157-531 | 157-407 | 36 |
+| fir (large, medium, small) | 12,969 / 6,813 / 599 (53 / 51 / 10 % bark) | 6,633 / 3,598 / 437 | 3,268 / 2,278 / 318 | 800 / 2,278 / 318 | 20 |
+| pine large | 10,142-11,844 (37-39 % bark) | 5,787-6,596 | 2,818-3,176 | 1,438-1,440 | 16 |
+| pine big, medium | 2,923-5,485 (42-50 % bark) | 1,703-3,148 | 992-1,693 | 489-1,391 | 16 |
+| pine small, sapling | 587-2,333 | 436-1,544 | 270-884 | 124-400 | 16 |
+
+Leaf surfaces have 1.0 to 1.56 vertices per triangle; bark has 0.7 to 0.8.
+
+**3. Instances and triangles per LOD and per pass.** Camera pass:
+
+| pose | LOD0 | authored LOD2 | LOD2b | cards | quads | total | within about 240 m (LOD0 + LOD2) | coverage-weighted | in the view frustum |
+|---|---|---|---|---|---|---|---|---|---|
+| save | 256 trees, **2.10 M** (40 %; bark 0.83, leaves 1.27) | 571, 0.98 M | 2,576, 1.96 M | 4,923, 0.18 M | 7,557, 0.03 M | 5.25 M | 3.08 M (59 %) | 2.49 M (47 %) | 1.61 M (31 %) |
+| interior | 256, 1.72 M (32 %; 0.75 / 0.96) | 640, 1.06 M | 2,696, 2.35 M | 4,918, 0.18 M | 8,102, 0.03 M | 5.33 M | 2.78 M (52 %) | 2.71 M (51 %) | 2.17 M (41 %) |
+| edge | 256, 1.63 M (34 %; 0.72 / 0.91) | 440, 0.75 M | 2,696, 2.27 M | 4,737, 0.17 M | 8,438, 0.03 M | 4.86 M | 2.38 M (49 %) | 2.15 M (44 %) | 2.60 M (53 %) |
+
+- **Per pass.**
+  - The depth prepass and the colour pass draw the same instances, so the camera list above counts twice per frame.
+  - The shadow pass draws the proxies in both cascades:
+    - save: 2 x (0.42 M LOD0 casters + 0.07 M card casters) = 0.99 M;
+    - interior: 2 x 0.44 M = 0.88 M;
+    - edge: 2 x 0.33 M = 0.66 M.
+  - Trees therefore submit about 11 M triangles per frame at the save. Shadow draws are 694 of 757 at the save, 635 of 767 in the interior and 329 of 434 at the edge.
+- **Coverage-weighted** means triangles times the fraction of each tree's pixels its dither keeps. About half of the near-tree triangles are spent on trees that are partly dissolved. Their vertices cost the same whatever the dither throws away.
+  - Coverage-weighted LOD0 is 35 % of LOD0's triangles at the save, 43 % in the interior and 31 % at the edge.
+  - The cause is the two wide fades: LOD0 over 175 m, and LOD2b over 350 m.
+- **In the view frustum** means the bounding sphere of the instance (mesh AABB times instance scale, no wind margin) intersects the camera frustum. The camera has an 80 degree vertical field of view, 112 degrees horizontal at 16:9.
+- **Correction to section 0.11 and the occlusion plan:**
+  - LOD0 holds 32 to 40 % of the camera triangles, not about 90 %. The 90 % is LOD0 to LOD2b together.
+  - The frustum keeps 31 to 53 % of tree triangles, not the 78 to 90 % the occlusion probe reported (its LOD0 row: 22 of 256 outside; here 148 to 168 of 256 are outside).
+
+**4. What each part costs** (main-viewport GPU ms saved, two rounds; prepass / colour split in brackets):
+
+| case | save | interior | edge |
+|---|---|---|---|
+| all trees hidden | 6.89 / 7.20 | 6.90 / 7.34 | 7.19 / 7.36 |
+| LOD0 camera draws hidden | **2.69 / 2.57** (0.79 / 2.17) | **2.09 / 1.96** (0.52 / 1.49) | **2.14 / 2.33** (0.57 / 1.66) |
+| authored LOD2 (slot 1) hidden | 0.88 / 0.78 | 0.83 / 0.79 | 0.86 / 0.96 |
+| LOD2b hidden | 1.87 / 1.87 | 2.72 / 3.00 | 2.73 / 2.80 |
+| cards and quads hidden | 0.27 / 0.33 | 0.07 / 0.38 | 0.31 / 0.38 |
+| tree sun shadows off | 0.56 / 0.78 | 0.33 / 0.40 | 0.35 / 0.38 |
+| LOD0 shadow proxies hidden | 0.19 / 0.22 | 0.23 / 0.12 | 0.09 / 0.16 |
+| card shadow proxies hidden (slots 1 and 2) | 0.37 / 0.57 | 0.12 / 0.21 | 0.23 / 0.23 |
+| LOD0 bark alone kept (= leaves' cost) | 2.09 / 1.90 | 1.37 / 1.41 | 1.54 / 1.54 |
+| LOD0 leaves alone kept (= bark's cost) | 0.67 / 0.64 | 0.65 / 0.80 | |
+
+- **LOD0 costs 1.2 to 1.4 ms per million triangles.** Its leaves cost about one and a half to two times its bark per triangle (about 1.5 against 0.8 to 1.0 ms per million), because a leaf triangle has more vertices.
+- **The depth prepass is 25 to 30 % of every tree LOD's camera cost** (all trees: 1.75 to 1.81 ms). The rest is the colour pass.
+- **Not fill-bound.** At 50 % 3D scale (a quarter of the pixels), LOD0 still costs 2.42 against 2.63 ms at the save, 1.78 against 2.03 in the interior and 2.03 against 2.24 at the edge. Only 8 to 12 % of LOD0's cost (0.2 to 0.25 ms) scales with pixels. Alpha-tested overdraw is therefore small, and so is anything that tighter leaf cards could save.
+- **Tree shadows are cheap here** (0.4 to 0.7 ms): there are only 2 cascades out to 400 m. LOD0 already casts with the authored LOD2, and the LOD2 tiers cast with the 22 to 33 triangle cards. The card casters cost as much as the LOD0 casters, because their cost follows draws (one per proxy per cascade).
+
+**5. Options**
+
+No pixel change (measured with oracles):
+
+| # | option | saves (save / interior / edge) | image | where |
+|---|---|---|---|---|
+| T1 | **Per-instance frustum culling of the tree camera lists.** This is lane T's OC-1 and OC-2, already in progress. | copy oracle with a 0.3 x tree height margin: **3.05 to 3.23 ms** (save and interior) | none: stills match the unchanged copy, heatmap included | lane T |
+| T2 | Drop instances whose dither keeps under 2 % of their pixels | 0.47 to 0.61 / 0.44 to 0.56 / 0.55 to 0.59 | near-invisible: at most 2 % of a fading tree's pixels, the same as moving each fade edge by 1 to 3 m | `accepted()` in the compute shader; lane T's file, after OC-2 |
+| T3 | LOD0 shadow casters: authored LOD2 to LOD2b | 0.06 to 0.14 / 0.09 / 0.07 to 0.08 | near-invisible (LOD2b keeps crown coverage within 5 %) | `GpuShadows.cs`; too small on its own |
+| T4 | Decimate LOD0 bark only: inner rings, the back faces of thin branches, twigs under a pixel at 25 m | estimate about 0.3 ms (bark costs 0.6 to 0.7 ms, 31 to 56 % of LOD0 triangles) | near-invisible if the silhouette is kept; judge on contact sheets at 5, 15 and 40 m | offline TR-4 tool (decision D5 reopened, bark only) |
+| T5 | Tighter leaf-card geometry | at most 0.2 to 0.25 ms (the pixel share of LOD0) | none | not worth it |
+| T6 | Keep the leaves out of the depth prepass | not offered: Forward+ in 4.8 has no per-material prepass opt-out, and SSAO, SSR and contact shadows need tree depth and normals | | no |
+
+Image changes, user decision (all measured unless marked):
+
+| # | option | saves (save / interior) | what changes |
+|---|---|---|---|
+| U1 | **Narrow the LOD0 fade:** `TreeNearDetailFadeStartMeters` 25 to 175, end stays 200. A setting only. | **0.71 to 0.90 / 0.61 to 0.86** | Trees from 3 m to about 150 m become pure LOD0. Today a growing share of their pixels is authored LOD2. **More detail, not less.** The LOD0 to LOD2 hand-off becomes a 25 m dither at about 150 to 175 m, so it is shorter and may show more when walking. Stills: `run2/still_1_base.png` against `run2/still_1_prop_TreeNearDetailFadeStartMeters_175.0.png`. |
+| U2 | Billboard fade 550/900 to 300/350 (the shipped default): LOD2b gives way to cards from 300 m | 1.24 to 1.44 / 1.70 | LOD2b trees fall from 2,576 to 749. The card hand-off moves from today's effective 255-605 m dither to 300-350 m. Judge on the TR-8 switch strip. Stills at the interior: `run3/still_2_base.png` against `run3/still_2_prop_TreeBillboardFadeStartMeters_300.0_TreeBillboardFadeEndMeters_350.0.png` (no difference visible in that view). 450/500 saves 0.52 to 0.65 / 0.20 to 0.32. |
+| U1+U2 | both | **1.96 to 2.07 / 2.28 to 2.33** | as above |
+| U3 | LOD0 only to 100 m (fade 75 to 100) / to 60 m / shipped 25 to 40 m | 1.57 to 1.63 / 1.18 to 1.20; 2.35 to 2.38 / 1.79 to 1.80; 2.55 to 2.61 / 1.96 to 2.07 | LOD2 detail from 100 m, 60 m or 40 m. Still: `run2/still_1_prop_TreeNearDetailFadeStartMeters_75.0_TreeNearDetailFadeEndMeters_100.0.png` |
+| U4 | Use the pack's own authored LOD1 (34 to 75 % of LOD0's triangles) beyond 50 m, LOD0 inside 50 m | 1.10 to 1.13 / 0.64 to 0.74 (beyond 100 m: 0.64 to 0.66 / 0.26 to 0.33) | Sparser leaf clusters on trees beyond 50 m. Needs a sixth slot or a remap in `GpuTreeLodInterval`. LOD1 everywhere: 1.25 to 1.37 / 0.86 to 0.87 / 0.96 to 0.97 at the edge. Still: `run3/still_1_copy_l0_lod1_beyond50.png` |
+| U5 | Slot 1 draws LOD2b in place of authored LOD2 | 0.46 to 0.54 / 0.31 to 0.37 | LOD2b from 3 m |
+| U6 | LOD0 shadows from cards | 0.14 to 0.15 / 0.14 to 0.19 | near tree shadows lose their branch shapes |
+| — | Upper bound of any LOD0 mesh work (LOD0 drawn as authored LOD2) | 2.36 to 2.54 / 1.45 to 1.49 / 1.55 to 1.57 | |
+| — | Impostor and quad distances | cards and quads cost 0.07 to 0.38 ms in all | not a close-up lever |
+
+**6. Recommendation.**
+1. **T1 first.** Lane T's frustum culling is the largest close-up win and changes no pixels. The oracle says about 3 ms here, against the 0.7 to 1.0 ms in section 0.11, whose frustum count looks wrong; OC-2's A/B will settle it. About half of it is LOD0: 1.1 to 1.4 M of LOD0's 1.6 to 2.1 M triangles are off screen.
+2. **U1, for the user.** One setting, no code, and the near forest gets more detail for 0.6 to 0.9 ms. With U2, about 2 to 2.3 ms.
+3. T2 after OC-2, in the same compute pass (lane T). Then T4 if the user wants LOD0 itself cheaper without a look change.
+4. Side finding for TR-9a, not urgent: when a cap moves a hand-off inward, the fade keeps its width rather than its start. With the user's 175 m LOD0 fade, the dissolve then starts at 0 to 3 m.
+
+**Evidence** (all in `.godot/perf_pass_real/tc/`):
+- Run folders, each with `report.json` (census and windows) and `console.log`:
+  - `run1/`: three poses, every case, the fade settings at the save and the interior;
+  - `run2/`: the frustum oracle, bark-only and leaves-only copies, the coverage cut, stills;
+  - `run3/`: the LOD1 split, billboard fades, stills.
+- Scripts: driver `tc_driver.gd.txt`, runner `run_tc.ps1.txt`, the C# probe partial `TmpTreesCloseupProbe.cs.txt` (it ran from a throwaway worktree), analyser `tc_an.py`.
+- run1's first leaves-only copy failed (custom vertex format); its rows are replaced by run2.
+
+### 0.14 GPU budget: where the GPU time goes, what could move to the CPU, the wet world and shell shadows (2026-11-16)
+
+Questions from the user: what can take load off the GPU, and what work is better suited to the CPU? The wet world should not show at long distances and should update less often. Are shadows cast on or from the inner ring shell?
+
+**Answer in short.**
+- **The GPU frame is raster work, not compute.**
+  - At the three poses, five items make up about 85 % of the GPU frame: near terrain 4.5 to 5.1 ms, trees 2.8 to 4.7 ms, Sunshine clouds 2.2 to 2.4 ms, the sun shadow map 1.3 to 1.8 ms and the far-ring viewport 1.4 to 1.7 ms.
+  - Every slowly changing compute dispatch (sky LUT, terrain-cloud sun visibility, height shadow, macro and storm maps, far weather bake, wet map) costs **under 0.02 ms per frame each, about 0.07 ms in total**.
+  - Moving any of them to the CPU would save almost nothing, and the CPU versions would be slower. Lowering their cadence saves at most 0.02 ms each.
+- **Real GPU savings that need a decision.** Ranked list below:
+  - the near cloud-shadow cascade at 5 Hz instead of 10 Hz (about 0.2 ms);
+  - engine SSR only while wet (0.2 to 0.9 ms);
+  - tree wetness per instance instead of per vertex (about 0.3 ms in forest while wet; lane T's files);
+  - a tree cull that re-runs on 2 of 3 frames while the camera stands still (0.16 ms; lane T).
+- **Wet world (done, not committed).**
+  - Wetness now fades out between 5.2 and 6.5 km from the camera, and nothing is evaluated beyond that.
+  - The map is dispatched every 2 s (was 0.5 s), and on movement only after the camera drifts 4 texels (256 m).
+  - The scaled far viewport no longer evaluates wetness at all: its positions are not main-world metres.
+  - Measured saving is small: 0.04 to 0.07 ms while wet, 0 in forest. Wet shading costs 0.5 to 0.6 ms in total, and it is almost all within a few hundred metres of the camera. A dispatch costs 0.007 ms.
+  - The near field is unchanged: the heatmap of new against old matches the old-against-old noise pair.
+- **Shell shadows: nothing measurable is wasted.**
+  - The far viewports render no shadows at all.
+  - In the main viewport the global hull walls and roof do cast into the sun map: 20 visible casters, 5 to 24 shadow draws and 3,000 to 88,000 primitives. Turning them off saves 0.00 to 0.02 ms, which is noise.
+  - Turning off every caster farther than 20 km also saves 0 ms.
+  - The planet light casts no shadows by day.
+
+**Method.**
+- Slot 3 copy through the real-world driver.
+  - Files: `.godot/perf_pass_real/real_world_perf_gpub.gd`, a copy of the E1 driver with a `--gpub` flow, a GPU timestamp reader and new ablations; runner `run_gpub.ps1`.
+  - Optimized C# was built from the shared tree. It therefore includes lane T's work-in-progress tree culling as of 12:30 (GLSL and C# consistent; tree compute ran) and the uncommitted `project.godot` with occlusion culling off.
+  - 1600 x 900, VSync off (display asleep), RTX 4070 at P0, Ultra preset with the user's files: atlas 8,192 at 16-bit depth, 2 cascades to 400 m in near-map mode.
+  - Noon with the clocks running (sun 75 to 47 degrees over the run).
+- Poses:
+  - **save**: 20,295.04 km around, 123.86 km across, 624 m, on the ground under a tree (pinned with `--force-pose`);
+  - **plains**: `plains_eye`;
+  - **forest**: `forest_interior_eye`.
+- Two kinds of number:
+  - **T**: GPU timestamps of the newest readback frame, read every frame (engine `vp_begin/vp_end` per viewport plus every game marker), in ms per frame averaged over 3 to 4 baseline windows.
+  - **A**: A-X-A ablation, 8 s windows, the GPU p50 of all viewports against the mean of the two baselines around it.
+  - Noise between the two baselines is 0.00 to 0.12 ms (0.35 once on the plains).
+  - Godot 4.8-dev7 exposes no engine sub-pass timestamps (prepass, opaque, shadow, sky), so these come from ablations.
+- **The save spot costs 15.5 ms here, not 22.5 ms.** The 22.5 ms in 0.12 came from waste runs 1 and 2, where the tree GPU compute failed to initialize (see the caveat there).
+
+**Per-pass GPU at the three poses** (ms; ablation rows overlap and must not be added; "per dispatch" in brackets):
+
+| pass | method | save | plains | forest |
+|---|---|---|---|---|
+| **frame GPU, all viewports (p50)** | T | **15.46** | **13.06** | **15.46** |
+| main viewport | T | 13.62 | 11.47 | 13.70 |
+| near terrain, including its sun-map casting | A | 4.54 | 5.13 | 4.89 |
+| trees, all passes | A | 3.99 | 2.78 | 4.68 |
+| of which tree sun shadows | A | 0.58 | 0.21 | 0.33 |
+| sun shadow map, all casters (2 cascades, 400 m) | A | 1.68 | 1.75 | 1.26 |
+| sun-map draws / primitives (of which trees) | count | 756 / 3.1 M (1.7 M) | 831 / 2.1 M (0.8 M) | 739 / 2.5 M (1.2 M) |
+| planet light shadows (off by day) | A | 0.00 | 0.00 | 0.00 |
+| global hull shadow casters (walls and roof) | A | 0.01 | 0.00 | 0.02 |
+| every caster farther than 20 km | A | 0.01 | 0.00 | 0.01 |
+| grass draw | A | 0.56 | 0.25 to 0.51 | 0.67 |
+| grass culling compute | T | 0.021 (0.031) | 0.021 (0.031) | 0.021 (0.031) |
+| tree culling compute (lane T work in progress) | T | 0.16 (0.24) | 0.16 (0.23) | 0.17 (0.26) |
+| **Sunshine clouds, inclusive** | T | **2.21** | **2.41** | **2.25** |
+| clouds: prepass | T | 0.025 | 0.021 | 0.022 |
+| clouds: raymarch | T | 1.39 | 1.60 | 1.43 |
+| clouds: interleave | T | 0.35 | 0.35 | 0.35 |
+| clouds: reconstruct | T | 0.41 | 0.41 | 0.41 |
+| clouds: composite | T | 0.04 | 0.03 | 0.03 |
+| clouds at half resolution (**visual**) | A | 0.84 | 1.36 | 0.71 |
+| cloud shadow, near cascade (1,024², 10 Hz in slices) | T | 0.52 (0.92) | 0.62 (1.29) | 0.65 (1.17) |
+| cloud shadow, far cascade | T | 0.011 (0.28) | 0.015 (0.44) | 0.017 (0.43) |
+| cloud macro map / storm map | T | 0.007 / 0.005 | 0.006 / 0.010 | 0.007 / 0.011 |
+| terrain-cloud sun visibility (0.5 s generations) | T | 0.018 (0.055) | 0.014 (0.056) | 0.017 (0.056) |
+| height shadow slices | T | 0.008 (0.025) | 0.006 (0.025) | 0.007 (0.022) |
+| haze sky-view LUT (rebuilt every frame while the sun moves) | T | 0.007 | 0.007 | 0.007 |
+| far-ring viewport | T (GPU) / A (wall) | 1.54 / 1.67 | 1.36 / 1.54 | 1.37 / 1.42 |
+| far weather cloud bake viewport (every 2 s) | T | 0.007 (0.12) | 0.006 (0.12) | 0.007 (0.12) |
+| far backdrop composite | A | 0.01 | ≤ 0.10 (noise 0.20) | 0.01 |
+| global LOD terrain in the main viewport | A | 0.09 | 0.00 | 0.05 |
+| engine SSR (dry) | A | 0.86 | 0.19 to 0.35 | 0.26 to 0.43 |
+| SSAO | A | 0.03 | 0.01 | 0.09 |
+| FXAA | A | 0.11 | 0.00 | 0.05 |
+| minimap viewport | T | 0.006 | 0.006 | 0.006 |
+| water FFT | T | not dispatched (no ocean in range) | same | same |
+| rain haze and streak composites | T | not dispatched (dry) | same | same |
+| wet map dispatch and copy | T | 0.007 per dispatch, 0.5 per s: < 0.001 per frame | same | same |
+| wet shading, all receivers, forced wet | A | 0.48 to 0.54 | 0.58 to 0.62 | 0.56 to 0.60 |
+
+The clouds run as a post-transparent compositor effect. Everything before them in the main viewport takes 10.7 ms at the save, 8.3 on the plains and 10.7 in forest: depth prepass, sun map, opaque, sky and transparent. Near terrain, trees, the sun map, grass and SSR account for most of it.
+
+**Ranked offload and cadence candidates** (savings measured unless marked est.):
+
+| # | candidate | saves | image risk | notes |
+|---|---|---|---|---|
+| G1 | **Near cloud-shadow cascade at 5 Hz instead of 10 Hz** (`RingSunshineCloudBridge.GpuNearShadowUpdatesPerSecond`, Ultra preset) | marker 0.41 → 0.21 ms per frame; frame mean −0.20 to −0.21 ms, wall −0.22 to −0.28 ms. At 2.5 Hz −0.26 to −0.33 ms | low but real: cloud-shadow edges advance in 0.2 s steps instead of 0.1 s | User decision. Check with a 10 s capture and `ffmpeg_tools flicker` before and after. A CPU version is not sensible: 1,024² texels of cloud-density raymarching per update. |
+| G2 | **Engine SSR only while the wet world is valid** (the CPU already knows: `RingWetWorld.Valid`; the water has its own SSR) | 0.86 ms at the save, 0.19 to 0.35 on the plains, 0.26 to 0.43 in forest, dry | low to medium: any dry surface with roughness below 0.7 loses its screen-space reflection | User decision. Needs a still A/B at the 4 poses and at a POI with metal. Also needs a fade on the switch so wet onset does not pop. |
+| G3 | **Tree wetness per instance, not per vertex** (`ring_wet_sample_vegetation` runs in the tree vertex shaders; write one wet term per instance in the vegetation compute instead) | about 0.3 ms in forest while wet (wet adds 0.26 ms with trees hidden against 0.56 to 0.60 with trees) | none expected: the map texel is 64 m and a tree is smaller, so one sample per tree matches per-vertex sampling except within a few metres of a texel edge | Lane T owns the files. Prove it with a forced-wet still compare. |
+| G4 | **Tree cull re-runs on 2 of 3 frames while the camera stands still** (`GPU.TreeCulling` 0.23 to 0.26 ms per dispatch) | 0.16 ms per frame est. | none | Pass to lane T. Measured with their work in progress; at HEAD (0.12) it was 0.03 to 0.09 ms per dispatch. |
+| G5 | Far-ring viewport at a lower cadence or resolution | 1.4 to 1.7 ms | **visual** (section 0.12 W8) | Already a user decision in section 7. |
+| G6 | Clouds at half resolution | 0.7 to 1.4 ms | **visual** | As in section 7. |
+| — | Gate on input change, or move to a worker thread: sky-view LUT (0.007), terrain-cloud sun visibility (0.014 to 0.018; switching its processing off measured 0.00 to 0.05), height shadow (0.006 to 0.008), macro and storm maps (≤ 0.011), far weather bake (0.007), wet map (< 0.001), grass cull (0.021) | ≤ 0.02 ms each, about 0.07 ms in total | none | **Not worth doing.** On the CPU each would be slower and would then need an upload: the sky LUT is 192 x 108 x 3 sky integrals, the visibility field 1,026 x 34 x 8 terrain traces. |
+
+The large GPU costs, near terrain and trees, are triangles (section 5). The CPU's part in reducing them is choosing less geometry: tree frustum culling (OC-1 to OC-3, lane T) and terrain LOD. Those belong to the tree and triangle study, not here.
+
+**Wet world change (WW-1, uncommitted).** User-approved direction.
+- Files:
+  - `materials/ring_wetness.gdshaderinc`: new helpers `ring_wet_camera_world` and `ring_wet_reach`. `ring_wet_sample` and `ring_wet_sample_vegetation` return zero beyond the reach and multiply by the reach factor inside it.
+  - `scripts/Weather/RingWetWorld.cs`:
+    - `DefaultReachMeters = 6500`, published in the previously unused `ring_wet_clock.z`; `ReachMeters` is a test hook;
+    - the camera height goes in `ring_wet_frame` column 3 `.w`;
+    - `RefreshSeconds` 0.5 → 2.0; `MoveDispatchTexels = 4`.
+  - `RingWetWorld.Gpu.cs` and `scripts/diagnostics/RingPerformanceGpu.cs`: a `GPU.WetMap` marker.
+  - `ring_terrain_global.gdshader` and `ring_ocean_global.gdshader`: `wet_world_receiver`, set false by `RingScaledFarViewport.CreateMaterials`.
+  - A dated note in `docs/storm-revamp-s2-wet-world-design.md`.
+- Inside 5.2 km the reach factor is exactly 1.0, so near wetness is bit-identical. No new global uniform, no `project.godot` change.
+- **No grave-key row.** The reach is tied to the 16 km map window: it must end inside the full-weight region even with the 256 m dispatch lag, and it saves 0.05 ms. It is a constant, not a look tunable.
+- Before and after (GPU p50 of all viewports, ms; the map forced fully wet with `ForceUniform(0.9, 0.9, 0.7, 0.6)`; old reach = `ReachMeters` 10,000 km plus far-viewport wetness on; sequence dry, old, new, dry, new, old, dry):
+
+  | pose | dry | wet, old reach | wet, new reach | old − new | far viewport GPU, old → new |
+  |---|---|---|---|---|---|
+  | save | 15.27 | 15.81 | 15.74 | 0.07 | 1.558 → 1.548 |
+  | plains | 12.85 | 13.47 | 13.43 | 0.04 | 1.368 → 1.363 |
+  | forest | 15.32 | 15.88 | 15.92 | −0.04 (noise; nothing beyond 5 km in view) | 1.382 → 1.371 |
+
+- Cadence: 2 → 0.5 dispatches per second while wet (counted: 171 in 340 s), 0.007 ms of GPU each, dispatch plus copy. The GPU saving is under 0.001 ms per frame. The gain is fewer render-thread calls, not GPU time.
+- Map display filter: it is time-based (alpha = 1 − exp(−dt / 0.5 s)), so a 2 s step lands about 98 % of the way. Film and soak change over 90 to 300 s (`WetnessModel` taus), so a step is a few percent at most.
+- Image check: stills with the clocks held, old against new, and old against old as the noise pair (`ffmpeg_tools compare`):
+  - save: SSIM 0.99828 against the noise pair's 0.99819. The heatmap matches the noise pair everywhere except two small patches of distant land on the horizon, both beyond 6.5 km.
+  - plains, with the arch in view: SSIM 0.99963 against 0.99936. Same heatmap as the noise pair; the arch shows no change.
+  - Evidence: `.godot/perf_pass_real/gpub_run1/cmp_{spawn,plains}_{new_vs_legacy,legacy_vs_legacy}.png`, plus the stills `wetcap_*_1_legacy.png` and `wetcap_*_2_new.png`.
+- Not measured: a real storm (it was dry at the poses, so the map was forced); flight at speed with the new 4-texel move rule.
+
+**Inner ring shell and far arch: shadow findings.**
+- **Far viewports (`FarRingViewport`, `FarRingRegionalViewport`)**:
+  - Both have their own World3D and positional atlas 0. Their lights (`FarRingSun`, `FarRingPlanetLight` and the regional pair) have `ShadowEnabled = false`.
+  - Every mesh created there is `CastShadow = Off`.
+  - They do no shadow-map work, and the main lights do not reach them.
+- **Main viewport sun map** (StarLight, 2 cascades, 400 m in near-map mode). Far casters that are still on:
+  - the global LOD hull: `GlobalStructuralEdgeWalls_*` (always On, `RingTerrainGlobalLod.cs` about line 1785) and `GlobalStructuralRoof_*` (hard On, about line 1834). That is 256 nodes, 20 of them visible casters.
+  - The segment under the camera has the camera inside its AABB, so it enters every cascade.
+  - Cost: 5 to 24 shadow draws and 3,000 to 88,000 primitives; 0.00 to 0.02 ms of GPU (noise).
+  - All 18 visible casters whose bounds lie more than 20 km away together cost 0 ms.
+  - Global LOD terrain, proxy oceans, analytic ring, cloud layers and stand-ins already cast nothing.
+- **Planet light**: shadows off by day (energy 0 at noon), 0 ms. The scene's planet map is 6 km with 4 splits when it is on (night). Not measured here.
+- **Receivers**: far terrain beyond the 400 m map does no cascade lookups.
+- **Cloud-shadow systems covering the arch**, all cheap:
+  - the far weather shadow bake: 0.12 ms every 2 s;
+  - the macro terrain mask: built on the CPU, one texture fetch per pixel;
+  - the whole-ring terrain-cloud sun visibility: 0.014 to 0.018 ms per frame.
+  - The near and far Sunshine cascades (24 km and 96 km) cover only the main world.
+- **Unmeasured side finding**: the far viewport reuses `ring_terrain_global` and `ring_ocean_global`. Their `light()` evaluates the main world's height-shadow globals on scaled positions (`ring_height_shadow.gdshaderinc`). It costs ALU on every arch pixel and could in principle pick up stray height-shadow texels. Its cost is inside the 1.4 to 1.5 ms far viewport; a per-material switch like `wet_world_receiver` would remove it.
+- **Fix: none applied.** Gating the hull casters the way the proxy hull is gated (`ResolveStructuralHullShadowRelevance`: on only within 25 km of an edge or 2 km of the cavity) would be identical by construction, because the hull lies outside every cascade footprint elsewhere. It saves only draw calls (0.00 to 0.02 ms). It also touches `RingTerrainGlobalLod.cs`, which holds another lane's uncommitted W1/W2 edits. It is written up as an optional order, **SH-1**: S size; identity by a sun-map depth still compare at the save and plains; tests `terrain_lod_shadow_coverage_smoke_test` and `certified_terrain_macro_shadow_visual_smoke`.
+
+**Evidence** (`.godot/perf_pass_real/`):
+- `gpub_run1/`: the three poses with 17 ablations each, the wet A/B and the stills; `report.json` holds the per-window `ts` segments and the shadow draw and primitive counts.
+- `gpub_run2/`: the cloud-shadow cadence at 5 and 2.5 Hz and an SSR repeat, at the plains and forest poses.
+- Driver `real_world_perf_gpub.gd`, runner `run_gpub.ps1`.
+
 ## 1. Summary (fixture world)
 
 1. **Which settings decide the answer.** The game starts on **Very High** on this machine (hardware tier `desktop_mid_high`, `scripts/world_size_launcher.gd:1981`; Medium is the laptop tier default). The user's last-played world (slot 3) is saved at Very High, with their own overrides on top: tree LOD0 out to 200 m and cards from 550 to 900 m, a 16,384 shadow atlas, and grass and water overrides (section 2.2).

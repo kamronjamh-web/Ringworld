@@ -7,6 +7,8 @@ render_mode cull_disabled, depth_draw_opaque, shadows_disabled;
 uniform vec3 camera_world_position = vec3(0.0);
 uniform float fade_start_meters = 4000.0;
 uniform float fade_end_meters = 5500.0;
+// False in the scaled far viewport: its positions are scaled far-world units, not main-world metres, so the wet frame does not apply.
+uniform bool wet_world_receiver = true;
 uniform bool far_fade_enabled = false;
 uniform float far_fade_start_meters = 500000.0;
 uniform float far_fade_end_meters = 1000000.0;
@@ -115,7 +117,7 @@ void fragment() {
 	ALBEDO = grazing_color * haze.T;
 	EMISSION = ring_haze_inscatter(haze);
 	float rain_matte = 0.0;
-	if (ring_wet_params.w > 0.5) {
+	if (wet_world_receiver && ring_wet_params.w > 0.5) {
 		// Wet world: rain mattes the far water (rain now only, from the rain fallback of the wet map); hail adds a white-noise chop near a storm core.
 		RingWet rain_state = ring_wet_sample(world_position, normalize(surface_up_world), normalize(surface_up_world));
 		rain_matte = 0.08 * rain_state.rain + 0.15 * ring_wet_events.y;

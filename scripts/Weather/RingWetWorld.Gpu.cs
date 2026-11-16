@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Godot;
+using RingworldTechDemo.Diagnostics;
 using RingworldTechDemo.Voxel.Core;
 
 namespace RingworldTechDemo.Weather;
@@ -221,13 +222,16 @@ public partial class RingWetWorld
                     }, link.Shader, 0);
                     link.Sets[(ping, storm)] = set;
                 }
-                long list = rd.ComputeListBegin();
-                rd.ComputeListBindComputePipeline(list, link.Pipeline);
-                rd.ComputeListBindUniformSet(list, set, 0);
-                rd.ComputeListDispatch(list, WetMapFrame.Size / 8, WetMapFrame.Size / 8, 1);
-                rd.ComputeListEnd();
-                // Copy into the stable published texture; swapping the Texture2DRD's RID per dispatch forced every material to rebuild its uniform set.
-                rd.TextureCopy(link.Textures[ping], link.Published, Vector3.Zero, Vector3.Zero, new Vector3(WetMapFrame.Size, WetMapFrame.Size, 1.0f), 0, 0, 0, 0);
+                using (RingPerformanceGpu.BeginScope(RingPerformanceGpu.WetMap))
+                {
+                    long list = rd.ComputeListBegin();
+                    rd.ComputeListBindComputePipeline(list, link.Pipeline);
+                    rd.ComputeListBindUniformSet(list, set, 0);
+                    rd.ComputeListDispatch(list, WetMapFrame.Size / 8, WetMapFrame.Size / 8, 1);
+                    rd.ComputeListEnd();
+                    // Copy into the stable published texture; swapping the Texture2DRD's RID per dispatch forced every material to rebuild its uniform set.
+                    rd.TextureCopy(link.Textures[ping], link.Published, Vector3.Zero, Vector3.Zero, new Vector3(WetMapFrame.Size, WetMapFrame.Size, 1.0f), 0, 0, 0, 0);
+                }
                 if (!link.PublishedBound && link.MapTexture != null && IsInstanceValid(link.MapTexture)) { link.MapTexture.TextureRdRid = link.Published; link.PublishedBound = true; }
                 if (readback || link.ReadbackRequested) { link.Readback = rd.TextureGetData(link.Textures[ping], 0); link.ReadbackRequested = false; }
                 link.Ping = 1 - ping;

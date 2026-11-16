@@ -87,6 +87,12 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
     [Export(PropertyHint.Range, "0,50000,100")] public float FadeStartMeters { get; set; } = 4000.0f;
     [Export(PropertyHint.Range, "100,100000,100")] public float FadeEndMeters { get; set; } = 5500.0f;
     [Export] public bool EnableFarDistanceFade { get; set; } = false;
+    /// <summary>A/B switch, not exported (perf audit 0.12): true re-sets every macro shadow parameter on every receiver at each install.</summary>
+    public bool LegacyMacroShadowApply
+    {
+        get => !global::RingworldTechDemo.RingTerrainMacroShadowProjector.SkipUnchangedParameters;
+        set => global::RingworldTechDemo.RingTerrainMacroShadowProjector.SkipUnchangedParameters = !value;
+    }
     [Export(PropertyHint.Range, "10000,5000000,10000")] public float FarFadeStartMeters { get; set; } = 500000.0f;
     [Export(PropertyHint.Range, "10000,5000000,10000")] public float FarFadeEndMeters { get; set; } = 1000000.0f;
     [Export(PropertyHint.Range, "10000,5000000,10000")] public float RegionalVisibilityDistanceMeters { get; set; } = 1200000.0f;
@@ -143,7 +149,10 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
     [Export(PropertyHint.Range, "4000,320000,1000")] public float MacroTerrainShadowMaxTraceMeters { get; set; } = 96000.0f;
 
     [ExportGroup("Occlusion Culling")]
-    [Export] public bool BuildTerrainOccluder { get; set; } = true;
+    // Off since 2026-11-16 (perf audit W2): the bedrock occluders hide nothing a surface camera sees but kept Godot's occlusion
+    // raster running every frame (0.3-0.5 ms render CPU). They are meant for caves; when caves land, set this back to true AND
+    // re-enable rendering/occlusion_culling/use_occlusion_culling in project.godot.
+    [Export] public bool BuildTerrainOccluder { get; set; } = false;
     [Export(PropertyHint.Range, "32,512,1")] public int OccluderAroundSegments { get; set; } = 128;
     [Export(PropertyHint.Range, "1,256,1")] public float OccluderBedrockSafetyMarginMeters { get; set; } = 8.0f;
 

@@ -7,7 +7,7 @@
 // a fast layer of sharp short-lived crowns. Zero beyond 40 m. The clock is the weather sim clock modulo 64 s (every rate below divides 64 s), so a paused clock gives identical frames.
 #include "res://materials/ring_ground_tremor.gdshaderinc"
 global uniform sampler2D ring_wet_ripple_tex : filter_linear_mipmap, repeat_enable;
-global uniform vec4 ring_wet_clock; // x: ripple phase (sim clock mod 64 s), y: ripple layers (1..4), z: wet window half extent (m), w: far blend (m)
+global uniform vec4 ring_wet_clock; // x: ripple phase (sim clock mod 64 s), y: ripple layers (1..4), z: wet reach (m), w: far blend (m)
 
 // One layer: gradient of the ring height in plane axes (around, across). tile_m divides 16384 m, rate (cycles/s) times 64 is an integer, lifetime is the visible share of a cycle.
 vec2 ring_rain_ripple_layer(vec2 plane_m, float tile_m, float rate, float lifetime, float seed, float lod) {

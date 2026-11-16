@@ -11,6 +11,8 @@ uniform float far_space_real_end_meters = 10500000.0;
 uniform float far_space_render_end_meters = 1150000.0;
 uniform float fade_start_meters = 4000.0;
 uniform float fade_end_meters = 5500.0;
+// False in the scaled far viewport: its positions are scaled far-world units, not main-world metres, so the wet frame does not apply.
+uniform bool wet_world_receiver = true;
 uniform bool far_fade_enabled = false;
 uniform float far_fade_start_meters = 500000.0;
 uniform float far_fade_end_meters = 1000000.0;
@@ -150,7 +152,7 @@ void fragment() {
 	// Wet world: the far ground only ever sees the rain-now fallback beyond the wet window, plus the map inside it: darkening and an averaged gloss, no highlights.
 	float surface_roughness = 1.0;
 	float surface_specular = 0.18;
-	if (ring_wet_params.w > 0.5) {
+	if (wet_world_receiver && ring_wet_params.w > 0.5) {
 		vec3 wet_normal = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
 		vec3 wet_up = normalize(surface_up_world);
 		RingWet wet_state = ring_wet_sample(world_position, wet_normal, wet_up);

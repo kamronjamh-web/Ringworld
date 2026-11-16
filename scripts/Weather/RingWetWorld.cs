@@ -33,8 +33,16 @@ public partial class RingWetWorld : Node
         GlobalClock = "ring_wet_clock", GlobalEvents = "ring_wet_events", GlobalWind = "ring_wet_wind", GlobalRippleTexture = "ring_wet_ripple_tex",
         GlobalNoiseTexture = "ring_wet_noise_tex", GlobalDebugMode = "ring_wet_debug_mode";
 
-    /// <summary>Seconds between map dispatches (and a dispatch whenever the texel window moves).</summary>
-    public const double RefreshSeconds = 0.5;
+    /// <summary>Seconds between map dispatches (also a dispatch when the camera's texel window lags the published one by <see cref="MoveDispatchTexels"/>, or on a sim time jump).</summary>
+    public const double RefreshSeconds = 2.0;
+    /// <summary>Texels (64 m each) the camera's snapped window corner may drift from the published corner before a re-dispatch. The camera stays well inside the 16 km window and
+    /// the shader uses the camera offset from the published corner, so a lagging window is exact.</summary>
+    public const int MoveDispatchTexels = 4;
+    /// <summary>Distance from the camera (m) beyond which nothing is wet (ring_wet_clock.z): wetness fades out over the last 20 percent. The wet map window is 16 km, so at 6.5 km the fade
+    /// ends inside the map's full-weight region even with the 4-texel dispatch lag and the far rain fallback is never needed. The user asked for no wetness at long distances (perf pass doc section 0.14).</summary>
+    public const float DefaultReachMeters = 6500.0f;
+    /// <summary>Test/capture hook for the wet reach (m); non-finite or below 1 falls back to <see cref="DefaultReachMeters"/>.</summary>
+    public float ReachMeters { get; set; } = DefaultReachMeters;
     public const float FarBlendMeters = 1000.0f;
     public const double ClockPeriodSeconds = 64.0;
     private const double DryHoldSeconds = 4.0;
@@ -186,21 +194,25 @@ public partial class RingWetWorld : Node
         bool dispatched = false;
         if (valid && EnsureGpu() && GpuReady)
         {
-            bool moved = !HasPublishedFrame || !PublishedFrame.SameWindow(frame);
+            double moveLimit = MoveDispatchTexels * WetMapFrame.TexelMeters;
+            bool moved = !HasPublishedFrame
+                || Math.Abs(WetMapFrame.AroundDelta(frame.CornerAround, PublishedFrame.CornerAround, circumference)) >= moveLimit
+                || Math.Abs(frame.CornerAcross - PublishedFrame.CornerAcross) >= moveLimit;
             bool timeJump = double.IsNaN(_lastDispatchSimTime) || Math.Abs(simTime - _lastDispatchSimTime) > 5.0;
             if (moved || timeJump || now - _lastDispatchSeconds >= RefreshSeconds)
             {
                 dispatched = DispatchMap(frame, camera, simTime, now, moved, timeJump, wetPossible);
             }
         }
-        PublishFrameGlobals(frame, geometry);
+        PublishFrameGlobals(frame, geometry, (float)camera.VerticalMeters);
         PublishParams(valid && HasPublishedFrame && MapPublished);
         _ = dispatched;
     }
 
-    private void PublishFrameGlobals(in WetMapFrame frame, in RingLodGeometrySnapshot geometry)
+    private void PublishFrameGlobals(in WetMapFrame frame, in RingLodGeometrySnapshot geometry, float cameraHeightMeters)
     {
         Projection matrix = frame.WorldFrame(geometry);
+        matrix.W.W = cameraHeightMeters; // column 3 .w: camera height above the surface point (the wet reach origin)
         if (!_framePublishedSet || !matrix.Equals(_framePublished))
         {
             _framePublished = matrix; _framePublishedSet = true;
@@ -248,7 +260,7 @@ public partial class RingWetWorld : Node
         // The drying rate uses the mean weather wind (constant between gusts), not the gusting local wind: the map stays a pure function of the clock.
         _windMetersPerSecond = (_weather?.WeatherWindMetersPerSecond ?? wind).Length();
         float phase = (float)WetMapFrame.Mod(simTime, ClockPeriodSeconds);
-        var clock = new Vector4(phase, Mathf.Clamp(RingWetWorldSettings.Current.RippleLayers, 1, 4), WetMapFrame.ExtentMeters * 0.5f, FarBlendMeters);
+        var clock = new Vector4(phase, Mathf.Clamp(RingWetWorldSettings.Current.RippleLayers, 1, 4), float.IsFinite(ReachMeters) && ReachMeters >= 1.0f ? ReachMeters : DefaultReachMeters, FarBlendMeters);
         if (clock != _clockPublished) { _clockPublished = clock; RenderingServer.GlobalShaderParameterSet(GlobalClock, clock); }
     }
 

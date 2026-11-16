@@ -6,7 +6,8 @@
 // so receivers stay bitwise identical to their pre-wet-world output. Callers wrap the work in `if (ring_wet_params.w > 0.5)` to also skip the fetches.
 //   ring_wet_map        RGBA16F: R film (gloss), G soak (darkening), B standing water, A rain now
 //   ring_wet_map_frame  (camera offset from the map corner around/across m, texel m, size texels)
-//   ring_wet_frame      mat4: columns 0/1 = around/across axis.xyz + camera canonical metres mod 16384; column 2 = up axis.xyz + ring radius; column 3 = camera ring centre (world)
+//   ring_wet_frame      mat4: columns 0/1 = around/across axis.xyz + camera canonical metres mod 16384; column 2 = up axis.xyz + ring radius; column 3 = ring-surface point under the camera (world) + camera height above it (m) in .w
+//   ring_wet_clock      (ripple phase, ripple layers, wet reach R m, far blend m): wetness fades out between 0.8 R and R from the camera and nothing is evaluated beyond R
 //   ring_wet_params     (wetness strength, wet roughness, puddle amount, valid)
 //   ring_wet_events     (S3 FatDrop, HailIntensity, HailSize, hail cover) at the camera
 //   ring_wet_wind       (world wind direction xyz, speed 0..1)
@@ -110,11 +111,24 @@ vec4 ring_wet_map_sample(vec3 world) {
 	return sampled;
 }
 
+// Camera world position: the ring-surface point under it plus its height along the up axis (ring_wet_frame column 3).
+vec3 ring_wet_camera_world() {
+	return ring_wet_frame[3].xyz + ring_wet_frame[2].xyz * ring_wet_frame[3].w;
+}
+
+// Reach factor 1..0: exactly 1.0 inside 0.8 R of the camera, 0 at R and beyond (R = ring_wet_clock.z).
+float ring_wet_reach(vec3 world) {
+	float reach = ring_wet_clock.z;
+	return 1.0 - smoothstep(0.8 * reach, reach, distance(world, ring_wet_camera_world()));
+}
+
 // Wetness at a surface point (zero when !valid): wet map (or the rain-now far fallback beyond its window) x shelter, plus fat-drop spots on exposed up-facing surfaces.
 RingWet ring_wet_sample(vec3 world, vec3 normal_world, vec3 up_world) {
 	RingWet w = RingWet(0.0, 0.0, 0.0, 0.0);
 	if (ring_wet_params.w < 0.5) return w;
-	vec4 sampled = ring_wet_map_sample(world);
+	float reach = ring_wet_reach(world);
+	if (reach <= 0.0) return w;
+	vec4 sampled = ring_wet_map_sample(world) * reach;
 	float exposure = ring_wet_exposure(world, normal_world, up_world);
 	float n_up = dot(normal_world, up_world);
 	if (n_up <= 0.5) {
@@ -146,7 +160,9 @@ RingWet ring_wet_sample_up(vec3 world, vec3 up_world) {
 // sample the largest wet world cost (the shelter and spot part was about 0.35 ms on a forest view at 720p, RTX 4070; docs/storm-revamp-s2-wet-world-design.md section 10).
 RingWet ring_wet_sample_vegetation(vec3 world) {
 	if (ring_wet_params.w < 0.5) return RingWet(0.0, 0.0, 0.0, 0.0);
-	vec4 sampled = ring_wet_map_sample(world);
+	float reach = ring_wet_reach(world);
+	if (reach <= 0.0) return RingWet(0.0, 0.0, 0.0, 0.0);
+	vec4 sampled = ring_wet_map_sample(world) * reach;
 	return RingWet(sampled.x, sampled.y, 0.0, sampled.w);
 }
 

@@ -149,10 +149,35 @@ public static class RingTerrainMacroShadowProjector
         ActiveReceiverCount = active;
     }
 
+    /// <summary>
+    /// A/B switch (perf audit 0.12): false restores the old behaviour of re-setting every parameter on every receiver at each install.
+    /// Re-setting a texture parameter, even to the same texture, makes Godot rebuild the material's uniform set and every instance that
+    /// uses it (the mask texture is updated in place, so the receivers already sample the new mask).
+    /// </summary>
+    public static bool SkipUnchangedParameters { get; set; } = true;
+
     private static void SetParameter(GodotObject material, StringName parameter, Variant value)
     {
-        if (material is ShaderMaterial shaderMaterial) shaderMaterial.SetShaderParameter(parameter, value);
+        if (material is ShaderMaterial shaderMaterial)
+        {
+            if (SkipUnchangedParameters && SameValue(shaderMaterial.GetShaderParameter(parameter), value)) return;
+            shaderMaterial.SetShaderParameter(parameter, value);
+        }
         else material.Call("set_shader_param", parameter, value);
+    }
+
+    /// <summary>Exact equality only: a value that differs in any bit is set again, so every receiver ends in the same state as before.</summary>
+    private static bool SameValue(Variant current, Variant value)
+    {
+        if (current.VariantType != value.VariantType) return false;
+        return value.VariantType switch
+        {
+            Variant.Type.Bool => current.AsBool() == value.AsBool(),
+            Variant.Type.Float => current.AsDouble().Equals(value.AsDouble()),
+            Variant.Type.Vector3 => current.AsVector3() == value.AsVector3(),
+            Variant.Type.Object => ReferenceEquals(current.AsGodotObject(), value.AsGodotObject()),
+            _ => false,
+        };
     }
 
     private static void Apply(GodotObject material, float coordinateScale, Basis directionTransform)

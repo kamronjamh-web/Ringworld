@@ -1198,6 +1198,7 @@ public partial class RingScaledFarViewport : Node
 		{
 			_terrainMaterial = new ShaderMaterial { Shader = terrainShader };
 			_terrainMaterial.SetShaderParameter("far_space_enabled", false);
+			_terrainMaterial.SetShaderParameter("wet_world_receiver", false); // scaled far-world units, not main-world metres
 			_terrainMaterial.SetShaderParameter("far_fade_enabled", false);
 			// Begin with the safe ground cutout. SyncCameraAndLighting replaces
 			// it immediately with the altitude-dependent radius.
@@ -1218,6 +1219,7 @@ public partial class RingScaledFarViewport : Node
 		if (waterShader != null)
 		{
 			_waterMaterial = new ShaderMaterial { Shader = waterShader };
+			_waterMaterial.SetShaderParameter("wet_world_receiver", false); // scaled far-world units, not main-world metres
 			_waterMaterial.SetShaderParameter("far_fade_enabled", false);
 			_waterMaterial.SetShaderParameter("fade_start_meters", FadeStartMeters * CoordinateScale);
 			_waterMaterial.SetShaderParameter("fade_end_meters", FadeEndMeters * CoordinateScale);
