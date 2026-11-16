@@ -276,7 +276,7 @@ Ranked by expected saving per hour of work. Savings are per frame, measured agai
 ### 0.9 Evidence and how to repeat it
 
 Everything is under `.godot/perf_pass_real/` (ordinary test output, pruned after 7 days):
-- `run1/`: 1600 x 900, all ground poses, walk, tier-1 and tier-2 flights, ablations at the plains and in the forest interior. Its "spawn" windows were at the plains pose because of the autosave, and are reported as plains.
+- `run1/`: 1600 x 900, all ground poses, walk, tier-1 and tier-2 flights, ablations at the plains and in the forest interior. Its "spawn" windows were at the plains pose because of the autosave, and are reported as plains. **`run1/report.json`, `console.log`, `power_log.csv` and `stderr.log` were overwritten on 2026-11-16 by a lane B run with default arguments; `summary.md` and `ablations_plains_and_forest.md` are the originals.**
 - `run2_1080/`: 1920 x 1080, the same poses (no ablations).
 - `run3_wet/`: 1920 x 1080, flights with `WetWorld` on, off and on again.
 - `run4_spawn/`: 1600 x 900, the real saved spawn with ablations and the speed sweep, including the `WetWorld` on/off/on test at 1.2 and 36.8 km/s.
