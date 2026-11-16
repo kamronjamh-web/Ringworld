@@ -111,47 +111,48 @@ public partial class AtmosphereSettingsSmoke : RefCounted
         p4.Set("Aerosol", 0.35f); p4.Set("Altitude", 0.5f); // nominal mist/heights (the new defaults have no mist and falloff 1)
         float nominalSigmaMist = RingAtmosphereModel.HazeSigmaMist, nominalSigmaR = RingAtmosphereModel.HazeSigmaRayleigh.X;
         float nominalHMist = RingAtmosphereModel.HazeMistHeightMeters, nominalHA = RingAtmosphereModel.HazeAerosolHeightMeters;
-        bool p4Defaults = p4.Settings.MistDensity == 1.0f && p4.Settings.MistHeight == 400.0f && p4.Settings.AerosolHeight == 1500.0f
+        bool p4Defaults = p4.Settings.AerosolHeight == 1500.0f
             && p4.Settings.RayleighStrength == 1.0f && Mathf.IsEqualApprox(p4.Settings.GroundAlbedo, 0.11f) && Mathf.IsEqualApprox(p4.Settings.MultiScatter, 0.99f)
             && p4.Settings.SkyTintR == 1.0f && p4.Settings.SkyTintG == 1.0f && Mathf.IsEqualApprox(p4.Settings.SkyTintB, 1.01f) && p4.Settings.HazeQuality == 4
             && RingAtmosphereModel.HazeQuality == 4 && Mathf.IsEqualApprox(nominalHMist, 400.0f) && Mathf.IsEqualApprox(nominalHA, 1500.0f)
             && RingAtmosphereModel.HazeSkyTint.IsEqualApprox(new Vector3(1.0f, 1.0f, 1.01f)) && Mathf.IsEqualApprox(RingAtmosphereModel.HazeGroundAlbedo, 0.11f);
         ulong revisionBefore = RingAtmosphereModel.Revision;
-        p4.Set("RayleighStrength", 1.5f); p4.Set("MistDensity", 2.0f); p4.Set("MistHeight", 800.0f); p4.Set("AerosolHeight", 3000.0f);
+        p4.Set("RayleighStrength", 1.5f); p4.Set("MistDensity", 2.0f); p4.Set("MistHeight", 800.0f); p4.Set("AerosolHeight", 3000.0f); // the removed mist keys are ignored (MIST-1)
         p4.Set("GroundAlbedo", 0.3f); p4.Set("MultiScatter", 2.0f); p4.Set("SkyTintB", 0.5f); p4.SetHazeQuality(16);
         bool p4Applied = RingAtmosphereModel.Revision > revisionBefore
             && Mathf.IsEqualApprox(RingAtmosphereModel.HazeSigmaRayleigh.X, nominalSigmaR * 1.5f)
-            && Mathf.IsEqualApprox(RingAtmosphereModel.HazeSigmaMist, nominalSigmaMist * 2.0f)
-            && Mathf.IsEqualApprox(RingAtmosphereModel.HazeMistHeightMeters, 800.0f) && Mathf.IsEqualApprox(RingAtmosphereModel.HazeAerosolHeightMeters, 3000.0f)
+            && nominalSigmaMist == 0.0f && RingAtmosphereModel.HazeSigmaMist == 0.0f // MIST-1: no static mist, only the weather mist adds sigma_M0
+            && Mathf.IsEqualApprox(RingAtmosphereModel.HazeMistHeightMeters, 400.0f) && Mathf.IsEqualApprox(RingAtmosphereModel.HazeAerosolHeightMeters, 3000.0f)
             && Mathf.IsEqualApprox(RingAtmosphereModel.HazeGroundAlbedo, 0.3f) && Mathf.IsEqualApprox(RingAtmosphereModel.HazeMultiscatterGain, 2.0f)
             && Mathf.IsEqualApprox(RingAtmosphereModel.HazeSkyTint.Z, 0.5f) && RingAtmosphereModel.HazeQuality == 16;
         // The altitude-falloff slider still composes: falloff 1 halves both heights on top of the controls.
         p4.Set("Altitude", 1.0f);
-        bool p4Composes = Mathf.IsEqualApprox(RingAtmosphereModel.HazeMistHeightMeters, 400.0f) && Mathf.IsEqualApprox(RingAtmosphereModel.HazeAerosolHeightMeters, 1500.0f);
+        bool p4Composes = Mathf.IsEqualApprox(RingAtmosphereModel.HazeMistHeightMeters, 200.0f) && Mathf.IsEqualApprox(RingAtmosphereModel.HazeAerosolHeightMeters, 1500.0f);
         p4.Set("Altitude", 0.5f);
         bool p4Saved = p4.Save();
         var p4Reload = new AtmosphereVisualDefaults(isolatedPath);
         p4Reload.Initialize();
-        bool p4Persisted = p4Saved && Mathf.IsEqualApprox(p4Reload.Settings.RayleighStrength, 1.5f) && Mathf.IsEqualApprox(p4Reload.Settings.MistHeight, 800.0f)
+        bool p4Persisted = p4Saved && Mathf.IsEqualApprox(p4Reload.Settings.RayleighStrength, 1.5f)
             && Mathf.IsEqualApprox(p4Reload.Settings.SkyTintB, 0.5f) && p4Reload.Settings.HazeQuality == 16 && RingAtmosphereModel.HazeQuality == 16
             && Mathf.IsEqualApprox(RingAtmosphereModel.HazeGroundAlbedo, 0.3f);
-        p4Reload.Set("RayleighStrength", float.NaN); p4Reload.Set("MistDensity", 99.0f); p4Reload.Set("MistHeight", -5.0f); p4Reload.Set("AerosolHeight", 1.0e9f);
+        p4Reload.Set("RayleighStrength", float.NaN); p4Reload.Set("AerosolHeight", 1.0e9f);
         p4Reload.Set("GroundAlbedo", 7.0f); p4Reload.Set("MultiScatter", float.PositiveInfinity); p4Reload.Set("SkyTintR", -2.0f); p4Reload.SetHazeQuality(11);
-        bool p4Clamped = p4Reload.Settings.RayleighStrength == 1.0f && p4Reload.Settings.MistDensity == 5.0f && p4Reload.Settings.MistHeight == 50.0f
+        bool p4Clamped = p4Reload.Settings.RayleighStrength == 1.0f
             && p4Reload.Settings.AerosolHeight == 5000.0f && p4Reload.Settings.GroundAlbedo == 0.5f && Mathf.IsEqualApprox(p4Reload.Settings.MultiScatter, 0.99f)
             && p4Reload.Settings.SkyTintR == 0.0f && p4Reload.Settings.HazeQuality == 8 && RingAtmosphereModel.HazeQuality == 8;
         p4Reload.SetHazeQuality(100);
         p4Clamped = p4Clamped && p4Reload.Settings.HazeQuality == 16;
         p4Reload.Save();
         string p4Path = ProjectSettings.GlobalizePath(isolatedPath);
-        string[] p4Keys = { "MistDensity", "MistHeight", "AerosolHeight", "RayleighStrength", "GroundAlbedo", "MultiScatter", "SkyTintR", "SkyTintG", "SkyTintB", "HazeQuality" };
+        string[] p4Keys = { "AerosolHeight", "RayleighStrength", "GroundAlbedo", "MultiScatter", "SkyTintR", "SkyTintG", "SkyTintB", "HazeQuality" };
         string p4Text = System.IO.File.ReadAllText(p4Path);
         string p4Stripped = string.Join('\n', System.Array.FindAll(p4Text.Split('\n'), line => System.Array.TrueForAll(p4Keys, key => !line.StartsWith(key))));
         bool p4LinesWritten = p4Stripped.Length < p4Text.Length;
-        System.IO.File.WriteAllText(p4Path, p4Stripped);
+        // An old user file still carries the removed static-mist keys (MIST-1); it must load without errors and ignore them.
+        System.IO.File.WriteAllText(p4Path, p4Stripped.TrimEnd() + "\nMistDensity = 1.02\nMistHeight = 420.0\n");
         var p4Old = new AtmosphereVisualDefaults(isolatedPath);
         p4Old.Initialize();
-        bool p4OldFile = p4LinesWritten && p4Old.Settings.MistDensity == 1.0f && p4Old.Settings.MistHeight == 400.0f && p4Old.Settings.AerosolHeight == 1500.0f
+        bool p4OldFile = p4LinesWritten && string.IsNullOrEmpty(p4Old.LastError) && p4Old.Settings.AerosolHeight == 1500.0f
             && p4Old.Settings.RayleighStrength == 1.0f && Mathf.IsEqualApprox(p4Old.Settings.GroundAlbedo, 0.11f) && p4Old.Settings.HazeQuality == 4
             && RingAtmosphereModel.HazeQuality == 4 && Mathf.IsEqualApprox(RingAtmosphereModel.HazeMistHeightMeters, 400.0f)
             && Mathf.IsEqualApprox(RingAtmosphereModel.HazeSigmaRayleigh.X, nominalSigmaR);

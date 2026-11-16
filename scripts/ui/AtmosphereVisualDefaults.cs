@@ -26,7 +26,7 @@ public sealed class AtmosphereVisualDefaults
         RingAtmosphereLuts.SkyViewEnabled = Settings.SkyHazeLut;
         RingVegetationHaze.Enabled = Settings.VegetationInstanceHaze;
         RingAtmosphereModel.HazeModel = (RingAtmosphereModel.HazeModelKind)Mathf.Clamp(Settings.HazeModel, 0, 1);
-        RingAtmosphereModel.SetPhysicalControls(Settings.MistDensity, Settings.MistHeight, Settings.AerosolHeight, Settings.RayleighStrength,
+        RingAtmosphereModel.SetPhysicalControls(Settings.AerosolHeight, Settings.RayleighStrength,
             Settings.GroundAlbedo, Settings.MultiScatter, new Vector3(Settings.SkyTintR, Settings.SkyTintG, Settings.SkyTintB), Settings.HazeQuality);
         RingAtmosphereModel.ApplyArtDirection(
             (RingAtmosphereModel.ArtDirectionPreset)Mathf.Clamp(Settings.Preset, 0, 1),
@@ -47,8 +47,6 @@ public sealed class AtmosphereVisualDefaults
             case "CloudShadowing": Settings.CloudShadowing = value; break;
             case "StormHaze": Settings.StormHaze = value; break;
             case "EnclosedCloudFog": Settings.EnclosedCloudFog = value; break;
-            case "MistDensity": Settings.MistDensity = value; break;
-            case "MistHeight": Settings.MistHeight = value; break;
             case "AerosolHeight": Settings.AerosolHeight = value; break;
             case "RayleighStrength": Settings.RayleighStrength = value; break;
             case "GroundAlbedo": Settings.GroundAlbedo = value; break;
@@ -144,8 +142,6 @@ public sealed class AtmosphereVisualDefaults
         Settings.CloudShadowing = Clean(Settings.CloudShadowing, 1, 0, 1);
         Settings.StormHaze = Clean(Settings.StormHaze, 1, 0, 1);
         Settings.EnclosedCloudFog = Clean(Settings.EnclosedCloudFog, 1, 0, 1);
-        Settings.MistDensity = Clean(Settings.MistDensity, 1, 0, 5);
-        Settings.MistHeight = Clean(Settings.MistHeight, 400, 50, 2000);
         Settings.AerosolHeight = Clean(Settings.AerosolHeight, 1500, 200, 5000);
         Settings.RayleighStrength = Clean(Settings.RayleighStrength, 1, 0, 3);
         Settings.GroundAlbedo = Clean(Settings.GroundAlbedo, .11f, 0, .5f);

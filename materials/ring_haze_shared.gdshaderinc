@@ -314,7 +314,7 @@ float ring_haze_flat_layer(float hbar, float mu, float dt, float scale_height) {
 }
 
 // Per-layer Integral exp(-h/H) dt over [t0, t1]: x = Rayleigh, y = aerosol, z = mist.
-// Straight rays (altitude sag a dt^2 / (8 Rc) under RING_HAZE_SAG_FRACTION * H_mist, e.g. everything under ~20 km) are ONE piece of the
+// Straight rays (altitude sag a dt^2 / (8 Rc) under RING_HAZE_SAG_FRACTION * H_mist (H_A when sigma_M0 is 0, the mist layer is then skipped), e.g. everything under ~20 km) are ONE piece of the
 // closed form above. Longer curved rays are cut into N pieces (N = quality 4/8/16) at Chebyshev-spaced positions, dense at both ends
 // where the low altitude (hence the weight) is; each piece uses its chord line plus the Simpson-mean offset (2N+1 exact h evaluations).
 vec3 ring_haze_layer_integrals(RingHazeParams p, float h0, float radial0, float b, float a, float t0, float t1) {
@@ -322,7 +322,9 @@ vec3 ring_haze_layer_integrals(RingHazeParams p, float h0, float radial0, float 
 	if (dt <= 0.0) return vec3(0.0);
 	int n = p.quality >= 16 ? 16 : (p.quality >= 8 ? 8 : 4);
 	float sag = max(a, 0.0) * dt * dt / (8.0 * max(radial0, 1.0));
-	float sag_tol = clamp(RING_HAZE_SAG_FRACTION * p.H_mist, 4.0, 40.0);
+	// The mist layer exists only while the weather adds sigma_M0 (the static ground mist was removed, MIST-1); without it the tolerance follows the aerosol height, so short rays need fewer pieces.
+	bool mist_on = p.sigma_M0 > 0.0;
+	float sag_tol = clamp(RING_HAZE_SAG_FRACTION * (mist_on ? p.H_mist : p.H_A), 4.0, 40.0);
 	// Adaptive count: Chebyshev pieces are at most (pi/2)/k of the span, so the per-piece sag is sag (pi/2)^2 / k^2; k = ceil((pi/2) sqrt(sag / tol)) keeps it at the one-piece tolerance.
 	int pieces = sag <= sag_tol ? 1 : min(n, max(2, int(ceil(1.5707963 * sqrt(sag / sag_tol)))));
 	vec3 sum = vec3(0.0);
@@ -336,7 +338,7 @@ vec3 ring_haze_layer_integrals(RingHazeParams p, float h0, float radial0, float 
 		float h_end = ring_haze_height(t_end, h0, radial0, b, a);
 		float hbar = (h_start + 4.0 * h_mid + h_end) / 6.0;
 		float mu = (h_end - h_start) / max(piece_dt, 0.000001);
-		sum += vec3(ring_haze_flat_layer(hbar, mu, piece_dt, p.H_R), ring_haze_flat_layer(hbar, mu, piece_dt, p.H_A), ring_haze_flat_layer(hbar, mu, piece_dt, p.H_mist));
+		sum += vec3(ring_haze_flat_layer(hbar, mu, piece_dt, p.H_R), ring_haze_flat_layer(hbar, mu, piece_dt, p.H_A), mist_on ? ring_haze_flat_layer(hbar, mu, piece_dt, p.H_mist) : 0.0);
 		h_start = h_end;
 		t_start = t_end;
 	}
@@ -375,7 +377,7 @@ vec3 ring_haze_sun_transmittance(RingHazeParams p, vec3 ray, vec2 interval, floa
 	float cap = p.cap_height;
 	float col_R = max(p.H_R * (exp(min(-h_mid / max(p.H_R, 1.0), 80.0)) - exp(-cap / max(p.H_R, 1.0))), 0.0);
 	float col_A = max(p.H_A * (exp(min(-h_mid / max(p.H_A, 1.0), 80.0)) - exp(-cap / max(p.H_A, 1.0))), 0.0);
-	float col_M = max(p.H_mist * (exp(min(-h_mid / max(p.H_mist, 1.0), 80.0)) - exp(-cap / max(p.H_mist, 1.0))), 0.0);
+	float col_M = p.sigma_M0 > 0.0 ? max(p.H_mist * (exp(min(-h_mid / max(p.H_mist, 1.0), 80.0)) - exp(-cap / max(p.H_mist, 1.0))), 0.0) : 0.0;
 	vec3 tau_col = p.sigma_R * col_R + vec3(p.sigma_A * col_A + p.sigma_M0 * col_M);
 	float airmass = 1.025 / (max(cos_sun, 0.0) + 0.025);
 	return exp(-tau_col * airmass) * smoothstep(-0.06, 0.0, cos_sun);

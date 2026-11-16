@@ -159,8 +159,6 @@ public partial class RingLiveTuningDrawer
         _atmospherePhysicalGroup.AddChild(new Label { Text = "Physical haze", Modulate = RingUiStyle.Muted });
         AddAtmosphereSlider(_atmospherePhysicalGroup, "CloudShadowing", "Cloud shadowing of haze", 0, 1, .01, settings.CloudShadowing);
         AddAtmosphereSlider(_atmospherePhysicalGroup, "StormHaze", "Storm haze", 0, 1, .01, settings.StormHaze);
-        AddAtmosphereSlider(_atmospherePhysicalGroup, "MistDensity", "Ground mist density", 0, 5, .01, settings.MistDensity);
-        AddAtmosphereSlider(_atmospherePhysicalGroup, "MistHeight", "Mist height (m)", 50, 2000, 10, settings.MistHeight);
         AddAtmosphereSlider(_atmospherePhysicalGroup, "AerosolHeight", "Aerosol height (m)", 200, 5000, 50, settings.AerosolHeight);
         AddAtmosphereSlider(_atmospherePhysicalGroup, "RayleighStrength", "Rayleigh strength", 0, 3, .01, settings.RayleighStrength);
         AddAtmosphereSlider(_atmospherePhysicalGroup, "GroundAlbedo", "Ground bounce albedo", 0, .5, .01, settings.GroundAlbedo);
@@ -239,8 +237,6 @@ public partial class RingLiveTuningDrawer
         SetAtmosphereRange("CloudShadowing", s.CloudShadowing);
         SetAtmosphereRange("StormHaze", s.StormHaze);
         SetAtmosphereRange("EnclosedCloudFog", s.EnclosedCloudFog);
-        SetAtmosphereRange("MistDensity", s.MistDensity);
-        SetAtmosphereRange("MistHeight", s.MistHeight);
         SetAtmosphereRange("AerosolHeight", s.AerosolHeight);
         SetAtmosphereRange("RayleighStrength", s.RayleighStrength);
         SetAtmosphereRange("GroundAlbedo", s.GroundAlbedo);

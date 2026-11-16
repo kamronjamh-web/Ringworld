@@ -25,7 +25,7 @@ public partial class PostRainMistTest : RefCounted
             RingAtmosphereModel.ApplyArtDirection(RingAtmosphereModel.ArtPreset, RingAtmosphereModel.VisibilityFullKm, RingAtmosphereModel.Density, RingAtmosphereModel.AltitudeFalloff, 0.35f, 0.22f, 0.25f);
             float baseSigma = RingAtmosphereModel.HazeSigmaMist, baseHeight = RingAtmosphereModel.HazeMistHeightMeters;
             ulong baseRevision = RingAtmosphereModel.Revision;
-            Check(baseSigma > 0f && baseHeight > 0f, "no base mist");
+            Check(baseSigma == 0f && baseHeight > 0f, "the static ground mist is removed (MIST-1): no base sigma_M0 without weather, but a positive H_mist");
 
             // M = 0: nothing published, bit-identical.
             Check(!RingAtmosphereModel.SetWeatherMist(0f, 0.0) && RingAtmosphereModel.Revision == baseRevision, "M=0 must not publish");

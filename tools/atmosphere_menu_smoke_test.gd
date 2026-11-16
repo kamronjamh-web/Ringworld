@@ -129,9 +129,13 @@ func _run() -> void:
 	var haze_quality := _drawer.find_child("AtmosphereHazeQuality", true, false) as OptionButton
 	if physical_group == null or rayleigh == null or haze_quality == null or not physical_group.visible:
 		return _fail("physical haze controls missing or hidden under the Physical model")
-	for slider_name in ["MistDensity", "MistHeight", "AerosolHeight", "GroundAlbedo", "MultiScatter", "SkyTintR", "SkyTintG", "SkyTintB", "CloudShadowing", "StormHaze"]:
+	for slider_name in ["AerosolHeight", "GroundAlbedo", "MultiScatter", "SkyTintR", "SkyTintG", "SkyTintB", "CloudShadowing", "StormHaze"]:
 		if _drawer.find_child("Atmosphere" + slider_name, true, false) as HSlider == null:
 			return _fail("physical haze slider missing: " + slider_name)
+	# The static ground mist was removed (MIST-1): its rows must not come back.
+	for removed_name in ["MistDensity", "MistHeight"]:
+		if _drawer.find_child("Atmosphere" + removed_name, true, false) != null:
+			return _fail("removed mist slider still present: " + removed_name)
 	# POI haze and cloud shadows follow the regular haze and terrain cloud shadows: no per-POI toggles in the menu.
 	for check_name in ["AtmospherePoiHaze", "AtmospherePoiCloudShadow"]:
 		if _drawer.find_child(check_name, true, false) != null:

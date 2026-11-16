@@ -22,8 +22,7 @@ public partial class AtmosphereVisualSettings : Resource
     /// <summary>Physical-haze sun irradiance multiplier (DaySideAtmosphere.haze_brightness). Absent in older files, which load as the default.</summary>
     [Export] public float HazeBrightness { get; set; } = 0.52f;
     // Physical-haze controls (P4). Absent in older files, which load with these defaults.
-    [Export] public float MistDensity { get; set; } = 1.0f;
-    [Export] public float MistHeight { get; set; } = 400.0f;
+    // MistDensity / MistHeight (the static ground mist) were removed 2026-11-16 (MIST-1); older files that still carry them load fine (the keys are ignored).
     [Export] public float AerosolHeight { get; set; } = 1500.0f;
     [Export] public float RayleighStrength { get; set; } = 1.0f;
     [Export] public float GroundAlbedo { get; set; } = 0.11f;

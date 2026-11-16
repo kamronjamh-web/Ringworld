@@ -5294,6 +5294,18 @@
       "expected_s": 1500,
       "timeout_s": 2400
     },
+    "mist_ab_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "atmosphere-haze",
+        "perf-telemetry"
+      ],
+      "marker": "MIST_AB",
+      "expected_s": 300,
+      "timeout_s": 1800
+    },
     "landscape_cost_baseline": {
       "kind": "tool",
       "mode": "gpu",
