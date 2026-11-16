@@ -330,6 +330,10 @@ static func capture_original_state(ctx: Dictionary) -> Dictionary:
 	state["tree_proxy"] = proxies
 	state["tree_cast"] = casts
 	state["tree_cast_touched"] = {}
+	state["game"] = ctx["game"]
+	state["world_environment"] = ctx["world_environment"]
+	state["scaled_far"] = ctx["scaled_far"]
+	state["extra_undo"] = []
 	state["viewport"] = (ctx["tree"] as SceneTree).root
 	state["scale"] = (ctx["tree"] as SceneTree).root.scaling_3d_scale
 	return state
@@ -343,6 +347,8 @@ static func _case_parts(label: String) -> Array:
 
 
 static func _known_case(base: String) -> bool:
+	if base in EXTRA_CASES:
+		return true
 	if base in ["baseline", "baseline_repeat", "near_terrain_hidden", "far_terrain_hidden", "trees_hidden", "grass_hidden", "tree_shadows_off"]:
 		return true
 	return base.begins_with("tree_slot") and base.ends_with("_hidden") and base.trim_prefix("tree_slot").trim_suffix("_hidden").is_valid_int()
@@ -397,6 +403,10 @@ static func _layers(nodes: Array) -> Array:
 
 
 static func restore_state(state: Dictionary) -> void:
+	if state.has("extra_undo"):
+		var undo_list: Array = state["extra_undo"]
+		while not undo_list.is_empty():
+			(undo_list.pop_back() as Callable).call()
 	for index in state["near_nodes"].size():
 		if is_instance_valid(state["near_nodes"][index]):
 			state["near_nodes"][index].visible = state["near_visible"][index]
@@ -431,6 +441,8 @@ static func apply_case(state: Dictionary, label: String) -> bool:
 		if not state.has("viewport"):
 			return false
 		(state["viewport"] as Viewport).scaling_3d_scale = float(parts[1])
+	if base in EXTRA_CASES:
+		return _apply_extra(state, base)
 	match base:
 		"baseline", "baseline_repeat":
 			pass
@@ -494,6 +506,141 @@ static func verify_case(state: Dictionary, full_label: String) -> String:
 	return ""
 
 
+
+# ------------------------------------------------------------------ perf pass P0 extra cases (docs/perf-pass-2026-11.md)
+
+## Extra A-B-A cases for run_cost, selected with --extra-cases=a,b (or LANDSCAPE_HARNESS_ARGS). Each uses an existing runtime switch or a node property and pushes its undo
+## on state["extra_undo"]; restore_state runs the undos. TEST ONLY.
+const EXTRA_CASES := ["clouds_off", "cloud_shadow_gen_off", "sun_map_off", "hs_receivers_off", "water_hidden", "ui_hidden", "clocks_running", "far_viewport_off", "env_post_off", "env_ssao_off", "env_ssr_off", "atlas_4096", "atlas_8192", "atlas_16384"]
+const ENV_POST_FLAGS := ["glow_enabled", "ssao_enabled", "ssil_enabled", "ssr_enabled", "sdfgi_enabled", "volumetric_fog_enabled", "adjustment_enabled"]
+
+
+static func _apply_extra(state: Dictionary, base: String) -> bool:
+	var game: Node = state["game"]
+	var undo: Array = state["extra_undo"]
+	match base:
+		"clouds_off", "cloud_shadow_gen_off":
+			var bridge := game.get_node_or_null("SunshineCloudBridge")
+			if bridge == null:
+				return false
+			var property := "CloudRenderingEnabled" if base == "clouds_off" else "GpuShadowGenerationEnabled"
+			var previous: Variant = bridge.get(property)
+			bridge.set(property, false)
+			undo.append(func() -> void:
+				if is_instance_valid(bridge):
+					bridge.set(property, previous))
+		"sun_map_off":
+			var graphics := game.get_node_or_null("GraphicsQuality")
+			if graphics == null:
+				return false
+			var requested := bool(graphics.get("RequestedSunShadowsEnabled"))
+			graphics.call("SetShadowTuningOverride", "Enabled", false)
+			undo.append(func() -> void:
+				if is_instance_valid(graphics):
+					graphics.call("SetShadowTuningOverride", "Enabled", requested))
+		"atlas_4096", "atlas_8192", "atlas_16384":
+			var atlas_graphics := game.get_node_or_null("GraphicsQuality")
+			if atlas_graphics == null:
+				return false
+			var atlas_before := int(atlas_graphics.get("RequestedDirectionalShadowAtlasSize"))
+			atlas_graphics.call("SetShadowTuningOverride", "AtlasSize", int(base.trim_prefix("atlas_")))
+			undo.append(func() -> void:
+				if is_instance_valid(atlas_graphics):
+					atlas_graphics.call("SetShadowTuningOverride", "AtlasSize", atlas_before))
+		"hs_receivers_off":
+			var height_shadow := game.get_node_or_null("TerrainHeightShadow")
+			if height_shadow == null:
+				return false
+			height_shadow.set("ReceiversEnabled", false)
+			undo.append(func() -> void:
+				if is_instance_valid(height_shadow):
+					height_shadow.set("ReceiversEnabled", true))
+		"water_hidden":
+			var hidden: Array = []
+			for node in _all_nodes(game):
+				if node is MeshInstance3D and (node as MeshInstance3D).visible:
+					var shader := _shader_name(node)
+					if "ocean" in shader or "water" in shader or "river" in shader or "lake" in shader:
+						(node as MeshInstance3D).visible = false
+						hidden.append(node)
+			state["water_hidden_count"] = hidden.size()
+			undo.append(func() -> void:
+				for node in hidden:
+					if is_instance_valid(node):
+						node.visible = true)
+		"ui_hidden":
+			var layers: Array = []
+			for node in _all_nodes((state["viewport"] as Node)):
+				if node is CanvasLayer and (node as CanvasLayer).visible:
+					(node as CanvasLayer).visible = false
+					layers.append(node)
+			state["ui_hidden_count"] = layers.size()
+			undo.append(func() -> void:
+				for node in layers:
+					if is_instance_valid(node):
+						node.visible = true)
+		"clocks_running":
+			var cycle := game.get_node_or_null("RingDayNightCycle")
+			var weather := game.get_node_or_null("RingVolumetricClouds")
+			if cycle == null or weather == null:
+				return false
+			var cloud_time: Variant = weather.get("CloudSimulationTimeSeconds")
+			cycle.set("Paused", false)
+			weather.set("CloudSimulationPaused", false)
+			undo.append(func() -> void:
+				if is_instance_valid(cycle):
+					cycle.set("Paused", true)
+				if is_instance_valid(weather):
+					weather.set("CloudSimulationPaused", true)
+					weather.set("CloudSimulationTimeSeconds", cloud_time))
+		"far_viewport_off":
+			var far_owner: Node = state["scaled_far"]
+			var outer: Variant = far_owner.get("OuterViewportForDiagnostics")
+			if not (outer is SubViewport) or not is_instance_valid(outer):
+				return false
+			var mode: Variant = (outer as SubViewport).get("render_target_update_mode")
+			(outer as SubViewport).set("render_target_update_mode", SubViewport.UPDATE_DISABLED)
+			undo.append(func() -> void:
+				if is_instance_valid(outer):
+					(outer as SubViewport).set("render_target_update_mode", mode))
+		"env_post_off", "env_ssao_off", "env_ssr_off":
+			var world_environment: WorldEnvironment = state["world_environment"]
+			var environment := world_environment.environment
+			if environment == null:
+				return false
+			var before := {}
+			var flags: Array = ENV_POST_FLAGS if base == "env_post_off" else (["ssao_enabled"] if base == "env_ssao_off" else ["ssr_enabled"])
+			for flag in flags:
+				before[flag] = environment.get(flag)
+				environment.set(flag, false)
+			if base == "env_post_off":
+				state["env_post_before"] = before
+			undo.append(func() -> void:
+				for flag in before:
+					environment.set(flag, before[flag]))
+		_:
+			return false
+	return true
+
+
+## What the extra cases can see of the render state (recorded per window, so a switch that did not take shows in the report).
+static func extra_probe(ctx: Dictionary) -> Dictionary:
+	var game: Node = ctx["game"]
+	var root: Window = (ctx["tree"] as SceneTree).root
+	var sun: DirectionalLight3D = ctx["sun"]
+	var bridge := game.get_node_or_null("SunshineCloudBridge")
+	var environment := (ctx["world_environment"] as WorldEnvironment).environment
+	var flags := {}
+	if environment != null:
+		for flag in ENV_POST_FLAGS:
+			flags[flag] = environment.get(flag)
+	var cycle := game.get_node_or_null("RingDayNightCycle")
+	return {"sun_shadow_enabled": sun.shadow_enabled, "sun_shadow_mode": sun.directional_shadow_mode, "sun_shadow_max_distance": sun.directional_shadow_max_distance,
+		"clouds_enabled": bridge.get("CloudRenderingEnabled") if bridge != null else null, "cloud_shadow_gen": bridge.get("GpuShadowGenerationEnabled") if bridge != null else null,
+		"use_taa": root.use_taa, "msaa_3d": root.msaa_3d, "screen_space_aa": root.screen_space_aa, "scaling_3d_mode": root.scaling_3d_mode, "scaling_3d_scale": root.scaling_3d_scale,
+		"clock_paused": cycle.get("Paused") if cycle != null else null, "environment": flags,
+		"shadow_atlas": game.get_node("GraphicsQuality").get("EffectiveDirectionalShadowAtlasSize") if game.get_node_or_null("GraphicsQuality") != null else null}
+
 # ------------------------------------------------------------------ cost part
 
 static func summarize(values: Array) -> Dictionary:
@@ -532,6 +679,7 @@ static func _viewports(ctx: Dictionary) -> void:
 	for rid in rids:
 		RenderingServer.viewport_set_measure_render_time(rid, true)
 	ctx["root_rid"] = rids[0]
+	ctx["all_rids"] = rids
 	ctx["far_rid"] = far_rid
 	ctx["viewport_count"] = rids.size()
 
@@ -564,8 +712,24 @@ static func sample_window(ctx: Dictionary, seconds: float) -> Dictionary:
 	var frame_ms: Array = []
 	var draws: Array = []
 	var prims: Array = []
+	var process_ms: Array = []
+	var physics_ms: Array = []
+	var setup_ms: Array = []
+	var all_gpu: Array = []
+	var all_cpu: Array = []
+	var all_rids: Array = ctx.get("all_rids", [])
 	var root_rid: RID = ctx["root_rid"]
 	var far_rid: RID = ctx["far_rid"]
+	# perf pass P0: split the frame at the SceneTree process_frame signal (emitted before the nodes' _process) and at frame_pre_draw: process step = pre_draw - process_frame
+	# (all _process, timers, deferred calls), draw step = post_draw - pre_draw (render CPU plus any wait for the GPU), other = the rest of the frame (physics, input, OS).
+	var marks := {"process": 0, "pre": 0}
+	var on_process := func() -> void: marks["process"] = Time.get_ticks_usec()
+	var on_pre := func() -> void: marks["pre"] = Time.get_ticks_usec()
+	tree.process_frame.connect(on_process)
+	RenderingServer.frame_pre_draw.connect(on_pre)
+	var process_step: Array = []
+	var draw_step: Array = []
+	var other_step: Array = []
 	var utc0 := Time.get_unix_time_from_system()
 	var start := Time.get_ticks_usec()
 	var last := start
@@ -573,14 +737,31 @@ static func sample_window(ctx: Dictionary, seconds: float) -> Dictionary:
 		await RenderingServer.frame_post_draw
 		var now := Time.get_ticks_usec()
 		frame_ms.append((now - last) * 0.001)
+		if int(marks["process"]) > last and int(marks["pre"]) >= int(marks["process"]):
+			process_step.append((int(marks["pre"]) - int(marks["process"])) * 0.001)
+			draw_step.append((now - int(marks["pre"])) * 0.001)
+			other_step.append((int(marks["process"]) - last) * 0.001)
 		last = now
 		root_gpu.append(RenderingServer.viewport_get_measured_render_time_gpu(root_rid))
 		root_cpu.append(RenderingServer.viewport_get_measured_render_time_cpu(root_rid))
 		far_gpu.append(RenderingServer.viewport_get_measured_render_time_gpu(far_rid) if far_rid.is_valid() else NAN)
 		draws.append(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME))
 		prims.append(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME))
+		# perf pass P0: main-thread process and physics time, render setup and the sum over every measured viewport (bound analysis)
+		process_ms.append(Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0)
+		physics_ms.append(Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0)
+		setup_ms.append(RenderingServer.get_frame_setup_time_cpu())
+		var sum_gpu := 0.0
+		var sum_cpu := 0.0
+		for rid in all_rids:
+			sum_gpu += RenderingServer.viewport_get_measured_render_time_gpu(rid)
+			sum_cpu += RenderingServer.viewport_get_measured_render_time_cpu(rid)
+		all_gpu.append(sum_gpu)
+		all_cpu.append(sum_cpu)
 		timing.call("Sample")
 	var utc1 := Time.get_unix_time_from_system()
+	tree.process_frame.disconnect(on_process)
+	RenderingServer.frame_pre_draw.disconnect(on_pre)
 	var markers := {}
 	var gpu_window: Dictionary = timing.call("Window")
 	for key in gpu_window:
@@ -588,7 +769,19 @@ static func sample_window(ctx: Dictionary, seconds: float) -> Dictionary:
 			continue
 		var values: Array = Array(gpu_window[key])
 		markers[str(key)] = summarize(values)
+	var cpu_scopes := {}
+	var cpu_window: Dictionary = timing.call("CpuWindow")
+	for key in cpu_window:
+		if str(key) == "_meta":
+			continue
+		var scope_values: Array = Array(cpu_window[key])
+		var scope_sum := 0.0
+		for value in scope_values:
+			scope_sum += float(value)
+		cpu_scopes[str(key)] = {"n": scope_values.size(), "sum_ms": scope_sum, "ms_per_frame": scope_sum / maxf(1.0, float(draws.size())), "median": _median(scope_values)}
 	return {"samples": draws.size(), "seconds": (Time.get_ticks_usec() - start) * 0.000001, "utc0": utc0, "utc1": utc1, "root_gpu_ms": summarize(root_gpu), "far_gpu_ms": summarize(far_gpu),
+		"process_ms": summarize(process_ms), "physics_ms": summarize(physics_ms), "setup_cpu_ms": summarize(setup_ms), "all_gpu_ms": summarize(all_gpu), "all_cpu_ms": summarize(all_cpu), "cpu_scopes": cpu_scopes,
+		"process_step_ms": summarize(process_step), "draw_step_ms": summarize(draw_step), "other_step_ms": summarize(other_step),
 		"root_cpu_ms": summarize(root_cpu), "frame_ms": summarize(frame_ms), "draw_calls": summarize(draws), "primitives": summarize(prims), "markers": markers, "timing_meta": gpu_window.get("_meta", {})}
 
 
@@ -664,7 +857,10 @@ static func run_cost(ctx: Dictionary) -> Dictionary:
 		for pose in poses:
 			if str(pose["name"]) == str(extra[0]):
 				pose_times.append([pose, str(extra[1])])
-	var plan_windows := pose_times.size() * rounds * CASES.size()
+	var cases: Array = CASES.duplicate()
+	for extra in harness_csv("--extra-cases="):
+		cases.insert(cases.size() - 1, str(extra))
+	var plan_windows := pose_times.size() * rounds * cases.size()
 	print("%s plan: %d pose-times x %d rounds x %d cases = %d windows of %.1f s (+%d frames +%.1f s settle) rounds=%d" % [marker, pose_times.size(), rounds, CASES.size(), plan_windows, seconds, WARMUP_FRAMES, SETTLE_S, rounds])
 
 	var results: Array = []
@@ -703,7 +899,7 @@ static func run_cost(ctx: Dictionary) -> Dictionary:
 		print("%s %s fill %.1f s, scopes %s, nodes %s" % [marker, key, fill_wall_s, JSON.stringify(fill["scopes"]), JSON.stringify(record["geometry_nodes"])])
 		# 2./3. cases
 		for round_index in rounds:
-			var order: Array = CASES.duplicate()
+			var order: Array = cases.duplicate()
 			if round_index % 2 == 1:
 				order.reverse()
 			for label in order:
@@ -712,6 +908,8 @@ static func run_cost(ctx: Dictionary) -> Dictionary:
 					failures.append("%s: unknown case %s" % [key, label])
 					continue
 				var window: Dictionary = await sample_window(ctx, seconds)
+				window["probe"] = extra_probe(ctx)
+				print("%s %s r%d %s frame %.2f p95 %.2f max %.2f proc_step %.2f draw_step %.2f other %.2f root_gpu %.2f far_gpu %.2f all_gpu %.2f all_cpu %.2f setup %.2f draws %.0f" % [marker, key, round_index, label, float(window["frame_ms"].get("median", NAN)), float(window["frame_ms"].get("p95", NAN)), float(window["frame_ms"].get("max", NAN)), float(window["process_step_ms"].get("median", NAN)), float(window["draw_step_ms"].get("median", NAN)), float(window["other_step_ms"].get("median", NAN)), float(window["root_gpu_ms"].get("median", NAN)), float(window["far_gpu_ms"].get("median", NAN)), float(window["all_gpu_ms"].get("median", NAN)), float(window["all_cpu_ms"].get("median", NAN)), float(window["setup_cpu_ms"].get("median", NAN)), float(window["draw_calls"].get("mean", NAN))])
 				var why := verify_case(state, str(label))
 				window["label"] = label
 				window["round"] = round_index
@@ -722,10 +920,11 @@ static func run_cost(ctx: Dictionary) -> Dictionary:
 				(record["windows"] as Array).append(window)
 				windows_total += 1
 		restore_state(state)
-		record["derived"] = _derive(record["windows"])
+		record["derived"] = _derive(record["windows"], cases)
+		record["extra_state"] = {"water_hidden_count": state.get("water_hidden_count", -1), "ui_hidden_count": state.get("ui_hidden_count", -1), "env_post_before": state.get("env_post_before", {})}
 		results.append(record)
 		print("%s %s derived %s" % [marker, key, JSON.stringify(record["derived"]["summary_line"])])
-		_save_json(out_dir.path_join("cost_partial.json"), {"completed": results.size(), "of": pose_times.size()})
+		_save_json(out_dir.path_join("cost_partial.json"), {"completed": results.size(), "of": pose_times.size(), "pose_times": results})
 
 	COMMON.stop_power_log(int(ctx["power_pid"]))
 	ctx["power_pid"] = -1

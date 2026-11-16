@@ -106,8 +106,10 @@ static func report_poses(report: String) -> Array:
 ## Call after hold_world_clocks. Natural mode samples the old fixed time without clearing spawned weather.
 static func pin_weather(game: Node, poses: Array) -> Dictionary:
 	var mode := COMMON.arg_value("--weather=", "clear")
+	if mode == "storm":
+		return _pin_storm(game, poses)
 	if mode != "clear" and mode != "natural":
-		return {"error": "unknown --weather=%s (clear|natural)" % mode}
+		return {"error": "unknown --weather=%s (clear|natural|storm)" % mode}
 	if poses.is_empty():
 		return {"error": "no fixture poses for weather sampling"}
 	var clouds := game.get_node_or_null("RingVolumetricClouds")
@@ -161,6 +163,39 @@ static func pin_weather(game: Node, poses: Array) -> Dictionary:
 	return {"error": "no clear weather time in 200 candidates; best time %.1f, %d/%d poses failed, worst pose %s (kind=%d, precipitation=%.4f)" %
 		[best["cloud_time"], best_failures, poses.size(), best["worst_pose"], best["weather"]["system_kind"], best["weather"]["precipitation"]],
 		"searched": 200, "best": best, "spawned_cleared": spawned_cleared}
+
+
+## Perf pass P0 (docs/perf-pass-2026-11.md): `--weather=storm [--weather-pose=<name>]` pins the cloud time (same 200 candidates as clear mode) at which the named fixture pose
+## (default: the first) has the heaviest natural weather (a front outranks rain alone). Spawned weather is left alone. TEST ONLY.
+static func _pin_storm(game: Node, poses: Array) -> Dictionary:
+	if poses.is_empty():
+		return {"error": "no fixture poses for weather sampling"}
+	var clouds := game.get_node_or_null("RingVolumetricClouds")
+	if clouds == null or not clouds.has_method("GetNaturalWeatherDiagnosticAtTime"):
+		return {"error": "RingVolumetricClouds weather diagnostic missing"}
+	var wanted := COMMON.arg_value("--weather-pose=", str(poses[0]["name"]))
+	var target := {}
+	for pose in poses:
+		if str(pose["name"]) == wanted:
+			target = pose
+	if target.is_empty():
+		return {"error": "unknown --weather-pose=%s" % wanted}
+	var best_time := -1.0
+	var best_score := -1.0
+	var best_sample := {}
+	for k in 200:
+		var cloud_time: float = COMMON.FIXED_CLOUD_TIME + 600.0 * k
+		var sample := _weather_at_time(game, clouds, float(target["around_m"]), float(target["across_m"]), cloud_time)
+		if sample.has("error"):
+			return {"error": "%s at cloud time %.1f: %s" % [wanted, cloud_time, sample["error"]]}
+		var score := float(sample["precipitation"]) + (1.0 if int(sample["system_kind"]) >= MAJOR_FRONT else 0.0)
+		if score > best_score:
+			best_score = score
+			best_time = cloud_time
+			best_sample = sample
+	clouds.set("CloudSimulationTimeSeconds", best_time)
+	return {"mode": "storm", "cloud_time": best_time, "searched": 200, "per_pose": {wanted: best_sample}, "spawned_cleared": false, "megastorm": {wanted: best_sample.get("megastorm", null)},
+		"storm_pose": wanted, "storm_score": best_score}
 
 
 static func weather_at(game: Node, around: float, across: float) -> Dictionary:
