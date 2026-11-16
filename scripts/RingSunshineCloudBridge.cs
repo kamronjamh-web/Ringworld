@@ -357,8 +357,7 @@ public partial class RingSunshineCloudBridge : Node
     private float _heavyOvercastFactor;
     private float _lightningHistorySuppression;
     private float _sunHistorySuppression;
-    private bool _hasPreviousSunDirection;
-    private Vector3 _previousSunDirection;
+    private SunHistoryMotionState _sunHistoryMotion;
     private bool _sunHistoryWasSuppressed;
     private Vector3 _lastCloudFrameOrigin = new(float.PositiveInfinity, 0.0f, 0.0f);
     private Vector4 _lastCloudFrameAround = new(float.PositiveInfinity, 0.0f, 0.0f, 0.0f);
@@ -1866,32 +1865,10 @@ public partial class RingSunshineCloudBridge : Node
         if (_clouds == null || _sunLight == null) return;
 
         Vector3 direction = _sunLight.GlobalBasis.Z.Normalized();
-        float angularSpeed = 0.0f;
-        float angularDistance = 0.0f;
-        if (_hasPreviousSunDirection)
-        {
-            angularDistance = SunAngularDistanceDegrees(_previousSunDirection, direction);
-            // Do not turn a zero/invalid process delta into an arbitrarily
-            // large solar velocity. This can occur while the editor pauses or
-            // the viewport is rebuilt, and is not a lighting discontinuity.
-            if (delta > 0.000001 && double.IsFinite(delta))
-                angularSpeed = angularDistance / (float)delta;
-        }
-        _previousSunDirection = direction;
-        _hasPreviousSunDirection = true;
-
-        float threshold = Mathf.Max(0.1f, MinimumHistorySunRotationDegreesPerSecond);
-        // atan2(|cross|, dot) remains accurate for sub-degree per-frame
-        // motion, unlike acos(dot), whose float precision makes ordinary 1x
-        // motion orientation-dependent at high frame rates. Keep a strict
-        // quiet window below the configured threshold: the normal authored
-        // cycle must retain its history completely.
-        // A real discontinuity remains immediate even when it occurs in one
-        // frame (teleport/clock jump), while sustained accelerated motion
-        // ramps to full suppression over one threshold-width window.
-        float continuousSuppression = SmoothUnit((angularSpeed - threshold) / threshold);
-        bool discontinuity = angularDistance >= Mathf.Max(0.01f, SunHistoryDiscontinuityDegrees);
-        _sunHistorySuppression = discontinuity ? 1.0f : continuousSuppression;
+        float discontinuityDegrees = Mathf.Max(0.01f, SunHistoryDiscontinuityDegrees);
+        float angularSpeed = AdvanceSunHistoryMotion(ref _sunHistoryMotion, direction, delta, discontinuityDegrees, out float angularDistance);
+        _sunHistorySuppression = ResolveSunHistorySuppression(angularSpeed, angularDistance,
+            MinimumHistorySunRotationDegreesPerSecond, discontinuityDegrees);
         bool suppressing = _sunHistorySuppression >= 0.5f;
         if (suppressing && !_sunHistoryWasSuppressed)
         {
@@ -1900,6 +1877,77 @@ public partial class RingSunshineCloudBridge : Node
         }
         _sunHistoryWasSuppressed = suppressing;
         ApplyEffectiveHistoryWeight();
+    }
+
+    /// <summary>Sun-history speed estimate state (see <see cref="AdvanceSunHistoryMotion"/>).</summary>
+    public struct SunHistoryMotionState
+    {
+        public bool HasDirection;
+        public Vector3 CommittedDirection;
+        public double SecondsSinceCommit;
+        public float LastStepDegrees;
+        public double LastStepSeconds;
+        public float LastRate;
+    }
+
+    /// <summary>Smaller sun motion than this is not committed; it accumulates until it exceeds it.</summary>
+    public const float SunHistoryMotionEpsilonDegrees = 0.0001f;
+
+    /// <summary>
+    /// Sun angular speed for the history policy, in degrees per second. Pure.
+    /// Speed is measured from committed sun directions over the time between commits, not over one frame:
+    /// RingDayNightCycle's sun-shadow stabilisation holds the light still and moves it in small steps (one every ~0.5 s at the
+    /// authored rate). Dividing a step by one frame's delta read it as several degrees per second above ~96 fps and rebuilt all
+    /// of Sunshine every step (~57 ms spike, perf pass E1 2026-11-16). On a commit the rate is taken over the last two steps,
+    /// so an irregular step cadence (steps 1 and 3 frames apart) reads as its mean rate; between the steps of stepped fast
+    /// motion that rate is held for up to two step intervals, so suppression stays on instead of toggling (and rebuilding)
+    /// every step. Continuous motion commits every frame, so the result equals the per-frame rate there. A discontinuity step
+    /// is neither averaged forward nor held. A zero or invalid delta adds no time and never yields an unbounded speed.
+    /// <paramref name="distanceDegrees"/> is the angle from the committed direction (the discontinuity test).
+    /// </summary>
+    public static float AdvanceSunHistoryMotion(ref SunHistoryMotionState state, Vector3 direction, double delta,
+        float discontinuityDegrees, out float distanceDegrees)
+    {
+        distanceDegrees = 0.0f;
+        if (delta > 0.0 && double.IsFinite(delta)) state.SecondsSinceCommit += delta;
+        if (!state.HasDirection)
+        {
+            state = new SunHistoryMotionState { HasDirection = true, CommittedDirection = direction };
+            return 0.0f;
+        }
+        distanceDegrees = SunAngularDistanceDegrees(state.CommittedDirection, direction);
+        if (distanceDegrees > SunHistoryMotionEpsilonDegrees)
+        {
+            double seconds = state.SecondsSinceCommit;
+            float speed = 0.0f;
+            if (seconds > 0.000001)
+                speed = state.LastStepSeconds > 0.000001
+                    ? (distanceDegrees + state.LastStepDegrees) / (float)(seconds + state.LastStepSeconds)
+                    : distanceDegrees / (float)seconds;
+            bool discontinuity = distanceDegrees >= discontinuityDegrees;
+            state.LastStepDegrees = discontinuity || seconds <= 0.000001 ? 0.0f : distanceDegrees;
+            state.LastStepSeconds = discontinuity || seconds <= 0.000001 ? 0.0 : seconds;
+            state.LastRate = discontinuity ? 0.0f : speed;
+            state.CommittedDirection = direction;
+            state.SecondsSinceCommit = 0.0;
+            return speed;
+        }
+        if (state.LastStepSeconds > 0.000001 && state.SecondsSinceCommit <= state.LastStepSeconds * 2.0)
+            return state.LastRate;
+        return 0.0f;
+    }
+
+    /// <summary>
+    /// Solar history suppression (0-1). Pure. Keep a strict quiet window below the configured threshold: the normal authored
+    /// cycle must retain its history completely. A real discontinuity remains immediate even when it occurs in one frame
+    /// (teleport/clock jump), while sustained accelerated motion ramps to full suppression over one threshold-width window.
+    /// </summary>
+    public static float ResolveSunHistorySuppression(float speedDegreesPerSecond, float distanceDegrees,
+        float minimumRotationDegreesPerSecond, float discontinuityDegrees)
+    {
+        float threshold = Mathf.Max(0.1f, minimumRotationDegreesPerSecond);
+        if (distanceDegrees >= Mathf.Max(0.01f, discontinuityDegrees)) return 1.0f;
+        return SmoothUnit((speedDegreesPerSecond - threshold) / threshold);
     }
 
     /// <summary>Stable unsigned angle between two sun directions, in degrees.</summary>

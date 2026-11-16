@@ -4261,6 +4261,18 @@
       "expected_s": 1,
       "timeout_s": 60
     },
+    "sun_history_motion_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "cloud-history"
+      ],
+      "marker": "SUN_HISTORY_MOTION",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
     "precip_occlusion_gpu_test": {
       "kind": "test",
       "mode": "gpu",
