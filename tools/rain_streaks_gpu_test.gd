@@ -101,6 +101,8 @@ func aim(forward: Vector3, pitch_degrees := 8.0) -> void:
 	var look := (f * cos(deg_to_rad(pitch_degrees)) + up * sin(deg_to_rad(pitch_degrees))).normalized()
 	var basis := Basis(right, right.cross(look).normalized(), -look).orthonormalized()
 	camera.global_transform = Transform3D(basis, eye)
+	# Physics interpolation would otherwise render one in-between pose after a re-aim (scene_static flake, 2026-11-16).
+	camera.reset_physics_interpolation()
 
 func run() -> void:
 	create_timer(900.0, true, false, true).timeout.connect(func(): _finish("FAIL watchdog expired"))
