@@ -20,6 +20,9 @@ public partial class RingBiomeDecorationLayer
             Aabb expectedWindBounds = (windTransform * windPrototype).Grow(24);
             if (TreeWindDeformationBounds(windTransform, windPrototype) != expectedWindBounds)
                 return "FAIL: configured maximum tree wind deformation missing from bounds";
+            string interning = RunGpuTreeInterningRegression();
+            if (interning.Length > 0) return interning;
+            GpuTreeLookupCopyChunk = 64; // Several yielded chunks even for the few hundred roots here.
             TreeStreamingBudgetMilliseconds = .25f; MaximumGpuTreeRoots = 4096;
             CellSizeMeters = 20; SpatialTileCells = 4;
             MergeFarGpuTreeBatches = true; MergeMidGpuTreeBatches = true; MidTreeBatchTileSpan = 2;
@@ -40,6 +43,7 @@ public partial class RingBiomeDecorationLayer
                 return "FAIL: variant-preserving mid merge";
             var retained = _gpuTreeGroups[new GpuGroupKey(1, 0, 0)];
             PrepareRegressionPlan(geometry); if (!DrainRegressionPlan() || !ReferenceEquals(retained, _gpuTreeGroups[new GpuGroupKey(1, 0, 0)])) return "FAIL: unchanged identity reuse";
+            if (!LookupMatchesGroups()) return "FAIL: chunked lookup copy differs from a full copy after two plans";
             var distant = _gpuTreeMergedGroups[3].Values.Single(g => g.Members!.Any(m => m.Key.Around == 10) && g.Key.Variant == 0);
             var changed = Tile(0, 0, 1, 300);
             changed.Trees[0] = changed.Trees[0] with { SurfaceHeight = 7 };
@@ -48,9 +52,11 @@ public partial class RingBiomeDecorationLayer
             if (!ReferenceEquals(retained, _gpuTreeGroups[new GpuGroupKey(1, 0, 0)])
                 || !_gpuTreeMergedGroups[3].Values.Contains(distant)
                 || _gpuTreeRootLookup[1].Group.Roots[_gpuTreeRootLookup[1].Index].SurfaceHeight != 7) return "FAIL: incremental changed tile";
+            if (!LookupMatchesGroups()) return "FAIL: chunked lookup copy differs from a full copy after a changed tile";
             _vegetationTiles.Remove(third.Key); _visibleVegetationTiles.Remove(third.Key);
             PrepareRegressionPlan(geometry); if (!DrainRegressionPlan() || _gpuTreeRootLookup.Count != 600
                 || _gpuTreeTilePartitions.ContainsKey(third.Key)) return "FAIL: removed tile retention";
+            if (!LookupMatchesGroups()) return "FAIL: chunked lookup copy differs from a full copy after a removed tile";
             RefreshGpuTreeResidentSources(); PrepareRegressionPlan(geometry);
             if (!_gpuTreePreparation!.MoveNext()) return "FAIL: planner did not yield";
             RefreshGpuTreeResidentSources(); if (!DrainRegressionPlan() || !_gpuTreeSourcesDirty) return "FAIL: late refresh was lost";
@@ -110,6 +116,41 @@ public partial class RingBiomeDecorationLayer
             return "PASS: sliced convergence, incremental reuse/change/removal, caps, stale protection, late refresh, cancellation, normalization";
         }
         catch (Exception error) { return "FAIL: " + error.GetType().Name + " " + error.Message; }
+    }
+
+    // The committed lookup must hold exactly one entry per root of the committed groups, pointing at that group and index: what a full rebuild produces.
+    private bool LookupMatchesGroups()
+    {
+        int roots = 0;
+        foreach (GpuTreeGroup group in _gpuTreeGroups.Values)
+            for (int i = 0; i < group.Roots.Length; i++)
+            {
+                roots++;
+                if (!_gpuTreeRootLookup.TryGetValue(group.Roots[i].Id, out var entry) || !ReferenceEquals(entry.Group, group) || entry.Index != i) return false;
+            }
+        return roots == _gpuTreeRootLookup.Count;
+    }
+
+    // The per-frame edge and cap arrays are interned: same array while the values are unchanged, a new array (and the old one untouched) when they change,
+    // so selection invalidation by value comparison keeps working after a live tuning change.
+    private string RunGpuTreeInterningRegression()
+    {
+        float visibility = VisibilityRadiusMeters; int lod4 = MaximumLod4Trees;
+        try
+        {
+            VisibilityRadiusMeters = 1_000_000; MaximumLod4Trees = 300;
+            float[] edgesA = GpuTreeLodEdges(); uint[] capsA = GpuTreeLodCaps(); float[] configuredA = GpuTreeConfiguredEdges();
+            if (!ReferenceEquals(edgesA, GpuTreeLodEdges()) || !ReferenceEquals(capsA, GpuTreeLodCaps()) || !ReferenceEquals(configuredA, GpuTreeConfiguredEdges()))
+                return "FAIL: unchanged edges or caps were not interned";
+            float[] edgesSnapshot = (float[])edgesA.Clone(); uint[] capsSnapshot = (uint[])capsA.Clone();
+            VisibilityRadiusMeters = 2_000_000; MaximumLod4Trees = 400;
+            float[] edgesB = GpuTreeLodEdges(); uint[] capsB = GpuTreeLodCaps();
+            if (ReferenceEquals(edgesA, edgesB) || edgesA.AsSpan().SequenceEqual(edgesB) || ReferenceEquals(capsA, capsB) || capsA.AsSpan().SequenceEqual(capsB))
+                return "FAIL: changed edges or caps were not returned as new arrays";
+            if (!edgesA.AsSpan().SequenceEqual(edgesSnapshot) || !capsA.AsSpan().SequenceEqual(capsSnapshot)) return "FAIL: an interned array was mutated in place";
+            return "";
+        }
+        finally { VisibilityRadiusMeters = visibility; MaximumLod4Trees = lod4; }
     }
 
     private void PrepareRegressionPlan(RingLodGeometrySnapshot geometry)

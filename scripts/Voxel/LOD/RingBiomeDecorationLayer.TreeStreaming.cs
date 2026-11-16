@@ -230,16 +230,16 @@ public partial class RingBiomeDecorationLayer
 			if (priorityTurned)
 			{
 				RebuildVegetationRequestQueue(focus, predictedFocus, priorityForward, layout);
-				StartVegetationTileBuilds(sampler, edits, layout);
+				using (RingPerformanceTelemetry.MeasureCpu("Trees build start")) StartVegetationTileBuilds(sampler, edits, layout);
 			}
 			return;
 		}
 		RebuildVegetationRequestQueue(focus, predictedFocus, priorityForward, layout);
 		_vegetationRenderDirty = true;
 		_vegetationRenderMovementDirty = true;
-		StartVegetationTileBuilds(sampler, edits, layout);
-		EvictVegetationCache();
-		ScheduleVegetationDiskBudget();
+		using (RingPerformanceTelemetry.MeasureCpu("Trees build start")) StartVegetationTileBuilds(sampler, edits, layout);
+		using (RingPerformanceTelemetry.MeasureCpu("Trees cache eviction")) EvictVegetationCache();
+		using (RingPerformanceTelemetry.MeasureCpu("Trees disk budget")) ScheduleVegetationDiskBudget();
 	}
 
 	// A floating-origin move that only translates the surface keeps every GPU source row valid
@@ -536,12 +536,26 @@ public partial class RingBiomeDecorationLayer
 	private void CompleteTileStreaming()
 	{
 		using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Trees install");
+		// Arm the frame deadline here so the bookkeeping below counts against the same budget as the render update that follows.
+		bool armedDeadline = !LegacyTreeStreamingBudget && _gpuTreeFrameDeadline == 0;
+		if (armedDeadline) _gpuTreeFrameDeadline = Time.GetTicksUsec() + (ulong)(GpuTreeStreamingBudget * 1000);
+		try { CompleteTileStreamingCore(); }
+		finally { if (armedDeadline) _gpuTreeFrameDeadline = 0; }
+	}
+
+	private readonly List<VegetationTileKey> _vegetationBuildKeyScratch = new();
+
+	private void CompleteTileStreamingCore()
+	{
 		if (!UsePersistentVegetationTiles || _grid?.TerrainSampler is not RingTerrainSampler sampler) return;
 		bool completedAny = false;
 		bool rebuildRequests = false;
-		foreach ((VegetationTileKey key, VegetationBuildJob job) in new List<KeyValuePair<VegetationTileKey, VegetationBuildJob>>(_vegetationBuilds))
+		_vegetationBuildKeyScratch.Clear();
+		foreach (VegetationTileKey pendingKey in _vegetationBuilds.Keys) _vegetationBuildKeyScratch.Add(pendingKey);
+		using (RingPerformanceTelemetry.MeasureCpu("Trees completion bookkeeping"))
+		foreach (VegetationTileKey key in _vegetationBuildKeyScratch)
 		{
-			if (!job.Task.IsCompleted) continue;
+			if (!_vegetationBuilds.TryGetValue(key, out VegetationBuildJob? job) || !job.Task.IsCompleted) continue;
 			completedAny = true;
 			_vegetationBuilds.Remove(key);
 			_requestedVegetationTiles.Remove(key);
@@ -599,10 +613,25 @@ public partial class RingBiomeDecorationLayer
 			RebuildVegetationRequestQueue(focus, PredictVegetationFocus(focus), ResolveVegetationPriorityForward(), layout);
 		}
 		RingLodSurfaceEditSnapshot edits = _smoothTerrain?.CaptureLodSurfaceEditSnapshot() ?? _grid.CaptureLodSurfaceEditSnapshot();
-		StartVegetationTileBuilds(sampler, edits, layout);
-		EvictVegetationCache();
-		ScheduleVegetationDiskBudget();
+		using (RingPerformanceTelemetry.MeasureCpu("Trees build start")) StartVegetationTileBuilds(sampler, edits, layout);
+		using (RingPerformanceTelemetry.MeasureCpu("Trees cache eviction")) EvictVegetationCache();
+		using (RingPerformanceTelemetry.MeasureCpu("Trees disk budget")) ScheduleVegetationDiskBudget();
 		ServiceVegetationRenderUpdates();
+	}
+
+	private string? _vegetationIdentity, _vegetationIdentityDirectory, _vegetationIdentityRoot, _vegetationLodCacheWorld, _vegetationLodCacheRoot;
+	private ulong _vegetationIdentitySettings, _vegetationIdentityDefinition;
+	private int _vegetationIdentityGenerator, _vegetationIdentitySeed, _vegetationIdentityFeatures;
+
+	// GlobalizePath and Path.Combine are only redone when the active world directory setting changes.
+	private string ResolveVegetationLodCacheRoot(string activeWorld)
+	{
+		if (_vegetationLodCacheRoot is null || !string.Equals(_vegetationLodCacheWorld, activeWorld, StringComparison.Ordinal))
+		{
+			_vegetationLodCacheRoot = Path.Combine(ProjectSettings.GlobalizePath(activeWorld), "lod_cache");
+			_vegetationLodCacheWorld = activeWorld;
+		}
+		return _vegetationLodCacheRoot;
 	}
 
 	private (string Path, string BudgetRoot) ResolveVegetationDiskCachePath(
@@ -614,8 +643,7 @@ public partial class RingBiomeDecorationLayer
 			return (string.Empty, string.Empty);
 		string activeWorld = ProjectSettings.GetSetting("ringworld/runtime/active_world_directory", "").AsString();
 		if (string.IsNullOrWhiteSpace(activeWorld)) return (string.Empty, string.Empty);
-		string worldRoot = ProjectSettings.GlobalizePath(activeWorld);
-		string budgetRoot = Path.Combine(worldRoot, "lod_cache");
+		string budgetRoot = ResolveVegetationLodCacheRoot(activeWorld);
 		ulong settings = VegetationCacheSettingsHash(
 			layout.AroundCellCount,
 			layout.CircumferenceMeters,
@@ -628,13 +656,24 @@ public partial class RingBiomeDecorationLayer
 			GroveDensity,
 			MaximumSlopeDegrees,
 			UseRegionalImportedForest);
-		string definition = FormattableString.Invariant(
-			$"v{VegetationDiskCacheVersion}|g{sampler.TerrainGeneratorVersion}|seed{sampler.Seed}|h{sampler.TerrainDefinitionHash:X16}|s{settings:X16}{(sampler.EmitterSites != null ? "|es1" : "")}{(sampler.ClimateMachines != null ? "|cm1" : "")}{(sampler.WeatherLung != null ? "|wl1" : "")}");
-		byte[] digest = SHA256.HashData(Encoding.UTF8.GetBytes(definition));
-		string identity = Convert.ToHexString(digest.AsSpan(0, 12));
+		// The identity is a pure function of these inputs, so it is computed once per distinct tuple.
+		int generator = sampler.TerrainGeneratorVersion, seed = sampler.Seed;
+		ulong definitionHash = sampler.TerrainDefinitionHash;
+		int features = (sampler.EmitterSites != null ? 1 : 0) | (sampler.ClimateMachines != null ? 2 : 0) | (sampler.WeatherLung != null ? 4 : 0);
+		if (_vegetationIdentity is null || _vegetationIdentitySettings != settings || _vegetationIdentityGenerator != generator || _vegetationIdentitySeed != seed
+			|| _vegetationIdentityDefinition != definitionHash || _vegetationIdentityFeatures != features || _vegetationIdentityRoot != budgetRoot)
+		{
+			string definition = FormattableString.Invariant(
+				$"v{VegetationDiskCacheVersion}|g{generator}|seed{seed}|h{definitionHash:X16}|s{settings:X16}{(sampler.EmitterSites != null ? "|es1" : "")}{(sampler.ClimateMachines != null ? "|cm1" : "")}{(sampler.WeatherLung != null ? "|wl1" : "")}");
+			byte[] digest = SHA256.HashData(Encoding.UTF8.GetBytes(definition));
+			_vegetationIdentity = Convert.ToHexString(digest.AsSpan(0, 12));
+			_vegetationIdentityDirectory = Path.Combine(budgetRoot, "vegetation", _vegetationIdentity);
+			_vegetationIdentitySettings = settings; _vegetationIdentityGenerator = generator; _vegetationIdentitySeed = seed;
+			_vegetationIdentityDefinition = definitionHash; _vegetationIdentityFeatures = features; _vegetationIdentityRoot = budgetRoot;
+		}
 		long shardAround = FloorDiv(key.Around, 64);
 		long shardAcross = FloorDiv(key.Across, 64);
-		string directory = Path.Combine(budgetRoot, "vegetation", identity, $"r_{shardAround}_{shardAcross}");
+		string directory = Path.Combine(_vegetationIdentityDirectory!, $"r_{shardAround}_{shardAcross}");
 		return (Path.Combine(directory, $"t_{key.Around}_{key.Across}.bin"), budgetRoot);
 	}
 
@@ -656,7 +695,7 @@ public partial class RingBiomeDecorationLayer
 		if (!EnableVegetationDiskCache || _vegetationDiskCacheDisabledByCommandLine) return;
 		string activeWorld = ProjectSettings.GetSetting("ringworld/runtime/active_world_directory", "").AsString();
 		if (string.IsNullOrWhiteSpace(activeWorld)) return;
-		string root = Path.Combine(ProjectSettings.GlobalizePath(activeWorld), "lod_cache");
+		string root = ResolveVegetationLodCacheRoot(activeWorld);
 		RingGeneratedLodCacheBudget.Schedule(
 			root,
 			Mathf.Max(0, VegetationDiskCacheBudgetMiB) * 1024L * 1024L,
@@ -738,6 +777,8 @@ public partial class RingBiomeDecorationLayer
 		_vegetationRenderMovementDirty = true;
 	}
 
+	private readonly List<(long LastUsed, int Order, VegetationTileKey Key)> _vegetationEvictionScratch = new();
+
 	private void EvictVegetationCache()
 	{
 		// The cache must hold the whole desired set plus a margin of two perimeters, whatever the setting says,
@@ -746,16 +787,24 @@ public partial class RingBiomeDecorationLayer
 		long maximumBytes = Mathf.Max(16, MaximumVegetationCacheMemoryMiB) * 1024L * 1024L;
 		long bytes = 0;
 		foreach (VegetationTile tile in _vegetationTiles.Values) bytes += tile.EstimatedBytes;
-		while (_vegetationTiles.Count > maximum || bytes > maximumBytes)
+		if (_vegetationTiles.Count > maximum || bytes > maximumBytes)
 		{
-			VegetationTileKey victim = default; long oldest = long.MaxValue; bool found = false;
+			// Never create a visible coverage hole merely to satisfy a too-small cache setting: only evictable tiles are listed. Evictability does not change while evicting, so the victims are the evictable tiles in LastUsed order (enumeration order breaks ties,
+			// as the strict less-than scan used to).
+			var candidates = _vegetationEvictionScratch; candidates.Clear();
 			foreach ((VegetationTileKey key, VegetationTile tile) in _vegetationTiles)
-				if (!_keepVegetationTiles.Contains(key) && !_desiredVegetationTiles.Contains(key) && tile.LastUsed < oldest) { victim = key; oldest = tile.LastUsed; found = true; }
-			if (!found) break; // Never create a visible coverage hole merely to satisfy a too-small cache setting.
-			bytes -= _vegetationTiles[victim].EstimatedBytes;
-			_vegetationTiles.Remove(victim);
-			_evictedVegetationKeys.Add(victim);
-			VegetationTilesEvicted++;
+				if (!_keepVegetationTiles.Contains(key) && !_desiredVegetationTiles.Contains(key)) candidates.Add((tile.LastUsed, candidates.Count, key));
+			candidates.Sort(static (a, b) => a.LastUsed != b.LastUsed ? a.LastUsed.CompareTo(b.LastUsed) : a.Order.CompareTo(b.Order));
+			foreach (var candidate in candidates)
+			{
+				VegetationTileKey victim = candidate.Key;
+				if (_vegetationTiles.Count <= maximum && bytes <= maximumBytes) break;
+				bytes -= _vegetationTiles[victim].EstimatedBytes;
+				_vegetationTiles.Remove(victim);
+				_evictedVegetationKeys.Add(victim);
+				VegetationTilesEvicted++;
+			}
+			candidates.Clear();
 		}
 		VegetationCacheEstimatedBytes = Math.Max(0L, bytes);
 	}

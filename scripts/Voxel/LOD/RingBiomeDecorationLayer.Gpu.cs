@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Godot;
 using RingworldTechDemo.Atmosphere;
 using RingworldTechDemo.Diagnostics;
@@ -180,7 +181,9 @@ public partial class RingBiomeDecorationLayer
         }
         if (_explorer == null || _grid == null) return false;
         if (!EnsureGpuTreeBackend()) return false;
-        _gpuTreeFrameDeadline = Time.GetTicksUsec() + (ulong)(GpuTreeStreamingBudget * 1000);
+        // The completion pass (CompleteTileStreaming) arms the same deadline before its own bookkeeping; only arm here when nobody has.
+        bool armedDeadline = LegacyTreeStreamingBudget || _gpuTreeFrameDeadline == 0;
+        if (armedDeadline) _gpuTreeFrameDeadline = Time.GetTicksUsec() + (ulong)(GpuTreeStreamingBudget * 1000);
         try
         {
         RingLodGeometrySnapshot geometry = _grid.CaptureLodGeometrySnapshot();
@@ -206,7 +209,7 @@ public partial class RingBiomeDecorationLayer
         return ServiceGpuTreeOutputs(_explorer.GlobalPosition, _explorer.CanonicalPosition,
             _grid.GetCanonicalRingCircumferenceMeters64());
         }
-        finally { _gpuTreeFrameDeadline = 0; }
+        finally { if (armedDeadline) _gpuTreeFrameDeadline = 0; }
     }
 
     private bool EnsureGpuTreeBackend()
@@ -227,12 +230,14 @@ public partial class RingBiomeDecorationLayer
 
     // Cooperative selection/build/merge implementation lives in .GpuPreparation.cs.
 
-    private IEnumerable<GpuTreeGroup> GroupsForGpuLod(int lod)
+    private IEnumerable<GpuTreeGroup> GroupsForGpuLod(int lod) => GroupContainerForGpuLod(lod).Values;
+
+    private Dictionary<GpuGroupKey, GpuTreeGroup> GroupContainerForGpuLod(int lod)
     {
         if (((lod == 2 && MergeMidGpuTreeBatches) || (lod is 3 or 4 && MergeFarGpuTreeBatches))
             && _gpuTreeMergedGroups.TryGetValue(lod, out Dictionary<GpuGroupKey, GpuTreeGroup>? merged))
-            return merged.Values;
-        return _gpuTreeGroups.Values;
+            return merged;
+        return _gpuTreeGroups;
     }
 
     // Far outputs deliberately use the same growing bin sizes as the retired
@@ -449,13 +454,26 @@ public partial class RingBiomeDecorationLayer
     /// <summary>Test switch: the configured hand-off ends are used as before TR-9a. No menu row.</summary>
     internal bool DisableGpuTreeEffectiveEdges { get; set; }
 
+    // The per-frame edge, cap and gate arrays are interned: the previously returned array comes back while the values are unchanged and a new array
+    // otherwise. Selection and frame submission keep these references and compare them by value, so they must never be mutated in place.
+    private float[]? _gpuTreeConfiguredEdgesInterned, _gpuTreeLodEdgesInterned, _gpuTreeGatesInterned;
+    private uint[]? _gpuTreeCapsInterned;
+    private static T[] InternArray<T>(ref T[]? slot, ReadOnlySpan<T> values) where T : unmanaged, IEquatable<T>
+    {
+        if (slot is null || !slot.AsSpan().SequenceEqual(values)) slot = values.ToArray();
+        return slot;
+    }
+    /// <summary>Test switch: the tree streaming deadline is armed only inside the render update and the source lookup copy is unchunked, as before PERF-3 T1. No menu row.</summary>
+    public bool LegacyTreeStreamingBudget { get; set; }
+
     private float[] GpuTreeLodEdges()
     {
-        float[] edges = GpuTreeConfiguredEdges();
+        Span<float> edges = stackalloc float[6];
+        FillGpuTreeConfiguredEdges(edges);
         if (EffectiveCompactTreeLodProfile && !DisableGpuTreeEffectiveEdges && _gpuTreeEffectiveEnds is { } ends
             && _gpuTreeEffectiveBase is { } baseEdges && baseEdges.AsSpan().SequenceEqual(edges))
             for (int i = 0; i < 4; i++) edges[1 + i] = ends[i];
-        return edges;
+        return InternArray(ref _gpuTreeLodEdgesInterned, (ReadOnlySpan<float>)edges);
     }
 
     /// <summary>Test hook: the stored effective hand-off ends of slots 0..3, or null when none are in force.</summary>
@@ -467,6 +485,13 @@ public partial class RingBiomeDecorationLayer
 
     private float[] GpuTreeConfiguredEdges()
     {
+        Span<float> edges = stackalloc float[6];
+        FillGpuTreeConfiguredEdges(edges);
+        return InternArray(ref _gpuTreeConfiguredEdgesInterned, (ReadOnlySpan<float>)edges);
+    }
+
+    private void FillGpuTreeConfiguredEdges(Span<float> edges)
+    {
         if (EffectiveCompactTreeLodProfile)
         {
             CompactTreeFadeBounds(out _, out float nearEnd, out _, out float billboardEnd);
@@ -476,12 +501,14 @@ public partial class RingBiomeDecorationLayer
                 : Mathf.Clamp(MinimumLod5DistanceMeters, billboardEnd, Math.Max(billboardEnd, MaximumLod5DistanceMeters));
             float midEnd = nearEnd;
             if (EffectiveTreeRenderLods) CompactTreeMidFadeBounds(out _, out midEnd);
-            return new[] { 0f, nearEnd, midEnd, billboardEnd, compactFourth, far };
+            edges[0] = 0f; edges[1] = nearEnd; edges[2] = midEnd; edges[3] = billboardEnd; edges[4] = compactFourth; edges[5] = far;
+            return;
         }
         float collision = EnableImportedForestCollisions ? Math.Max(1, ImportedForestCollisionRadiusMeters) + 4 : 1;
         float first = Math.Max(collision, Lod1DistanceMeters), second = Math.Max(first, Lod2DistanceMeters), third = Math.Max(second, Lod3DistanceMeters);
         float fourth = Mathf.Clamp(MinimumLod5DistanceMeters, third, Math.Max(third, MaximumLod5DistanceMeters));
-        return new[] { 0f, first, second, third, fourth, Math.Max(Math.Max(VisibilityRadiusMeters, MaximumLod5DistanceMeters), collision) };
+        edges[0] = 0f; edges[1] = first; edges[2] = second; edges[3] = third; edges[4] = fourth;
+        edges[5] = Math.Max(Math.Max(VisibilityRadiusMeters, MaximumLod5DistanceMeters), collision);
     }
 
     private bool GpuTreeSelectionCanReuse(Vector3 camera, RingCanonicalPosition? focus, double circumference,
@@ -523,7 +550,8 @@ public partial class RingBiomeDecorationLayer
             ClearGpuTreeFallbackOutputs(budgeted: true);
         float[] edges = GpuTreeLodEdges();
         uint[] caps = GpuTreeLodCaps();
-        float[] gates = { VegetationLodRankGate(1), VegetationLodRankGate(2), EffectiveCompactTreeLodProfile ? 1f : VegetationLodRankGate(3), VegetationLodRankGate(4), VegetationLodRankGate(5) };
+        Span<float> gateValues = stackalloc float[5] { VegetationLodRankGate(1), VegetationLodRankGate(2), EffectiveCompactTreeLodProfile ? 1f : VegetationLodRankGate(3), VegetationLodRankGate(4), VegetationLodRankGate(5) };
+        float[] gates = InternArray(ref _gpuTreeGatesInterned, (ReadOnlySpan<float>)gateValues);
         float guard = Math.Max(32, CellSizeMeters * 2);
         _gpuTreeCompute.OptimizeTreeDispatches = OptimizeGpuTreeDispatches;
         if (CanDeferGpuTreeFrame(camera, focus, circumference, edges, caps, gates, guard)) return true;
@@ -544,38 +572,32 @@ public partial class RingBiomeDecorationLayer
         using var selectionScope = RingPerformanceTelemetry.MeasureCpu("Trees output selection");
         _gpuTreeOrder.Clear(); _gpuTreeWanted.Clear();
         _gpuTreeOutputGroups.Clear();
-        var pruneCounts = new Dictionary<GpuOutputKey, (int PotentialProtected, int PotentialOrdinary, int GuaranteedProtected, int GuaranteedOrdinary)>();
+        var pruneCounts = _gpuTreePruneCountsScratch; pruneCounts.Clear();
         bool compactProfile = EffectiveCompactTreeLodProfile;
         float reuseRadius = guard * .25f + .001f;
         _gpuTreeGroupDistanceScratch.Clear();
+        if ((!SerialTreeSelection || VerifyTreeSelection) && focus is RingCanonicalPosition boundsFocus)
+            using (RingPerformanceTelemetry.MeasureCpu("Trees selection bounds")) PrepareGpuTreeBoundsSets(boundsFocus, circumference);
         // TR-9a: derive the hand-off ends from the caps before any band is used. Pruning and a canonical focus are required; otherwise the configured edges apply.
+        using (RingPerformanceTelemetry.MeasureCpu("Trees selection effective edges"))
+        {
         if (compactProfile && PruneEmptyGpuTreeBatches && !DisableGpuTreeEffectiveEdges && focus is RingCanonicalPosition effectiveFocus)
             edges = UpdateGpuTreeEffectiveEdges(camera, effectiveFocus, circumference, caps, gates, guard);
         else if (_gpuTreeEffectiveEnds is not null) { _gpuTreeEffectiveEnds = null; _gpuTreeEffectiveBase = null; edges = GpuTreeLodEdges(); }
-        for (int lod = 0; lod < 5; lod++)
-        {
-        if (!IsGpuTreeLodEnabled(lod)) continue;
-        // Per-LOD invariants: the interval depends only on (lod, edges).
-        GpuTreeLodInterval(lod, edges, out float lodNear, out float lodFar, out _, out _, out _, out _);
-        foreach (GpuTreeGroup group in GroupsForGpuLod(lod))
-        {
-            (float near, float far) = GpuTreeGroupDistanceBounds(group, camera, focus, circumference);
-            var key = new GpuOutputKey(group.Key, lod);
-            bool overlaps = (lod == 0 && group.HasProtected && !compactProfile) || (far + guard >= lodNear && near - guard < lodFar);
-            if (!overlaps) continue;
-            if (PruneEmptyGpuTreeBatches)
-            {
-                // Quad mode: the quad slot also accepts steep trees of the card gate from the card near edge, so its candidate count uses the larger gate and
-                // only counts roots past its own start as guaranteed; the card slot loses steep trees, so none of its roots is guaranteed.
-                bool quadSlot = lod == 4 && EffectiveFarTreeQuads, cardSlot = lod == 3 && EffectiveFarTreeQuads;
-                GpuTreeLodInterval(4, edges, out _, out _, out float quadInStart, out _, out _, out _);
-                if (!TryGpuTreeGroupPruneCounts(group, lod, lodNear, lodFar, quadSlot ? Math.Max(gates[3], gates[4]) : gates[lod], reuseRadius, focus, circumference,
-                    compactProfile, out var counts, cardSlot ? -1f : quadSlot ? gates[4] : float.NaN, quadSlot ? quadInStart : float.NaN)) continue;
-                pruneCounts[key] = counts;
-            }
-            _gpuTreeOrder.Add((key, near, (compactProfile || lod == 0) && group.HasProtected)); _gpuTreeOutputGroups[key] = group;
         }
+        using (RingPerformanceTelemetry.MeasureCpu("Trees selection prune counts"))
+        {
+        if (VerifyTreeSelection)
+        {
+            // Serial result is committed; the parallel one is computed alongside and compared.
+            BuildGpuTreeSelectionCandidates(false, false, edges, gates, guard, reuseRadius, camera, focus, circumference, compactProfile, _gpuTreeOrder, _gpuTreeOutputGroups, pruneCounts);
+            VerifyGpuTreeSelectionCandidates(edges, gates, guard, reuseRadius, camera, focus, circumference, compactProfile, _gpuTreeOrder, _gpuTreeOutputGroups, pruneCounts);
         }
+        else BuildGpuTreeSelectionCandidates(!SerialTreeSelection, false, edges, gates, guard, reuseRadius, camera, focus, circumference, compactProfile, _gpuTreeOrder, _gpuTreeOutputGroups, pruneCounts);
+        }
+        ReleaseGpuTreeBoundsSets();
+        using (RingPerformanceTelemetry.MeasureCpu("Trees selection order"))
+        {
         _gpuTreeOrder.Sort(GpuTreeOrderComparison);
         if (PruneEmptyGpuTreeBatches && focus is RingCanonicalPosition pruningFocus)
             PruneGpuTreeBudgetGuaranteedPrefix(caps, pruneCounts);
@@ -595,6 +617,7 @@ public partial class RingBiomeDecorationLayer
 				+ item.Key.Group.Across * 13 + item.Key.Group.Variant * 7 + item.Key.Lod);
 		UpdateGpuTreeSunShadowOrderSignature(shadowOrderSignature);
         foreach (var item in _gpuTreeOrder) _gpuTreeWanted.Add(item.Key);
+        }
         _gpuTreeSelectionValid = true; _gpuTreeSelectionEpoch = GpuTreeSourceEpoch; _gpuTreeSelectionProtectionRevision = _gpuTreeProtectionLayoutRevision;
         _gpuTreeSelectionFocus = focus; _gpuTreeSelectionCamera = camera; _gpuTreeSelectionCircumference = circumference; _gpuTreeSelectionLayerTransform = GlobalTransform;
         _gpuTreeSelectionEdges = edges; _gpuTreeSelectionCaps = caps; _gpuTreeSelectionGates = gates; _gpuTreeSelectionGuard = guard;
@@ -693,7 +716,7 @@ public partial class RingBiomeDecorationLayer
             if (requested)
             {
                 RecordGpuTreeFrameSubmission(camera, focus, circumference);
-                _gpuLastCamera = camera; _gpuLastCaps = (uint[])caps.Clone();
+                _gpuLastCamera = camera; _gpuLastCaps = caps;
                 (_gpuTreeFrameScratch, _gpuTreeLastFrameList) = (_gpuTreeLastFrameList, _gpuTreeFrameScratch);
                 _gpuLastFramesValid = true;
             }
@@ -734,17 +757,21 @@ public partial class RingBiomeDecorationLayer
     }
 
     // Nearest and farthest distance of a group to the camera, cached per selection rebuild.
+    // The canonical-focus bounds of a group: a pure function of the group, the focus and the circumference (the parallel pass computes these off the main thread).
+    private static (float Near, float Far) GpuTreeCanonicalBounds(GpuTreeGroup group, RingCanonicalPosition canonical, double circumference)
+    {
+        Vector2 local = CanonicalCamera(group, canonical, circumference);
+        float near = local.DistanceTo(local.Clamp(group.CanonicalMin, group.CanonicalMax));
+        Vector2 delta = (local - group.CanonicalMin).Abs().Max((local - group.CanonicalMax).Abs());
+        return (near, delta.Length());
+    }
+
     private (float Near, float Far) GpuTreeGroupDistanceBounds(GpuTreeGroup group, Vector3 camera, RingCanonicalPosition? focus, double circumference)
     {
         if (_gpuTreeGroupDistanceScratch.TryGetValue(group, out (float Near, float Far) cached)) return cached;
         float near, far;
         if (focus is RingCanonicalPosition canonical)
-        {
-            Vector2 local = CanonicalCamera(group, canonical, circumference);
-            near = local.DistanceTo(local.Clamp(group.CanonicalMin, group.CanonicalMax));
-            Vector2 delta = (local - group.CanonicalMin).Abs().Max((local - group.CanonicalMax).Abs());
-            far = delta.Length();
-        }
+            (near, far) = GpuTreeCanonicalBounds(group, canonical, circumference);
         else
         {
             Aabb bounds = GlobalTransform * group.Bounds;
@@ -756,6 +783,7 @@ public partial class RingBiomeDecorationLayer
     }
 
     private const int GpuTreeEffectiveBins = 64;
+    private readonly int[][] _gpuTreeEffectiveHistograms = { new int[GpuTreeEffectiveBins], new int[GpuTreeEffectiveBins], new int[GpuTreeEffectiveBins], new int[GpuTreeEffectiveBins] };
     private const float GpuTreeEffectiveCapShare = .95f;
 
     /// <summary>
@@ -824,35 +852,26 @@ public partial class RingBiomeDecorationLayer
             minimum[j] = Math.Min(previousMinimum + widthOf[j], hi[j]);
             previousMinimum = minimum[j]; previousWidth = widthOf[j];
         }
-        var histograms = new int[count][];
-        var protectedCount = new int[count];
+        var histograms = _gpuTreeEffectiveHistograms;
+        Span<int> protectedCount = stackalloc int[4];
         float protectedFarthest = 0;
         for (int j = 0; j < count; j++)
         {
-            histograms[j] = new int[GpuTreeEffectiveBins];
+            Array.Clear(histograms[j]);
             int slot = slotOf[j];
             if (!(hi[j] > lo[j])) continue;
-            float low = lo[j], high = hi[j], invBin = GpuTreeEffectiveBins / (high - low), gate = gates[slot];
-            float lowSquared = low * low, highSquared = high * high;
-            int[] histogram = histograms[j];
-            foreach (GpuTreeGroup group in GroupsForGpuLod(slot))
+            CountGpuTreeEffectiveSlot(!SerialTreeSelection && !VerifyTreeSelection, false, slot, lo[j], hi[j], gates[slot], guard, camera, focus, circumference,
+                histograms[j], out int slotProtected, out float slotFarthest);
+            if (VerifyTreeSelection)
             {
-                (float near, float far) = GpuTreeGroupDistanceBounds(group, camera, focus, circumference);
-                if (far + guard < low || near - guard >= high) continue;
-                Vector2 local = CanonicalCamera(group, focus, circumference);
-                Vector4[] metadata = group.Metadata;
-                for (int i = 0; i < metadata.Length; i++)
-                {
-                    Vector4 meta = metadata[i];
-                    bool protectedRoot = meta.Y > .5f;
-                    if (!protectedRoot && meta.X > gate) continue;
-                    float dx = meta.Z - local.X, dz = meta.W - local.Y, distanceSquared = dx * dx + dz * dz;
-                    if (distanceSquared < lowSquared || distanceSquared >= highSquared) continue;
-                    float distance = MathF.Sqrt(distanceSquared);
-                    if (protectedRoot) { protectedCount[j]++; if (slot == 0 && distance > protectedFarthest) protectedFarthest = distance; }
-                    else histogram[Math.Min(GpuTreeEffectiveBins - 1, (int)((distance - low) * invBin))]++;
-                }
+                Array.Clear(_gpuTreeEffectiveVerifyHistogram);
+                CountGpuTreeEffectiveSlot(true, true, slot, lo[j], hi[j], gates[slot], guard, camera, focus, circumference,
+                    _gpuTreeEffectiveVerifyHistogram, out int verifyProtected, out float verifyFarthest);
+                if (!histograms[j].AsSpan().SequenceEqual(_gpuTreeEffectiveVerifyHistogram) || verifyProtected != slotProtected
+                    || BitConverter.SingleToInt32Bits(verifyFarthest) != BitConverter.SingleToInt32Bits(slotFarthest)) CountGpuTreeSelectionMismatch($"effective histogram slot {slot}");
             }
+            protectedCount[j] = slotProtected;
+            if (slotFarthest > protectedFarthest) protectedFarthest = slotFarthest;
         }
         bool sameBase = _gpuTreeEffectiveBase is { } previousBase && previousBase.AsSpan().SequenceEqual(configured) && _gpuTreeEffectiveEnds is not null;
         var ends = new float[4] { configured[1], configured[2], configured[3], configured[4] };
@@ -915,17 +934,321 @@ public partial class RingBiomeDecorationLayer
         return pp != 0 || po != 0;
     }
 
+    // ---- PERF-3 T2: the selection passes computed in parallel with identical results ----
+    /// <summary>Test switch: the tree selection runs entirely on the calling thread, as before PERF-3 T2. No menu row.</summary>
+    public bool SerialTreeSelection { get; set; }
+    /// <summary>Debug switch: every selection rebuild also computes the parallel result and counts differences in <see cref="TreeSelectionMismatches"/>. The serial result is the one committed. No menu row.</summary>
+    public bool VerifyTreeSelection { get; set; }
+    /// <summary>Differences found between the serial and parallel selection while <see cref="VerifyTreeSelection"/> is on (order, groups, prune counts, histograms).</summary>
+    public long TreeSelectionMismatches { get; private set; }
+    /// <summary>Parallel passes run only when at least this many roots (effective edges) or groups x 16 (prune counts) are involved; smaller work stays serial.</summary>
+    internal int ParallelSelectionMinimumRoots = 4096;
+    private const int ParallelSelectionGroupsPerChunk = 32;
+    private const int ParallelSelectionMaximumDegree = 4;
+
+    private sealed class GpuTreeEffectiveChunk
+    {
+        public readonly int[] Histogram = new int[GpuTreeEffectiveBins];
+        public int Protected;
+        public float Farthest;
+    }
+    private GpuTreeEffectiveChunk[] _gpuTreeEffectiveChunks = Array.Empty<GpuTreeEffectiveChunk>();
+    private readonly List<(Vector4[] Metadata, Vector2 Local)> _gpuTreeEffectiveEligible = new();
+    private readonly int[] _gpuTreeEffectiveVerifyHistogram = new int[GpuTreeEffectiveBins];
+
+    // The per-root body of the effective-edge histogram, shared by the serial and parallel passes so both evaluate the same expressions.
+    private static void AccumulateGpuTreeEffectiveRoots(Vector4[] metadata, Vector2 local, float gate, float low, float invBin, float lowSquared, float highSquared,
+        bool slotZero, int[] histogram, ref int protectedCount, ref float farthest)
+    {
+        for (int i = 0; i < metadata.Length; i++)
+        {
+            Vector4 meta = metadata[i];
+            bool protectedRoot = meta.Y > .5f;
+            if (!protectedRoot && meta.X > gate) continue;
+            float dx = meta.Z - local.X, dz = meta.W - local.Y, distanceSquared = dx * dx + dz * dz;
+            if (distanceSquared < lowSquared || distanceSquared >= highSquared) continue;
+            float distance = MathF.Sqrt(distanceSquared);
+            if (protectedRoot) { protectedCount++; if (slotZero && distance > farthest) farthest = distance; }
+            else histogram[Math.Min(GpuTreeEffectiveBins - 1, (int)((distance - low) * invBin))]++;
+        }
+    }
+
+    // One slot's histogram, protected count and farthest protected root (slot 0 only). The parallel variant gathers the eligible groups serially (the distance
+    // cache is not thread-safe), counts chunks of groups into private histograms and sums them in chunk order; integer sums and max are order independent.
+    private void CountGpuTreeEffectiveSlot(bool parallel, bool force, int slot, float low, float high, float gate, float guard, Vector3 camera,
+        RingCanonicalPosition focus, double circumference, int[] histogram, out int protectedCount, out float farthest)
+    {
+        float invBin = GpuTreeEffectiveBins / (high - low), lowSquared = low * low, highSquared = high * high;
+        bool slotZero = slot == 0;
+        int protectedTotal = 0; float farthestTotal = 0;
+        if (!parallel)
+        {
+            foreach (GpuTreeGroup group in GroupsForGpuLod(slot))
+            {
+                (float near, float far) = GpuTreeGroupDistanceBounds(group, camera, focus, circumference);
+                if (far + guard < low || near - guard >= high) continue;
+                AccumulateGpuTreeEffectiveRoots(group.Metadata, CanonicalCamera(group, focus, circumference), gate, low, invBin, lowSquared, highSquared, slotZero, histogram, ref protectedTotal, ref farthestTotal);
+            }
+            protectedCount = protectedTotal; farthest = farthestTotal;
+            return;
+        }
+        var eligible = _gpuTreeEffectiveEligible; eligible.Clear();
+        long roots = 0;
+        if (FindGpuTreeBoundsSet(slot) is { } set)
+        {
+            for (int i = 0; i < set.Count; i++)
+            {
+                if (set.Far[i] + guard < low || set.Near[i] - guard >= high) continue;
+                GpuTreeGroup group = set.Groups[i];
+                eligible.Add((group.Metadata, CanonicalCamera(group, focus, circumference)));
+                roots += group.Metadata.Length;
+            }
+        }
+        else
+        foreach (GpuTreeGroup group in GroupsForGpuLod(slot))
+        {
+            (float near, float far) = GpuTreeGroupDistanceBounds(group, camera, focus, circumference);
+            if (far + guard < low || near - guard >= high) continue;
+            eligible.Add((group.Metadata, CanonicalCamera(group, focus, circumference)));
+            roots += group.Metadata.Length;
+        }
+        if (!force && roots < ParallelSelectionMinimumRoots)
+        {
+            foreach ((Vector4[] metadata, Vector2 local) in eligible)
+                AccumulateGpuTreeEffectiveRoots(metadata, local, gate, low, invBin, lowSquared, highSquared, slotZero, histogram, ref protectedTotal, ref farthestTotal);
+            eligible.Clear();
+            protectedCount = protectedTotal; farthest = farthestTotal;
+            return;
+        }
+        int chunkCount = (eligible.Count + ParallelSelectionGroupsPerChunk - 1) / ParallelSelectionGroupsPerChunk;
+        if (_gpuTreeEffectiveChunks.Length < chunkCount)
+        {
+            int previous = _gpuTreeEffectiveChunks.Length;
+            Array.Resize(ref _gpuTreeEffectiveChunks, Math.Max(chunkCount, previous * 2));
+            for (int c = previous; c < _gpuTreeEffectiveChunks.Length; c++) _gpuTreeEffectiveChunks[c] = new GpuTreeEffectiveChunk();
+        }
+        GpuTreeEffectiveChunk[] chunks = _gpuTreeEffectiveChunks;
+        Parallel.For(0, chunkCount, new ParallelOptions { MaxDegreeOfParallelism = ParallelSelectionMaximumDegree }, c =>
+        {
+            GpuTreeEffectiveChunk chunk = chunks[c];
+            Array.Clear(chunk.Histogram);
+            int chunkProtected = 0; float chunkFarthest = 0;
+            int end = Math.Min(eligible.Count, (c + 1) * ParallelSelectionGroupsPerChunk);
+            for (int g = c * ParallelSelectionGroupsPerChunk; g < end; g++)
+                AccumulateGpuTreeEffectiveRoots(eligible[g].Metadata, eligible[g].Local, gate, low, invBin, lowSquared, highSquared, slotZero, chunk.Histogram, ref chunkProtected, ref chunkFarthest);
+            chunk.Protected = chunkProtected; chunk.Farthest = chunkFarthest;
+        });
+        for (int c = 0; c < chunkCount; c++)
+        {
+            GpuTreeEffectiveChunk chunk = chunks[c];
+            for (int b = 0; b < GpuTreeEffectiveBins; b++) histogram[b] += chunk.Histogram[b];
+            protectedTotal += chunk.Protected;
+            if (chunk.Farthest > farthestTotal) farthestTotal = chunk.Farthest;
+        }
+        eligible.Clear();
+        protectedCount = protectedTotal; farthest = farthestTotal;
+    }
+
+    // Per selection rebuild, the groups of every distinct container (the raw groups and the merged mid and far sets) copied into flat arrays in enumeration order,
+    // with their canonical bounds computed in parallel chunks. The per-slot and per-LOD passes then read arrays instead of hashing every group through the cache.
+    private sealed class GpuTreeBoundsSet
+    {
+        public Dictionary<GpuGroupKey, GpuTreeGroup>? Container;
+        public GpuTreeGroup[] Groups = Array.Empty<GpuTreeGroup>();
+        public float[] Near = Array.Empty<float>(), Far = Array.Empty<float>();
+        public int Count;
+    }
+    private readonly List<GpuTreeBoundsSet> _gpuTreeBoundsSets = new();
+    private int _gpuTreeBoundsSetCount;
+    private bool _gpuTreeBoundsReady;
+    private const int ParallelBoundsGroupsPerChunk = 512;
+
+    private void PrepareGpuTreeBoundsSets(RingCanonicalPosition focus, double circumference)
+    {
+        _gpuTreeBoundsSetCount = 0; _gpuTreeBoundsReady = false;
+        for (int lod = 0; lod < 5; lod++)
+        {
+            if (!IsGpuTreeLodEnabled(lod)) continue;
+            Dictionary<GpuGroupKey, GpuTreeGroup> container = GroupContainerForGpuLod(lod);
+            bool known = false;
+            for (int i = 0; i < _gpuTreeBoundsSetCount; i++) if (ReferenceEquals(_gpuTreeBoundsSets[i].Container, container)) { known = true; break; }
+            if (known) continue;
+            if (_gpuTreeBoundsSetCount == _gpuTreeBoundsSets.Count) _gpuTreeBoundsSets.Add(new GpuTreeBoundsSet());
+            GpuTreeBoundsSet set = _gpuTreeBoundsSets[_gpuTreeBoundsSetCount++];
+            set.Container = container;
+            int count = container.Count;
+            if (set.Groups.Length < count)
+            {
+                int size = Math.Max(count, set.Groups.Length * 2);
+                set.Groups = new GpuTreeGroup[size]; set.Near = new float[size]; set.Far = new float[size];
+            }
+            int n = 0;
+            foreach (GpuTreeGroup group in container.Values) set.Groups[n++] = group;
+            set.Count = n;
+            GpuTreeGroup[] groups = set.Groups; float[] near = set.Near, far = set.Far;
+            if (n < ParallelBoundsGroupsPerChunk * 2)
+                for (int i = 0; i < n; i++) (near[i], far[i]) = GpuTreeCanonicalBounds(groups[i], focus, circumference);
+            else
+                Parallel.For(0, (n + ParallelBoundsGroupsPerChunk - 1) / ParallelBoundsGroupsPerChunk, new ParallelOptions { MaxDegreeOfParallelism = ParallelSelectionMaximumDegree }, c =>
+                {
+                    int end = Math.Min(n, (c + 1) * ParallelBoundsGroupsPerChunk);
+                    for (int i = c * ParallelBoundsGroupsPerChunk; i < end; i++) (near[i], far[i]) = GpuTreeCanonicalBounds(groups[i], focus, circumference);
+                });
+        }
+        _gpuTreeBoundsReady = true;
+    }
+
+    private GpuTreeBoundsSet? FindGpuTreeBoundsSet(int lod)
+    {
+        if (!_gpuTreeBoundsReady) return null;
+        Dictionary<GpuGroupKey, GpuTreeGroup> container = GroupContainerForGpuLod(lod);
+        for (int i = 0; i < _gpuTreeBoundsSetCount; i++) if (ReferenceEquals(_gpuTreeBoundsSets[i].Container, container)) return _gpuTreeBoundsSets[i];
+        return null;
+    }
+
+    private void ReleaseGpuTreeBoundsSets()
+    {
+        _gpuTreeBoundsReady = false;
+        for (int i = 0; i < _gpuTreeBoundsSetCount; i++) { Array.Clear(_gpuTreeBoundsSets[i].Groups, 0, _gpuTreeBoundsSets[i].Count); _gpuTreeBoundsSets[i].Container = null; }
+        _gpuTreeBoundsSetCount = 0;
+    }
+
+    private struct GpuTreePruneCandidate
+    {
+        public GpuTreeGroup Group; public GpuOutputKey Key; public float Near, LodNear, LodFar, Gate, GuaranteedGate, GuaranteedNear;
+        public int Lod; public bool Priority, Ok;
+        public (int PotentialProtected, int PotentialOrdinary, int GuaranteedProtected, int GuaranteedOrdinary) Counts;
+    }
+    private GpuTreePruneCandidate[] _gpuTreePruneCandidates = new GpuTreePruneCandidate[256];
+
+    /// <summary>
+    /// Candidate groups of every enabled LOD in the original loop order, with the per-group prune counts. The parallel variant lists the overlapping groups
+    /// serially, computes the (pure) prune counts of those in parallel chunks and then appends to the outputs serially in the listed order, so the order list,
+    /// group map and counts are exactly what the serial loop produces.
+    /// </summary>
+    private void BuildGpuTreeSelectionCandidates(bool parallel, bool force, float[] edges, float[] gates, float guard, float reuseRadius, Vector3 camera,
+        RingCanonicalPosition? focus, double circumference, bool compactProfile,
+        List<(GpuOutputKey Key, float Distance, bool Priority)> order, Dictionary<GpuOutputKey, GpuTreeGroup> outputGroups,
+        Dictionary<GpuOutputKey, (int PotentialProtected, int PotentialOrdinary, int GuaranteedProtected, int GuaranteedOrdinary)> counts)
+    {
+        order.Clear(); outputGroups.Clear(); counts.Clear();
+        bool prune = PruneEmptyGpuTreeBatches;
+        GpuTreeLodInterval(4, edges, out _, out _, out float quadInStart, out _, out _, out _);
+        int listed = 0;
+        for (int lod = 0; lod < 5; lod++)
+        {
+            if (!IsGpuTreeLodEnabled(lod)) continue;
+            // Per-LOD invariants: the interval depends only on (lod, edges).
+            GpuTreeLodInterval(lod, edges, out float lodNear, out float lodFar, out _, out _, out _, out _);
+            // Quad mode: the quad slot also accepts steep trees of the card gate from the card near edge, so its candidate count uses the larger gate and
+            // only counts roots past its own start as guaranteed; the card slot loses steep trees, so none of its roots is guaranteed.
+            bool quadSlot = lod == 4 && EffectiveFarTreeQuads, cardSlot = lod == 3 && EffectiveFarTreeQuads;
+            float gate = quadSlot ? Math.Max(gates[3], gates[4]) : gates[lod];
+            float guaranteedGate = cardSlot ? -1f : quadSlot ? gates[4] : float.NaN, guaranteedNear = quadSlot ? quadInStart : float.NaN;
+            void Consider(GpuTreeGroup group, float near, float far)
+            {
+                var key = new GpuOutputKey(group.Key, lod);
+                bool overlaps = (lod == 0 && group.HasProtected && !compactProfile) || (far + guard >= lodNear && near - guard < lodFar);
+                if (!overlaps) return;
+                bool priority = (compactProfile || lod == 0) && group.HasProtected;
+                if (!prune) { order.Add((key, near, priority)); outputGroups[key] = group; return; }
+                if (!parallel)
+                {
+                    if (!TryGpuTreeGroupPruneCounts(group, lod, lodNear, lodFar, gate, reuseRadius, focus, circumference, compactProfile, out var groupCounts, guaranteedGate, guaranteedNear)) return;
+                    counts[key] = groupCounts;
+                    order.Add((key, near, priority)); outputGroups[key] = group;
+                    return;
+                }
+                if (listed == _gpuTreePruneCandidates.Length) Array.Resize(ref _gpuTreePruneCandidates, listed * 2);
+                _gpuTreePruneCandidates[listed++] = new GpuTreePruneCandidate { Group = group, Key = key, Near = near, LodNear = lodNear, LodFar = lodFar, Gate = gate,
+                    GuaranteedGate = guaranteedGate, GuaranteedNear = guaranteedNear, Lod = lod, Priority = priority };
+            }
+            if (parallel && FindGpuTreeBoundsSet(lod) is { } set)
+                for (int i = 0; i < set.Count; i++) Consider(set.Groups[i], set.Near[i], set.Far[i]);
+            else
+                foreach (GpuTreeGroup group in GroupsForGpuLod(lod))
+                {
+                    (float near, float far) = GpuTreeGroupDistanceBounds(group, camera, focus, circumference);
+                    Consider(group, near, far);
+                }
+        }
+        if (listed == 0) return;
+        GpuTreePruneCandidate[] candidates = _gpuTreePruneCandidates;
+        long work = 0;
+        for (int i = 0; i < listed; i++) work += candidates[i].Group.Metadata.Length;
+        if (!force && work < ParallelSelectionMinimumRoots)
+            for (int i = 0; i < listed; i++) ComputeGpuTreePruneCandidate(ref candidates[i], reuseRadius, focus, circumference, compactProfile);
+        else
+        {
+            int chunkCount = (listed + ParallelSelectionGroupsPerChunk - 1) / ParallelSelectionGroupsPerChunk;
+            Parallel.For(0, chunkCount, new ParallelOptions { MaxDegreeOfParallelism = ParallelSelectionMaximumDegree }, c =>
+            {
+                int end = Math.Min(listed, (c + 1) * ParallelSelectionGroupsPerChunk);
+                for (int i = c * ParallelSelectionGroupsPerChunk; i < end; i++) ComputeGpuTreePruneCandidate(ref candidates[i], reuseRadius, focus, circumference, compactProfile);
+            });
+        }
+        for (int i = 0; i < listed; i++)
+        {
+            ref GpuTreePruneCandidate candidate = ref candidates[i];
+            if (candidate.Ok)
+            {
+                counts[candidate.Key] = candidate.Counts;
+                order.Add((candidate.Key, candidate.Near, candidate.Priority)); outputGroups[candidate.Key] = candidate.Group;
+            }
+            candidate.Group = null!; // Do not keep groups alive from the reused buffer.
+        }
+    }
+
+    private void ComputeGpuTreePruneCandidate(ref GpuTreePruneCandidate candidate, float reuseRadius, RingCanonicalPosition? focus, double circumference, bool compactProfile)
+        => candidate.Ok = TryGpuTreeGroupPruneCounts(candidate.Group, candidate.Lod, candidate.LodNear, candidate.LodFar, candidate.Gate, reuseRadius, focus, circumference,
+            compactProfile, out candidate.Counts, candidate.GuaranteedGate, candidate.GuaranteedNear);
+
+    private readonly List<(GpuOutputKey Key, float Distance, bool Priority)> _gpuTreeVerifyOrder = new();
+    private readonly Dictionary<GpuOutputKey, GpuTreeGroup> _gpuTreeVerifyGroups = new();
+    private readonly Dictionary<GpuOutputKey, (int PotentialProtected, int PotentialOrdinary, int GuaranteedProtected, int GuaranteedOrdinary)> _gpuTreeVerifyCounts = new();
+
+    private void CountGpuTreeSelectionMismatch(string what)
+    {
+        if (TreeSelectionMismatches++ < 5) GD.PrintErr($"Tree selection mismatch: {what}");
+    }
+
+    // Computes the parallel selection (forced through the parallel code whatever its size) and compares it with the serial one that was just committed.
+    private void VerifyGpuTreeSelectionCandidates(float[] edges, float[] gates, float guard, float reuseRadius, Vector3 camera, RingCanonicalPosition? focus, double circumference,
+        bool compactProfile, List<(GpuOutputKey Key, float Distance, bool Priority)> order, Dictionary<GpuOutputKey, GpuTreeGroup> outputGroups,
+        Dictionary<GpuOutputKey, (int PotentialProtected, int PotentialOrdinary, int GuaranteedProtected, int GuaranteedOrdinary)> counts)
+    {
+        BuildGpuTreeSelectionCandidates(true, true, edges, gates, guard, reuseRadius, camera, focus, circumference, compactProfile, _gpuTreeVerifyOrder, _gpuTreeVerifyGroups, _gpuTreeVerifyCounts);
+        if (order.Count != _gpuTreeVerifyOrder.Count) CountGpuTreeSelectionMismatch($"order length {order.Count} vs {_gpuTreeVerifyOrder.Count}");
+        else
+            for (int i = 0; i < order.Count; i++)
+                if (order[i].Key != _gpuTreeVerifyOrder[i].Key || BitConverter.SingleToInt32Bits(order[i].Distance) != BitConverter.SingleToInt32Bits(_gpuTreeVerifyOrder[i].Distance)
+                    || order[i].Priority != _gpuTreeVerifyOrder[i].Priority) { CountGpuTreeSelectionMismatch($"order entry {i}"); break; }
+        if (outputGroups.Count != _gpuTreeVerifyGroups.Count) CountGpuTreeSelectionMismatch("group map size");
+        else
+            foreach ((GpuOutputKey key, GpuTreeGroup group) in outputGroups)
+                if (!_gpuTreeVerifyGroups.TryGetValue(key, out GpuTreeGroup? other) || !ReferenceEquals(group, other)) { CountGpuTreeSelectionMismatch("group reference"); break; }
+        if (counts.Count != _gpuTreeVerifyCounts.Count) CountGpuTreeSelectionMismatch("prune count size");
+        else
+            foreach ((GpuOutputKey key, var value) in counts)
+                if (!_gpuTreeVerifyCounts.TryGetValue(key, out var other) || other != value) { CountGpuTreeSelectionMismatch("prune counts"); break; }
+        _gpuTreeVerifyOrder.Clear(); _gpuTreeVerifyGroups.Clear(); _gpuTreeVerifyCounts.Clear();
+    }
+
+    private readonly Dictionary<GpuOutputKey, (int PotentialProtected, int PotentialOrdinary, int GuaranteedProtected, int GuaranteedOrdinary)> _gpuTreePruneCountsScratch = new();
+    private readonly Dictionary<GpuOutputKey, GpuTreeGroup> _gpuTreePruneSourcesScratch = new();
+
     private void PruneGpuTreeBudgetGuaranteedPrefix(uint[] caps,
         Dictionary<GpuOutputKey, (int PotentialProtected, int PotentialOrdinary, int GuaranteedProtected, int GuaranteedOrdinary)> counts)
     {
-        uint[] protectedReservation = new uint[5];
+        Span<uint> protectedReservation = stackalloc uint[5];
         foreach (var item in _gpuTreeOrder)
         {
             var c = counts[item.Key];
             protectedReservation[item.Key.Lod] = Math.Min(caps[item.Key.Lod], protectedReservation[item.Key.Lod] + (uint)c.GuaranteedProtected);
         }
         var retained = _gpuTreeOrderScratch; retained.Clear();
-        uint[] guaranteedOrdinary = (uint[])protectedReservation.Clone();
+        Span<uint> guaranteedOrdinary = stackalloc uint[5];
+        protectedReservation.CopyTo(guaranteedOrdinary);
         foreach (var item in _gpuTreeOrder)
         {
             int lod = item.Key.Lod;
@@ -938,11 +1261,13 @@ public partial class RingBiomeDecorationLayer
             guaranteedOrdinary[lod] = Math.Min(caps[lod], guaranteedOrdinary[lod] + (uint)c.GuaranteedOrdinary);
         }
         if (retained.Count == _gpuTreeOrder.Count) return;
-        var sources = new Dictionary<GpuOutputKey, GpuTreeGroup>(_gpuTreeOutputGroups);
+        var sources = _gpuTreePruneSourcesScratch; sources.Clear();
+        foreach ((GpuOutputKey key, GpuTreeGroup group) in _gpuTreeOutputGroups) sources[key] = group;
         _gpuTreeOrder.Clear(); _gpuTreeOrder.AddRange(retained);
         _gpuTreeOutputGroups.Clear();
         foreach (var item in retained)
             _gpuTreeOutputGroups[item.Key] = sources[item.Key];
+        sources.Clear();
     }
 
     private bool UsesFarQuadMesh(int lod) => lod == 4 && EffectiveFarTreeQuads;
@@ -1172,12 +1497,22 @@ public partial class RingBiomeDecorationLayer
 
     private uint[] GpuTreeLodCaps()
     {
+        Span<uint> caps = stackalloc uint[5];
+        FillGpuTreeLodCaps(caps);
+        return InternArray(ref _gpuTreeCapsInterned, (ReadOnlySpan<uint>)caps);
+    }
+
+    private void FillGpuTreeLodCaps(Span<uint> caps)
+    {
         uint near = (uint)Math.Max(Mathf.Clamp(MaximumLod1Trees, 32, 2048), EnableImportedForestCollisions ? MaximumImportedForestColliders : 0);
         uint middle = (uint)Mathf.Clamp(MaximumLod2Trees, 64, 4096);
         uint third = (uint)Mathf.Clamp(MaximumLod3Trees, 128, 8192);
         if (EffectiveCompactTreeLodProfile)
-            return new[] { near, EffectiveTreeRenderLods ? middle : 0u, near + middle + third, (uint)Mathf.Clamp(MaximumLod4Trees, 256, 16384), (uint)Mathf.Clamp(MaximumTreeBillboards, 256, 65536) };
-        return new[] { near, middle, third, (uint)Mathf.Clamp(MaximumLod4Trees, 256, 16384), (uint)Mathf.Clamp(MaximumTreeBillboards, 256, 65536) };
+        {
+            caps[0] = near; caps[1] = EffectiveTreeRenderLods ? middle : 0u; caps[2] = near + middle + third;
+        }
+        else { caps[0] = near; caps[1] = middle; caps[2] = third; }
+        caps[3] = (uint)Mathf.Clamp(MaximumLod4Trees, 256, 16384); caps[4] = (uint)Mathf.Clamp(MaximumTreeBillboards, 256, 65536);
     }
     private static void WriteGpuTreeTransform(float[] rows, int i, Transform3D t)
     {

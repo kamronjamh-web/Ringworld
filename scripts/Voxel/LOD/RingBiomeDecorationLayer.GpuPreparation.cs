@@ -143,12 +143,14 @@ public partial class RingBiomeDecorationLayer
             if (++scanned % 128 == 0) yield return false;
         }
         VegetationLayout layout = CaptureVegetationLayout(plan.Circumference);
-        Array.Sort(plan.VisibleTiles, (a, b) => {
-            var ac = VegetationTileCenter(a.Key, layout); var bc = VegetationTileCenter(b.Key, layout);
-            double ad = Math.Pow(WrappedVegetationDelta(ac.Around - plan.Focus.AroundMeters, plan.Circumference), 2) + Math.Pow(ac.Across - plan.Focus.AcrossMeters, 2);
-            double bd = Math.Pow(WrappedVegetationDelta(bc.Around - plan.Focus.AroundMeters, plan.Circumference), 2) + Math.Pow(bc.Across - plan.Focus.AcrossMeters, 2);
-            int d = ad.CompareTo(bd); return d != 0 ? d : a.Key.Around != b.Key.Around ? a.Key.Around.CompareTo(b.Key.Around) : a.Key.Across.CompareTo(b.Key.Across);
-        });
+        if (LegacyTreeStreamingBudget)
+            Array.Sort(plan.VisibleTiles, (a, b) => {
+                var ac = VegetationTileCenter(a.Key, layout); var bc = VegetationTileCenter(b.Key, layout);
+                double ad = Math.Pow(WrappedVegetationDelta(ac.Around - plan.Focus.AroundMeters, plan.Circumference), 2) + Math.Pow(ac.Across - plan.Focus.AcrossMeters, 2);
+                double bd = Math.Pow(WrappedVegetationDelta(bc.Around - plan.Focus.AroundMeters, plan.Circumference), 2) + Math.Pow(bc.Across - plan.Focus.AcrossMeters, 2);
+                int d = ad.CompareTo(bd); return d != 0 ? d : a.Key.Around != b.Key.Around ? a.Key.Around.CompareTo(b.Key.Around) : a.Key.Across.CompareTo(b.Key.Across);
+            });
+        else SortGpuTreeVisibleTiles(plan, layout);
         foreach (VegetationTile tile in plan.VisibleTiles)
         {
             if (selectedCount >= maximum) break;
@@ -198,7 +200,22 @@ public partial class RingBiomeDecorationLayer
         bool incremental = !plan.RebuildAll && previousRoots == _gpuTreeRootLookup.Count;
         if (incremental)
         {
-            plan.Lookup = new Dictionary<ulong, (GpuTreeGroup Group, int Index)>(_gpuTreeRootLookup);
+            if (LegacyTreeStreamingBudget) plan.Lookup = new Dictionary<ulong, (GpuTreeGroup Group, int Index)>(_gpuTreeRootLookup);
+            else
+            {
+                // Fill the spare (the lookup displaced by the previous commit) in bounded chunks instead of one large copy.
+                var spare = _gpuTreeRootLookupSpare ?? new Dictionary<ulong, (GpuTreeGroup Group, int Index)>();
+                _gpuTreeRootLookupSpare = null;
+                spare.Clear();
+                spare.EnsureCapacity(_gpuTreeRootLookup.Count);
+                int copied = 0;
+                foreach (KeyValuePair<ulong, (GpuTreeGroup Group, int Index)> entry in _gpuTreeRootLookup)
+                {
+                    spare[entry.Key] = entry.Value;
+                    if (++copied % Math.Max(1, GpuTreeLookupCopyChunk) == 0) yield return false;
+                }
+                plan.Lookup = spare;
+            }
             foreach ((GpuGroupKey key, GpuTreeGroup old) in plan.Previous)
             {
                 if (plan.Built.TryGetValue(key, out GpuTreeGroup? kept) && ReferenceEquals(kept, old)) continue;
@@ -219,7 +236,12 @@ public partial class RingBiomeDecorationLayer
         foreach (bool _ in BuildMergedGpuTreeGroupsSliced(plan)) yield return false;
         // The extra partition cache follows visible/protected residency, not the
         // entire raw-tile LRU. Evicted records cannot accumulate here.
-        var retainedTiles = new HashSet<VegetationTileKey>(plan.VisibleTiles.Select(tile => tile.Key));
+        var retainedTiles = new HashSet<VegetationTileKey>(plan.VisibleTiles.Length);
+        foreach (VegetationTile visibleTile in plan.VisibleTiles)
+        {
+            retainedTiles.Add(visibleTile.Key);
+            if (++scanned % 128 == 0) yield return false;
+        }
         foreach (GpuGroupKey key in plan.Built.Keys) retainedTiles.Add(new VegetationTileKey(key.Around, key.Across));
         foreach (VegetationTileKey key in plan.Partitions.Keys.ToArray())
         {
@@ -240,6 +262,7 @@ public partial class RingBiomeDecorationLayer
                 if (_importedForestCollisionRoot != null)
                     _importedForestCollisionRoot.Transform = compensation * _importedForestCollisionRoot.Transform;
             }
+            if (!LegacyTreeStreamingBudget && !ReferenceEquals(_gpuTreeRootLookup, plan.Lookup)) _gpuTreeRootLookupSpare = _gpuTreeRootLookup;
             _gpuTreeGroups = plan.Built; _gpuTreeMergedGroups = plan.Merged; _gpuTreeRootLookup = plan.Lookup; _gpuTreeProtectedIds = plan.ProtectedIds;
             _gpuTreeTilePartitions = plan.Partitions; GpuTreeSourceEpoch++; InvalidateGpuTreeFrameCache();
             _gpuTreeGeometry = plan.Geometry; _gpuTreeLayerTransform = plan.LayerTransform; _gpuTreeSourceEdit = plan.Edit; _gpuTreeRootEmbed = plan.Settings.RootEmbed;
@@ -247,6 +270,35 @@ public partial class RingBiomeDecorationLayer
             if (!_gpuTreeSourcesDirty) _vegetationTilesChangedSinceRender = 0;
         }
         _gpuTreePreparationPlan = null;
+    }
+
+    private Dictionary<ulong, (GpuTreeGroup Group, int Index)>? _gpuTreeRootLookupSpare;
+    /// <summary>Entries copied per preparation step when the root lookup is carried over to the next plan (tests shrink it).</summary>
+    internal int GpuTreeLookupCopyChunk = 4096;
+
+    // Same order as the comparison sort it replaces (squared distance to the focus, then tile key; keys are unique so the order is total),
+    // with each tile's distance computed once instead of twice per comparison.
+    private void SortGpuTreeVisibleTiles(GpuPreparationPlan plan, in VegetationLayout layout)
+    {
+        VegetationTile[] tiles = plan.VisibleTiles;
+        int count = tiles.Length;
+        if (count < 2) return;
+        var distances = new double[count]; var order = new int[count];
+        for (int i = 0; i < count; i++)
+        {
+            var center = VegetationTileCenter(tiles[i].Key, layout);
+            distances[i] = Math.Pow(WrappedVegetationDelta(center.Around - plan.Focus.AroundMeters, plan.Circumference), 2) + Math.Pow(center.Across - plan.Focus.AcrossMeters, 2);
+            order[i] = i;
+        }
+        Array.Sort(order, (x, y) =>
+        {
+            int d = distances[x].CompareTo(distances[y]); if (d != 0) return d;
+            VegetationTileKey a = tiles[x].Key, b = tiles[y].Key;
+            return a.Around != b.Around ? a.Around.CompareTo(b.Around) : a.Across.CompareTo(b.Across);
+        });
+        var sorted = new VegetationTile[count];
+        for (int i = 0; i < count; i++) sorted[i] = tiles[order[i]];
+        Array.Copy(sorted, tiles, count);
     }
 
     private bool GpuTreePreparationStillValid(GpuPreparationPlan plan)
