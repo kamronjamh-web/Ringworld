@@ -22,6 +22,16 @@ public partial class RingBiomeDecorationLayer
            && proxy.Renderer.Visible
            && proxy.Renderer.CastShadow != GeometryInstance3D.ShadowCastingSetting.Off;
 
+    // The GPU output's own renderer holds the full (unculled) list and exists only for the sun shadows: the camera draws the output's CameraRenderer instead.
+    // On therefore means ShadowsOnly; Off hides it from every pass (layers 0), which keeps the old reading of Renderer.CastShadow != Off as "casts a sun shadow".
+    private static void SetGpuTreeFullListCast(GeometryInstance3D renderer, GeometryInstance3D.ShadowCastingSetting logical)
+    {
+        bool on = logical != GeometryInstance3D.ShadowCastingSetting.Off;
+        SetCastShadow(renderer, on ? GeometryInstance3D.ShadowCastingSetting.ShadowsOnly : GeometryInstance3D.ShadowCastingSetting.Off);
+        uint layers = on ? 1u : 0u;
+        if (renderer.Layers != layers) renderer.Layers = layers;
+    }
+
     // Called by the GPU-output owner immediately after it chooses the template material.
     // Authored LOD2 uses a cloned per-surface mesh, while the one-surface impostor can
     // safely use the material selected by that owner.
@@ -54,7 +64,7 @@ public partial class RingBiomeDecorationLayer
         if (!selected)
         {
             ReleaseGpuTreeShadowProxy(output);
-            SetCastShadow(output.Renderer, GeometryInstance3D.ShadowCastingSetting.Off);
+            SetGpuTreeFullListCast(output.Renderer, GeometryInstance3D.ShadowCastingSetting.Off);
             return;
         }
 
@@ -66,14 +76,14 @@ public partial class RingBiomeDecorationLayer
             || key.Group.Variant < 0 || key.Group.Variant >= _lod3AuthoredTemplates.Length || key.Group.Variant >= _lod4AuthoredTemplates.Length)
         {
             ReleaseGpuTreeShadowProxy(output);
-            SetCastShadow(output.Renderer, GeometryInstance3D.ShadowCastingSetting.On);
+            SetGpuTreeFullListCast(output.Renderer, GeometryInstance3D.ShadowCastingSetting.On);
             return;
         }
 
         GpuTreeShadowProxy? proxy = GetOrCreateGpuTreeShadowProxy(key, output);
         if (proxy == null)
         {
-            SetCastShadow(output.Renderer, GeometryInstance3D.ShadowCastingSetting.On);
+            SetGpuTreeFullListCast(output.Renderer, GeometryInstance3D.ShadowCastingSetting.On);
             return;
         }
 
@@ -82,9 +92,9 @@ public partial class RingBiomeDecorationLayer
             proxy.Ready = true;
             proxy.Renderer.Visible = true;
         }
-        // Keep the primary shadow until the GPU-side mirror has received a valid
+        // Keep the primary shadow (the full list, shadows only) until the GPU-side mirror has received a valid
         // indirect command and instance buffer. This prevents a visible gap.
-        SetCastShadow(output.Renderer, proxy.Ready
+        SetGpuTreeFullListCast(output.Renderer, proxy.Ready
             ? GeometryInstance3D.ShadowCastingSetting.Off
             : GeometryInstance3D.ShadowCastingSetting.On);
     }
@@ -149,7 +159,7 @@ public partial class RingBiomeDecorationLayer
             foreach (GpuTreeOutput output in _gpuTreeOutputs.Values)
                 if (output.BatchId == batchId)
                 {
-                    SetCastShadow(output.Renderer, GeometryInstance3D.ShadowCastingSetting.Off);
+                    SetGpuTreeFullListCast(output.Renderer, GeometryInstance3D.ShadowCastingSetting.Off);
                     break;
                 }
         }

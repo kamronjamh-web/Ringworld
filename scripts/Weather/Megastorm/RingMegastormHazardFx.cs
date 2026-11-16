@@ -41,6 +41,8 @@ public partial class RingMegastormHazardFx : Node
 
     /// <summary>Last published blast state (x strength, y front offset, z bend angle, w slam).</summary>
     public Vector4 LastBlast { get; private set; }
+    /// <summary>True while the blast global is above zero (set in <see cref="WriteBlast"/>, the only writer). The GPU tree frustum filter reads it instead of polling the global.</summary>
+    public static volatile bool BlastActive;
     public Vector3 LastN { get; private set; }
     public int WriteCount { get; private set; }
     public float LastBurst { get; private set; }
@@ -118,7 +120,7 @@ public partial class RingMegastormHazardFx : Node
 
     private void WriteBlast(Vector4 blast, Vector3 n, Vector3 up, Vector3 origin)
     {
-        LastBlast = blast; LastN = n; WriteCount++;
+        LastBlast = blast; LastN = n; WriteCount++; BlastActive = blast.X > 0.0f;
         RenderingServer.GlobalShaderParameterSet(BlastGlobal, blast);
         if (blast.X > 0.0f)
         {

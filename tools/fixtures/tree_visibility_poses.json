@@ -1,0 +1,66 @@
+{
+ "coast_eye": {
+  "across_m": 190404.022585299,
+  "around_m": 6338521.26995006,
+  "class": "CoastalBelt",
+  "ground_m": 3.82670114670987,
+  "habitat": "None",
+  "name": "coast_eye",
+  "notes": "land 3.8 m, ocean 250 m along yaw 112.5",
+  "pitch_deg": -2.0,
+  "yaw_deg": 112.5
+ },
+ "generator": "ringworld_surface_world_v9",
+ "hydrology_loaded": false,
+ "plains_eye": {
+  "across_m": 166154.022585299,
+  "around_m": 6380021.26995006,
+  "class": "Plains",
+  "ground_m": 741.473145062074,
+  "habitat": "None",
+  "name": "plains_eye",
+  "notes": "Plains on a 1.5 km ring, not dense forest, site free 2 km",
+  "pitch_deg": -3.0,
+  "yaw_deg": 0.0
+ },
+ "recipe_hash": "0x642C4019DB8AC5DC",
+ "save_across_m": 189654.022585299,
+ "save_around_m": 6354521.26995006,
+ "save_class": "Mountain",
+ "save_ground_m": 379.425352997297,
+ "save_habitat": "None",
+ "seconds": 43.9216081,
+ "forest_clearing_eye": {
+  "across_m": 152604.022585299,
+  "around_m": 6382721.26995006,
+  "class": "Rolling",
+  "ground_m": 642.467099361145,
+  "habitat": "Clearing",
+  "name": "forest_clearing_eye",
+  "notes": "clearing opening; dense forest in 4/8 directions at ring 250 m; nearest tree 13 m (amended rule, see spec 2.4)",
+  "pitch_deg": 0.0,
+  "yaw_deg": 0.0
+ },
+ "forest_edge_eye": {
+  "across_m": 152404.022585299,
+  "around_m": 6382821.26995006,
+  "class": "Rolling",
+  "ground_m": 635.213445672505,
+  "habitat": "Edge",
+  "name": "forest_edge_eye",
+  "notes": "edge, dense forest 100 m ahead (yaw 225), none behind, 11 trees within 60 m ahead",
+  "pitch_deg": 0.0,
+  "yaw_deg": 225.0
+ },
+ "forest_interior_eye": {
+  "across_m": 151854.022585299,
+  "around_m": 6381171.26995006,
+  "class": "Rolling",
+  "ground_m": 675.395720029552,
+  "habitat": "DenseForest",
+  "name": "forest_interior_eye",
+  "notes": "dense forest within 150 m, 6 trees within 30 m",
+  "pitch_deg": 0.0,
+  "yaw_deg": 0.0
+ }
+}

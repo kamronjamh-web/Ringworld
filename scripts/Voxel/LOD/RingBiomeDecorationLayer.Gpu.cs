@@ -82,6 +82,9 @@ public partial class RingBiomeDecorationLayer
     }
     private sealed class GpuTreeOutput
     {
+        // Renderer draws the full list (the sun shadows' casters while no shadow proxy is ready; never the camera). CameraRenderer draws the camera list and
+        // VerifyRenderer (TreeCullVerify only) the rows the frustum filter dropped, in magenta. Both are children of Renderer.
+        public MultiMeshInstance3D? CameraRenderer, VerifyRenderer;
         public required MultiMeshInstance3D Renderer;
         public required int BatchId;
         public required GpuTreeGroup SourceGroup;
@@ -538,6 +541,7 @@ public partial class RingBiomeDecorationLayer
         if (_gpuTreeCompute == null || !_gpuTreeCompute.Ready) return false;
         _gpuTreeCompute.RequestHaze(RingVegetationHaze.CreateFrame(_treeHazeRayFrame, _grid != null ? _grid.GetCanonicalRingCircumferenceMeters64() / Math.Tau : 0));
         _gpuTreeCompute.RequestShadow(global::RingworldTechDemo.Shadows.RingVegetationShadow.CreateFrame(camera));
+        UpdateTreeCameraCulling();
         if (_gpuLastPolicySignature != GpuTreeRenderPolicySignature()) MarkTreeSunShadowPolicyDirty();
         // A parent/layer transform can change without a streaming invalidation
         // (including a floating-origin move in a fixture).
@@ -1329,12 +1333,28 @@ public partial class RingBiomeDecorationLayer
         ConfigureGpuTreeOutputMaterial(key, group, ref material);
         MultiMeshInstance3D renderer = CreateInstances($"GpuTree_{key.Group.Around}_{key.Group.Across}_{key.Group.Variant}_L{key.Lod}", mesh,
             material, castsShadow, castsShadow ? key.Lod : -1);
-		renderer.Visible = false; renderer.CastShadow = GeometryInstance3D.ShadowCastingSetting.Off; renderer.ExtraCullMargin = 8;
+        renderer.Visible = false; renderer.ExtraCullMargin = 8;
+        SetGpuTreeFullListCast(renderer, GeometryInstance3D.ShadowCastingSetting.Off);
+        // The camera draws its own list (frustum-filtered by phase 6 of the compute); this renderer keeps the full list for the sun shadows.
+        var cameraMultiMesh = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, Mesh = mesh };
+        var cameraRenderer = new MultiMeshInstance3D { Name = renderer.Name + "_Camera", Multimesh = cameraMultiMesh, MaterialOverride = material,
+            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, ExtraCullMargin = renderer.ExtraCullMargin };
+        renderer.AddChild(cameraRenderer);
+        MultiMeshInstance3D? verifyRenderer = null;
+        MultiMesh? verifyMultiMesh = null;
+        if (TreeCullVerify && CreateTreeCullVerifyMaterial(material, mesh) is { } verifyMaterial)
+        {
+            verifyMultiMesh = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, Mesh = mesh };
+            verifyRenderer = new MultiMeshInstance3D { Name = renderer.Name + "_CullVerify", Multimesh = verifyMultiMesh, MaterialOverride = verifyMaterial,
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, ExtraCullMargin = renderer.ExtraCullMargin };
+            renderer.AddChild(verifyRenderer);
+        }
         int id = _gpuTreeCompute!.RegisterBatch(new RingGpuVegetationCompute.BatchRegistration(renderer.Name, renderer.Multimesh!, mesh,
-            group.Rows, group.Metadata, group.RootCount, group.Bounds, false, group.SharedImpostor, UsesTreeDitherData(key.Lod), group.Expansion));
+            group.Rows, group.Metadata, group.RootCount, group.Bounds, false, group.SharedImpostor, UsesTreeDitherData(key.Lod), group.Expansion, cameraMultiMesh, verifyMultiMesh));
         if (id < 0) { UnregisterTreeSunShadowRenderer(renderer); renderer.QueueFree(); return false; }
-        _gpuTreeOutputs[key] = new GpuTreeOutput { Renderer = renderer, BatchId = id, SourceGroup = group, TreeDitherData = UsesTreeDitherData(key.Lod), FarQuad = UsesFarQuadMesh(key.Lod), RenderLodMesh = UsesRenderLodMesh(key.Lod) };
+        _gpuTreeOutputs[key] = new GpuTreeOutput { Renderer = renderer, CameraRenderer = cameraRenderer, VerifyRenderer = verifyRenderer, BatchId = id, SourceGroup = group, TreeDitherData = UsesTreeDitherData(key.Lod), FarQuad = UsesFarQuadMesh(key.Lod), RenderLodMesh = UsesRenderLodMesh(key.Lod) };
         if (material is ShaderMaterial) renderer.SetInstanceShaderParameter("vegetation_haze_slot", _gpuTreeCompute.GetHazeSlot(id));
+        if (material is ShaderMaterial) cameraRenderer.SetInstanceShaderParameter("vegetation_haze_slot", _gpuTreeCompute.GetCameraHazeSlot(id));
 		MarkTreeSunShadowPolicyDirty();
         return true;
     }
@@ -1365,7 +1385,7 @@ public partial class RingBiomeDecorationLayer
         // current sun-shadow selection while a replacement is being prepared.
         UnregisterTreeSunShadowRenderer(output.Renderer);
         ReleaseGpuTreeOutputMaterial(output);
-        output.Renderer.CastShadow = GeometryInstance3D.ShadowCastingSetting.Off;
+        SetGpuTreeFullListCast(output.Renderer, GeometryInstance3D.ShadowCastingSetting.Off);
         // There can only be one retained generation for a logical output key.
         if (_gpuTreeFallbackOutputs.Remove(key, out GpuTreeOutput? older))
         {
@@ -1620,5 +1640,143 @@ public partial class RingBiomeDecorationLayer
             _gpuTreeGroups[key] = new GpuTreeGroup { Key = key, Roots = Array.Empty<CachedTree>(), Rows = rows, Metadata = meta, Bounds = bounds.Grow(8), AroundOrigin = stableAroundOrigin, AcrossOrigin = stableAcrossOrigin, CanonicalMin = minimum, CanonicalMax = maximum, HasProtected = Array.Exists(meta, item => item.Y > .5f) };
         }
         RebuildGpuTreeMergedGroups(fixtureCircumference); _gpuFixtureLastMerge = MergeFarGpuTreeBatches; _gpuFixtureLastSharedFar = UseSharedFarTreeImpostors; _gpuFixtureLastMergeMid = MergeMidGpuTreeBatches; InvalidateGpuTreeFrameCache(); GpuTreeSourceEpoch++;
+    }
+
+    // ---- Per-instance frustum culling of the camera tree lists (OC-2) ----------------------------------------------------------------------------------
+    // Each GPU tree output keeps its full list (budget, LOD bands, dither words; the sun shadows' casters) and the compute cuts a second, camera-only list from it
+    // (phase 6): the rows whose bounding sphere (mesh sphere x instance scale + the wind bound of 0.6 instance heights + 0.25 m) touches a latched, padded camera
+    // frustum. The latch follows RingStandingGrassLayer's rules (GrassCullingFrustum.Pad): it is rebuilt after a turn of TreeCullRotationDegrees or a move of
+    // TreeCullMovementMeters, widened by TreeCullPaddingDegrees and by the movement threshold plus a margin for the camera's own speed (the render camera can be
+    // a frame or two ahead of the one this thread sees). Culling is off while a megastorm blast bends the trees and for the frame the layer is rebased.
+    /// <summary>A/B switch (debug, not a tuning row): false keeps every row in the camera list. The picture is identical either way; only the draw cost differs.</summary>
+    public bool TreeFrustumCulling { get; set; } = true;
+    /// <summary>Debug: draws the rows the frustum filter drops in magenta (unshaded). Must be set before the outputs are created. A magenta pixel in a frame means a visible row was culled.</summary>
+    public bool TreeCullVerify { get; set; }
+    public long TreeCullRelatches { get; private set; }
+    public string TreeCullLastRelatchReason { get; private set; } = "none";
+    public bool TreeCullActive => _treeCullSentEnabled;
+    /// <summary>Counters for measuring the filter (cumulative): compute-list dispatches of phase 6, render-thread ms spent recording them, and the worst single Work.</summary>
+    public long TreeCullDispatches => _gpuTreeCompute?.CameraCullDispatchCount ?? 0;
+    /// <summary>Debug / fixtures: <see cref="StartTreeCameraAudit"/> reads every camera list back (render thread, stalls) and checks it against its full list: rows in order and bit-identical,
+    /// haze and shadow terms, the filter off = identical lists. <see cref="TreeCullAuditResult"/> holds the text once it finishes ("" while pending, "idle" before the first call).</summary>
+    public string TreeCullAuditResult { get; private set; } = "idle";
+    public void StartTreeCameraAudit()
+    {
+        if (_gpuTreeCompute == null) { TreeCullAuditResult = "no compute"; return; }
+        TreeCullAuditResult = "";
+        _gpuTreeCompute.RequestCameraListAudit(a => TreeCullAuditResult = $"batches={a.Batches} notIdentical={a.NotIdentical} rowsFull={a.RowsFull} rowsCamera={a.RowsCamera} dropped={a.RowsDropped} altered={a.OutOfOrderOrAltered} termsChecked={a.TermsChecked} termMismatches={a.TermMismatches} first=\"{a.First}\"");
+    }
+    public double TreeCullRecordMilliseconds => _gpuTreeCompute?.CameraCullRecordMilliseconds ?? 0;
+    public double TreeCullWorstWorkMilliseconds => _gpuTreeCompute?.CameraCullWorstWorkMilliseconds ?? 0;
+    private const float TreeCullMovementMeters = 4f, TreeCullRotationDegrees = 3f, TreeCullPaddingDegrees = 5f, TreeCullSpeedSeconds = .1f;
+    private const float TreeCullWindFraction = .6f, TreeCullGuardMeters = .25f;
+    private readonly record struct TreeCullCamera(ulong Id, Camera3D.ProjectionType Projection, Camera3D.KeepAspectEnum KeepAspect, float Fov, float Size, Vector2 FrustumOffset,
+        float Near, float Far, float HOffset, float VOffset, Vector2 Viewport);
+    private bool _treeCullValid, _treeCullSentEnabled, _treeCullSentVerify, _treeCullHavePrevious;
+    private Transform3D _treeCullTransform, _treeCullLayer;
+    private TreeCullCamera _treeCullCamera;
+    private float _treeCullSpeedMargin;
+    private Vector3 _treeCullPreviousOrigin;
+    private ulong _treeCullHoldUntilUsec;
+    private ulong _treeCullPreviousUsec;
+    private Vector4[]? _treeCullPlanes;
+    private Plane[]? _treeCullPlaneScratch;
+
+
+    private bool TreeCullTransformsCurrent()
+    {
+        foreach (GpuTreeOutput output in _gpuTreeOutputs.Values)
+            if (output.TransformCacheVersion != _gpuTreeFrameCacheVersion || output.CachedGlobalTransform != output.Renderer.GlobalTransform) return false;
+        return true;
+    }
+
+    private void UpdateTreeCameraCulling()
+    {
+        if (_gpuTreeCompute is not { Ready: true }) return;
+        using var scope = RingPerformanceTelemetry.MeasureCpu("Trees camera cull");
+        Camera3D? camera = GetViewport()?.GetCamera3D();
+        bool haveCamera = camera != null && camera.IsInsideTree();
+        ulong now = Time.GetTicksUsec();
+        // Speed is measured in layer space: a floating-origin rebase moves the layer and the camera together and must not read as a jump or as standing still.
+        Vector3 origin = haveCamera ? GlobalTransform.AffineInverse() * camera!.GlobalTransform.Origin : default;
+        float speed = 0f;
+        if (haveCamera && _treeCullHavePrevious && now > _treeCullPreviousUsec)
+            speed = origin.DistanceTo(_treeCullPreviousOrigin) / ((now - _treeCullPreviousUsec) * 1e-6f);
+        _treeCullPreviousOrigin = origin; _treeCullPreviousUsec = now; _treeCullHavePrevious = haveCamera;
+        bool layerChanged = _treeCullValid && GlobalTransform != _treeCullLayer;
+        // The layer moving (a floating-origin rebase) switches the filter off for half a second; a flight that rebases often then stays off instead of toggling.
+        if (layerChanged) _treeCullHoldUntilUsec = now + 500_000;
+        bool held = now < _treeCullHoldUntilUsec;
+        // Fast flight re-latches every frame for little gain (the padding is about as wide as the view), so the filter steps aside above ~100 m/s (hysteresis 90 / 120).
+        bool fast = speed > (_treeCullSentEnabled ? 120f : 90f);
+        bool enabled = TreeFrustumCulling && haveCamera && !held && !fast && !RingMegastormHazardFx.BlastActive;
+        // Switching on needs the transforms the compute last culled with to be the renderers' current ones (the filter tests world-space planes against them).
+        if (enabled && !_treeCullSentEnabled && !TreeCullTransformsCurrent()) enabled = false;
+        bool verify = enabled && TreeCullVerify;
+        TreeCullCamera live = default;
+        float neededMargin = Math.Min(speed * TreeCullSpeedSeconds, 1e6f);
+        string? reason = null;
+        if (!_treeCullValid) reason = "initial";
+        else if (enabled != _treeCullSentEnabled) reason = held ? "layer" : "enabled";
+        else if (verify != _treeCullSentVerify) reason = "verify";
+        else if (enabled)
+        {
+            live = new TreeCullCamera(camera!.GetInstanceId(), camera.Projection, camera.KeepAspect, camera.Fov, camera.Size, camera.FrustumOffset,
+                camera.Near, camera.Far, camera.HOffset, camera.VOffset, GetViewport()?.GetVisibleRect().Size ?? Vector2.Zero);
+            Transform3D transform = camera.GlobalTransform;
+            if (live != _treeCullCamera) reason = "projection";
+            else if (transform.Origin.DistanceTo(_treeCullTransform.Origin) > TreeCullMovementMeters) reason = "translation";
+            else if (live.Projection == Camera3D.ProjectionType.Perspective
+                ? GrassCullingFrustum.BasisAngleDegrees(_treeCullTransform.Basis, transform.Basis) > TreeCullRotationDegrees
+                : transform.Basis != _treeCullTransform.Basis) reason = "rotation";
+            else if (neededMargin > _treeCullSpeedMargin) reason = "speed";
+            else if (_treeCullSpeedMargin > neededMargin * 4f + 4f) reason = "settled";
+        }
+        _treeCullLayer = GlobalTransform;
+        if (reason == null) return;
+        _treeCullValid = true; _treeCullSentEnabled = enabled; _treeCullSentVerify = verify;
+        TreeCullRelatches++; TreeCullLastRelatchReason = reason;
+        if (!enabled)
+        {
+            _gpuTreeCompute.RequestCameraCull(new RingGpuVegetationCompute.CameraCullState(false, Array.Empty<Vector4>(), TreeCullWindFraction, TreeCullGuardMeters, false));
+            return;
+        }
+        if (live.Id == 0) live = new TreeCullCamera(camera!.GetInstanceId(), camera.Projection, camera.KeepAspect, camera.Fov, camera.Size, camera.FrustumOffset,
+            camera.Near, camera.Far, camera.HOffset, camera.VOffset, GetViewport()?.GetVisibleRect().Size ?? Vector2.Zero);
+        _treeCullCamera = live;
+        _treeCullTransform = camera!.GlobalTransform;
+        // Hysteresis: the margin is twice what the speed needs now, so ordinary speed changes do not re-latch.
+        _treeCullSpeedMargin = neededMargin * 2f + .5f;
+        bool perspective = live.Projection == Camera3D.ProjectionType.Perspective;
+        Godot.Collections.Array<Plane> exact = camera.GetFrustum();
+        int count = exact.Count;
+        if (_treeCullPlanes is null || _treeCullPlanes.Length != count) { _treeCullPlanes = new Vector4[count]; _treeCullPlaneScratch = new Plane[count]; }
+        float movement = TreeCullMovementMeters + _treeCullSpeedMargin + Math.Abs(camera.HOffset) + Math.Abs(camera.VOffset)
+            + Math.Abs(camera.FrustumOffset.X) + Math.Abs(camera.FrustumOffset.Y);
+        GrassCullingFrustum.Pad(exact, _treeCullTransform, camera.Near, camera.Far, movement, perspective ? TreeCullPaddingDegrees : 0f, perspective, _treeCullPlanes, _treeCullPlaneScratch!);
+        _gpuTreeCompute.RequestCameraCull(new RingGpuVegetationCompute.CameraCullState(true, _treeCullPlanes, TreeCullWindFraction, TreeCullGuardMeters, verify));
+    }
+
+    /// <summary>Debug: an unshaded magenta copy of the tree material (same vertex shader, so wind and the camera-facing impostors move the vertices as drawn), or null when
+    /// there is no spatial shader to copy. Meshes with one material per surface use their first shader material.</summary>
+    private static ShaderMaterial? CreateTreeCullVerifyMaterial(Material? material, Mesh mesh)
+    {
+        ShaderMaterial? source = material as ShaderMaterial;
+        if (source == null) foreach (ShaderMaterial candidate in ImportedTreeRenderMaterials.ShaderMaterials(mesh)) { source = candidate; break; }
+        if (source?.Shader is not { } shader) return null;
+        string code = shader.Code;
+        int fragment = code.IndexOf("void fragment()", StringComparison.Ordinal), render = code.IndexOf("render_mode ", StringComparison.Ordinal);
+        if (fragment < 0 || render < 0 || render > fragment) return null;
+        int open = code.IndexOf('{', fragment), depth = 0, close = -1;
+        for (int i = open; i < code.Length && close < 0; i++)
+        {
+            if (code[i] == '{') depth++;
+            else if (code[i] == '}' && --depth == 0) close = i;
+        }
+        if (open < 0 || close < 0) return null;
+        code = code.Insert(close, "\n\tALBEDO = vec3(4.0, 0.0, 4.0);\n\tEMISSION = vec3(0.0);\n").Insert(render + "render_mode ".Length, "unshaded, ");
+        var material2 = (ShaderMaterial)source.Duplicate();
+        material2.Shader = new Shader { Code = code };
+        return material2;
     }
 }

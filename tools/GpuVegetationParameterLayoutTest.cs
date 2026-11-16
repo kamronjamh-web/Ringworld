@@ -73,6 +73,19 @@ public partial class GpuVegetationParameterLayoutTest : RefCounted
         for (int i = 62; i < Words; i++) if (plainData[i] != 0f) { _failures.Add($"null GrassCard left word {i} set"); break; }
         // The skip-unchanged comparison must see GrassCard: records are equal only when the card block is.
         if (card == (card with { DistanceMarginMeters = 3f })) _failures.Add("record equality ignores the margin");
+        // Phase 6 (tree camera list): per-batch words 83 / 110..113 are written beside WriteParameterWords; the frame state is the shared 112-byte block.
+        var cull = new float[Words];
+        RingGpuVegetationCompute.WriteCameraCullWords(true, true, 3f, new Vector3(0f, 1f, 2f), cull);
+        if (cull[83] != 1f || cull[110] != 3f || cull[111] != 0f || cull[112] != 1f || cull[113] != 2f) _failures.Add("camera words: has-verify / sphere radius / centre misplaced");
+        RingGpuVegetationCompute.WriteCameraCullWords(false, false, 3f, new Vector3(0f, 1f, 2f), cull);
+        for (int i = 83; i < Words; i++) if (cull[i] != 0f) { _failures.Add($"camera words: word {i} must be 0 without a camera list"); break; }
+        byte[] none = RingGpuVegetationCompute.CameraCullBytes(null);
+        if (none.Length != RingGpuVegetationCompute.CameraCullBlockBytes || Array.Exists(none, b => b != 0)) _failures.Add("camera block: no state must be all zero (mode 0 keeps every row)");
+        var block = new float[RingGpuVegetationCompute.CameraCullBlockBytes / 4];
+        Buffer.BlockCopy(RingGpuVegetationCompute.CameraCullBytes(new RingGpuVegetationCompute.CameraCullState(true, planes, .6f, .25f, true)), 0, block, 0, block.Length * 4);
+        if (block[0] != 1f || block[3] != 5f || block[20] != 0f || block[23] != 10f || block[24] != 2f || block[25] != .6f || block[26] != .25f || block[27] != 6f) _failures.Add("camera block: planes / (mode, wind, guard, count) misplaced");
+        Buffer.BlockCopy(RingGpuVegetationCompute.CameraCullBytes(new RingGpuVegetationCompute.CameraCullState(false, planes, .6f, .25f, true)), 0, block, 0, block.Length * 4);
+        if (block[24] != 0f || block[27] != 0f) _failures.Add("camera block: a disabled state must keep every row");
         if (capture) return true;
         foreach (string f in _failures) GD.PushError("PARAM_LAYOUT " + f);
         GD.Print(_failures.Count == 0 ? "PARAM_LAYOUT=PASS" : "PARAM_LAYOUT=FAIL");

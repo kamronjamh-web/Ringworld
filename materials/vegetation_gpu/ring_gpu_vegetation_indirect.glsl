@@ -13,22 +13,30 @@ layout(set = 0, binding = 5, std430) buffer Flags { uint local_offset[]; };
 layout(set = 0, binding = 6, std430) buffer Counts { uint group_count[]; };
 layout(set = 0, binding = 7, std430) buffer Offsets { uint group_offset[]; };
 layout(set = 0, binding = 8, std430) buffer Budgets { uint used[5]; };
+// Phase 6 only (tree batches with a camera list): the frustum-filtered copy of the output rows (the camera draws it; the full list stays the shadow casters'),
+// and, in verify mode, the rows the filter dropped. Batches without them bind the small budget buffer, which is never touched.
+layout(set = 0, binding = 9, std430) buffer CameraRows { float camera_row[]; };
+layout(set = 0, binding = 10, std430) buffer CameraCommands { uint camera_command[]; };
+layout(set = 0, binding = 11, std430) buffer VerifyRows { float verify_row[]; };
+layout(set = 0, binding = 12, std430) buffer VerifyCommands { uint verify_command[]; };
 layout(push_constant, std430) uniform Push {
     uint phase, count, capacity, surfaces;
     uint sweep, protected_base_valid, haze_base, haze_tag;
     vec4 haze_anchor; // xyz = anchor in mesh-local row space (trees: mesh AABB centre; grass / shared impostor: 0), w > .5 = write haze
-    vec4 shadow_flags; // x > .5 = write the shadow slot (same slot index and tag as the haze slot, anchor = the row root)
+    vec4 shadow_flags; // x > .5 = write the shadow slot (same slot index and tag as the haze slot, anchor = the row root); phase 6: y = the full list's slot base (exact as a float: at most 2^24 slots)
 } q;
 layout(set = 1, binding = 0, std140) uniform HazeParams {
     vec4 sigma_R_H_R; vec4 aerosol; vec4 geometry; vec4 sides; vec4 outward; vec4 axis; vec4 to_sun; vec4 camera; vec4 storm;
 } haze;
-layout(rgba16f, set = 1, binding = 1) uniform restrict writeonly image2D haze_atlas;
-layout(rgba16f, set = 1, binding = 3) uniform restrict writeonly image2D shadow_atlas;
+layout(set = 1, binding = 8, std140) uniform CameraCull { vec4 planes[6]; vec4 settings; } cull; // phase 6 only, see camera_keeps
+layout(rgba16f, set = 1, binding = 1) uniform restrict image2D haze_atlas; // phase 6 reads the full list's terms to copy them
+layout(rgba16f, set = 1, binding = 3) uniform restrict image2D shadow_atlas;
 #include "res://materials/vegetation_gpu/ring_vegetation_shadow_terms.glslinc"
 #include "res://materials/ring_atmosphere_shared.gdshaderinc"
 #include "res://materials/ring_haze_shared.gdshaderinc"
 #include "res://materials/atmosphere/ring_vegetation_haze_terms.gdshaderinc"
 shared uint scan[64];
+shared uint scan_dropped[64];
 
 void write_vegetation_haze(uint slot_row, vec3 root, vec3 local_x, vec3 local_y, vec3 local_z) {
     if (!VEGETATION_HAZE || q.haze_anchor.w < .5) return;
@@ -265,12 +273,96 @@ vec2 tree_coverage_words(uint id, uint stride, float d) {
     return vec2(hi, 2.0 + 0.2 * lo);
 }
 
+// Phase 6 (trees with a camera list): compacts the full output list into the camera list, in order, keeping the rows whose bounding sphere touches the
+// padded camera frustum, and copies each kept row's haze / shadow terms to the camera list's slot range with that range's tag.
+// Frame state (set 1, binding 8, shared by every batch): the planes (Godot: positive distance is outside) and settings = (mode, wind envelope as a fraction of the
+// instance height, fixed guard in metres, plane count); mode 0 keeps every row, 1 filters, 2 filters and writes the dropped rows to the verify list.
+// Per batch: p[83] > .5 = the batch has a verify list, p[110] the mesh sphere radius and p[111..113] its centre (mesh space).
+bool camera_keeps(uint b) {
+    if (cull.settings.x < .5 || q.sweep != 0u) return true; // q.sweep = 1: this batch was not in the latest frame request, its transform words may be stale
+    vec3 local_x = vec3(output_row[b], output_row[b + 4u], output_row[b + 8u]);
+    vec3 local_y = vec3(output_row[b + 1u], output_row[b + 5u], output_row[b + 9u]);
+    vec3 local_z = vec3(output_row[b + 2u], output_row[b + 6u], output_row[b + 10u]);
+    vec3 root = vec3(output_row[b + 3u], output_row[b + 7u], output_row[b + 11u]);
+    mat3 basis = mat3(vec3(p[16], p[17], p[18]), vec3(p[19], p[20], p[21]), vec3(p[22], p[23], p[24]));
+    float height = length(basis * local_y);
+    float scale = max(length(basis * local_x), max(height, length(basis * local_z)));
+    vec3 world = basis * (root + local_x * p[111] + local_y * p[112] + local_z * p[113]) + vec3(p[25], p[26], p[27]);
+    // The tree vertex shaders bend a vertex by at most 0.6 of the instance height (ring_local_wind.gdshaderinc); nothing else leaves the mesh sphere.
+    float radius = p[110] * scale + cull.settings.y * max(.05, height) + cull.settings.z;
+    if (isnan(radius) || isinf(radius) || isnan(world.x + world.y + world.z)) return true;
+    for (int i = 0; i < int(cull.settings.w); ++i)
+        if (dot(cull.planes[i].xyz, world) - cull.planes[i].w > radius) return false;
+    return true;
+}
+
+void copy_camera_terms(uint source_slot, uint destination_slot) {
+    ivec2 from = ring_vegetation_haze_texel(int(source_slot)), to = ring_vegetation_haze_texel(int(destination_slot));
+    if (VEGETATION_HAZE && q.haze_anchor.w > .5) {
+        vec4 first = imageLoad(haze_atlas, from);
+        first.w = float(q.haze_tag);
+        imageStore(haze_atlas, to, first);
+        imageStore(haze_atlas, to + ivec2(1, 0), imageLoad(haze_atlas, from + ivec2(1, 0)));
+    }
+    if (VEGETATION_SHADOW && q.shadow_flags.x > .5) {
+        vec4 first = imageLoad(shadow_atlas, from);
+        first.w = float(q.haze_tag);
+        imageStore(shadow_atlas, to, first);
+        imageStore(shadow_atlas, to + ivec2(1, 0), imageLoad(shadow_atlas, from + ivec2(1, 0)));
+    }
+}
+
+// One workgroup per batch: 64 rows per step, a running offset keeps the survivors in their original order.
+void camera_phase(uint lane) {
+    uint visible = min(command[1], q.capacity);
+    uint stride = p[60] > .5 || p[14] > .5 ? 16u : 12u;
+    uint source_slots = uint(q.shadow_flags.y + .5);
+    bool verify = cull.settings.x > 1.5 && p[83] > .5;
+    uint kept = 0u, dropped = 0u;
+    for (uint start = 0u; start < visible; start += 64u) {
+        uint id = start + lane;
+        bool live = id < visible;
+        bool keep = live && camera_keeps(id * stride);
+        scan[lane] = keep ? 1u : 0u;
+        scan_dropped[lane] = verify && live && !keep ? 1u : 0u;
+        barrier();
+        for (uint step = 1u; step < 64u; step <<= 1u) {
+            uint previous = lane >= step ? scan[lane - step] : 0u;
+            uint previous_dropped = lane >= step ? scan_dropped[lane - step] : 0u;
+            barrier();
+            scan[lane] += previous;
+            scan_dropped[lane] += previous_dropped;
+            barrier();
+        }
+        uint kept_here = scan[63u], dropped_here = scan_dropped[63u];
+        if (keep) {
+            uint destination = kept + scan[lane] - 1u;
+            for (uint element = 0u; element < stride; ++element)
+                camera_row[destination * stride + element] = output_row[id * stride + element];
+            copy_camera_terms(source_slots + id, q.haze_base + destination);
+        } else if (verify && live) {
+            uint destination = dropped + scan_dropped[lane] - 1u;
+            for (uint element = 0u; element < stride; ++element)
+                verify_row[destination * stride + element] = output_row[id * stride + element];
+        }
+        kept += kept_here;
+        dropped += dropped_here;
+        barrier();
+    }
+    if (lane == 0u)
+        for (uint surface = 0u; surface < q.surfaces; ++surface) {
+            camera_command[surface * 5u + 1u] = kept;
+            if (p[83] > .5) verify_command[surface * 5u + 1u] = dropped; // a verify list that is not being filled must draw nothing
+        }
+}
+
 void main() {
     uint id = gl_GlobalInvocationID.x;
     uint lane = gl_LocalInvocationID.x;
     uint group = gl_WorkGroupID.x;
     uint groups = (q.count + 63u) / 64u;
     if (q.phase == 5u) { expand_tree_row(id); return; }
+    if (q.phase == 6u) { camera_phase(lane); return; }
     if (q.phase == 4u) {
         if (!VEGETATION_HAZE && !VEGETATION_SHADOW) return;
         uint visible = min(command[1], q.capacity);

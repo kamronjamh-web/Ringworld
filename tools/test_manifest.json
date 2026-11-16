@@ -7670,6 +7670,66 @@
       "marker": "EMITTER_SHOT",
       "expected_s": null,
       "timeout_s": 1500
+    },
+    "tree_visibility_oracle": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "vegetation",
+        "perf-telemetry"
+      ],
+      "marker": "TREE_VISIBILITY_ORACLE",
+      "expected_s": 1500,
+      "timeout_s": 3600,
+      "profile": "own-runner",
+      "runner": "tools/tree_visibility_run.ps1",
+      "user_args": "-Test oracle -SkipBuild"
+    },
+    "tree_frustum_identity_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "vegetation",
+        "perf-telemetry"
+      ],
+      "marker": "TREE_FRUSTUM_IDENTITY",
+      "expected_s": 1500,
+      "timeout_s": 3600,
+      "profile": "own-runner",
+      "runner": "tools/tree_visibility_run.ps1",
+      "user_args": "-Test frustum_identity"
+    },
+    "tree_frustum_blob_probe": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "vegetation",
+        "perf-telemetry"
+      ],
+      "marker": "TREE_FRUSTUM_BLOB",
+      "expected_s": 600,
+      "timeout_s": 1800,
+      "profile": "own-runner",
+      "runner": "tools/tree_visibility_run.ps1",
+      "user_args": "-Test blob_probe"
+    },
+    "tree_cull_verify_sweep": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "vegetation",
+        "perf-telemetry"
+      ],
+      "marker": "TREE_CULL_VERIFY_SWEEP",
+      "expected_s": 2400,
+      "timeout_s": 3900,
+      "profile": "own-runner",
+      "runner": "tools/tree_visibility_run.ps1",
+      "user_args": "-Test cull_verify"
     }
   }
 }

@@ -26,9 +26,15 @@ public sealed class RingGpuVegetationCompute : IDisposable
         public required Vector4[] Roots;
         public required float[] Frame;
     }
+    /// <summary>Tree batches: <paramref name="CameraTarget"/> receives the camera's list (phase 6: the output rows that touch the padded camera frustum, in order), so
+    /// <paramref name="MultiMesh"/> stays the full list that shadow casters use. <paramref name="VerifyTarget"/> (debug) receives the rows phase 6 dropped.</summary>
     public sealed record BatchRegistration(string Identity, MultiMesh MultiMesh, Mesh Mesh,
         float[] Candidates, Vector4[]? Metadata, int Capacity, Aabb CustomAabb, bool Grass,
-        bool TreeCustomData = false, bool TreeDitherData = false, TreeExpansion? Expansion = null);
+        bool TreeCustomData = false, bool TreeDitherData = false, TreeExpansion? Expansion = null,
+        MultiMesh? CameraTarget = null, MultiMesh? VerifyTarget = null);
+    /// <summary>The latched, padded camera frustum for tree camera lists (<see cref="RequestCameraCull"/>). Planes follow Camera3D.GetFrustum(): world space,
+    /// positive signed distance is outside. Disabled keeps every row (camera list = full list).</summary>
+    public sealed record CameraCullState(bool Enabled, Vector4[] Planes, float WindFraction, float GuardMeters, bool Verify);
     public readonly record struct BatchFrameParameters(int BatchId, Transform3D LocalToWorld, bool Grass,
         int LodPass, float NearDistance, float FarDistance, float TransitionDistance,
         float NearDensity, float FarDensity, bool EnableLod, float TreeRankGate,
@@ -53,6 +59,15 @@ public sealed class RingGpuVegetationCompute : IDisposable
         // CPU-only freshness token for a resident output's visibility decision.
         public long CompletedVisibilityRevision = 0;
         public Rid Source, Metadata, Parameters, Flags, Counts, Offsets, Set, Output, Commands;
+        public Rid CameraOutput, CameraCommands, VerifyOutput, VerifyCommands;
+        public bool HasCamera => CameraOutput.IsValid && CameraCommands.IsValid;
+        public long CameraBytes;
+        // Stamp of the last frame dispatch that included this batch; phase 6 filters only batches of the latest one (others keep every row: their transform words may be stale).
+        public int FrameStamp;
+        // Camera list slot range in the same atlases (its own tag), and the mesh sphere phase 6 culls with (mesh space; read on the main thread).
+        public int CameraHazeBase = -1, CameraHazeTag;
+        public Vector3 MeshSphereCenter;
+        public float MeshSphereRadius;
         public SharedSource? SharedSource;
         public Vector4[]? PendingMetadata;
         public byte[] ParameterDataBytes = new byte[ParameterBytes];
@@ -136,6 +151,12 @@ public sealed class RingGpuVegetationCompute : IDisposable
     private Vector3 _shadowRefreshCamera;
     private long _shadowRefreshDispatchCount, _shadowRefreshCount;
     private FrameRequest? _pending, _lastRequest;
+    private CameraCullState? _cameraCull;
+    private Rid _cameraCullBuffer;
+    private bool _cameraCullPending;
+    private long _cameraCullDispatchCount, _cameraCullTicks, _cameraCullMaxTicks, _cameraWorkTicks;
+    private int _dispatchStamp;
+    private readonly HashSet<int> _cameraCulledIds = new();
     private int _pendingGrassFrameRevision, _grassFrameRevision;
     private int _lastDispatchedCandidateCount;
     private bool _queued, _disposed, _ready, _failed;
@@ -266,6 +287,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
                 PrototypeHorizontalRadius = PrototypeHorizontalRadius(registration.Mesh),
                 UploadedHasProtectedRoots = HasProtectedRoots(registration.Metadata) };
             AssignHaze(created);
+            ConfigureCamera(created);
             _batches.Add(id, created);
             _membershipRevision++;
             QueueWork();
@@ -290,6 +312,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
                 PrototypeHorizontalRadius = PrototypeHorizontalRadius(registration.Mesh),
                 UploadedHasProtectedRoots = HasProtectedRoots(registration.Metadata) };
             AssignHaze(replacement);
+            ConfigureCamera(replacement);
             _batches[id] = replacement;
             _membershipRevision++;
             QueueWork();
@@ -333,12 +356,17 @@ public sealed class RingGpuVegetationCompute : IDisposable
             return _batches.TryGetValue(batchId, out Batch? batch) && batch.HazeBase >= 0 ? new Vector2(batch.HazeBase, batch.HazeTag) : new Vector2(-1, 0);
     }
 
-    /// <summary>Called while holding <see cref="_gate"/>.</summary>
-    private void AssignHaze(Batch batch)
+    /// <summary>(slot base, tag) of the batch's camera list range (its own slots in the same atlases), or (-1, 0) when it has none.</summary>
+    public Vector2 GetCameraHazeSlot(int batchId)
     {
-        if (HazeChannel == RingVegetationHaze.Channel.None) return;
-        BatchRegistration r = batch.Registration;
-        int length = r.Capacity, start = -1;
+        lock (_gate)
+            return _batches.TryGetValue(batchId, out Batch? batch) && batch.CameraHazeBase >= 0 ? new Vector2(batch.CameraHazeBase, batch.CameraHazeTag) : new Vector2(-1, 0);
+    }
+
+    /// <summary>Called while holding <see cref="_gate"/>. First-fit range of <paramref name="length"/> slots, or -1 when the atlas is full.</summary>
+    private int AllocateHazeRange(int length)
+    {
+        int start = -1;
         for (int i = 0; i < _hazeFree.Count && start < 0; i++)
         {
             (int freeStart, int freeLength) = _hazeFree[i];
@@ -348,10 +376,20 @@ public sealed class RingGpuVegetationCompute : IDisposable
         }
         if (start < 0)
         {
-            if ((long)_hazeHighWater + length > (long)RingVegetationHaze.MaximumAtlasRows * RingVegetationHaze.SlotsPerRow) return;
+            if ((long)_hazeHighWater + length > (long)RingVegetationHaze.MaximumAtlasRows * RingVegetationHaze.SlotsPerRow) return -1;
             start = _hazeHighWater;
             _hazeHighWater += length;
         }
+        return start;
+    }
+
+    /// <summary>Called while holding <see cref="_gate"/>.</summary>
+    private void AssignHaze(Batch batch)
+    {
+        if (HazeChannel == RingVegetationHaze.Channel.None) return;
+        BatchRegistration r = batch.Registration;
+        int start = AllocateHazeRange(r.Capacity);
+        if (start < 0) return;
         batch.HazeBase = start;
         batch.HazeTag = 2 + _hazeTagCounter++ % 2046;
         Vector3 anchor = Vector3.Zero;
@@ -361,14 +399,25 @@ public sealed class RingGpuVegetationCompute : IDisposable
             if (aabb.Position.IsFinite() && aabb.Size.IsFinite()) anchor = aabb.GetCenter();
         }
         batch.HazeAnchor = anchor;
+        if (r.CameraTarget is not null && !r.Grass && (batch.CameraHazeBase = AllocateHazeRange(r.Capacity)) >= 0)
+            batch.CameraHazeTag = 2 + _hazeTagCounter++ % 2046;
     }
 
-    /// <summary>Called while holding <see cref="_gate"/>. Returns the batch's range to the first-fit free list.</summary>
-    private void FreeHaze(Batch batch)
+    /// <summary>Called while holding <see cref="_gate"/> on the main thread: the mesh sphere phase 6 culls with. Trees draw their mesh around the AABB centre; the shared
+    /// impostors rebuild their vertices from per-variant data inside the mesh bounds (the far quad stands on the root and can reach past them), so they use a root-centred sphere.</summary>
+    private static void ConfigureCamera(Batch batch)
     {
-        if (batch.HazeBase < 0) return;
-        int start = batch.HazeBase, length = batch.Registration.Capacity;
-        batch.HazeBase = -1;
+        BatchRegistration r = batch.Registration;
+        if (r.CameraTarget is null || r.Grass) return;
+        Aabb aabb = r.Mesh.GetAabb();
+        if (!aabb.Position.IsFinite() || !aabb.Size.IsFinite()) { batch.MeshSphereRadius = 1e9f; return; }
+        if (r.TreeCustomData) { batch.MeshSphereCenter = Vector3.Zero; batch.MeshSphereRadius = aabb.GetCenter().Length() + aabb.Size.Length(); }
+        else { batch.MeshSphereCenter = aabb.GetCenter(); batch.MeshSphereRadius = aabb.Size.Length() * .5f; }
+    }
+
+    /// <summary>Called while holding <see cref="_gate"/>. Returns the range to the first-fit free list.</summary>
+    private void FreeHazeRange(int start, int length)
+    {
         int at = 0;
         while (at < _hazeFree.Count && _hazeFree[at].Start < start) at++;
         _hazeFree.Insert(at, (start, length));
@@ -377,6 +426,16 @@ public sealed class RingGpuVegetationCompute : IDisposable
         if (at > 0 && _hazeFree[at - 1].Start + _hazeFree[at - 1].Length == _hazeFree[at].Start)
         { _hazeFree[at - 1] = (_hazeFree[at - 1].Start, _hazeFree[at - 1].Length + _hazeFree[at].Length); _hazeFree.RemoveAt(at); at--; }
         if (_hazeFree[at].Start + _hazeFree[at].Length == _hazeHighWater) { _hazeHighWater = _hazeFree[at].Start; _hazeFree.RemoveAt(at); }
+    }
+
+    /// <summary>Called while holding <see cref="_gate"/>. Returns the batch's ranges (full list and camera list) to the free list.</summary>
+    private void FreeHaze(Batch batch)
+    {
+        if (batch.CameraHazeBase >= 0) { int start = batch.CameraHazeBase; batch.CameraHazeBase = -1; FreeHazeRange(start, batch.Registration.Capacity); }
+        if (batch.HazeBase < 0) return;
+        int length = batch.Registration.Capacity, first = batch.HazeBase;
+        batch.HazeBase = -1;
+        FreeHazeRange(first, length);
     }
 
     /// <summary>Main thread, every frame before <see cref="RequestFrame"/>. Publishes the haze inputs; culling writes haze for the rows it compacts
@@ -444,6 +503,19 @@ public sealed class RingGpuVegetationCompute : IDisposable
         if (!refresh) return;
         _shadowRefreshValid = true; _shadowRefreshKey = frame.Key; _shadowRefreshCamera = frame.CameraWorld; _shadowRefreshTicks = now;
         lock (_gate) { _shadowRefreshPending = true; QueueWork(); }
+    }
+
+    /// <summary>Main thread. Publishes the latched camera frustum that phase 6 filters the tree camera lists with. Call it when the latch changes (the filter re-runs
+    /// for every tree batch, without a full cull); batches culled by a frame request pick the newest state up anyway.</summary>
+    public void RequestCameraCull(CameraCullState state)
+    {
+        lock (_gate)
+        {
+            if (_disposed || _failed) return;
+            _cameraCull = state with { Planes = (Vector4[])state.Planes.Clone() };
+            _cameraCullPending = true;
+            QueueWork();
+        }
     }
 
     /// <summary>Copies a parent indirect output into a same-format render-only MultiMesh after each parent dispatch.</summary>
@@ -728,6 +800,11 @@ public sealed class RingGpuVegetationCompute : IDisposable
             if (shadowOn) _rd!.BufferUpdate(_shadowParams, 0, RingVegetationShadow.ParameterFloats * 4, FloatBytes(shadowFrame!.Value.Parameters));
             _shadowDispatchOn = shadowOn;
             if (hazeOn) _rd!.BufferUpdate(_hazeParams, 0, RingVegetationHaze.ParameterFloats * 4, FloatBytes(hazeFrame!.Value.Parameters));
+            CameraCullState? cullState;
+            bool cullPending;
+            lock (_gate) { cullState = _cameraCull; cullPending = _cameraCullPending; _cameraCullPending = false; }
+            if (cullPending) _rd!.BufferUpdate(_cameraCullBuffer, 0, CameraCullBlockBytes, CameraCullBytes(cullState));
+            _cameraCulledIds.Clear();
             _dispatchedIds.Clear();
             if (frame is not null)
             {
@@ -736,7 +813,10 @@ public sealed class RingGpuVegetationCompute : IDisposable
                 ReleaseSnapshotOf(frame);
             }
             else CopyOutputMirrors(_rd!);
-            if (hazeOn && refreshPending || shadowOn && shadowRefreshPending) DispatchTermsRefresh(batches, hazeOn && refreshPending, shadowOn && shadowRefreshPending);
+            if (hazeOn && refreshPending || shadowOn && shadowRefreshPending) DispatchTermsRefresh(batches, hazeOn && refreshPending, shadowOn && shadowRefreshPending, hazeOn, shadowOn);
+            if (cullPending) DispatchCameraOnly(batches, hazeOn, shadowOn);
+            if (_cameraWorkTicks > _cameraCullMaxTicks) _cameraCullMaxTicks = _cameraWorkTicks;
+            _cameraWorkTicks = 0;
         }
         catch (Exception error)
         {
@@ -754,7 +834,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
                     bool pendingMirror = false;
                     foreach (KeyValuePair<int, OutputMirror> entry in _mirrors)
                         if (!entry.Value.Allocated || (entry.Value.PendingCopy && _batches.TryGetValue(entry.Key, out Batch? source) && source.Dispatched)) { pendingMirror = true; break; }
-                    if (_retired.Count > 0 || _retiredMirrors.Count > 0 || (!_disposed && !_failed && (_pending is not null || pendingMirror || _hazeRefreshPending || _hazeRepoint || _shadowRefreshPending || _shadowRepoint))) QueueWork();
+                    if (_retired.Count > 0 || _retiredMirrors.Count > 0 || (!_disposed && !_failed && (_pending is not null || pendingMirror || _cameraCullPending || _hazeRefreshPending || _hazeRepoint || _shadowRefreshPending || _shadowRepoint))) QueueWork();
                 }
             }
             finally
@@ -800,6 +880,8 @@ public sealed class RingGpuVegetationCompute : IDisposable
         if (!_pipeline.IsValid || !_hazePipeline.IsValid || !_budgets.IsValid || !_hazeParams.IsValid || !_hazeAtlas.IsValid)
             throw new InvalidOperationException("Compute allocation failed");
         CreateShadowPlaceholders(_rd);
+        _cameraCullBuffer = _rd.UniformBufferCreate(CameraCullBlockBytes, CameraCullBytes(null));
+        if (!_cameraCullBuffer.IsValid) throw new InvalidOperationException("Vegetation camera frame buffer failed");
         _hazeSet = CreateHazeSet(_rd);
         if (HazeChannel != RingVegetationHaze.Channel.None
             && RingVegetationHaze.ChannelTexture(HazeChannel) is { } channelTexture && !channelTexture.TextureRdRid.IsValid)
@@ -855,6 +937,9 @@ public sealed class RingGpuVegetationCompute : IDisposable
             sampler.AddId(s.Texture.IsValid ? s.Texture : s.Placeholder);
             uniforms.Add(sampler);
         }
+        var cameraBlock = new RDUniform { UniformType = RenderingDevice.UniformType.UniformBuffer, Binding = 8 };
+        cameraBlock.AddId(_cameraCullBuffer);
+        uniforms.Add(cameraBlock);
         Rid set = rd.UniformSetCreate(uniforms, _shader, 1);
         if (!set.IsValid) throw new InvalidOperationException("Vegetation haze bindings invalid");
         return set;
@@ -1003,6 +1088,8 @@ public sealed class RingGpuVegetationCompute : IDisposable
     private static bool Valid(BatchRegistration r)
     {
         int stride = SourceStrideFor(r);
+        if (r.CameraTarget is not null && (r.Grass || r.CameraTarget == r.MultiMesh || r.CameraTarget == r.VerifyTarget)) return false;
+        if (r.VerifyTarget is not null && (r.CameraTarget is null || r.VerifyTarget == r.MultiMesh)) return false;
         if (r.Expansion is { } expansion)
             return !r.Grass && r.Metadata is not null && r.MultiMesh is not null && r.Mesh is not null && r.Mesh.GetSurfaceCount() > 0
                 && expansion.Roots.Length is > 0 and <= MaximumRootsPerBatch && expansion.Frame.Length == TreeExpansion.FrameWords
@@ -1029,6 +1116,18 @@ public sealed class RingGpuVegetationCompute : IDisposable
         r.MultiMesh.InstanceCount = r.Capacity;
         r.MultiMesh.VisibleInstanceCount = -1;
         r.MultiMesh.CustomAabb = r.CustomAabb;
+        foreach (MultiMesh? target in new[] { r.CameraTarget, r.VerifyTarget })
+        {
+            if (target is null) continue;
+            target.InstanceCount = 0;
+            target.TransformFormat = MultiMesh.TransformFormatEnum.Transform3D;
+            target.UseColors = false;
+            target.UseCustomData = r.TreeCustomData || r.TreeDitherData;
+            target.Mesh = r.Mesh;
+            target.InstanceCount = r.Capacity;
+            target.VisibleInstanceCount = -1;
+            target.CustomAabb = r.CustomAabb;
+        }
     }
 
     private void EnsureBatch(Batch b)
@@ -1047,6 +1146,11 @@ public sealed class RingGpuVegetationCompute : IDisposable
         b.Commands = RenderingServer.MultimeshGetCommandBufferRdRid(multimesh);
         b.SurfaceCount = r.Mesh.GetSurfaceCount();
         if (!b.Output.IsValid || !b.Commands.IsValid) throw new InvalidOperationException("Indirect MultiMesh buffers unavailable");
+        bool treeCustom = r.Grass || r.TreeCustomData || r.TreeDitherData;
+        if (r.CameraTarget is not null) AllocateCameraTarget(r.CameraTarget, r, treeCustom, out b.CameraOutput, out b.CameraCommands);
+        if (r.VerifyTarget is not null) AllocateCameraTarget(r.VerifyTarget, r, treeCustom, out b.VerifyOutput, out b.VerifyCommands);
+        if (r.CameraTarget is not null && !b.HasCamera || r.VerifyTarget is not null && (!b.VerifyOutput.IsValid || !b.VerifyCommands.IsValid))
+            throw new InvalidOperationException("Indirect camera MultiMesh buffers unavailable");
         b.Metadata = rd.StorageBufferCreate((uint)(b.Count * 16), MetadataBytes(r.Metadata, b.Count));
         SharedSource source = AcquireSource(rd, r);
         b.SharedSource = source;
@@ -1057,7 +1161,10 @@ public sealed class RingGpuVegetationCompute : IDisposable
         b.Counts = rd.StorageBufferCreate((uint)(b.Groups * 4));
         b.Offsets = rd.StorageBufferCreate((uint)((b.Groups + 2) * 4));
         var uniforms = new Godot.Collections.Array<RDUniform>();
-        Rid[] resources = { b.Source, b.Metadata, b.Output, b.Commands, b.Parameters, b.Flags, b.Counts, b.Offsets, _budgets };
+        // Bindings 9..12 (phase 6): the camera list and the verify list, or the small budget buffer for batches that have none.
+        Rid[] resources = { b.Source, b.Metadata, b.Output, b.Commands, b.Parameters, b.Flags, b.Counts, b.Offsets, _budgets,
+            b.HasCamera ? b.CameraOutput : _budgets, b.HasCamera ? b.CameraCommands : _budgets,
+            b.VerifyOutput.IsValid ? b.VerifyOutput : _budgets, b.VerifyOutput.IsValid ? b.VerifyCommands : _budgets };
         for (int i = 0; i < resources.Length; i++)
         {
             if (!resources[i].IsValid) throw new InvalidOperationException("Vegetation buffer allocation failed");
@@ -1070,8 +1177,25 @@ public sealed class RingGpuVegetationCompute : IDisposable
         b.Allocated = true;
         b.Bytes = b.Count * 20L + ParameterBytes + (b.Groups * 2L + 2) * 4
             + r.Capacity * b.OutputStride * 4L + b.SurfaceCount * 20L;
+        int cameraLists = (r.CameraTarget is not null ? 1 : 0) + (r.VerifyTarget is not null ? 1 : 0);
+        b.CameraBytes = cameraLists * (r.Capacity * (long)b.OutputStride * 4L);
+        b.Bytes += b.CameraBytes + cameraLists * b.SurfaceCount * 20L;
         Interlocked.Add(ref _estimatedBytes, b.Bytes);
-        Interlocked.Add(ref _outputBytes, r.Capacity * (long)b.OutputStride * 4L);
+        Interlocked.Add(ref _outputBytes, r.Capacity * (long)b.OutputStride * 4L + b.CameraBytes);
+    }
+
+    /// <summary>Same indirect allocation as the batch's own output (EnsureBatch): the camera and verify lists are render-only MultiMeshes the compute fills.</summary>
+    private static void AllocateCameraTarget(MultiMesh target, BatchRegistration r, bool custom, out Rid output, out Rid commands)
+    {
+        Rid multimesh = target.GetRid();
+        RenderingServer.MultimeshSetMesh(multimesh, default);
+        RenderingServer.MultimeshAllocateData(multimesh, 0, RenderingServer.MultimeshTransformFormat.Transform3D, false, custom, false);
+        RenderingServer.MultimeshAllocateData(multimesh, r.Capacity, RenderingServer.MultimeshTransformFormat.Transform3D, false, custom, true);
+        RenderingServer.MultimeshSetMesh(multimesh, r.Mesh.GetRid());
+        RenderingServer.MultimeshSetVisibleInstances(multimesh, -1);
+        RenderingServer.MultimeshSetCustomAabb(multimesh, r.CustomAabb);
+        output = RenderingServer.MultimeshGetBufferRdRid(multimesh);
+        commands = RenderingServer.MultimeshGetCommandBufferRdRid(multimesh);
     }
 
     private SharedSource AcquireSource(RenderingDevice rd, BatchRegistration registration)
@@ -1110,7 +1234,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
         {
             if (!roots.IsValid || !frameBuffer.IsValid) throw new InvalidOperationException("Vegetation expansion buffers unavailable");
             // Bindings the expansion does not touch still need valid storage buffers; the small budget buffer stands in for them.
-            Rid[] resources = { source.Rid, metadata, roots, _budgets, frameBuffer, _budgets, _budgets, _budgets, _budgets };
+            Rid[] resources = { source.Rid, metadata, roots, _budgets, frameBuffer, _budgets, _budgets, _budgets, _budgets, _budgets, _budgets, _budgets, _budgets };
             var uniforms = new Godot.Collections.Array<RDUniform>();
             for (int i = 0; i < resources.Length; i++)
             {
@@ -1174,6 +1298,8 @@ public sealed class RingGpuVegetationCompute : IDisposable
         foreach (var item in _selectedWork) dispatchedCandidates += item.Batch.Count;
         Volatile.Write(ref _lastDispatchedCandidateCount, dispatchedCandidates);
         Volatile.Write(ref _deferredBatchCount, _work.Count - _selectedWork.Count);
+        _dispatchStamp++;
+        foreach (var item in _selectedWork) item.Batch.FrameStamp = _dispatchStamp;
         foreach (var item in _selectedWork)
         {
             if (!rd.UniformSetIsValid(item.Batch.Set)) throw new InvalidOperationException("Renderer changed a vegetation buffer");
@@ -1246,6 +1372,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
                 }
             }
         }
+        DispatchCameraLists(rd, list, _selectedWork, hazeOn, _shadowDispatchOn);
         rd.ComputeListEnd();
         foreach (var item in _selectedWork)
         {
@@ -1382,11 +1509,46 @@ public sealed class RingGpuVegetationCompute : IDisposable
         return true;
     }
 
-    private static void ParameterData(FrameRequest frame, BatchFrameParameters p, Batch batch, float[] data, byte[] bytes)
+    private void ParameterData(FrameRequest frame, BatchFrameParameters p, Batch batch, float[] data, byte[] bytes)
     {
         WriteParameterWords(frame, p, batch.Registration.TreeCustomData, batch.Registration.TreeDitherData,
             batch.PrototypeHorizontalRadius, data);
+        WriteCameraCullWords(batch, data);
         Buffer.BlockCopy(data, 0, bytes, 0, ParameterBytes);
+    }
+
+    private static void WriteCameraCullWords(Batch batch, float[] data)
+        => WriteCameraCullWords(batch.HasCamera, batch.VerifyOutput.IsValid, batch.MeshSphereRadius, batch.MeshSphereCenter, data);
+
+    /// <summary>Pure fill of the per-batch phase 6 words (no RD): p[83] = has a verify list, p[110] mesh sphere radius, p[111..113] its centre. The frame state
+    /// (planes, mode) is the shared <see cref="CameraCullBytes"/> block.</summary>
+    internal static void WriteCameraCullWords(bool hasCamera, bool hasVerify, float meshRadius, Vector3 meshCenter, float[] data)
+    {
+        data[83] = 0; data[110] = 0; data[111] = 0; data[112] = 0; data[113] = 0;
+        if (!hasCamera) return;
+        data[83] = hasVerify ? 1 : 0;
+        data[110] = Math.Max(0, Finite(meshRadius, 1e9f));
+        data[111] = meshCenter.X; data[112] = meshCenter.Y; data[113] = meshCenter.Z;
+    }
+
+    internal const int CameraCullBlockBytes = 7 * 16;
+
+    /// <summary>The shared frame block of phase 6 (set 1, binding 8, std140): six planes then (mode, wind fraction, guard, plane count). Mode 0 keeps every row
+    /// (no state, disabled, or no planes), 1 filters, 2 filters and fills the verify lists.</summary>
+    internal static byte[] CameraCullBytes(CameraCullState? state)
+    {
+        var data = new float[CameraCullBlockBytes / 4];
+        int planes = state is null ? 0 : Math.Min(6, state.Planes.Length);
+        if (state is null || !state.Enabled || planes == 0) return FloatBytes(data);
+        for (int i = 0; i < planes; i++)
+        {
+            Vector4 plane = state.Planes[i];
+            data[i * 4] = plane.X; data[i * 4 + 1] = plane.Y; data[i * 4 + 2] = plane.Z; data[i * 4 + 3] = plane.W;
+        }
+        data[24] = state.Verify ? 2 : 1;
+        data[25] = Math.Max(0, Finite(state.WindFraction, .6f)); data[26] = Math.Max(0, Finite(state.GuardMeters, .25f));
+        data[27] = planes;
+        return FloatBytes(data);
     }
 
     /// <summary>Pure fill of the shader parameter words (no RD); the layout test pins it.</summary>
@@ -1585,7 +1747,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
     }
 
     /// <summary>Rewrites the haze and / or shadow atlas slots of already-compacted rows (phase 4) for batches this Work did not just cull.</summary>
-    private void DispatchTermsRefresh(Batch[] batches, bool haze, bool shadow)
+    private void DispatchTermsRefresh(Batch[] batches, bool haze, bool shadow, bool hazeLive, bool shadowLive)
     {
         RenderingDevice rd = _rd!;
         _refreshBatches.Clear();
@@ -1614,9 +1776,66 @@ public sealed class RingGpuVegetationCompute : IDisposable
             if (shadow) Interlocked.Increment(ref _shadowRefreshDispatchCount);
         }
         AddBarrier(rd, list);
+        bool cameraBarrier = true;
+        foreach (Batch batch in _refreshBatches)
+            if (CameraListEligible(batch)) DispatchCameraBatch(rd, list, batch, hazeLive, shadowLive, ref cameraBarrier);
         rd.ComputeListEnd();
         if (haze) Interlocked.Increment(ref _hazeRefreshCount);
         if (shadow) Interlocked.Increment(ref _shadowRefreshCount);
+    }
+
+    private static bool CameraListEligible(Batch batch) => batch.HasCamera && batch.Allocated && !batch.Retired && !batch.Registration.Grass && batch.Set.IsValid;
+
+    /// <summary>Phase 6 for every selected tree batch of this dispatch, after the sweeps: the camera list is cut from the finished full list.</summary>
+    private void DispatchCameraLists(RenderingDevice rd, long list, List<(Batch Batch, BatchFrameParameters Frame)> work, bool hazeOn, bool shadowOn)
+    {
+        bool barrier = false;
+        foreach (var item in work)
+            if (CameraListEligible(item.Batch)) DispatchCameraBatch(rd, list, item.Batch, hazeOn, shadowOn, ref barrier);
+    }
+
+    /// <summary>Re-runs phase 6 for the tree batches no other pass of this Work just handled: the latched camera frustum changed and nothing else moved.</summary>
+    private void DispatchCameraOnly(Batch[] batches, bool hazeOn, bool shadowOn)
+    {
+        RenderingDevice rd = _rd!;
+        long list = -1;
+        bool barrier = false;
+        foreach (Batch batch in batches)
+        {
+            if (!batch.Dispatched || _cameraCulledIds.Contains(batch.Id) || !CameraListEligible(batch) || !rd.UniformSetIsValid(batch.Set)) continue;
+            if (list < 0)
+            {
+                list = rd.ComputeListBegin();
+                _boundVariant = -1;
+            }
+            DispatchCameraBatch(rd, list, batch, hazeOn, shadowOn, ref barrier);
+        }
+        if (list < 0) return;
+        rd.ComputeListEnd();
+    }
+
+    private void DispatchCameraBatch(RenderingDevice rd, long list, Batch batch, bool hazeOn, bool shadowOn, ref bool barrier)
+    {
+        long began = Stopwatch.GetTimestamp();
+        if (!barrier) { AddBarrier(rd, list); barrier = true; }
+        bool slots = batch.HazeBase >= 0 && batch.CameraHazeBase >= 0;
+        bool haze = hazeOn && slots, shadow = shadowOn && slots;
+        int variant = (haze ? 1 : 0) | (shadow ? 2 : 0);
+        if (variant != _boundVariant) BindPipeline(rd, list, variant);
+        rd.ComputeListBindUniformSet(list, batch.Set, 0);
+        WritePush(6, (uint)batch.Count, (uint)batch.Registration.Capacity, (uint)batch.SurfaceCount, batch.FrameStamp == _dispatchStamp ? 0u : 1u, 0, batch, false, false);
+        BitConverter.TryWriteBytes(_push.AsSpan(24, 4), (uint)Math.Max(0, batch.CameraHazeBase));
+        BitConverter.TryWriteBytes(_push.AsSpan(28, 4), (uint)batch.CameraHazeTag);
+        BitConverter.TryWriteBytes(_push.AsSpan(44, 4), haze ? 1f : 0f);
+        BitConverter.TryWriteBytes(_push.AsSpan(48, 4), shadow ? 1f : 0f);
+        BitConverter.TryWriteBytes(_push.AsSpan(52, 4), (float)Math.Max(0, batch.HazeBase));
+        rd.ComputeListSetPushConstant(list, _push, PushBytes);
+        rd.ComputeListDispatch(list, 1, 1, 1);
+        Interlocked.Increment(ref _dispatchCount);
+        Interlocked.Increment(ref _cameraCullDispatchCount);
+        _cameraCulledIds.Add(batch.Id);
+        long spent = Stopwatch.GetTimestamp() - began;
+        _cameraCullTicks += spent; _cameraWorkTicks += spent;
     }
 
     private void AddBarrier(RenderingDevice rd, long list)
@@ -1725,11 +1944,23 @@ public sealed class RingGpuVegetationCompute : IDisposable
                 RenderingServer.MultimeshTransformFormat.Transform3D, r.Grass, r.Grass || r.TreeCustomData || r.TreeDitherData, false);
             Free(ref batch.Commands);
         }
+        BatchRegistration registration = batch.Registration;
+        if (batch.CameraCommands.IsValid && registration.CameraTarget is not null)
+        {
+            RenderingServer.MultimeshAllocateData(registration.CameraTarget.GetRid(), 0, RenderingServer.MultimeshTransformFormat.Transform3D, false, registration.TreeCustomData || registration.TreeDitherData, false);
+            Free(ref batch.CameraCommands);
+        }
+        if (batch.VerifyCommands.IsValid && registration.VerifyTarget is not null)
+        {
+            RenderingServer.MultimeshAllocateData(registration.VerifyTarget.GetRid(), 0, RenderingServer.MultimeshTransformFormat.Transform3D, false, registration.TreeCustomData || registration.TreeDitherData, false);
+            Free(ref batch.VerifyCommands);
+        }
+        batch.CameraOutput = default; batch.VerifyOutput = default;
         batch.Output = default;
         Interlocked.Add(ref _estimatedBytes, -batch.Bytes);
         if (batch.Allocated)
-        Interlocked.Add(ref _outputBytes, -batch.Registration.Capacity * (long)batch.OutputStride * 4L);
-        batch.Bytes = 0;
+        Interlocked.Add(ref _outputBytes, -batch.Registration.Capacity * (long)batch.OutputStride * 4L - batch.CameraBytes);
+        batch.Bytes = 0; batch.CameraBytes = 0;
         batch.Allocated = false;
         ReleaseSource(batch);
     }
@@ -1771,6 +2002,101 @@ public sealed class RingGpuVegetationCompute : IDisposable
             Callable.From(() => callback(commands, instances)).CallDeferred();
         }));
     }
+
+    /// <summary>Fixtures only: the batch's camera list (phase 6 output): its command words and rows.</summary>
+    public void RequestCameraReadbackForTests(int id, Action<uint[], float[]> callback)
+    {
+        RenderingServer.CallOnRenderThread(Callable.From(() =>
+        {
+            uint[] commands = Array.Empty<uint>(); float[] instances = Array.Empty<float>();
+            Batch? batch;
+            lock (_gate) _batches.TryGetValue(id, out batch);
+            if (_rd is not null && batch is { Retired: false, Dispatched: true } && batch.HasCamera && !_disposed)
+            {
+                byte[] commandBytes = _rd.BufferGetData(batch.CameraCommands);
+                commands = new uint[commandBytes.Length / 4]; Buffer.BlockCopy(commandBytes, 0, commands, 0, commandBytes.Length);
+                byte[] rows = _rd.BufferGetData(batch.CameraOutput);
+                instances = new float[rows.Length / 4]; Buffer.BlockCopy(rows, 0, instances, 0, rows.Length);
+            }
+            Callable.From(() => callback(commands, instances)).CallDeferred();
+        }));
+    }
+
+    /// <summary>Result of <see cref="RequestCameraListAudit"/>: every tree batch's camera list against its full list. <see cref="RowsDropped"/> are full-list rows missing from the camera list;
+    /// <see cref="OutOfOrderOrAltered"/> counts camera rows that are not an in-order, bit-identical subset of the full list; <see cref="TermMismatches"/> counts kept rows whose haze or shadow
+    /// texels differ from the full list's (the tag excepted, which must be the camera list's own); <see cref="NotIdentical"/> batches (the filter off) whose lists differ at all.</summary>
+    public readonly record struct CameraListAudit(int Batches, int NotIdentical, long RowsFull, long RowsCamera, long RowsDropped, int OutOfOrderOrAltered, long TermsChecked, long TermMismatches, string First);
+
+    /// <summary>Fixtures and the debug verify path only (stalls the render thread: whole buffers and both atlases are read back). Compares each tree batch's camera list with its full list.</summary>
+    public void RequestCameraListAudit(Action<CameraListAudit> callback)
+    {
+        RenderingServer.CallOnRenderThread(Callable.From(() =>
+        {
+            CameraListAudit result = default;
+            try { result = AuditCameraLists(); }
+            catch (Exception error) { result = new CameraListAudit(-1, 0, 0, 0, 0, 0, 0, 0, "audit failed: " + error.Message); }
+            Callable.From(() => callback(result)).CallDeferred();
+        }));
+    }
+
+    private CameraListAudit AuditCameraLists()
+    {
+        if (_rd is null || _disposed) return new CameraListAudit(0, 0, 0, 0, 0, 0, 0, 0, "no device");
+        List<Batch> batches = new();
+        CameraCullState? state;
+        lock (_gate) { foreach (Batch batch in _batches.Values) if (CameraListEligible(batch) && batch.Dispatched) batches.Add(batch); state = _cameraCull; }
+        bool filtering = state is { Enabled: true } && state.Planes.Length > 0;
+        byte[] hazeAtlas = _hazeAtlas.IsValid ? _rd.TextureGetData(_hazeAtlas, 0) : Array.Empty<byte>();
+        byte[] shadowAtlas = _shadowAtlas.IsValid ? _rd.TextureGetData(_shadowAtlas, 0) : Array.Empty<byte>();
+        int notIdentical = 0, altered = 0;
+        long full = 0, camera = 0, dropped = 0, termsChecked = 0, termMismatches = 0;
+        string first = "";
+        foreach (Batch batch in batches)
+        {
+            BatchRegistration r = batch.Registration;
+            int stride = batch.OutputStride, rowBytes = stride * 4;
+            byte[] commandsO = _rd.BufferGetData(batch.Commands), commandsC = _rd.BufferGetData(batch.CameraCommands);
+            int visible = (int)Math.Min(BitConverter.ToUInt32(commandsO, 4), (uint)r.Capacity), kept = (int)Math.Min(BitConverter.ToUInt32(commandsC, 4), (uint)r.Capacity);
+            byte[] rowsO = _rd.BufferGetData(batch.Output), rowsC = _rd.BufferGetData(batch.CameraOutput);
+            full += visible; camera += kept; dropped += visible - kept;
+            bool slots = batch.HazeBase >= 0 && batch.CameraHazeBase >= 0;
+            bool termsHaze = slots && _hazeDispatchOn && hazeAtlas.Length > 0, termsShadow = slots && _shadowDispatchOn && shadowAtlas.Length > 0;
+            ushort tag = BitConverter.HalfToUInt16Bits((Half)batch.CameraHazeTag);
+            int j = 0;
+            bool batchOk = true;
+            for (int i = 0; i < visible && j < kept; i++)
+            {
+                if (!rowsO.AsSpan(i * rowBytes, rowBytes).SequenceEqual(rowsC.AsSpan(j * rowBytes, rowBytes))) continue;
+                foreach ((bool on, byte[] atlas) in new[] { (termsHaze, hazeAtlas), (termsShadow, shadowAtlas) })
+                {
+                    if (!on) continue;
+                    termsChecked++;
+                    if (!TermsMatch(atlas, batch.HazeBase + i, batch.CameraHazeBase + j, tag)) { termMismatches++; if (first.Length == 0) first = $"{r.Identity}: terms of row {i} -> {j} differ"; }
+                }
+                j++;
+            }
+            if (j != kept) { altered++; batchOk = false; if (first.Length == 0) first = $"{r.Identity}: camera row {j} is not in the full list in order ({visible} full, {kept} camera)"; }
+            if (!filtering && (visible != kept || !batchOk)) { notIdentical++; if (first.Length == 0) first = $"{r.Identity}: unfiltered camera list differs ({visible} full, {kept} camera)"; }
+        }
+        return new CameraListAudit(batches.Count, notIdentical, full, camera, dropped, altered, termsChecked, termMismatches, first);
+    }
+
+    private static bool TermsMatch(byte[] atlas, int fullSlot, int cameraSlot, ushort cameraTag)
+    {
+        int slotsPerRow = RingVegetationHaze.SlotsPerRow, width = RingVegetationHaze.AtlasWidth;
+        int from = ((fullSlot / slotsPerRow) * width + (fullSlot % slotsPerRow) * 2) * 8, to = ((cameraSlot / slotsPerRow) * width + (cameraSlot % slotsPerRow) * 2) * 8;
+        if (from + 16 > atlas.Length || to + 16 > atlas.Length) return false;
+        // Texel 0: RGB identical, W is the list's own tag. Texel 1: identical.
+        return atlas.AsSpan(from, 6).SequenceEqual(atlas.AsSpan(to, 6)) && BitConverter.ToUInt16(atlas, to + 6) == cameraTag
+            && atlas.AsSpan(from + 8, 8).SequenceEqual(atlas.AsSpan(to + 8, 8));
+    }
+
+    /// <summary>Render-thread CPU time (ms) spent recording phase 6 so far, and the largest share of a single Work (a re-latch is the worst case).</summary>
+    public double CameraCullRecordMilliseconds => Interlocked.Read(ref _cameraCullTicks) * 1000.0 / Stopwatch.Frequency;
+    public double CameraCullWorstWorkMilliseconds => Interlocked.Read(ref _cameraCullMaxTicks) * 1000.0 / Stopwatch.Frequency;
+
+    /// <summary>Compute-list dispatches of phase 6 so far (a counter for measuring re-latch cost).</summary>
+    public long CameraCullDispatchCount => Interlocked.Read(ref _cameraCullDispatchCount);
 
     /// <summary>Fixtures only: the batch's resident source rows (after any GPU expansion).</summary>
     public void RequestSourceReadbackForTests(int id, Action<float[]> callback)
@@ -1849,6 +2175,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
                 Free(ref _hazeSet, uniform: true); Free(ref _hazeParams); Free(ref _hazeAtlas); Free(ref _hazePipeline);
                 Free(ref _shadowPipeline); Free(ref _hazeShadowPipeline); Free(ref _shadowParams); Free(ref _shadowAtlas); Free(ref _placeholderAtlas); Free(ref _placeholderArray);
                 Free(ref _placeholderTexture); Free(ref _nearestSampler); Free(ref _linearSampler);
+                Free(ref _cameraCullBuffer);
                 Free(ref _budgets); Free(ref _pipeline); Free(ref _shader);
             }
         }));
