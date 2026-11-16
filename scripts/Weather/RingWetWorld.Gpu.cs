@@ -5,7 +5,7 @@ using RingworldTechDemo.Voxel.Core;
 
 namespace RingworldTechDemo.Weather;
 
-/// <summary>Render-thread glue of <see cref="RingWetWorld"/>: the wet map compute dispatch (scripts/render/ring_wet_map.glsl) and its two ping-pong RGBA16F textures.</summary>
+/// <summary>Render-thread glue of <see cref="RingWetWorld"/>: the wet map compute dispatch (scripts/render/ring_wet_map.glsl), its two ping-pong RGBA16F textures and the stable published copy behind the global.</summary>
 public partial class RingWetWorld
 {
     private const string ShaderPath = "res://scripts/render/ring_wet_map.glsl";
@@ -17,6 +17,10 @@ public partial class RingWetWorld
         public RenderingDevice? Rd;
         public Rid Shader, Pipeline, NearestSampler, LinearSampler, ParamsBuffer, SystemsBuffer, DummyStorm;
         public readonly Rid[] Textures = new Rid[2];
+        /// <summary>Stable texture behind the global Texture2DRD; each dispatch copies the fresh map into it so materials never rebuild uniform sets.</summary>
+        public Rid Published;
+        public bool PublishedBound;
+        public Texture2Drd? MapTexture;
         public readonly Dictionary<(int Ping, Rid Storm), Rid> Sets = new();
         public int Ping;
         public volatile bool Ready, Failed, Released, MapPublished;
@@ -56,7 +60,7 @@ public partial class RingWetWorld
         if (RenderingServer.GetRenderingDevice() == null) return false;
         _mapTexture ??= new Texture2Drd();
         RenderingServer.GlobalShaderParameterSet(GlobalMap, _mapTexture);
-        var link = new GpuLink();
+        var link = new GpuLink { MapTexture = _mapTexture };
         _link = link;
         RenderingServer.CallOnRenderThread(Callable.From(() => InitOnRenderThread(link)));
         return false;
@@ -86,6 +90,13 @@ public partial class RingWetWorld
             };
             var zero = new Godot.Collections.Array<byte[]> { new byte[WetMapFrame.Size * WetMapFrame.Size * 8] };
             for (int i = 0; i < 2; i++) link.Textures[i] = rd.TextureCreate(format, new RDTextureView(), zero);
+            var published = new RDTextureFormat
+            {
+                Format = RenderingDevice.DataFormat.R16G16B16A16Sfloat, Width = WetMapFrame.Size, Height = WetMapFrame.Size, Depth = 1, ArrayLayers = 1, Mipmaps = 1,
+                TextureType = RenderingDevice.TextureType.Type2D,
+                UsageBits = RenderingDevice.TextureUsageBits.SamplingBit | RenderingDevice.TextureUsageBits.CanCopyToBit,
+            };
+            link.Published = rd.TextureCreate(published, new RDTextureView(), zero);
             var dummy = new RDTextureFormat
             {
                 Format = RenderingDevice.DataFormat.R16G16B16A16Sfloat, Width = 1, Height = 1, Depth = 1, ArrayLayers = 2, Mipmaps = 1,
@@ -113,7 +124,7 @@ public partial class RingWetWorld
             RenderingDevice? rd = link.Rd;
             if (rd == null) return;
             foreach (Rid set in link.Sets.Values) if (set.IsValid && rd.UniformSetIsValid(set)) rd.FreeRid(set);
-            foreach (Rid rid in new[] { link.Pipeline, link.Shader, link.NearestSampler, link.LinearSampler, link.ParamsBuffer, link.SystemsBuffer, link.Textures[0], link.Textures[1], link.DummyStorm })
+            foreach (Rid rid in new[] { link.Pipeline, link.Shader, link.NearestSampler, link.LinearSampler, link.ParamsBuffer, link.SystemsBuffer, link.Textures[0], link.Textures[1], link.Published, link.DummyStorm })
                 if (rid.IsValid) rd.FreeRid(rid);
         }));
     }
@@ -215,7 +226,9 @@ public partial class RingWetWorld
                 rd.ComputeListBindUniformSet(list, set, 0);
                 rd.ComputeListDispatch(list, WetMapFrame.Size / 8, WetMapFrame.Size / 8, 1);
                 rd.ComputeListEnd();
-                if (_mapTexture != null && IsInstanceValid(_mapTexture)) _mapTexture.TextureRdRid = link.Textures[ping];
+                // Copy into the stable published texture; swapping the Texture2DRD's RID per dispatch forced every material to rebuild its uniform set.
+                rd.TextureCopy(link.Textures[ping], link.Published, Vector3.Zero, Vector3.Zero, new Vector3(WetMapFrame.Size, WetMapFrame.Size, 1.0f), 0, 0, 0, 0);
+                if (!link.PublishedBound && link.MapTexture != null && IsInstanceValid(link.MapTexture)) { link.MapTexture.TextureRdRid = link.Published; link.PublishedBound = true; }
                 if (readback || link.ReadbackRequested) { link.Readback = rd.TextureGetData(link.Textures[ping], 0); link.ReadbackRequested = false; }
                 link.Ping = 1 - ping;
                 link.MapPublished = true;
