@@ -217,13 +217,12 @@ const HAZE_SATURATED_TAU := 8.0
 const HAZE_SIGMA_R := [5.802e-6, 13.558e-6, 33.1e-6]
 const HAZE_H_R := 8000.0
 const HAZE_H_A := 1500.0
-const HAZE_H_MIST := 400.0
-const HAZE_SIGMA_M0 := 4.0e-6
+const HAZE_SIGMA_RESERVE := 4.0e-6 # the aerosol default keeps this out of the Koschmieder balance (ring_haze_params_default)
 const HAZE_FLOOR_DEPTH := 2500.0
 const HAZE_CAP := 20000.0
 
 func haze_sigma_a() -> float:
-	return maxf(3.912 / 180000.0 - HAZE_SIGMA_R[1] - HAZE_SIGMA_M0, 0.0)
+	return maxf(3.912 / 180000.0 - HAZE_SIGMA_R[1] - HAZE_SIGMA_RESERVE, 0.0)
 
 func haze_cases() -> Array:
 	var cases := []
@@ -276,8 +275,8 @@ void main() {
 	vec3 outward = vec3(1.0, 0.0, 0.0); vec3 axis = vec3(0.0, 1.0, 0.0); vec3 camera = vec3(0.0);
 	RingHazeParams p = ring_haze_params_default();
 	int pset = int(v2.z + 0.5);
-	if (pset == 1) { p.sigma_A = 0.0; p.sigma_M0 = 0.0; }
-	if (pset == 2) { p.sigma_R = vec3(0.0); p.sigma_A = 0.0; p.sigma_M0 = 0.0; }
+	if (pset == 1) { p.sigma_A = 0.0; }
+	if (pset == 2) { p.sigma_R = vec3(0.0); p.sigma_A = 0.0; }
 	if (pset == 3) { p.day = 0.0; }
 	p.quality = int(v1.w + 0.5);
 	float sun = radians(v2.w);
@@ -293,7 +292,7 @@ void main() {
 	RingHaze haze = sky ? ring_haze_eval_sky(p, v1.xyz, camera, height, outward, axis, v2.x, v2.y, scale, radius, 2500.0) : (remote_mode ? full : near_haze);
 	float diff = max(max(length(full.T - near_haze.T), length(full.S_sun - near_haze.S_sun)), length(full.S_amb - near_haze.S_amb));
 	output_data.values[index * 8u] = vec4(o.tau_R, 0.0);
-	output_data.values[index * 8u + 1u] = vec4(o.tau_A, o.tau_M, interval.x, interval.y);
+	output_data.values[index * 8u + 1u] = vec4(o.tau_A, 0.0, interval.x, interval.y);
 	output_data.values[index * 8u + 2u] = vec4(haze.T, 0.0);
 	output_data.values[index * 8u + 3u] = vec4(haze.S_sun, 0.0);
 	output_data.values[index * 8u + 4u] = vec4(haze.S_amb, 0.0);
@@ -376,7 +375,6 @@ func haze_reference(test_case: Dictionary) -> Dictionary:
 	var dt: float = (air[1] - air[0]) / steps
 	var sum_r := 0.0
 	var sum_a := 0.0
-	var sum_m := 0.0
 	for k in steps:
 		var t: float = air[0] + (k + 0.5) * dt
 		var px := (radius - height) + t * ray[0]
@@ -384,12 +382,10 @@ func haze_reference(test_case: Dictionary) -> Dictionary:
 		var h := radius - sqrt(px * px + pz * pz)
 		sum_r += exp(-h / HAZE_H_R)
 		sum_a += exp(-h / HAZE_H_A)
-		sum_m += exp(-h / HAZE_H_MIST)
 	var sigma_a := 0.0 if pset == 1 else haze_sigma_a()
-	var sigma_m := 0.0 if pset == 1 else HAZE_SIGMA_M0
 	result["tau_r"] = Vector3(HAZE_SIGMA_R[0], HAZE_SIGMA_R[1], HAZE_SIGMA_R[2]) * (sum_r * dt)
 	result["tau_a"] = sigma_a * sum_a * dt
-	result["tau_m"] = sigma_m * sum_m * dt
+	result["tau_m"] = 0.0 # no mist layer
 	return result
 
 const HAZE_REMOTE_TAU_REL_TOL := 0.03
@@ -442,7 +438,6 @@ func haze_reference_remote(test_case: Dictionary) -> Dictionary:
 	var dt: float = (t1 - t0) / steps
 	var sum_r := 0.0
 	var sum_a := 0.0
-	var sum_m := 0.0
 	for k in steps:
 		var t: float = t0 + (k + 0.5) * dt
 		var px := (radius - height) + t * ray[0]
@@ -450,10 +445,9 @@ func haze_reference_remote(test_case: Dictionary) -> Dictionary:
 		var h := radius - sqrt(px * px + pz * pz)
 		sum_r += exp(-h / HAZE_H_R)
 		sum_a += exp(-h / HAZE_H_A)
-		sum_m += exp(-h / HAZE_H_MIST)
 	result["tau_r"] = Vector3(HAZE_SIGMA_R[0], HAZE_SIGMA_R[1], HAZE_SIGMA_R[2]) * (sum_r * dt)
 	result["tau_a"] = haze_sigma_a() * sum_a * dt
-	result["tau_m"] = HAZE_SIGMA_M0 * sum_m * dt
+	result["tau_m"] = 0.0 # no mist layer
 	return result
 
 func haze_tau_error(actual: float, expected: float) -> float:
@@ -665,8 +659,9 @@ func run_haze_tests() -> String:
 				return "sky non-finite %s T=%s" % [test_case["name"], transmittance]
 		if index == 0:
 			horizon_t = transmittance
-			if maxf(transmittance.x, maxf(transmittance.y, transmittance.z)) > 0.01:
-				return "sky horizon T should be ~0, got %s" % transmittance
+			# Rayleigh + aerosol only since the mist layer was removed (MIST-1/2): red keeps a faint ~10% at the horizon, green and blue are ~0.
+			if maxf(transmittance.x, maxf(transmittance.y, transmittance.z)) > 0.15 or transmittance.y > 0.05:
+				return "sky horizon T should be nearly opaque, got %s" % transmittance
 		if index == 16:
 			zenith_t = transmittance
 		if test_case["name"] == "sky_rayleigh_zenith":

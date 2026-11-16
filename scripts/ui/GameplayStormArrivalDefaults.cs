@@ -31,7 +31,8 @@ public sealed class GameplayStormArrivalDefaults
             var loaded = ResourceLoader.Load<GameplayStormArrivalSettings>(_path, cacheMode: ResourceLoader.CacheMode.Ignore);
             if (loaded == null) { LastError = "Invalid storm arrival preferences"; return; }
             foreach (Variant key in loaded.Overrides.Keys)
-                if (key.VariantType == Variant.Type.String && TryValidate(key.AsString(), loaded.Overrides[key], out Variant clean))
+                if (key.VariantType == Variant.Type.String && key.AsString() == "PostRainMist") continue; // removed 2026-11-16 (the weather mist is gone); old files still load
+                else if (key.VariantType == Variant.Type.String && TryValidate(key.AsString(), loaded.Overrides[key], out Variant clean))
                 { Settings.Overrides[key] = clean; RingStormArrivalSettings.Current.Set(key.AsString(), clean); }
                 else LastError = "Ignored invalid storm arrival override";
         }
@@ -65,7 +66,7 @@ public sealed class GameplayStormArrivalDefaults
     }
     public static readonly Dictionary<string, (float Min, float Max)> Limits = new()
     {
-        ["GustFrontStrength"]=(0,2), ["GustFrontLeadSeconds"]=(20,180), ["Hail"]=(0,2), ["PostRainMist"]=(0,2), ["Rainbows"]=(0,2)
+        ["GustFrontStrength"]=(0,2), ["GustFrontLeadSeconds"]=(20,180), ["Hail"]=(0,2), ["Rainbows"]=(0,2)
     };
     public static IEnumerable<string> Keys => Limits.Keys;
     public static bool TryValidate(string key, Variant value, out Variant clean)

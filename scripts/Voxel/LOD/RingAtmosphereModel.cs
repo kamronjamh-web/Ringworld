@@ -82,12 +82,12 @@ public static class RingAtmosphereModel
     }
 
     /// <summary>Exact CPU mirror of ring_haze_apply_storm (same operations in the same order); storm.X &lt;= 0 leaves the values untouched.</summary>
-    public static void ApplyStorm(Vector4 storm, ref float sigmaA, ref float omegaA, ref float g, float sigmaMist, float omegaMist)
+    public static void ApplyStorm(Vector4 storm, ref float sigmaA, ref float omegaA, ref float g)
     {
         float s = Mathf.Clamp(storm.X, 0.0f, 1.0f);
         if (s <= 0.0f) return;
         float add = s * Mathf.Max(storm.Y, 0.0f);
-        float scatterClear = omegaA * sigmaA + omegaMist * sigmaMist;
+        float scatterClear = omegaA * sigmaA;
         float scatterStorm = Mathf.Clamp(storm.Z, 0.0f, 1.0f) * add;
         float sigma = sigmaA + add;
         omegaA = sigma > 0.0f ? (omegaA * sigmaA + scatterStorm) / sigma : omegaA;
@@ -111,8 +111,9 @@ public static class RingAtmosphereModel
     // ---- Physical haze (P2a). Units are physical (1/m, m) at every coordinate scale; the shader converts positions itself. ----
     // Base values match ring_haze_params_default() in materials/ring_haze_shared.gdshaderinc.
     public static readonly Vector3 BaseSigmaRayleigh = new(5.802e-6f, 13.558e-6f, 33.1e-6f);
-    public const float BaseRayleighHeightMeters = 8000.0f, BaseAerosolHeightMeters = 1500.0f, BaseMistHeightMeters = 400.0f;
-    public const float BaseSigmaMist = 4.0e-6f, BaseOmegaAerosol = 0.9f, BaseOmegaMist = 0.95f, BaseMieG = 0.6f;
+    public const float BaseRayleighHeightMeters = 8000.0f, BaseAerosolHeightMeters = 1500.0f;
+    /// <summary>Green extinction (1/m) at the aerosol control default that the Koschmieder balance keeps out of the aerosol layer (the removed mist layer used to take it; kept so the aerosol value did not change).</summary>
+    public const float BaseAerosolReserveSigma = 4.0e-6f, BaseOmegaAerosol = 0.9f, BaseMieG = 0.6f;
     /// <summary>The legacy "full opacity distance" control (Natural 120 km) maps to Koschmieder visibility with this factor (Natural 120 km -> 180 km).</summary>
     public const float VisibilityScale = 1.5f;
     public const float AerosolControlDefault = 0.35f, ForwardControlDefault = 0.22f, WarmthControlDefault = 0.25f;
@@ -121,9 +122,6 @@ public static class RingAtmosphereModel
     public static float HazeSigmaAerosol { get; private set; } = 4.175e-6f;
     public static float HazeOmegaAerosol { get; private set; } = BaseOmegaAerosol;
     public static float HazeAerosolHeightMeters { get; private set; } = BaseAerosolHeightMeters;
-    public static float HazeSigmaMist { get; private set; } = BaseSigmaMist;
-    public static float HazeOmegaMist { get; private set; } = BaseOmegaMist;
-    public static float HazeMistHeightMeters { get; private set; } = BaseMistHeightMeters;
     public static float HazeG { get; private set; } = BaseMieG;
     public static Vector3 HazeSunTint { get; private set; } = Vector3.One;
     /// <summary>Gauss-Legendre points of the optical-depth quadrature (4/8/16). Set through <see cref="SetPhysicalControls"/>.</summary>
@@ -131,8 +129,7 @@ public static class RingAtmosphereModel
     // ---- Physical-only live controls (P4). Defaults reproduce the pre-P4 mapping exactly. Set via SetPhysicalControls, which
     // ApplyArtDirection must follow (AtmosphereVisualDefaults.Apply does both) so the profile, Revision and every material update. ----
     public const float GroundAlbedoControlDefault = 0.11f, MultiscatterGainControlDefault = 0.99f;
-    // The static ground mist was removed on 2026-11-16 (MIST-1): sigma_M0 is the weather mist only (WeatherMistAddedSigma); H_mist is BaseMistHeightMeters
-    // x the altitude-falloff factor x the weather height factor.
+    // The mist layer (static ground mist 2026-11-16 MIST-1, weather mist 2026-11-16 MIST-2) is gone; only Rayleigh and aerosol remain.
     /// <summary>Base aerosol scale height H_A (m); the altitude-falloff control still scales it (x2 .. x0.5).</summary>
     public static float HazeAerosolBaseHeightMeters { get; private set; } = BaseAerosolHeightMeters;
     /// <summary>Multiplier on sigma_R (after the density mapping). Does not rebalance sigma_A, so visibility shifts with it.</summary>
@@ -155,79 +152,6 @@ public static class RingAtmosphereModel
             Mathf.Clamp(FiniteOrDefault(skyTint.Y, 1.0f), 0.0f, 2.0f), Mathf.Clamp(FiniteOrDefault(skyTint.Z, 1.0f), 0.0f, 2.0f));
         HazeQuality = quality <= 6 ? 4 : quality <= 11 ? 8 : 16;
     }
-    // ---- S3 post-rain mist (docs/storm-revamp-s3-storm-arrival-design.md section 5, WO-E1). The weather owner multiplies the user's mist density and
-    // height by a pair of factors; at strength 0 both are exactly 1, so the physical profile is bit-identical to before. Changes are quantised, rate-limited and slew-limited (2 steps per publish unless immediate)
-    // and go through the same Revision + ApplyAll path as the Atmosphere tab, so Sunshine, the sky, objects and the CPU irradiance stay consistent. ----
-    /// <summary>Weather mist mapping (retuned 2026-10-26): the weather ADDS ground mist extinction <see cref="WeatherMistSigmaPerStrength"/> x M (1/m) to sigma_M0 and shrinks the mist scale height by
-    /// max(<see cref="WeatherMistMinHeightFactor"/>, 1 - <see cref="WeatherMistHeightDrop"/> M). It is additive, not a multiplier, because the user's mist (aerosol control) can be zero or tiny
-    /// and a multiplier then makes no fog at all. M = 1 gives sigma_M0 of about 2e-3 (ground visibility about 1.9 km: mist, not fog; retuned 2026-10-29 from 1e-2 / 390 m, which read as a white-out) over a 40% scale height.</summary>
-    public const float WeatherMistSigmaPerStrength = 2.0e-3f, WeatherMistHeightDrop = 0.6f, WeatherMistMinHeightFactor = 0.15f;
-    /// <summary>Extinction (1/m, at the floor) the weather adds to the mist layer: <see cref="WeatherMistSigmaPerStrength"/> x M.</summary>
-    public static float WeatherMistAddedSigma { get; private set; }
-    /// <summary>Multiplier on the mist scale height from the weather: 1 - 0.6 M (never below 0.15), so the mist pools in the lowlands.</summary>
-    public static float WeatherMistHeightFactor { get; private set; } = 1.0f;
-    /// <summary>The published (quantised) weather mist strength M, 0..2.</summary>
-    public static float WeatherMist { get; private set; }
-    /// <summary>Quantisation of the weather mist strength.</summary>
-    public const float WeatherMistStep = 1.0f / 32.0f;
-    /// <summary>Minimum seconds between two publishes, and the most publishes in any <see cref="WeatherMistWindowSeconds"/>.</summary>
-    public const double WeatherMistMinPublishSeconds = 2.0, WeatherMistWindowSeconds = 600.0;
-    public const int WeatherMistMaxPublishesPerWindow = 30;
-    /// <summary>At most 2/32 of M per publish, so with the 2 s spacing a 0 to 1 ramp takes at least 32 s and 16 publishes, well inside the 30-per-10-min cap.</summary>
-    public const int WeatherMistMaxStepsPerPublish = 2;
-    public static int WeatherMistPublishCount { get; private set; }
-    private static readonly double[] WeatherMistPublishTimes = new double[WeatherMistMaxPublishesPerWindow];
-    private static int _weatherMistPublishHead;
-
-    /// <summary>
-    /// Sets the target weather mist strength M (0..2; the post-rain mist setting included). Quantised to 1/32; a change is published (Revision++, ApplyAll)
-    /// at most every 2 s and at most 30 times per 10 minutes (the target is simply retried by the caller's next call). Unless <paramref name="immediate"/>,
-    /// each publish moves M at most <see cref="WeatherMistMaxStepsPerPublish"/> steps toward the target, so repeated calls ramp smoothly instead of popping;
-    /// <paramref name="maxStepsPerPublish"/> overrides that per-publish step limit (the megastorm wake fog uses 4). <paramref name="immediate"/> jumps straight to the quantised target (still rate-limited). Returns true when it published.
-    /// <paramref name="nowSeconds"/> is any monotonic clock.
-    /// </summary>
-    public static bool SetWeatherMist(float strength, double nowSeconds, bool immediate = false, int maxStepsPerPublish = WeatherMistMaxStepsPerPublish)
-    {
-        float m = float.IsFinite(strength) ? Mathf.Clamp(strength, 0.0f, 2.0f) : 0.0f;
-        m = Mathf.Round(m / WeatherMistStep) * WeatherMistStep;
-        if (m == WeatherMist) return false;
-        if (WeatherMistPublishCount > 0)
-        {
-            double last = WeatherMistPublishTimes[(_weatherMistPublishHead + WeatherMistMaxPublishesPerWindow - 1) % WeatherMistMaxPublishesPerWindow];
-            if (nowSeconds - last < WeatherMistMinPublishSeconds) return false;
-            if (WeatherMistPublishCount >= WeatherMistMaxPublishesPerWindow
-                && nowSeconds - WeatherMistPublishTimes[_weatherMistPublishHead] < WeatherMistWindowSeconds) return false;
-        }
-        if (!immediate)
-        {
-            int cur = (int)MathF.Round(WeatherMist / WeatherMistStep), tgt = (int)MathF.Round(m / WeatherMistStep);
-            m = (cur + Math.Clamp(tgt - cur, -Math.Max(1, maxStepsPerPublish), Math.Max(1, maxStepsPerPublish))) * WeatherMistStep;
-        }
-        WeatherMist = m;
-        WeatherMistAddedSigma = WeatherMistSigmaPerStrength * m;
-        WeatherMistHeightFactor = m <= 0.0f ? 1.0f : Mathf.Max(WeatherMistMinHeightFactor, 1.0f - WeatherMistHeightDrop * m);
-        WeatherMistPublishTimes[_weatherMistPublishHead] = nowSeconds;
-        _weatherMistPublishHead = (_weatherMistPublishHead + 1) % WeatherMistMaxPublishesPerWindow;
-        WeatherMistPublishCount++;
-        ApplyProfile();
-        Revision++;
-        ApplyAll();
-        return true;
-    }
-
-    /// <summary>Removes the weather mist and forgets the publish history (the haze is exactly the user's again); publishes once if a mist was active. Used when the weather world is torn down and by tests.</summary>
-    public static void ClearWeatherMist()
-    {
-        bool active = WeatherMist != 0.0f;
-        WeatherMist = 0.0f; WeatherMistAddedSigma = 0.0f; WeatherMistHeightFactor = 1.0f;
-        WeatherMistPublishCount = 0; _weatherMistPublishHead = 0;
-        Array.Clear(WeatherMistPublishTimes);
-        if (!active) return;
-        ApplyProfile();
-        Revision++;
-        ApplyAll();
-    }
-
     /// <summary>Top of the integrated air: the controller's upper shell height (AtmosphereUpperHeightMeters export). Not used by the physical
     /// haze while a containment field is published (<see cref="FieldProfile"/>): the field is then the lid everywhere.</summary>
     public static float HazeCapHeightMeters => UpperHeightMeters;
@@ -270,7 +194,7 @@ public static class RingAtmosphereModel
     private static readonly StringName[] HazeParameterNameList =
     {
         "atmosphere_haze_model", "ring_haze_sigma_R", "ring_haze_H_R", "ring_haze_sigma_A", "ring_haze_omega_A", "ring_haze_H_A",
-        "ring_haze_sigma_M0", "ring_haze_omega_M", "ring_haze_H_mist", "ring_haze_cap_height_meters", "ring_haze_g", "ring_haze_quality",
+        "ring_haze_cap_height_meters", "ring_haze_g", "ring_haze_quality",
         "ring_haze_sun_tint",
     };
     /// <summary>Shader uniforms written by <see cref="PushHazeParameters"/> (for follower materials that mirror a surface material).</summary>
@@ -285,13 +209,10 @@ public static class RingAtmosphereModel
         setParameter(HazeParameterNameList[3], HazeSigmaAerosol);
         setParameter(HazeParameterNameList[4], HazeOmegaAerosol);
         setParameter(HazeParameterNameList[5], HazeAerosolHeightMeters);
-        setParameter(HazeParameterNameList[6], HazeSigmaMist);
-        setParameter(HazeParameterNameList[7], HazeOmegaMist);
-        setParameter(HazeParameterNameList[8], HazeMistHeightMeters);
-        setParameter(HazeParameterNameList[9], HazeCapHeightMeters);
-        setParameter(HazeParameterNameList[10], HazeG);
-        setParameter(HazeParameterNameList[11], HazeQuality);
-        setParameter(HazeParameterNameList[12], HazeSunTint);
+        setParameter(HazeParameterNameList[6], HazeCapHeightMeters);
+        setParameter(HazeParameterNameList[7], HazeG);
+        setParameter(HazeParameterNameList[8], HazeQuality);
+        setParameter(HazeParameterNameList[9], HazeSunTint);
     }
 
     // ---- Physical haze lighting for CPU-built compute/mask profiles (P2b). Compute shaders cannot read Godot globals, so
@@ -340,10 +261,10 @@ public static class RingAtmosphereModel
         Vector3 sun = HazeSunIrradiance * HazeSunTint;
         Vector3 sigmaR = HazeSigmaRayleigh;
         float stormSigmaA = HazeSigmaAerosol, stormOmegaA = HazeOmegaAerosol, stormG = HazeG;
-        ApplyStorm(HazeStormVector, ref stormSigmaA, ref stormOmegaA, ref stormG, HazeSigmaMist, HazeOmegaMist);
+        ApplyStorm(HazeStormVector, ref stormSigmaA, ref stormOmegaA, ref stormG);
         profile[10] = new(_hazeModel == HazeModelKind.Physical ? 1.0f : 0.0f, opacityMultiplier, sigmaR.X, sigmaR.Y);
         profile[11] = new(sigmaR.Z, HazeRayleighHeightMeters, stormSigmaA, stormOmegaA);
-        profile[12] = new(HazeAerosolHeightMeters, HazeSigmaMist, HazeOmegaMist, HazeMistHeightMeters);
+        profile[12] = new(HazeAerosolHeightMeters, 0.0f, 0.0f, 0.0f);
         profile[13] = new(stormG, HazeQuality, LocalHazeDay(outward, toSun, solarVisibility, hubDay), sun.X);
         profile[14] = new(sun.Y, sun.Z, HazeAmbientDay.X, HazeAmbientDay.Y);
         profile[15] = new(HazeAmbientDay.Z, HazeAmbientNight.X, HazeAmbientNight.Y, HazeAmbientNight.Z);
@@ -479,34 +400,30 @@ public static class RingAtmosphereModel
     /// <summary>
     /// Maps the persisted art controls onto the physical haze parameters. The legacy shell/opacity values above are untouched and
     /// still drive the Legacy model; shell geometry and the cap height stay with the controller exports.
-    ///   visibility (km)  -> Koschmieder visibility V = 1.5 * km (Natural 120 -> 180 km); sigma_A = max(3.912 / V - sigma_R.g - sigma_M0, 0).
-    ///   density          -> multiplies every extinction (Rayleigh, aerosol, mist); 0 is the identity, 1 the nominal air.
-    ///   aerosol (0..1)   -> ground-mist load, sigma_M0 = 4e-6 * aerosol / 0.35; sigma_A re-balances so V is unchanged.
-    ///   altitude falloff -> scale heights of aerosol and mist, H = H0 * 2^(2 * (0.5 - falloff)) (0 -> x2 taller, 1 -> x0.5),
+    ///   visibility (km)  -> Koschmieder visibility V = 1.5 * km (Natural 120 -> 180 km); sigma_A = max(3.912 / V - sigma_R.g - reserve, 0).
+    ///   density          -> multiplies every extinction (Rayleigh, aerosol); 0 is the identity, 1 the nominal air.
+    ///   aerosol (0..1)   -> the reserve BaseAerosolReserveSigma * aerosol / 0.35 kept out of sigma_A by the Koschmieder balance.
+    ///   altitude falloff -> scale height of the aerosol, H = H0 * 2^(2 * (0.5 - falloff)) (0 -> x2 taller, 1 -> x0.5),
     ///                       matching the legacy sense (higher falloff = haze thins faster with altitude).
-    ///   P4 controls      -> mist density multiplies sigma_M0; mist/aerosol height replace H0 (the falloff factor still multiplies them, so
+    ///   P4 controls      -> aerosol height replaces H0 (the falloff factor still multiplies it, so
     ///                       the falloff slider keeps its relative sense); Rayleigh strength multiplies sigma_R. Defaults are the identity.
     ///   forward scatter  -> Mie g = 0.6 + (fs - 0.22) * 0.4545 (Natural 0.22 -> 0.60, Cinematic 0.55 -> 0.75).
     ///   sun warmth       -> tint on the haze sun colour: neutral at 0.25, towards (1, 0.78, 0.55) at 1, towards a cool (0.9, 0.97, 1.08) at 0.
     /// </summary>
-    /// <summary>The removed static ground mist the aerosol (art) control used to carry; only the Koschmieder balance still uses it, the mist layer itself is weather-only.</summary>
-    private static float NominalStaticMistSigma() => BaseSigmaMist * Mathf.Clamp(_aerosol, 0.0f, 1.0f) / AerosolControlDefault;
+    /// <summary>The share of the green extinction the aerosol (art) control keeps out of the aerosol layer in the Koschmieder balance (it used to be the static mist's, now a plain reserve so the aerosol value is unchanged).</summary>
+    private static float AerosolReserveSigma() => BaseAerosolReserveSigma * Mathf.Clamp(_aerosol, 0.0f, 1.0f) / AerosolControlDefault;
 
     private static void ApplyPhysicalProfile()
     {
         float density = Mathf.Clamp(_density, 0.0f, 2.0f);
-        float sigmaMist = NominalStaticMistSigma();
-        // The Koschmieder balance still subtracts the former nominal static mist so the aerosol layer is unchanged by its removal (MIST-1); the P4 Rayleigh multiplier is applied on top (visibility shifts).
-        float sigmaAerosol = Mathf.Max(3.912f / (HazeVisibilityKm * 1000.0f) - BaseSigmaRayleigh.Y - sigmaMist, 0.0f);
+        // The Koschmieder balance still subtracts the former nominal mist share so the aerosol layer is unchanged by the mist's removal (MIST-1/2); the P4 Rayleigh multiplier is applied on top (visibility shifts).
+        float sigmaAerosol = Mathf.Max(3.912f / (HazeVisibilityKm * 1000.0f) - BaseSigmaRayleigh.Y - AerosolReserveSigma(), 0.0f);
         float heightScale = Mathf.Pow(2.0f, 2.0f * (0.5f - Mathf.Clamp(_altitudeFalloff, 0.0f, 1.0f)));
         HazeSigmaRayleigh = BaseSigmaRayleigh * (density * HazeRayleighStrength);
         HazeSigmaAerosol = sigmaAerosol * density;
-        HazeSigmaMist = WeatherMistAddedSigma * density;
         HazeRayleighHeightMeters = BaseRayleighHeightMeters;
         HazeAerosolHeightMeters = HazeAerosolBaseHeightMeters * heightScale;
-        HazeMistHeightMeters = BaseMistHeightMeters * heightScale * WeatherMistHeightFactor;
         HazeOmegaAerosol = BaseOmegaAerosol;
-        HazeOmegaMist = BaseOmegaMist;
         HazeG = Mathf.Clamp(BaseMieG + (_forwardScattering - ForwardControlDefault) * 0.4545f, 0.0f, 0.95f);
         float warmth = Mathf.Clamp(_sunWarmth, 0.0f, 1.0f);
         HazeSunTint = warmth >= WarmthControlDefault
@@ -652,16 +569,16 @@ public static class RingAtmosphereModel
         // Physical parameter mapping: Koschmieder closure (when the aerosol term is not clamped away), zero density is the identity,
         // everything finite and positive, and the model switch round-trips.
         float density = Mathf.Clamp(_density, 0.0f, 2.0f);
-        float greenExtinction = HazeSigmaRayleigh.Y + HazeSigmaAerosol + NominalStaticMistSigma() * density + HazeSigmaMist;
+        float greenExtinction = HazeSigmaRayleigh.Y + HazeSigmaAerosol + AerosolReserveSigma() * density;
         bool nominalControls = Mathf.IsEqualApprox(HazeRayleighStrength, 1.0f);
         float koschmieder = density > 0.0f ? 3.912f / (HazeVisibilityKm * 1000.0f) * density : 0.0f;
         bool aerosolClamped = HazeSigmaAerosol <= 0.0f;
         bool physicalVisibility = !nominalControls || (aerosolClamped
             ? greenExtinction >= koschmieder - 1e-9f
             : Mathf.Abs(greenExtinction - koschmieder) <= koschmieder * 0.001f + 1e-12f);
-        bool physicalZeroDensity = density > 0.0f || (HazeSigmaRayleigh.LengthSquared() <= 0.0f && HazeSigmaAerosol <= 0.0f && HazeSigmaMist <= 0.0f);
-        bool physicalFinite = float.IsFinite(HazeSigmaAerosol) && HazeSigmaAerosol >= 0.0f && HazeSigmaMist >= 0.0f
-            && HazeAerosolHeightMeters > 0.0f && HazeMistHeightMeters > 0.0f && HazeG >= 0.0f && HazeG <= 0.95f
+        bool physicalZeroDensity = density > 0.0f || (HazeSigmaRayleigh.LengthSquared() <= 0.0f && HazeSigmaAerosol <= 0.0f);
+        bool physicalFinite = float.IsFinite(HazeSigmaAerosol) && HazeSigmaAerosol >= 0.0f 
+            && HazeAerosolHeightMeters > 0.0f && HazeG >= 0.0f && HazeG <= 0.95f
             && HazeSunTint.X > 0.0f && HazeSunTint.Y > 0.0f && HazeSunTint.Z > 0.0f;
         HazeModelKind originalModel = _hazeModel;
         ulong originalRevision = Revision;
@@ -674,7 +591,7 @@ public static class RingAtmosphereModel
             + $"mountain(clear={mountainClearDistance:0.000}, full={mountainFullDistance:0.000}), "
             + "explicit_connected_lengths, "
             + $"physical(model={_hazeModel}, V={HazeVisibilityKm:0.#}km, sigmaGreen={greenExtinction * 1e6f:0.000}e-6, koschmieder={koschmieder * 1e6f:0.000}e-6, "
-            + $"sigmaA={HazeSigmaAerosol * 1e6f:0.000}e-6, sigmaM={HazeSigmaMist * 1e6f:0.000}e-6, g={HazeG:0.000}, ok={physicalPassed})";
+            + $"sigmaA={HazeSigmaAerosol * 1e6f:0.000}e-6, g={HazeG:0.000}, ok={physicalPassed})";
         return passed;
     }
 

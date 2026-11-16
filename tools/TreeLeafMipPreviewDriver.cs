@@ -203,7 +203,6 @@ public partial class TreeLeafMipPreviewDriver : Node
         m.SetShaderParameter("atmosphere_haze_model", 1);
         m.SetShaderParameter("ring_haze_sigma_R", Vector3.Zero);
         m.SetShaderParameter("ring_haze_sigma_A", 0f);
-        m.SetShaderParameter("ring_haze_sigma_M0", 0f);
         m.SetShaderParameter("atmosphere_boundary_max_opacity", 0f);
         m.SetShaderParameter("atmosphere_upper_max_opacity", 0f);
         m.SetShaderParameter("atmosphere_distance_haze_max_opacity", 0f);

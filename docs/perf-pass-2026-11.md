@@ -300,6 +300,17 @@ Tried and dropped (no gain beyond noise): tree and terrain shadow-pass IN_SHADOW
 
 Still open, in order: the 70 ms periodic process spikes at the 9 km save in daylight (suspect `RingTerrainCloudSunVisibility`, 0.5 s timer; order E1 in 0.8); VSync behaviour with the display on (a 60 Hz FIFO swapchain may lock 17-20 ms forest frames to 30 fps); the GPU-side items that change the image (user decision, section 8): the 16k shadow atlas (1.8 ms), tree distances (trees 7.1 ms in forest), cloud resolution, far viewport scale.
 
+### 0.11 Occlusion culling study (2026-11-16)
+
+Full study and plan: [`docs/occlusion-culling-plan.md`](occlusion-culling-plan.md). Measured on slot 3 at the forest interior, forest edge, plains and save-spot ground poses, four yaws each, by reading back the camera depth and every tree and grass instance.
+- Hidden by terrain or trees: 5 to 60 % of tree instances, but only 0 to 15 % of tree triangles (20 % with no wind margin). The near trees carry the triangles and are the occluders; LOD0 trees were never hidden. Terrain does almost all of the hiding; trees hiding trees adds nothing measurable.
+- Trees have no per-instance frustum culling (Godot only culls whole 240 m tile renderers): 10 to 22 % of submitted tree instances are off screen.
+- Oracle savings at the pose yaw (tree camera draws replaced by copies holding only the kept instances): frustum culling 0.86 to 1.06 ms in forest and 0.41 on the plains; occlusion on top 0.5 to 1.3 ms at forest views facing a slope (about a third of that averaged over yaws), 0.07 on the plains, 0 at altitude. The tree camera draws cost 6.4 to 6.6 ms in forest, 70 % of it in the colour pass.
+- Collapsing hidden instances in the vertex shader keeps only 3 to 40 % of those savings: they must be compacted out of the indirect count.
+- Grass (at most 0.1 to 0.2 ms), proxy terrain sectors (5 to 18 % hidden) and POIs (none near the poses) are not worth culling. Godot `OccluderInstance3D` would cull no tree renderer.
+- Recommended (Phase 1, orders OC-0 to OC-3): exact per-instance frustum culling of the tree camera lists, a second compaction after the budget-correct one, shadows untouched, byte-identical; about 0.7 to 1.0 ms in forest and 0.3 to 0.4 ms on the plains. Occlusion proper is a user decision and not recommended now: the exact colour-pass variant nets about 0.1 ms, the terrain-horizon variant (0.2 to 0.5 ms averaged) is exact only with correct LOD-error margins, and previous-frame Hi-Z is not invisible.
+- Side finding: Godot's primitive counter reports indirect multimeshes at full capacity; the "15 to 17 million tree primitives" in section 5.1 is inflated (about 5 million per camera pass are drawn).
+
 ## 1. Summary (fixture world)
 
 1. **Which settings decide the answer.** The game starts on **Very High** on this machine (hardware tier `desktop_mid_high`, `scripts/world_size_launcher.gd:1981`; Medium is the laptop tier default). The user's last-played world (slot 3) is saved at Very High, with their own overrides on top: tree LOD0 out to 200 m and cards from 550 to 900 m, a 16,384 shadow atlas, and grass and water overrides (section 2.2).

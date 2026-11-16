@@ -4,8 +4,8 @@ using RingworldTechDemo.Voxel.LOD;
 
 namespace RingworldTechDemo.Atmosphere;
 
-/// <summary>Per-instance Physical haze frame for vegetation. Parameters is the 40-float std140 block the vegetation compute reads
-/// (10 vec4, unstormed values; the shader applies the storm). Key changes whenever any input the terms depend on changes (except the camera / sun
+/// <summary>Per-instance Physical haze frame for vegetation. Parameters is the 36-float std140 block the vegetation compute reads
+/// (9 vec4, unstormed values; the shader applies the storm). Key changes whenever any input the terms depend on changes (except the camera / sun
 /// motion, which callers threshold themselves).</summary>
 public readonly record struct RingVegetationHazeFrame(bool Enabled, Vector3 CameraWorld, Vector3 ToSun, float[] Parameters, ulong Key);
 
@@ -18,7 +18,7 @@ public readonly record struct RingVegetationHazeFrame(bool Enabled, Vector3 Came
 public static class RingVegetationHaze
 {
     public enum Channel { None = -1, Grass = 0, Trees = 1 }
-    public const int AtlasWidth = 2048, SlotsPerRow = 1024, ParameterFloats = 40, MaximumAtlasRows = 16384;
+    public const int AtlasWidth = 2048, SlotsPerRow = 1024, ParameterFloats = 36, MaximumAtlasRows = 16384;
     public const string TermsIncludePath = "res://materials/atmosphere/ring_vegetation_haze_terms.gdshaderinc";
     private static readonly StringName[] TextureGlobals = { "ringworld_vegetation_haze_grass", "ringworld_vegetation_haze_trees" };
     private static readonly StringName StateGlobal = "ringworld_vegetation_haze_state";
@@ -117,10 +117,9 @@ public static class RingVegetationHaze
         float[] parameters =
         {
             sigmaR.X, sigmaR.Y, sigmaR.Z, RingAtmosphereModel.HazeRayleighHeightMeters,
-            RingAtmosphereModel.HazeSigmaAerosol, RingAtmosphereModel.HazeOmegaAerosol, RingAtmosphereModel.HazeAerosolHeightMeters, RingAtmosphereModel.HazeSigmaMist,
-            RingAtmosphereModel.HazeOmegaMist, RingAtmosphereModel.HazeMistHeightMeters, RingAtmosphereModel.HazeCapHeightMeters, RingAtmosphereModel.HazeG,
+            RingAtmosphereModel.HazeSigmaAerosol, RingAtmosphereModel.HazeOmegaAerosol, RingAtmosphereModel.HazeAerosolHeightMeters, RingAtmosphereModel.HazeCapHeightMeters,
             (float)radiusMeters, RingAtmosphereModel.FloorDepthMeters, frame.CameraHeightMeters, RingAtmosphereModel.HazeQuality,
-            frame.SidewallNegativeMeters, frame.SidewallPositiveMeters, frame.CoordinateScale, 0.0f,
+            frame.SidewallNegativeMeters, frame.SidewallPositiveMeters, frame.CoordinateScale, RingAtmosphereModel.HazeG,
             outward.X, outward.Y, outward.Z, 0.0f,
             axis.X, axis.Y, axis.Z, 0.0f,
             toSun.X, toSun.Y, toSun.Z, 0.0f,

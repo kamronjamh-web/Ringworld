@@ -256,7 +256,7 @@ public partial class VegetationHazeGpuTest : Node
     private const string ProbeSource = @"#version 450
 layout(local_size_x = 64) in;
 layout(set = 0, binding = 0, std140) uniform Frame {
-    vec4 sigma_R_H_R; vec4 aerosol; vec4 mist; vec4 geometry; vec4 sides; vec4 outward; vec4 axis; vec4 to_sun; vec4 camera; vec4 storm;
+    vec4 sigma_R_H_R; vec4 aerosol; vec4 geometry; vec4 sides; vec4 outward; vec4 axis; vec4 to_sun; vec4 camera; vec4 storm;
     vec4 e_sun; vec4 ambient; vec4 night_ambient; vec4 day;
 } f;
 layout(set = 0, binding = 1, std430) readonly buffer Inputs { vec4 inp[]; };
@@ -273,8 +273,8 @@ void main() {
     if (i >= uint(f.day.y + 0.5)) return;
     RingHazeParams p = ring_haze_params_default();
     p.sigma_R = f.sigma_R_H_R.xyz; p.H_R = f.sigma_R_H_R.w;
-    p.sigma_A = f.aerosol.x; p.omega_A = f.aerosol.y; p.H_A = f.aerosol.z; p.sigma_M0 = f.aerosol.w;
-    p.omega_M = f.mist.x; p.H_mist = f.mist.y; p.cap_height = f.mist.z; p.g = f.mist.w;
+    p.sigma_A = f.aerosol.x; p.omega_A = f.aerosol.y; p.H_A = f.aerosol.z; p.cap_height = f.aerosol.w;
+    p.g = f.sides.w;
     p.quality = int(f.geometry.w + 0.5); p.to_sun = normalize(f.to_sun.xyz);
     p.E_sun = f.e_sun.xyz; p.ambient = f.ambient.xyz; p.night_ambient = f.night_ambient.xyz; p.day = f.day.x;
     RingHazeParams p_storm = ring_haze_apply_storm(p, f.storm);
@@ -312,8 +312,8 @@ void main() {
         string source = ExpandSource(ProbeSource);
         var uniform = new float[56];
         Array.Copy(frameParameters, uniform, RingVegetationHaze.ParameterFloats);
-        Put(uniform, 40, LightSun, 0); Put(uniform, 44, LightAmbient, 0); Put(uniform, 48, LightNight, 0);
-        uniform[52] = LightDay; uniform[53] = count;
+        Put(uniform, 36, LightSun, 0); Put(uniform, 40, LightAmbient, 0); Put(uniform, 44, LightNight, 0);
+        uniform[48] = LightDay; uniform[49] = count;
         byte[] uniformBytes = Bytes(uniform), inputBytes = Bytes(input);
         var done = new TaskCompletionSource<float[]>();
         RenderingServer.CallOnRenderThread(Callable.From(() =>

@@ -12,21 +12,20 @@
 // Layers (extinction per metre = sigma * exp(-h / H)):
 //   Rayleigh  sigma_R (per channel), H_R      scattering = extinction
 //   aerosol   sigma_A (grey Mie),    H_A      scattering = omega_A * extinction
-//   mist      sigma_M0 (grey Mie),   H_mist   scattering = omega_M * extinction
 // Optical depth over the first local air interval [t0, t1] (see ring_haze_air_interval):
 //   tau_layer = sigma_layer * Integral exp(-h(t)/H_layer) dt,   h(t) = h0 - (b t + a t^2) / (Rc + sqrt(Rc^2 + b t + a t^2))
 //   with Rc = R - h0, b = 2 Rc dot(outward, ray), a = |ray - axis dot(ray, axis)|^2   (cancellation-free form of R - |radial|).
 //   Per piece, h is replaced by the line hbar + mu (t - tm) (hbar = Simpson mean of the exact h, mu = chord slope) and the exponential
 //   is integrated in closed form (iq): Integral = dt exp(-hbar/H) sinh(x)/x with x = |mu| dt / (2H)  (x -> 0 limit 1 + x^2/6).
-//   Short or nearly straight rays (altitude sag < RING_HAZE_SAG_FRACTION * H_mist, e.g. everything under ~20 km) are ONE piece; longer
+//   Short or nearly straight rays (altitude sag < RING_HAZE_SAG_FRACTION * H_A, e.g. everything under ~20 km) are ONE piece; longer
 //   curved rays are cut into N (quality 4/8/16) Chebyshev-spaced pieces, 2N+1 exact h evaluations. (Deviation from "N-point Gauss-Legendre on h(t)": GL cannot
-//   resolve a 400 m mist layer over 20-600 km; measured 2.7% tau error at N=8.)
+//   resolve a thin low layer over 20-600 km; measured 2.7% tau error at N=8.)
 // Altitude below the floor is not clamped (the shell reaches floor_depth below it); the exponent is clamped at 80.
 //
 // Output:
-//   T = exp(-(tau_R + tau_A + tau_M))                    per channel (Rayleigh chromatic, Mie/mist grey)
+//   T = exp(-(tau_R + tau_A))                            per channel (Rayleigh chromatic, Mie grey)
 //   mu = dot(view_ray, to_sun);  P_R = 3/(16 pi) (1 + mu^2);  P_M = Cornette-Shanks(g)
-//   w_sun = tau_R P_R + (omega_A tau_A + omega_M tau_M) P_M ;  w_amb = tau_R + omega_A tau_A + omega_M tau_M
+//   w_sun = tau_R P_R + omega_A tau_A P_M ;  w_amb = tau_R + omega_A tau_A
 //   S_sun = (1 - T) * E_sun * day * sun_vis * T_sun * w_sun / max(tau_total, eps)
 //   S_amb = (1 - T) * (ambient * day + night_ambient * (1 - day)) * w_amb / max(tau_total, eps)
 //   (constant-lighting single scatter: the light seen by the whole path is that at the path midpoint)
@@ -35,7 +34,7 @@
 //   where cos_sun = dot(to_sun, local up at the path midpoint). sun_vis = smoothstep(-0.06, 0, cos_sun) kills the sun below the horizon.
 //   `day` is supplied by the caller (ringworld_effective_solar_day semantics); this file reads no globals.
 
-// Maximum altitude error (m) tolerated by treating h as a straight line inside one quadrature piece, scaled by the mist height.
+// Maximum altitude error (m) tolerated by treating h as a straight line inside one quadrature piece, scaled by the aerosol height.
 const float RING_HAZE_SAG_FRACTION = 0.03;
 
 struct RingHaze {
@@ -50,9 +49,6 @@ struct RingHazeParams {
 	float sigma_A;      // aerosol (Mie) extinction at the floor, 1/m
 	float omega_A;      // aerosol single-scatter albedo
 	float H_A;          // aerosol scale height, m
-	float sigma_M0;     // ground mist extinction at the floor, 1/m
-	float omega_M;      // mist single-scatter albedo
-	float H_mist;       // mist scale height, m
 	float cap_height;   // top of the integration (upper air shell), m
 	float g;            // Mie forward-scattering anisotropy
 	vec3 E_sun;         // sun irradiance colour, linear (radiance = E_sun * phase * optical depth terms)
@@ -66,22 +62,19 @@ struct RingHazeParams {
 struct RingHazeOptics {
 	vec3 tau_R;
 	float tau_A;
-	float tau_M;
 };
 
 // Koschmieder: total green-channel extinction at the floor = 3.912 / V. Returns the aerosol floor extinction that
-// makes the (Rayleigh + aerosol + mist) green extinction match the meteorological visibility V (km).
-float ring_haze_aerosol_from_visibility(float visibility_km, float sigma_R_green, float sigma_M0) {
-	return max(3.912 / (max(visibility_km, 0.001) * 1000.0) - sigma_R_green - sigma_M0, 0.0);
+// makes the (Rayleigh + aerosol + reserve) green extinction match the meteorological visibility V (km).
+// sigma_reserve (1/m) is a fixed share of the green extinction kept out of the aerosol layer so the aerosol value is the one tuned when the removed mist layer still took it (2026-11-16).
+float ring_haze_aerosol_from_visibility(float visibility_km, float sigma_R_green, float sigma_reserve) {
+	return max(3.912 / (max(visibility_km, 0.001) * 1000.0) - sigma_R_green - sigma_reserve, 0.0);
 }
 
 RingHazeParams ring_haze_params_default() {
 	RingHazeParams p;
 	p.sigma_R = vec3(5.802e-6, 13.558e-6, 33.1e-6);
 	p.H_R = 8000.0;
-	p.sigma_M0 = 4.0e-6;
-	p.omega_M = 0.95;
-	p.H_mist = 400.0;
 	p.sigma_A = ring_haze_aerosol_from_visibility(180.0, 13.558e-6, 4.0e-6);
 	p.omega_A = 0.9;
 	p.H_A = 1500.0;
@@ -313,21 +306,19 @@ float ring_haze_flat_layer(float hbar, float mu, float dt, float scale_height) {
 	return dt * exp(min(-hbar / H + x, 80.0)) * (1.0 - exp(-2.0 * x)) / (2.0 * x);
 }
 
-// Per-layer Integral exp(-h/H) dt over [t0, t1]: x = Rayleigh, y = aerosol, z = mist.
-// Straight rays (altitude sag a dt^2 / (8 Rc) under RING_HAZE_SAG_FRACTION * H_mist (H_A when sigma_M0 is 0, the mist layer is then skipped), e.g. everything under ~20 km) are ONE piece of the
+// Per-layer Integral exp(-h/H) dt over [t0, t1]: x = Rayleigh, y = aerosol.
+// Straight rays (altitude sag a dt^2 / (8 Rc) under RING_HAZE_SAG_FRACTION * H_A, e.g. everything under ~20 km) are ONE piece of the
 // closed form above. Longer curved rays are cut into N pieces (N = quality 4/8/16) at Chebyshev-spaced positions, dense at both ends
 // where the low altitude (hence the weight) is; each piece uses its chord line plus the Simpson-mean offset (2N+1 exact h evaluations).
-vec3 ring_haze_layer_integrals(RingHazeParams p, float h0, float radial0, float b, float a, float t0, float t1) {
+vec2 ring_haze_layer_integrals(RingHazeParams p, float h0, float radial0, float b, float a, float t0, float t1) {
 	float dt = t1 - t0;
-	if (dt <= 0.0) return vec3(0.0);
+	if (dt <= 0.0) return vec2(0.0);
 	int n = p.quality >= 16 ? 16 : (p.quality >= 8 ? 8 : 4);
 	float sag = max(a, 0.0) * dt * dt / (8.0 * max(radial0, 1.0));
-	// The mist layer exists only while the weather adds sigma_M0 (the static ground mist was removed, MIST-1); without it the tolerance follows the aerosol height, so short rays need fewer pieces.
-	bool mist_on = p.sigma_M0 > 0.0;
-	float sag_tol = clamp(RING_HAZE_SAG_FRACTION * (mist_on ? p.H_mist : p.H_A), 4.0, 40.0);
+	float sag_tol = clamp(RING_HAZE_SAG_FRACTION * p.H_A, 4.0, 40.0);
 	// Adaptive count: Chebyshev pieces are at most (pi/2)/k of the span, so the per-piece sag is sag (pi/2)^2 / k^2; k = ceil((pi/2) sqrt(sag / tol)) keeps it at the one-piece tolerance.
 	int pieces = sag <= sag_tol ? 1 : min(n, max(2, int(ceil(1.5707963 * sqrt(sag / sag_tol)))));
-	vec3 sum = vec3(0.0);
+	vec2 sum = vec2(0.0);
 	float t_start = t0;
 	float h_start = ring_haze_height(t0, h0, radial0, b, a);
 	for (int i = 0; i < 16; i++) {
@@ -338,7 +329,7 @@ vec3 ring_haze_layer_integrals(RingHazeParams p, float h0, float radial0, float 
 		float h_end = ring_haze_height(t_end, h0, radial0, b, a);
 		float hbar = (h_start + 4.0 * h_mid + h_end) / 6.0;
 		float mu = (h_end - h_start) / max(piece_dt, 0.000001);
-		sum += vec3(ring_haze_flat_layer(hbar, mu, piece_dt, p.H_R), ring_haze_flat_layer(hbar, mu, piece_dt, p.H_A), mist_on ? ring_haze_flat_layer(hbar, mu, piece_dt, p.H_mist) : 0.0);
+		sum += vec2(ring_haze_flat_layer(hbar, mu, piece_dt, p.H_R), ring_haze_flat_layer(hbar, mu, piece_dt, p.H_A));
 		h_start = h_end;
 		t_start = t_end;
 	}
@@ -350,17 +341,15 @@ RingHazeOptics ring_haze_optics(RingHazeParams p, vec3 ray, vec2 interval, float
 	RingHazeOptics o;
 	o.tau_R = vec3(0.0);
 	o.tau_A = 0.0;
-	o.tau_M = 0.0;
 	if (interval.y <= interval.x) return o;
 	axis = normalize(axis); outward = normalize(outward);
 	vec3 radial_ray = ray - axis * dot(ray, axis);
 	float radial0 = radius_m - camera_height;
 	float b = 2.0 * radial0 * dot(outward, ray);
 	float a = dot(radial_ray, radial_ray);
-	vec3 layers = ring_haze_layer_integrals(p, camera_height, radial0, b, a, interval.x, interval.y);
+	vec2 layers = ring_haze_layer_integrals(p, camera_height, radial0, b, a, interval.x, interval.y);
 	o.tau_R = p.sigma_R * layers.x;
 	o.tau_A = p.sigma_A * layers.y;
-	o.tau_M = p.sigma_M0 * layers.z;
 	return o;
 }
 
@@ -377,8 +366,7 @@ vec3 ring_haze_sun_transmittance(RingHazeParams p, vec3 ray, vec2 interval, floa
 	float cap = p.cap_height;
 	float col_R = max(p.H_R * (exp(min(-h_mid / max(p.H_R, 1.0), 80.0)) - exp(-cap / max(p.H_R, 1.0))), 0.0);
 	float col_A = max(p.H_A * (exp(min(-h_mid / max(p.H_A, 1.0), 80.0)) - exp(-cap / max(p.H_A, 1.0))), 0.0);
-	float col_M = p.sigma_M0 > 0.0 ? max(p.H_mist * (exp(min(-h_mid / max(p.H_mist, 1.0), 80.0)) - exp(-cap / max(p.H_mist, 1.0))), 0.0) : 0.0;
-	vec3 tau_col = p.sigma_R * col_R + vec3(p.sigma_A * col_A + p.sigma_M0 * col_M);
+	vec3 tau_col = p.sigma_R * col_R + vec3(p.sigma_A * col_A);
 	float airmass = 1.025 / (max(cos_sun, 0.0) + 0.025);
 	return exp(-tau_col * airmass) * smoothstep(-0.06, 0.0, cos_sun);
 }
@@ -403,12 +391,12 @@ RingHaze ring_haze_eval_interval(RingHazeParams p, vec3 ray, vec2 interval, floa
 	RingHaze result = ring_haze_identity();
 	if (interval.y <= interval.x) return result;
 	RingHazeOptics o = ring_haze_optics(p, ray, interval, camera_height, outward, axis, radius_m);
-	float mie_extinction = o.tau_A + o.tau_M;
+	float mie_extinction = o.tau_A;
 	vec3 tau_total = o.tau_R + vec3(mie_extinction);
 	result.T = exp(-tau_total);
 	vec3 one_minus_T = vec3(ring_haze_one_minus_exp(tau_total.x), ring_haze_one_minus_exp(tau_total.y), ring_haze_one_minus_exp(tau_total.z));
 	vec3 inv_total = vec3(1.0) / max(tau_total, vec3(0.00000001));
-	float mie_scatter = p.omega_A * o.tau_A + p.omega_M * o.tau_M;
+	float mie_scatter = p.omega_A * o.tau_A;
 	float mu = dot(ray, normalize(p.to_sun));
 	vec3 weight_sun = o.tau_R * ring_haze_phase_rayleigh(mu) + vec3(mie_scatter * ring_haze_phase_mie(mu, p.g));
 	vec3 weight_amb = o.tau_R + vec3(mie_scatter);
@@ -467,12 +455,12 @@ RingHaze ring_haze_eval_remote_interval(RingHazeParams p, vec3 raw_to_sun, float
 	RingHazeParams q = p;
 	q.to_sun = length(blended_sun) > 0.0001 ? normalize(blended_sun) : up_remote;
 	q.day = max(clamp(smoothstep(-0.2, 0.35, dot(up_remote, q.to_sun)), 0.0, 1.0) * clamp(solar_visibility, 0.0, 1.0), clamp(hub_day, 0.0, 1.0));
-	float mie_extinction = o.tau_A + o.tau_M;
+	float mie_extinction = o.tau_A;
 	vec3 tau_total = o.tau_R + vec3(mie_extinction);
 	result.T = exp(-tau_total);
 	vec3 one_minus_T = vec3(ring_haze_one_minus_exp(tau_total.x), ring_haze_one_minus_exp(tau_total.y), ring_haze_one_minus_exp(tau_total.z));
 	vec3 inv_total = vec3(1.0) / max(tau_total, vec3(0.00000001));
-	float mie_scatter = q.omega_A * o.tau_A + q.omega_M * o.tau_M;
+	float mie_scatter = q.omega_A * o.tau_A;
 	float mu = dot(ray, q.to_sun);
 	vec3 weight_sun = o.tau_R * ring_haze_phase_rayleigh(mu) + vec3(mie_scatter * ring_haze_phase_mie(mu, q.g));
 	vec3 weight_amb = o.tau_R + vec3(mie_scatter);
@@ -500,7 +488,7 @@ RingHazeParams ring_haze_apply_storm(RingHazeParams p, vec4 storm) {
 	float s = clamp(storm.x, 0.0, 1.0);
 	if (s <= 0.0) return p;
 	float add = s * max(storm.y, 0.0);
-	float scatter_clear = p.omega_A * p.sigma_A + p.omega_M * p.sigma_M0;
+	float scatter_clear = p.omega_A * p.sigma_A;
 	float scatter_storm = clamp(storm.z, 0.0, 1.0) * add;
 	float sigma = p.sigma_A + add;
 	p.omega_A = sigma > 0.0 ? (p.omega_A * p.sigma_A + scatter_storm) / sigma : p.omega_A;
@@ -556,7 +544,7 @@ RingHaze ring_haze_eval_sky(RingHazeParams p, vec3 dir, vec3 camera, float camer
 // ring atmosphere profile (slots 0-9 keep their Legacy meaning; RingAtmosphereModel.PackHazeProfile is the single packer):
 //   [10] (model_flag, opacity_multiplier, sigma_R.r, sigma_R.g)      model_flag: 0 = Legacy, 1 = Physical
 //   [11] (sigma_R.b, H_R, sigma_A, omega_A)
-//   [12] (H_A, sigma_M0, omega_M, H_mist)
+//   [12] (H_A, 0, 0, 0)                                              the last three are unused (they carried the removed mist layer)
 //   [13] (g, quality, day, E_sun.r)                                  E_sun already includes the sun tint
 //   [14] (E_sun.g, E_sun.b, ambient_day.r, ambient_day.g)
 //   [15] (ambient_day.b, ambient_night.r, ambient_night.g, ambient_night.b)
@@ -578,9 +566,6 @@ RingHaze ring_haze_from_profile(vec3 target, vec3 camera, vec4 p[16], float day)
 	hp.sigma_A = p[11].z;
 	hp.omega_A = p[11].w;
 	hp.H_A = p[12].x;
-	hp.sigma_M0 = p[12].y;
-	hp.omega_M = p[12].z;
-	hp.H_mist = p[12].w;
 	hp.cap_height = p[1].x;
 	hp.g = p[13].x;
 	hp.quality = int(p[13].y + 0.5);

@@ -931,18 +931,16 @@ func _p4_contract() -> Dictionary:
 	var profile: Array = _helper.BuildCloudProfile(RING_RADIUS, OUTWARD, AXIS, _altitude, RING_HALF_WIDTH, RING_HALF_WIDTH, _to_sun("noon"), 1.0)
 	var errors: PackedStringArray = PackedStringArray()
 	if int(st["quality"]) != 16: errors.append("model quality")
-	if not is_equal_approx(float(st["h_mist"]) / 400.0, 1.0) or not is_equal_approx(float(st["h_a"]) / 2500.0, 1.0): errors.append("model heights")
+	if not is_equal_approx(float(st["h_a"]) / 2500.0, 1.0): errors.append("model heights")
 	if not is_equal_approx(float(st["albedo"]), 0.25) or not is_equal_approx(float(st["gain"]), 1.5): errors.append("model bounce/gain")
 	if int(_cpu_sky.call("GetQuality")) != 16: errors.append("cpu sky quality")
 	for material in [_sky_material, _probe_material]:
 		if int(material.get_shader_parameter("ring_haze_quality")) != 16: errors.append("material quality")
 		if not is_equal_approx(float((material.get_shader_parameter("ring_haze_sigma_R") as Vector3).x) / sigma_r.x, 1.0): errors.append("material sigma_R")
-		if not is_equal_approx(float(material.get_shader_parameter("ring_haze_H_mist")) / 400.0, 1.0): errors.append("material H_mist")
 		if not is_equal_approx(float(material.get_shader_parameter("ring_haze_H_A")) / 2500.0, 1.0): errors.append("material H_A")
-		if float(material.get_shader_parameter("ring_haze_sigma_M0")) != float(st["sigma_m"]) or float(st["sigma_m"]) != 0.0: errors.append("material sigma_M0")
 	if int(profile[13].y) != 16: errors.append("cloud quality")
-	if not is_equal_approx(profile[10].z / sigma_r.x, 1.0) or not is_equal_approx(profile[12].x / 2500.0, 1.0) 			or not is_equal_approx(profile[12].w / 400.0, 1.0) or profile[12].y != float(st["sigma_m"]): errors.append("cloud profile values")
-	return _contract("p4_controls_reach_consumers", errors.is_empty(), "rayleigh 1.5x, no static mist (H_mist 400 m), H_A 2500 m, quality 16: " + (", ".join(errors) if not errors.is_empty() else "model, materials, CPU sky and cloud profile agree"))
+	if not is_equal_approx(profile[10].z / sigma_r.x, 1.0) or not is_equal_approx(profile[12].x / 2500.0, 1.0): errors.append("cloud profile values")
+	return _contract("p4_controls_reach_consumers", errors.is_empty(), "rayleigh 1.5x, H_A 2500 m, quality 16: " + (", ".join(errors) if not errors.is_empty() else "model, materials, CPU sky and cloud profile agree"))
 
 ## Global lighting values the compute probe uses (the project defaults of the shader globals) as Vector3s.
 func _global_default(name: String) -> Vector3:

@@ -162,7 +162,7 @@ public partial class StormArrivalCaptureHelper : RefCounted
     }
 
     /// <summary>
-    /// Terrain relief scan around a point for the valley mist capture: returns the lowest cell, the highest cell, and the mean ground, on a stepMeters grid within radiusMeters.
+    /// Terrain relief scan around a point (the valley capture is gone): returns the lowest cell, the highest cell, and the mean ground, on a stepMeters grid within radiusMeters.
     /// {valley_around, valley_across, valley_m, ridge_around, ridge_across, ridge_m, mean_m}.
     /// </summary>
     public Godot.Collections.Dictionary ScanRelief(Node layerNode, double aroundCentre, double acrossCentre, double radiusMeters, double stepMeters)
@@ -270,14 +270,6 @@ public partial class StormArrivalCaptureHelper : RefCounted
         }
         return result;
     }
-
-    /// <summary>The published weather mist: {mist, added_sigma, sigma_mist, height_factor, revision, publishes}.</summary>
-    public Godot.Collections.Dictionary MistState() => new()
-    {
-        ["mist"] = RingAtmosphereModel.WeatherMist, ["added_sigma"] = RingAtmosphereModel.WeatherMistAddedSigma, ["sigma_mist"] = RingAtmosphereModel.HazeSigmaMist,
-        ["height_factor"] = RingAtmosphereModel.WeatherMistHeightFactor, ["revision"] = (long)RingAtmosphereModel.Revision,
-        ["publishes"] = RingAtmosphereModel.WeatherMistPublishCount
-    };
 
     /// <summary>Diagnostic: the observer rain-history snapshot S2 reads (per-lag counts, proxies and the PriorRain it gives) next to the observer history.</summary>
     public Godot.Collections.Dictionary SnapshotState(Node layerNode)

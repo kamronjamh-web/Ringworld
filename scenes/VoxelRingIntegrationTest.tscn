@@ -49,7 +49,6 @@
 [ext_resource type="Script" path="res://scripts/Weather/RingWetWorld.cs" id="wet_world"]
 [ext_resource type="Script" path="res://scripts/Weather/RingLensDroplets.cs" id="lens_droplets"]
 [ext_resource type="Script" path="res://scripts/Shadows/RingContactShadows.cs" id="contact_shadows"]
-[ext_resource type="Script" path="res://scripts/Weather/RingPostRainMist.cs" id="storm_post_rain_mist"]
 [ext_resource type="Script" path="res://scripts/Weather/RingRainbow.cs" id="storm_rainbow"]
 [ext_resource type="Script" path="res://scripts/Weather/RingGustFrontDebris.cs" id="storm_gust_debris"]
 [ext_resource type="Script" uid="uid://dldopq76731f8" path="res://scripts/Voxel/LOD/RingTerrainCoarseSdfPilot.cs" id="37"]
@@ -698,9 +697,6 @@ script = ExtResource("52_cloud_provider")
 [node name="LocalWeatherEffects" type="Node3D" parent="." unique_id=308293362]
 script = ExtResource("33")
 Enabled = true
-
-[node name="PostRainMist" type="Node" parent="."]
-script = ExtResource("storm_post_rain_mist")
 
 [node name="Rainbow" type="Node" parent="."]
 script = ExtResource("storm_rainbow")

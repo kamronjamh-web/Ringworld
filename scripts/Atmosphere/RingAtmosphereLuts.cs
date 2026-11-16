@@ -115,7 +115,7 @@ public partial class RingAtmosphereLuts : RefCounted
     public int GetBuildsCompleted() => _buildsCompleted;
     public Vector4 GetPublishedKey() => _publishedKey;
     public float GetGrazeConstant() => _lastGraze;
-    /// <summary>The 44 floats of the last queued build's uniform block (tests feed the same block to their probe shaders).</summary>
+    /// <summary>The 40 floats of the last queued build's uniform block (tests feed the same block to their probe shaders).</summary>
     public float[] GetLastBuildParams() { lock (Gate) return (float[])_lastParams.Clone(); }
     /// <summary>RD texture RIDs of lut0/lut1/lut2 (valid once <see cref="IsReady"/>); tests sample them directly.</summary>
     public Rid GetSkyViewTexture(int index) { lock (Gate) return index is >= 0 and < 3 ? Images[index] : default; }
@@ -146,10 +146,9 @@ public partial class RingAtmosphereLuts : RefCounted
         return new[]
         {
             sigmaR.X, sigmaR.Y, sigmaR.Z, RingAtmosphereModel.HazeRayleighHeightMeters,
-            RingAtmosphereModel.HazeSigmaAerosol, RingAtmosphereModel.HazeOmegaAerosol, RingAtmosphereModel.HazeAerosolHeightMeters, RingAtmosphereModel.HazeSigmaMist,
-            RingAtmosphereModel.HazeOmegaMist, RingAtmosphereModel.HazeMistHeightMeters, RingAtmosphereModel.HazeCapHeightMeters, RingAtmosphereModel.HazeG,
+            RingAtmosphereModel.HazeSigmaAerosol, RingAtmosphereModel.HazeOmegaAerosol, RingAtmosphereModel.HazeAerosolHeightMeters, RingAtmosphereModel.HazeCapHeightMeters,
             i.Radius, RingAtmosphereModel.FloorDepthMeters, i.Height, RingAtmosphereModel.HazeQuality,
-            i.SideNegative, i.SidePositive, k, 0.0f,
+            i.SideNegative, i.SidePositive, k, RingAtmosphereModel.HazeG,
             i.Outward.X, i.Outward.Y, i.Outward.Z, 0.0f,
             i.Axis.X, i.Axis.Y, i.Axis.Z, 0.0f,
             i.ToSun.X, i.ToSun.Y, i.ToSun.Z, 0.0f,
@@ -235,7 +234,7 @@ public partial class RingAtmosphereLuts : RefCounted
             Mipmaps = 1,
             UsageBits = RenderingDevice.TextureUsageBits.StorageBit | RenderingDevice.TextureUsageBits.SamplingBit | RenderingDevice.TextureUsageBits.CanCopyFromBit,
         };
-        _uniformBuffer = _rd.UniformBufferCreate(44 * 4);
+        _uniformBuffer = _rd.UniformBufferCreate(40 * 4);
         var uniforms = new Godot.Collections.Array<RDUniform>();
         for (int i = 0; i < 3; i++)
         {

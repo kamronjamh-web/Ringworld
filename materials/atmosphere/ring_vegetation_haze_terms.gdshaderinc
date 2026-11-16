@@ -6,8 +6,8 @@
 // of the result that do not depend on E_sun, the day weight or the ambient colours, so the vertex shader can assemble T / S_sun / S_amb with
 // the LIVE lighting globals (cloud shadowing, storm sun occlusion and day changes never force a recompute):
 //   L_R         Rayleigh layer integral, Integral exp(-h/H_R) dt (m)          tau_R = sigma_R * L_R (per channel, sigma_R unstormed uniform)
-//   mie_ext     tau_A + tau_M (storm already applied to sigma_A)
-//   mie_scatter omega_A tau_A + omega_M tau_M
+//   mie_ext     tau_A (storm already applied to sigma_A)
+//   mie_scatter omega_A tau_A
 //   K_sun       t_sun * (tau_R P_R(mu) + mie_scatter P_M(mu, g)) / tau_total  (per channel; mu, g and t_sun at compute time)
 // Assembly (identical to ring_haze_eval, and to the ring_haze_sample opacity-multiplier tail for m != 1):
 //   tau = m (tau_R + mie_ext);  T = exp(-tau);  S_sun = (1 - T) E_sun day K_sun;  S_amb = (1 - T) mix(night, amb, day) (tau_R + mie_scatter) / (tau_R + mie_ext)
@@ -57,13 +57,12 @@ RingVegetationHazeTerms ring_vegetation_haze_terms(RingHazeParams p, vec3 target
 	float radial0 = radius_m - camera_height;
 	float b = 2.0 * radial0 * dot(outward_n, ray);
 	float a = dot(radial_ray, radial_ray);
-	vec3 layers = ring_haze_layer_integrals(p, camera_height, radial0, b, a, interval.x, interval.y);
+	vec2 layers = ring_haze_layer_integrals(p, camera_height, radial0, b, a, interval.x, interval.y);
 	float tau_A = p.sigma_A * layers.y;
-	float tau_M = p.sigma_M0 * layers.z;
 	vec3 tau_R = p.sigma_R * layers.x;
 	t.L_R = layers.x;
-	t.mie_ext = tau_A + tau_M;
-	t.mie_scatter = p.omega_A * tau_A + p.omega_M * tau_M;
+	t.mie_ext = tau_A;
+	t.mie_scatter = p.omega_A * tau_A;
 	vec3 tau_total = tau_R + vec3(t.mie_ext);
 	vec3 inv_total = vec3(1.0) / max(tau_total, vec3(0.00000001));
 	float mu = dot(ray, normalize(p.to_sun));

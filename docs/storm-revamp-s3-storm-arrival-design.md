@@ -4,6 +4,8 @@ Work orders for `docs/storm-revamp-plan.md` step S3, plus the cross-cutting flig
 
 User direction: immersion and spectacle only (no gameplay effects), exaggerated storms, walking now, flying vehicles later.
 
+> **Mist removed (2026-11-16).** Section 5 (post-rain mist and low fog), the PostRainMist setting and the arrival mist contribution were removed with the whole weather mist layer (`docs/atmosphere-haze-revamp-plan.md`, MIST-2). The rain-history clock, rainbow and the other arrival consumers are unchanged. Section 5 is kept as history.
+
 ## 1. Findings that shape the design
 
 1. **Storms barely translate; they grow and shrink in place.**

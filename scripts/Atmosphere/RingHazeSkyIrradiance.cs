@@ -38,7 +38,7 @@ public partial class RingHazeSkyIrradiance : RefCounted
     private struct Params
     {
         public D3 SigmaR;
-        public double HR, SigmaA, OmegaA, HA, SigmaM0, OmegaM, HMist, CapHeight, G;
+        public double HR, SigmaA, OmegaA, HA, CapHeight, G;
         public int Quality;
         public double Radius, FloorDepth;
         // Containment-field lid (WO9): the profile exactly as the shaders read it (ringworld_field_profile0 / 1); None = the box.
@@ -58,13 +58,10 @@ public partial class RingHazeSkyIrradiance : RefCounted
         p.HR = RingAtmosphereModel.HazeRayleighHeightMeters;
         // Storm haze (P9) goes through the float ApplyStorm mirror before promotion to double, so the CPU ambient follows the shaders.
         float sigmaA = RingAtmosphereModel.HazeSigmaAerosol, omegaA = RingAtmosphereModel.HazeOmegaAerosol, mieG = RingAtmosphereModel.HazeG;
-        RingAtmosphereModel.ApplyStorm(RingAtmosphereModel.HazeStormVector, ref sigmaA, ref omegaA, ref mieG, RingAtmosphereModel.HazeSigmaMist, RingAtmosphereModel.HazeOmegaMist);
+        RingAtmosphereModel.ApplyStorm(RingAtmosphereModel.HazeStormVector, ref sigmaA, ref omegaA, ref mieG);
         p.SigmaA = sigmaA;
         p.OmegaA = omegaA;
         p.HA = RingAtmosphereModel.HazeAerosolHeightMeters;
-        p.SigmaM0 = RingAtmosphereModel.HazeSigmaMist;
-        p.OmegaM = RingAtmosphereModel.HazeOmegaMist;
-        p.HMist = RingAtmosphereModel.HazeMistHeightMeters;
         p.CapHeight = RingAtmosphereModel.HazeCapHeightMeters;
         p.G = mieG;
         p.Quality = qualityOverride > 0 ? qualityOverride : RingAtmosphereModel.HazeQuality;
@@ -162,7 +159,7 @@ public partial class RingHazeSkyIrradiance : RefCounted
         if (dt <= 0.0) return new D3(0, 0, 0);
         int n = p.Quality >= 16 ? 16 : (p.Quality >= 8 ? 8 : 4);
         double sag = Math.Max(a, 0.0) * dt * dt / (8.0 * Math.Max(radial0, 1.0));
-        double sagTol = Clamp(SagFraction * p.HMist, 4.0, 40.0);
+        double sagTol = Clamp(SagFraction * p.HA, 4.0, 40.0);
         int pieces = sag <= sagTol ? 1 : Math.Min(n, Math.Max(2, (int)Math.Ceiling(1.5707963 * Math.Sqrt(sag / sagTol))));
         D3 sum = new(0, 0, 0);
         double tStart = t0;
@@ -176,7 +173,7 @@ public partial class RingHazeSkyIrradiance : RefCounted
             double hEnd = Height(tEnd, h0, radial0, b, a);
             double hbar = (hStart + 4.0 * hMid + hEnd) / 6.0;
             double mu = (hEnd - hStart) / Math.Max(pieceDt, 0.000001);
-            sum += new D3(FlatLayer(hbar, mu, pieceDt, p.HR), FlatLayer(hbar, mu, pieceDt, p.HA), FlatLayer(hbar, mu, pieceDt, p.HMist));
+            sum += new D3(FlatLayer(hbar, mu, pieceDt, p.HR), FlatLayer(hbar, mu, pieceDt, p.HA), 0.0);
             hStart = hEnd;
             tStart = tEnd;
         }
@@ -188,8 +185,7 @@ public partial class RingHazeSkyIrradiance : RefCounted
     {
         double colR = Math.Max(p.HR * (Math.Exp(Math.Min(-hMid / Math.Max(p.HR, 1.0), 80.0)) - Math.Exp(-cap / Math.Max(p.HR, 1.0))), 0.0);
         double colA = Math.Max(p.HA * (Math.Exp(Math.Min(-hMid / Math.Max(p.HA, 1.0), 80.0)) - Math.Exp(-cap / Math.Max(p.HA, 1.0))), 0.0);
-        double colM = Math.Max(p.HMist * (Math.Exp(Math.Min(-hMid / Math.Max(p.HMist, 1.0), 80.0)) - Math.Exp(-cap / Math.Max(p.HMist, 1.0))), 0.0);
-        double mie = p.SigmaA * colA + p.SigmaM0 * colM;
+        double mie = p.SigmaA * colA;
         D3 tauCol = new(p.SigmaR.X * colR + mie, p.SigmaR.Y * colR + mie, p.SigmaR.Z * colR + mie);
         double airmass = 1.025 / (Math.Max(cosSun, 0.0) + 0.025);
         double vis = Smoothstep(-0.06, 0.0, cosSun);
@@ -226,13 +222,13 @@ public partial class RingHazeSkyIrradiance : RefCounted
         double a = radialRay.Dot(radialRay);
         D3 layers = LayerIntegrals(p, f.CameraHeight, radial0, b, a, interval.Item1, interval.Item2);
         D3 tauR = p.SigmaR * layers.X;
-        double tauA = p.SigmaA * layers.Y, tauM = p.SigmaM0 * layers.Z;
-        double mieExt = tauA + tauM;
+        double tauA = p.SigmaA * layers.Y;
+        double mieExt = tauA;
         D3 tau = new(tauR.X + mieExt, tauR.Y + mieExt, tauR.Z + mieExt);
         r.T = new D3(Math.Exp(-tau.X), Math.Exp(-tau.Y), Math.Exp(-tau.Z));
         D3 oneMinusT = new(OneMinusExp(tau.X), OneMinusExp(tau.Y), OneMinusExp(tau.Z));
         D3 inv = new(1.0 / Math.Max(tau.X, 1e-8), 1.0 / Math.Max(tau.Y, 1e-8), 1.0 / Math.Max(tau.Z, 1e-8));
-        double mieScatter = p.OmegaA * tauA + p.OmegaM * tauM;
+        double mieScatter = p.OmegaA * tauA;
         D3 light = toLight.Normalized();
         double mu = ray.Dot(light);
         double pr = PhaseRayleigh(mu), pm = PhaseMie(mu, p.G);

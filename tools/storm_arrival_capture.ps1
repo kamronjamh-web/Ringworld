@@ -7,7 +7,7 @@ param(
 )
 # Runs tools/storm_arrival_capture.gd (windowed) in the fixed isolated profile .godot\appdata_<Profile>, output in .godot\captures\storm_arrival\<Label>.
 # The profile is created once (shader and Vulkan caches copied from the real profile) and reused afterwards.
-#   .\tools\storm_arrival_capture.ps1 -Label mist -ScriptArgs "--mode=mist" -Lock <gpu.lock>
+#   .\tools\storm_arrival_capture.ps1 -Label rainbow -ScriptArgs "--mode=rainbow" -Lock <gpu.lock>
 #   .\tools\storm_arrival_capture.ps1 -Label rainbow -ScriptArgs "--mode=rainbow --elev=16" -Lock <gpu.lock>
 $ErrorActionPreference = "Stop"
 $project = Split-Path $PSScriptRoot -Parent

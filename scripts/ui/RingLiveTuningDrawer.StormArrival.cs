@@ -18,11 +18,10 @@ public partial class RingLiveTuningDrawer
     }
     private void BuildStormArrivalControls(VBoxContainer tab)
     {
-        var group = TuningMenuUi.CreateSection(tab, "Storm arrival", "How a storm announces itself: the gust front, hail, the mist after rain and rainbows. All follow the weather and sun; 0 turns the effect off.");
+        var group = TuningMenuUi.CreateSection(tab, "Storm arrival", "How a storm announces itself: the gust front, hail and rainbows. All follow the weather and sun; 0 turns the effect off.");
         AddStormArrivalNumber(group, "GustFrontStrength", "Gust front strength", .01, "Scales the wind shift and speed jump at the leading edge of a storm, and the debris it lifts. 0 = off.");
         AddStormArrivalNumber(group, "GustFrontLeadSeconds", "Gust front lead (s)", 1, "How long a fast storm edge takes to cross the gust front band.");
         AddStormArrivalNumber(group, "Hail", "Hail", .01, "Hail swath count. 0 = no hail.");
-        AddStormArrivalNumber(group, "PostRainMist", "Post-rain mist", .01, "Mist that gathers in the haze after rain on calm, cool air. 0 = haze unchanged.");
         AddStormArrivalNumber(group, "Rainbows", "Rainbows", .01, "Rainbow strength when the low sun shines on rain ahead. 0 = none.");
         var row = new HBoxContainer();
         var save = new Button { Name = "StormArrivalSaveNow", Text = "Save storm arrival", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };

@@ -239,7 +239,6 @@ func _set_density(material: ShaderMaterial, zero: bool) -> void:
 	material.set_shader_parameter("atmosphere_distance_haze_max_opacity", 0.0 if zero else .65)
 	material.set_shader_parameter("ring_haze_sigma_R", Vector3.ZERO if zero else Vector3(5.802e-6, 13.558e-6, 33.1e-6))
 	material.set_shader_parameter("ring_haze_sigma_A", 0.0 if zero else 4.175e-6)
-	material.set_shader_parameter("ring_haze_sigma_M0", 0.0 if zero else 4.0e-6)
 
 func _capture_clear(label: String) -> Image:
 	holder.visible = false

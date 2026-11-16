@@ -12,8 +12,6 @@ public partial class RingStormArrivalSettings : Resource
     [Export(PropertyHint.Range, "20,180,1")] public float GustFrontLeadSeconds { get; set; } = 60f;
     /// <summary>Hail swath count multiplier; 0 disables hail.</summary>
     [Export(PropertyHint.Range, "0,2,0.01")] public float Hail { get; set; } = 1f;
-    /// <summary>Strength of the post-rain mist in the haze; 0 leaves the haze unchanged.</summary>
-    [Export(PropertyHint.Range, "0,2,0.01")] public float PostRainMist { get; set; } = 1f;
     /// <summary>Rainbow strength; 0 means no rainbow draw at all.</summary>
     [Export(PropertyHint.Range, "0,2,0.01")] public float Rainbows { get; set; } = 1f;
 

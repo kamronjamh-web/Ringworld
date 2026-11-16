@@ -280,7 +280,7 @@ public partial class RingRainbow : Node
         _ = _layer.ObserverStormArrival;                              // refresh the observer cache
         _layer.CopyObserverStormGeometry(_systems);
         float cloudBaseAgl = _layer.ObserverCloudBaseAboveGroundMeters;
-        float sigma = RingAtmosphereModel.HazeSigmaRayleigh.Y + RingAtmosphereModel.HazeSigmaAerosol + RingAtmosphereModel.HazeSigmaMist
+        float sigma = RingAtmosphereModel.HazeSigmaRayleigh.Y + RingAtmosphereModel.HazeSigmaAerosol
             + RingAtmosphereModel.HazeStorm * RingAtmosphereModel.StormAerosolExtinctionPerMeter * Mathf.Clamp(RingAtmosphereModel.Density, 0.0f, 2.0f);
         for (int i = 0; i < RingRainbowMath.AzimuthCount; i++)
         {

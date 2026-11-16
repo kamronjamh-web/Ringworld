@@ -69,12 +69,12 @@ RingHazeSkyTerms ring_haze_eval_sky_terms(RingHazeParams p, vec3 dir, vec3 camer
 	vec2 interval = ring_haze_air_interval(target, camera, camera_height, outward, axis, side_negative, side_positive, scale, radius_m, floor_depth_m, p.cap_height);
 	if (interval.y <= interval.x) return r;
 	RingHazeOptics o = ring_haze_optics(p, ray, interval, camera_height, outward, axis, radius_m);
-	float mie_extinction = o.tau_A + o.tau_M;
+	float mie_extinction = o.tau_A;
 	vec3 tau_total = o.tau_R + vec3(mie_extinction);
 	r.T = exp(-tau_total);
 	vec3 one_minus_T = vec3(ring_haze_one_minus_exp(tau_total.x), ring_haze_one_minus_exp(tau_total.y), ring_haze_one_minus_exp(tau_total.z));
 	vec3 inv_total = vec3(1.0) / max(tau_total, vec3(0.00000001));
-	float mie_scatter = p.omega_A * o.tau_A + p.omega_M * o.tau_M;
+	float mie_scatter = p.omega_A * o.tau_A;
 	vec3 t_sun = ring_haze_sun_transmittance_lid(p, ray, interval, camera_height, outward, axis, radius_m, side_negative);
 	vec3 base = one_minus_T * t_sun * inv_total;
 	r.A_R = base * o.tau_R;

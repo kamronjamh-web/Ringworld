@@ -2,6 +2,8 @@
 
 Status: design only, nothing implemented. Branch `storm-revamp-wip` (working tree of 2026-10-29, about to merge to main). Line references are to that tree.
 
+**Wake fog removed (2026-11-16).** The megastorm wake fog (the post-rain mist path, `RingAtmosphereModel.SetWeatherMist`, `M = WakeFog`) and the post-rain mist it rode on were removed with the whole weather mist layer (`docs/atmosphere-haze-revamp-plan.md`, MIST-2). `MegastormHazards.WakeFog` is still computed and exposed but nothing consumes it. Mentions of mist or wake fog below describe the old design.
+
 Companion design: `docs/containment-field-design.md` (the field doc). It owns the field, its cloud ceiling and the `ContainmentDisturbance` bus. Section 6.3 is the megastorm side of that contract.
 
 User vision (2026-10-29): "a wall of clouds towering from 500 m to the cloud limit all along the width of the ring that sweeps the whole ring. This can act as an ever-present threat once it is triggered somewhere along the game story."

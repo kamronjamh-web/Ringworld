@@ -4261,18 +4261,6 @@
       "expected_s": 1,
       "timeout_s": 60
     },
-    "post_rain_mist_test": {
-      "kind": "test",
-      "mode": "headless",
-      "tier": "gate",
-      "tags": [
-        "rain",
-        "atmosphere-haze"
-      ],
-      "marker": "POST_RAIN_MIST",
-      "expected_s": 1,
-      "timeout_s": 60
-    },
     "precip_occlusion_gpu_test": {
       "kind": "test",
       "mode": "gpu",
@@ -5293,18 +5281,6 @@
       "marker": "LANDSCAPE_LOOK",
       "expected_s": 1500,
       "timeout_s": 2400
-    },
-    "mist_ab_capture": {
-      "kind": "tool",
-      "mode": "gpu",
-      "tier": "manual",
-      "tags": [
-        "atmosphere-haze",
-        "perf-telemetry"
-      ],
-      "marker": "MIST_AB",
-      "expected_s": 300,
-      "timeout_s": 1800
     },
     "landscape_cost_baseline": {
       "kind": "tool",

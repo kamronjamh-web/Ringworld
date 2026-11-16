@@ -894,7 +894,6 @@ func _configure(material: ShaderMaterial) -> void:
 	material.set_shader_parameter("atmosphere_haze_model", 1)
 	material.set_shader_parameter("ring_haze_sigma_R", Vector3.ZERO)
 	material.set_shader_parameter("ring_haze_sigma_A", 0.0)
-	material.set_shader_parameter("ring_haze_sigma_M0", 0.0)
 	material.set_shader_parameter("atmosphere_boundary_max_opacity", 0.0)
 	material.set_shader_parameter("atmosphere_upper_max_opacity", 0.0)
 	material.set_shader_parameter("atmosphere_distance_haze_max_opacity", 0.0)

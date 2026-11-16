@@ -54,7 +54,6 @@ layout(set = 0, binding = 4) uniform sampler2D lut2;
 layout(set = 0, binding = 5, std140) uniform BuildParams {
 	vec4 sigma_R_H_R;
 	vec4 aerosol;
-	vec4 mist;
 	vec4 geometry;
 	vec4 sides;
 	vec4 outward;
@@ -89,11 +88,8 @@ void main() {
 	p.sigma_A = build.aerosol.x;
 	p.omega_A = build.aerosol.y;
 	p.H_A = build.aerosol.z;
-	p.sigma_M0 = build.aerosol.w;
-	p.omega_M = build.mist.x;
-	p.H_mist = build.mist.y;
-	p.cap_height = build.mist.z;
-	p.g = build.mist.w;
+	p.cap_height = build.aerosol.w;
+	p.g = build.sides.w;
 	p.quality = int(build.geometry.w + 0.5);
 	p.to_sun = normalize(build.to_sun.xyz);
 	p = ring_haze_apply_storm(p, build.storm);

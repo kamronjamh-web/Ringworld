@@ -20,7 +20,7 @@ layout(push_constant, std430) uniform Push {
     vec4 shadow_flags; // x > .5 = write the shadow slot (same slot index and tag as the haze slot, anchor = the row root)
 } q;
 layout(set = 1, binding = 0, std140) uniform HazeParams {
-    vec4 sigma_R_H_R; vec4 aerosol; vec4 mist; vec4 geometry; vec4 sides; vec4 outward; vec4 axis; vec4 to_sun; vec4 camera; vec4 storm;
+    vec4 sigma_R_H_R; vec4 aerosol; vec4 geometry; vec4 sides; vec4 outward; vec4 axis; vec4 to_sun; vec4 camera; vec4 storm;
 } haze;
 layout(rgba16f, set = 1, binding = 1) uniform restrict writeonly image2D haze_atlas;
 layout(rgba16f, set = 1, binding = 3) uniform restrict writeonly image2D shadow_atlas;
@@ -37,8 +37,8 @@ void write_vegetation_haze(uint slot_row, vec3 root, vec3 local_x, vec3 local_y,
     vec3 world = basis * local_anchor + vec3(p[25], p[26], p[27]);
     RingHazeParams hp = ring_haze_params_default();
     hp.sigma_R = haze.sigma_R_H_R.xyz; hp.H_R = haze.sigma_R_H_R.w;
-    hp.sigma_A = haze.aerosol.x; hp.omega_A = haze.aerosol.y; hp.H_A = haze.aerosol.z; hp.sigma_M0 = haze.aerosol.w;
-    hp.omega_M = haze.mist.x; hp.H_mist = haze.mist.y; hp.cap_height = haze.mist.z; hp.g = haze.mist.w;
+    hp.sigma_A = haze.aerosol.x; hp.omega_A = haze.aerosol.y; hp.H_A = haze.aerosol.z; hp.cap_height = haze.aerosol.w;
+    hp.g = haze.sides.w;
     hp.quality = int(haze.geometry.w + .5); hp.to_sun = normalize(haze.to_sun.xyz);
     hp = ring_haze_apply_storm(hp, haze.storm);
     RingVegetationHazeTerms t = ring_vegetation_haze_terms(hp, world, haze.camera.xyz, haze.geometry.z, haze.outward.xyz, haze.axis.xyz,

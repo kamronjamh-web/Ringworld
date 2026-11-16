@@ -8,12 +8,12 @@ namespace RingworldTechDemo.Tools;
 
 /// <summary>
 /// WO-A3 settings smoke (the live-tuning-setting skill's ten checks) for the storm arrival group: GustFrontStrength, GustFrontLeadSeconds, Hail,
-/// PostRainMist, Rainbows. Run: tools/storm_arrival_settings_smoke_test.gd. Prints STORM_ARRIVAL_SETTINGS=PASS.
+/// Rainbows. Run: tools/storm_arrival_settings_smoke_test.gd. Prints STORM_ARRIVAL_SETTINGS=PASS.
 /// </summary>
 [GlobalClass]
 public partial class StormArrivalSettingsSmoke : RefCounted
 {
-    static readonly string[] Keys = { "GustFrontStrength", "GustFrontLeadSeconds", "Hail", "PostRainMist", "Rainbows" };
+    static readonly string[] Keys = { "GustFrontStrength", "GustFrontLeadSeconds", "Hail", "Rainbows" };
 
     public Godot.Collections.Dictionary Run(string path)
     {
@@ -29,7 +29,7 @@ public partial class StormArrivalSettingsSmoke : RefCounted
         {
             // 1. missing file gives defaults
             var defaults = new GameplayStormArrivalDefaults(path); defaults.Initialize();
-            bool missing = runtime.GustFrontStrength == 1f && runtime.GustFrontLeadSeconds == 60f && runtime.Hail == 1f && runtime.PostRainMist == 1f && runtime.Rainbows == 1f
+            bool missing = runtime.GustFrontStrength == 1f && runtime.GustFrontLeadSeconds == 60f && runtime.Hail == 1f && runtime.Rainbows == 1f
                 && !defaults.Dirty && defaults.Settings.Overrides.Count == 0;
             // 2. a clean save is a no-op
             bool cleanSave = defaults.Save() && !File.Exists(absolute);
@@ -37,12 +37,12 @@ public partial class StormArrivalSettingsSmoke : RefCounted
             bool changed = defaults.SetOverride("Hail", 0f) && !defaults.SetOverride("Hail", 0f) && defaults.Dirty && runtime.Hail == 0f;
             // 4. set, save, reload, compare
             bool setAll = defaults.SetOverride("GustFrontStrength", 1.5f) && defaults.SetOverride("GustFrontLeadSeconds", 90f)
-                && defaults.SetOverride("PostRainMist", 0.25f) && defaults.SetOverride("Rainbows", 0f);
+                && defaults.SetOverride("Rainbows", 0f);
             bool saved = defaults.Save() && !defaults.Dirty && File.Exists(absolute);
-            runtime.GustFrontStrength = 1f; runtime.GustFrontLeadSeconds = 60f; runtime.Hail = 1f; runtime.PostRainMist = 1f; runtime.Rainbows = 1f;
+            runtime.GustFrontStrength = 1f; runtime.GustFrontLeadSeconds = 60f; runtime.Hail = 1f; runtime.Rainbows = 1f;
             var loaded = new GameplayStormArrivalDefaults(path); loaded.Initialize();
             bool roundTrip = Math.Abs(runtime.GustFrontStrength - 1.5f) < 1e-5f && runtime.GustFrontLeadSeconds == 90f && runtime.Hail == 0f
-                && Math.Abs(runtime.PostRainMist - 0.25f) < 1e-5f && runtime.Rainbows == 0f;
+                && runtime.Rainbows == 0f;
             // 5. clamps and NaN fallback
             bool clamps = true;
             foreach (string key in Keys)
@@ -77,7 +77,7 @@ public partial class StormArrivalSettingsSmoke : RefCounted
             File.Delete(ProjectSettings.GlobalizePath(dirtyPath));
             // 7. reset round-trip
             loaded.Reset();
-            bool reset = runtime.GustFrontStrength == 1f && runtime.GustFrontLeadSeconds == 60f && runtime.Hail == 1f && runtime.PostRainMist == 1f && runtime.Rainbows == 1f
+            bool reset = runtime.GustFrontStrength == 1f && runtime.GustFrontLeadSeconds == 60f && runtime.Hail == 1f && runtime.Rainbows == 1f
                 && loaded.Settings.Overrides.Count == 0 && loaded.Save();
             var afterReset = new GameplayStormArrivalDefaults(path); afterReset.Initialize();
             reset &= runtime.Hail == 1f && afterReset.Settings.Overrides.Count == 0;
@@ -88,11 +88,12 @@ public partial class StormArrivalSettingsSmoke : RefCounted
             bool unknown = !loaded.SetOverride("PostRainMistTypo", 1f) && !loaded.SetOverride("", 1f);
             // 10. an older file without a key loads the default for it
             string oldPath = path + ".old.tres";
-            var old = new GameplayStormArrivalSettings(); old.Overrides["Rainbows"] = 0.4f;
+            var old = new GameplayStormArrivalSettings(); old.Overrides["Rainbows"] = 0.4f; old.Overrides["PostRainMist"] = 0.7f; // PostRainMist was removed 2026-11-16: an old file that still has it must load quietly
             ResourceSaver.Save(old, oldPath);
-            runtime.GustFrontStrength = 1f; runtime.GustFrontLeadSeconds = 60f; runtime.Hail = 1f; runtime.PostRainMist = 1f; runtime.Rainbows = 1f;
+            runtime.GustFrontStrength = 1f; runtime.GustFrontLeadSeconds = 60f; runtime.Hail = 1f; runtime.Rainbows = 1f;
             var older = new GameplayStormArrivalDefaults(oldPath); older.Initialize();
-            bool oldFile = Math.Abs(runtime.Rainbows - 0.4f) < 1e-5f && runtime.GustFrontStrength == 1f && runtime.GustFrontLeadSeconds == 60f && runtime.Hail == 1f && runtime.PostRainMist == 1f;
+            bool oldFile = Math.Abs(runtime.Rainbows - 0.4f) < 1e-5f && runtime.GustFrontStrength == 1f && runtime.GustFrontLeadSeconds == 60f && runtime.Hail == 1f
+                && older.LastError.Length == 0 && !older.Settings.Overrides.ContainsKey("PostRainMist");
             File.Delete(ProjectSettings.GlobalizePath(oldPath));
             // ToTuning pushes the settings to the maths.
             runtime.GustFrontLeadSeconds = 120f; runtime.Hail = 0.5f;

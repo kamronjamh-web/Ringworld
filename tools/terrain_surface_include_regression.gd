@@ -13,6 +13,7 @@ extends SceneTree
 #             --golden-dir=<dir>          override the golden directory
 #             --max-diff=<0..255>         per-channel tolerance (default 0 = pixel identical)
 # Goldens: captured on the RTX 4070 desktop, 2026-10-29, branch storm-revamp-wip (the earlier A1000 goldens were stale; byte-exact only on this GPU class).
+# Re-captured 2026-11-16 on the 4070 after the weather mist removal: the test relies on shader-default haze uniforms, whose default mist (sigma_M0 4e-6) is gone (max diff 1-8/255).
 # Requires a real Vulkan/Forward+ renderer (do not pass --headless).
 const SURFACE = preload("res://scripts/Terrain/Surface/RingTerrain3DSurface.cs")
 const GEOMETRY = preload("res://scripts/Terrain/Surface/RingTerrain3DCollisionGeometry.cs")

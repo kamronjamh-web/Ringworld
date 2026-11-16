@@ -118,7 +118,6 @@ func _set_atmosphere(enabled: bool, zero_density: bool) -> void:
 		# Physical model: zero density = zero extinction in every layer.
 		material.set_shader_parameter("ring_haze_sigma_R", Vector3.ZERO if zero_density else Vector3(5.802e-6, 13.558e-6, 33.1e-6))
 		material.set_shader_parameter("ring_haze_sigma_A", 0.0 if zero_density else 4.175e-6)
-		material.set_shader_parameter("ring_haze_sigma_M0", 0.0 if zero_density else 4.0e-6)
 
 func _show(label: String) -> void:
 	for key in nodes: nodes[key].visible = key == label

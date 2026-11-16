@@ -49,8 +49,8 @@ public partial class HazeConsistencyProbeHelper : RefCounted
 
     public Godot.Collections.Dictionary PhysicalControlState() => new()
     {
-        ["sigma_r"] = RingAtmosphereModel.HazeSigmaRayleigh, ["sigma_m"] = RingAtmosphereModel.HazeSigmaMist,
-        ["h_mist"] = RingAtmosphereModel.HazeMistHeightMeters, ["h_a"] = RingAtmosphereModel.HazeAerosolHeightMeters,
+        ["sigma_r"] = RingAtmosphereModel.HazeSigmaRayleigh,
+        ["h_a"] = RingAtmosphereModel.HazeAerosolHeightMeters,
         ["quality"] = RingAtmosphereModel.HazeQuality, ["albedo"] = RingAtmosphereModel.HazeGroundAlbedo,
         ["gain"] = RingAtmosphereModel.HazeMultiscatterGain, ["sky_tint"] = RingAtmosphereModel.HazeSkyTint,
     };

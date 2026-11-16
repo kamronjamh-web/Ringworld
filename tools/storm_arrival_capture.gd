@@ -1,17 +1,15 @@
 extends SceneTree
 # Storm arrival acceptance capture (docs/storm-revamp-s3-storm-arrival-design.md section 12), modes relevant to WO-E1 and WO-F1. Boots the certified gameplay scene, finds a natural
 # MajorFront with StormArrivalCaptureHelper and freezes the cloud clock (CloudSimulationPaused) at chosen moments of its lifecycle.
-#   --mode=mist     post-rain mist: the rain core, then +60 / +300 / +900 s after the last rain, PostRainMist 1, and the same clearing moment with PostRainMist 0 and with the mist node off
 #   --mode=rainbow  a low sun behind the observer with sunlit rain ahead: Rainbows 1, Rainbows 0, and a forced-rain-mask variant
-#   --mode=mistvalley  the same clearing in a valley and from a ridge above it (relief scan within 5 km of the storm observer)
 #   --mode=gust     the gust front at one fixed observer: lull, approach, the front edge, after it, fat drops; wind log; Gust front strength 0 control
 #   --mode=hail     the natural hail swath at the same kind of observer: forward, looking down at the bounce, Hail 0 control
 #   --mode=movie    (run with --write-movie ... --fixed-fps 30) a montage of one storm arriving at 1x: lull, gust front, fat drops, core, hail
 #   --mode=timelapse  ONE continuous time-lapse (30 fps PNGs in <out>/frames, ~58 s, overlays hidden): clear, gust front with debris, fat drops, core with hail and a 1x lightning window,
-#                     the trailing rain slowed down over the rainbow window, clearing mist. Use --prefer=sun --face=antisolar (the storm arrives from the sun side and recedes toward
+#                     the trailing rain slowed down over the rainbow window, clearing. Use --prefer=sun --face=antisolar (the storm arrives from the sun side and recedes toward
 #                     the antisolar point, where its trailing rain carries the bow). --duration=<video s> --substeps=<rendered frames per saved frame> --trail_video=<s>
 #   --mode=realtime   1x diagnostic at the same observer: the cloud clock follows the wall clock, so wall-clock limiters behave as in play. --windows=lr+30:270,core+32:40
-#                     (anchors g, fat, core, lc, lr or absolute cloud seconds), 640x360 frames at 10 Hz in <out>/rt<n>, 4 Hz log incl. mist, wetness, cover probe and history snapshot.
+#                     (anchors g, fat, core, lc, lr or absolute cloud seconds), 640x360 frames at 10 Hz in <out>/rt<n>, 4 Hz log incl. wetness, cover probe and history snapshot.
 #   --out=<dir> --elev=<sun elevation> --around=<scan start>
 # Windowed GPU only; run it through tools/storm_arrival_capture.ps1 (GPU lock, fixed isolated profile). Prints STORM_ARRIVAL_CAPTURE=PASS.
 const LAUNCHER := preload("res://scenes/WorldSizeLauncher.tscn")
@@ -31,13 +29,12 @@ var global_terrain: Node
 var weather: Node
 var atmo: Node
 var sun: DirectionalLight3D
-var mist_node: Node
 var rainbow_node: Node
 var debris_node: Node
 var effects: Node
 var helper: RefCounted
 var out_dir := ""
-var mode := "mist"
+var mode := "rainbow"
 var around := 8150667.0
 var across := 119474.0
 var elevation_target := 25.0
@@ -95,14 +92,13 @@ func run() -> void:
 	weather = game.get_node_or_null("RingVolumetricClouds")
 	atmo = game.get_node_or_null("DaySideAtmosphere")
 	sun = game.get_node_or_null("StarLight") as DirectionalLight3D
-	mist_node = game.get_node_or_null("PostRainMist")
 	rainbow_node = game.get_node_or_null("Rainbow")
 	debris_node = game.get_node_or_null("GustFrontDebris")
 	effects = game.get_node_or_null("LocalWeatherEffects")
 	camera = game.get_node_or_null("Explorer/Head/Camera3D") as Camera3D
 	helper = HELPER.new()
-	if explorer == null or surface == null or drawer == null or clock == null or camera == null or weather == null or mist_node == null or rainbow_node == null or debris_node == null:
-		return fail("missing nodes (explorer=%s surface=%s drawer=%s clock=%s camera=%s weather=%s mist=%s rainbow=%s debris=%s)" % [explorer != null, surface != null, drawer != null, clock != null, camera != null, weather != null, mist_node != null, rainbow_node != null, debris_node != null])
+	if explorer == null or surface == null or drawer == null or clock == null or camera == null or weather == null or rainbow_node == null or debris_node == null:
+		return fail("missing nodes (explorer=%s surface=%s drawer=%s clock=%s camera=%s weather=%s rainbow=%s debris=%s)" % [explorer != null, surface != null, drawer != null, clock != null, camera != null, weather != null, rainbow_node != null, debris_node != null])
 	var modes := mode.split(",")
 	drawer.call("SetAtmosphereEnabled", true)
 	drawer.call("SetAtmosphereHazeModel", 1)
@@ -111,9 +107,6 @@ func run() -> void:
 	explorer.process_mode = Node.PROCESS_MODE_DISABLED
 	await set_sun_elevation()
 	report["sun_elevation"] = float(clock.get("SunElevationDegrees"))
-	if "mist" in modes or mode == "both": await mist_mode(scan_start)
-	if "mistvalley" in modes: await mist_valley_mode(scan_start)
-	if "mistdiag" in modes: await mist_diag_mode(scan_start)
 	if "gust" in modes: await gust_mode(scan_start)
 	if "hail" in modes: await hail_mode(scan_start)
 	if "movie" in modes: await movie_mode(scan_start)
@@ -161,7 +154,7 @@ func shot(label: String, yaw: float, pitch: float) -> Dictionary:
 	var arrival := weather.call("GetStormArrivalDiagnostic") as Dictionary
 	var d := {"label": label, "ground_m": surface.call("SampleHeight", around, across), "yaw": yaw, "pitch": pitch, "cloud_time": weather.get("CloudSimulationTimeSeconds"),
 		"phase": arrival.get("phase"), "clearing": arrival.get("clearing"), "recent_rain": arrival.get("recent_rain"), "time_since_rain": arrival.get("time_since_rain_s"),
-		"cooling": arrival.get("cooling_offset"), "mist": helper.call("MistState"), "mist_target": mist_node.get("TargetMist"),
+		"cooling": arrival.get("cooling_offset"),
 		"rainbow_active": rainbow_node.get("Active"), "rainbow_strengths": rainbow_node.get("LastStrengths"), "rainbow_global": rainbow_node.get("LastGlobalStrength"),
 		"luma": image_luma(image), "streaks": streak_state(), "fat_drop": arrival.get("fat_drop"), "gust_front": arrival.get("gust_front"), "hail_intensity": arrival.get("hail_intensity"),
 		"core": arrival.get("core"), "approach": arrival.get("approach"), "debris": debris_node.call("GetDiagnostics")}
@@ -173,123 +166,6 @@ func streak_state() -> Dictionary:
 	if effects == null: return {}
 	var d := effects.call("GetRainStreakDiagnostics") as Dictionary
 	return {"active": d.get("active"), "fat_drop": d.get("fat_drop"), "hail": d.get("hail"), "near_instances": d.get("near_instances"), "draws": d.get("draws")}
-
-func wait_mist(target_quantised_tolerance := 0.04, timeout_s := 110.0) -> void:
-	var end := Time.get_ticks_msec() + int(timeout_s * 1000.0)
-	while Time.get_ticks_msec() < end:
-		await process_frame
-		var state := helper.call("MistState") as Dictionary
-		if absf(float(state["mist"]) - float(mist_node.get("TargetMist"))) <= target_quantised_tolerance: return
-
-func mist_mode(scan_start: float) -> void:
-	var storm := helper.call("FindStorm", weather, 1800.0, scan_start, 80.0) as Dictionary
-	report["storm"] = storm
-	if not bool(storm["ok"]): return fail("no mature MajorFront found")
-	print("STORM ", JSON.stringify(storm))
-	await place(float(storm["around"]), float(storm["across"]))
-	await set_sun_elevation()
-	report["sun_elevation_at_storm"] = float(clock.get("SunElevationDegrees"))
-	var last_rain := float(storm["last_rain"]); var first_rain := float(storm["first_rain"]); var first_gust := float(storm["first_gust"])
-	# Rain core, for contrast.
-	set_cloud_time(0.5 * (first_rain + last_rain))
-	await settle_seconds(3.0)
-	await shot("mist_00_rain_core", 0.0, 3.0)
-	# Mist off for the first look (node disabled): the post-rain clearing without the mist, the identity baseline.
-	set_cloud_time(last_rain + 60.0)
-	mist_node.process_mode = Node.PROCESS_MODE_DISABLED
-	drawer.call("SetStormArrivalTuningValue", "PostRainMist", 0.0)
-	await settle_seconds(6.0)
-	await shot("mist_10_clear60_node_off", 0.0, 3.0)
-	await shot("mist_10_clear60_node_off_b", 0.0, 3.0)
-	# Setting 0 with the node running: the identity (must equal node off).
-	mist_node.process_mode = Node.PROCESS_MODE_INHERIT
-	await settle_seconds(5.0)
-	await shot("mist_11_clear60_setting0", 0.0, 3.0)
-	# Setting 1: the time-lapse through the clearing.
-	drawer.call("SetStormArrivalTuningValue", "PostRainMist", 1.0)
-	for offset in [60.0, 300.0, 900.0, 1500.0]:
-		set_cloud_time(last_rain + offset)
-		await wait_mist()
-		await settle_seconds(3.0)
-		await shot("mist_2%d_clear%d" % [int(offset) / 300, int(offset)], 0.0, 3.0)
-		await shot("mist_2%d_clear%d_up" % [int(offset) / 300, int(offset)], 90.0, 3.0)
-	# A/B at +300 s through four headings: mist off, then on.
-	set_cloud_time(last_rain + 300.0)
-	for setting in [0.0, 1.0]:
-		drawer.call("SetStormArrivalTuningValue", "PostRainMist", setting)
-		await wait_mist(0.04, 110.0)
-		await settle_seconds(3.0)
-		for yaw in [0.0, 90.0, 180.0, 270.0]:
-			await shot("mist_4%d_ab_y%d" % [int(setting), int(yaw)], yaw, 2.0)
-	# Pre-storm for the baseline of the same place (no mist, nothing arrived).
-	set_cloud_time(maxf(0.0, first_gust - 300.0))
-	await wait_mist()
-	await settle_seconds(3.0)
-	await shot("mist_30_prestorm", 0.0, 3.0)
-	report["mist_publishes"] = (helper.call("MistState") as Dictionary)["publishes"]
-
-
-# ---------------------------------------------------------------- mist diagnostics: what the materials really carry at M
-func collect_haze(node: Node, into: Dictionary) -> void:
-	var mats: Array = []
-	if node is GeometryInstance3D:
-		var g := node as GeometryInstance3D
-		if g.material_override != null: mats.append(g.material_override)
-		if g is MeshInstance3D and (g as MeshInstance3D).mesh != null:
-			for i in (g as MeshInstance3D).mesh.get_surface_count():
-				var m := (g as MeshInstance3D).get_active_material(i)
-				if m != null: mats.append(m)
-	for m in mats:
-		if m is ShaderMaterial:
-			var v = (m as ShaderMaterial).get_shader_parameter("ring_haze_sigma_M0")
-			if v != null:
-				var key := "%s|%s" % [str(snappedf(float(v), 1e-7)), str((m as ShaderMaterial).get_shader_parameter("ring_haze_H_mist"))]
-				into[key] = int(into.get(key, 0)) + 1
-	for c in node.get_children(): collect_haze(c, into)
-
-func mist_diag_mode(scan_start: float) -> void:
-	var storm := helper.call("FindStorm", weather, 1800.0, scan_start, 80.0) as Dictionary
-	if not bool(storm["ok"]): return fail("no storm")
-	await place(float(storm["around"]), float(storm["across"]))
-	await set_sun_elevation()
-	var last_rain := float(storm["last_rain"])
-	for setting in [0.0, 1.0]:
-		drawer.call("SetStormArrivalTuningValue", "PostRainMist", setting)
-		set_cloud_time(last_rain + 300.0)
-		await wait_mist(0.04, 110.0)
-		await settle_seconds(4.0)
-		var found := {}
-		collect_haze(game, found)
-		print("MISTDIAG setting=", setting, " state=", JSON.stringify(helper.call("MistState")), " materials=", JSON.stringify(found))
-		await shot("mistdiag_%d" % int(setting), 0.0, 2.0)
-
-# ---------------------------------------------------------------- mist valley
-func mist_valley_mode(scan_start: float) -> void:
-	var storm := helper.call("FindStorm", weather, 1800.0, scan_start, 80.0) as Dictionary
-	report["storm"] = storm
-	if not bool(storm["ok"]): return fail("no mature MajorFront found")
-	var relief := helper.call("ScanRelief", weather, float(storm["around"]), float(storm["across"]), 5000.0, 100.0) as Dictionary
-	report["relief"] = relief
-	print("RELIEF ", JSON.stringify(relief))
-	var last_rain := float(storm["last_rain"])
-	var spots := {"valley": [float(relief["valley_around"]), float(relief["valley_across"])], "ridge": [float(relief["ridge_around"]), float(relief["ridge_across"])]}
-	drawer.call("SetStormArrivalTuningValue", "PostRainMist", 1.0)
-	for spot in ["valley", "ridge"]:
-		await place(float(spots[spot][0]), float(spots[spot][1]))
-		await set_sun_elevation()
-		for offset in [300.0, 900.0]:
-			set_cloud_time(last_rain + offset)
-			await wait_mist()
-			await settle_seconds(3.0)
-			for yaw in [0.0, 120.0, 240.0]:
-				await shot("mistvalley_%s_%d_y%d" % [spot, int(offset), int(yaw)], yaw, (-9.0 if spot == "ridge" else 2.0))
-		# Off control at the same place: identical framing without the mist.
-		drawer.call("SetStormArrivalTuningValue", "PostRainMist", 0.0)
-		set_cloud_time(last_rain + 300.0)
-		await wait_mist(0.04, 110.0)
-		await settle_seconds(3.0)
-		await shot("mistvalley_%s_off_y0" % spot, 0.0, (-9.0 if spot == "ridge" else 2.0))
-		drawer.call("SetStormArrivalTuningValue", "PostRainMist", 1.0)
 
 # ---------------------------------------------------------------- arrival sequence (gust, hail, movie)
 func find_sequence(scan_start: float, prefer := Vector2.ZERO) -> Dictionary:
@@ -517,9 +393,7 @@ func timelapse_mode(scan_start: float) -> void:
 	else: yaw = await align_yaw(-sun.global_transform.basis.z.normalized())
 	explorer.call("SetPresentationView", yaw, 9.0)
 	report["timelapse_face"] = face
-	# Rainbow probe (nothing recorded): the bow strength over the trailing rain and the clearing, so the slow window sits on it. The post-rain mist is off meanwhile:
-	# its publishes are rate-limited in wall time (30 per 10 min), and a probe walking through the clearing would use them up before the recording.
-	drawer.call("SetStormArrivalTuningValue", "PostRainMist", 0.0)
+	# Rainbow probe (nothing recorded): the bow strength over the trailing rain and the clearing, so the slow window sits on it.
 	var probe := []; var bow_t0 := NAN; var bow_t1 := NAN
 	var pt := lc - 60.0
 	set_cloud_time(pt)
@@ -535,7 +409,6 @@ func timelapse_mode(scan_start: float) -> void:
 			if is_nan(bow_t0): bow_t0 = pt
 			bow_t1 = pt
 		pt += 15.0
-	drawer.call("SetStormArrivalTuningValue", "PostRainMist", 1.0)
 	report["rainbow_probe"] = probe
 	print("RAINBOW_PROBE ", JSON.stringify(probe))
 	var trail0 := lc; var trail1 := lr + 60.0
@@ -598,7 +471,7 @@ func timelapse_mode(scan_start: float) -> void:
 		if f % fps == 0:
 			var a := weather.call("GetStormArrivalDiagnostic") as Dictionary
 			log.append({"video_s": tv, "cloud_t": cloud_t, "phase": a.get("phase"), "gust": a.get("gust_front"), "fat": a.get("fat_drop"), "core": a.get("core"), "hail": a.get("hail_intensity"),
-				"clearing": a.get("clearing"), "mist": (helper.call("MistState") as Dictionary)["mist"], "mist_target": mist_node.get("TargetMist"), "rainbow": rainbow_node.get("LastStrengths"),
+				"clearing": a.get("clearing"), "rainbow": rainbow_node.get("LastStrengths"),
 				"rainbow_global": rainbow_node.get("LastGlobalStrength"), "air_sun": atmo.get("current_air_sun_visibility") if atmo != null else -1.0,
 				"lightning": (weather.call("GetSharedLightningDiagnostics") as Dictionary).get("active_count"), "debris": (debris_node.call("GetDiagnostics") as Dictionary).get("smoothed_level")})
 	report["timelapse_log"] = log
@@ -632,7 +505,7 @@ func hide_overlays() -> void:
 		var overlay := game.get_node_or_null(name) as CanvasLayer
 		if overlay != null: overlay.visible = false
 
-# 1x repro (diagnostic): the same observer as the time-lapse, the cloud clock driven by the wall clock at 1x so every wall-clock limiter (mist publishes, rainbow and history
+# 1x repro (diagnostic): the same observer as the time-lapse, the cloud clock driven by the wall clock at 1x so every wall-clock limiter (rainbow and history
 # refresh) runs as in play. --windows=<anchor><+-offset>:<seconds>,... with anchors g, fat, core, lc, lr (sequence times) or a bare number (cloud seconds); e.g. lr+30:270,core+60:45.
 # 640x360 frames at 10 Hz in <out>/rt<window>, a 4 Hz state log. --face=storm|antisolar, --pitch.
 func realtime_mode(scan_start: float) -> void:
@@ -697,10 +570,8 @@ func realtime_mode(scan_start: float) -> void:
 			if t >= next_log:
 				next_log += 0.25
 				var a := weather.call("GetStormArrivalDiagnostic") as Dictionary
-				var ms := helper.call("MistState") as Dictionary
 				log.append({"t": t, "frame": index - 1, "cloud_t": from + t, "phase": a.get("phase"), "gust": a.get("gust_front"), "core": a.get("core"), "trailing": a.get("trailing"), "clearing": a.get("clearing"),
 					"tsr": a.get("time_since_rain_s"), "recent": a.get("recent_rain"), "cooling": a.get("cooling_offset"), "system": a.get("system_id"), "kind": a.get("kind"),
-					"mist": ms["mist"], "mist_target": mist_node.get("TargetMist"), "calm": mist_node.get("LastCalm"), "cool": mist_node.get("LastCool"), "publishes": ms["publishes"],
 					"air_sun": atmo.get("current_air_sun_visibility") if atmo != null else -1.0, "storm_ambient": atmo.get("current_storm_ambient") if atmo != null else -1.0,
 					"eye_cap": atmo.get("current_storm_eye_cap") if atmo != null else -1.0,
 					"rainbow_global": rainbow_node.get("LastGlobalStrength"), "rainbow": rainbow_node.get("LastStrengths"), "rainbow_active": rainbow_node.get("Active"),
@@ -772,7 +643,6 @@ func rainbow_mode(scan_start: float) -> void:
 	if not bool(placement["ok"]): return fail("no rainbow observer found")
 	await place(float(placement["around"]), float(placement["across"]))
 	set_cloud_time(1800.0)
-	drawer.call("SetStormArrivalTuningValue", "PostRainMist", 0.0)
 	drawer.call("SetStormArrivalTuningValue", "Rainbows", 1.0)
 	await settle_seconds(5.0)
 	to_sun = sun.global_transform.basis.z.normalized()

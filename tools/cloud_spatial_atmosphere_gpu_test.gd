@@ -152,11 +152,10 @@ func _configure_common(material: ShaderMaterial, mode: String, density: float) -
 	material.set_shader_parameter("atmosphere_haze_model", 1 if _physical else 0)
 	var sigma := 0.05 * haze_strength
 	material.set_shader_parameter("ring_haze_sigma_R", Vector3(sigma, sigma, sigma))
-	material.set_shader_parameter("ring_haze_sigma_A", sigma)
-	material.set_shader_parameter("ring_haze_sigma_M0", sigma)
+	# The aerosol carries the extinction the removed mist layer used to add on this toy ring (same total).
+	material.set_shader_parameter("ring_haze_sigma_A", 2.0 * sigma)
 	material.set_shader_parameter("ring_haze_H_R", 60.0)
 	material.set_shader_parameter("ring_haze_H_A", 40.0)
-	material.set_shader_parameter("ring_haze_H_mist", 20.0)
 	material.set_shader_parameter("ring_haze_cap_height_meters", 40.0)
 	material.set_shader_parameter("camera_world_position", CAMERA_WORLD)
 	material.set_shader_parameter("ring_center", Vector3.ZERO)

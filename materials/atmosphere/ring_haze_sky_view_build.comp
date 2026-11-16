@@ -10,13 +10,12 @@ layout(rgba16f, set = 0, binding = 0) uniform restrict writeonly image2D lut0_im
 layout(rgba16f, set = 0, binding = 1) uniform restrict writeonly image2D lut1_image;
 layout(rgba16f, set = 0, binding = 2) uniform restrict writeonly image2D lut2_image;
 
-// Packed by RingAtmosphereLuts.PackBuildParams (11 vec4). Unstormed model values + the storm vector (ring_haze_apply_storm is the producer).
+// Packed by RingAtmosphereLuts.PackBuildParams (10 vec4). Unstormed model values + the storm vector (ring_haze_apply_storm is the producer).
 layout(set = 0, binding = 3, std140) uniform BuildParams {
 	vec4 sigma_R_H_R;     // sigma_R.xyz, H_R
-	vec4 aerosol;         // sigma_A, omega_A, H_A, sigma_M0
-	vec4 mist;            // omega_M, H_mist, cap_height, g
+	vec4 aerosol;         // sigma_A, omega_A, H_A, cap_height
 	vec4 geometry;        // radius_m, floor_depth_m, camera_height_m, quality
-	vec4 sides;           // side_negative_m, side_positive_m, graze constant k, unused
+	vec4 sides;           // side_negative_m, side_positive_m, graze constant k, g
 	vec4 outward;         // xyz
 	vec4 axis;            // xyz
 	vec4 to_sun;          // xyz (hub-blended primary light direction)
@@ -40,11 +39,8 @@ void main() {
 	p.sigma_A = build.aerosol.x;
 	p.omega_A = build.aerosol.y;
 	p.H_A = build.aerosol.z;
-	p.sigma_M0 = build.aerosol.w;
-	p.omega_M = build.mist.x;
-	p.H_mist = build.mist.y;
-	p.cap_height = build.mist.z;
-	p.g = build.mist.w;
+	p.cap_height = build.aerosol.w;
+	p.g = build.sides.w;
 	p.quality = int(build.geometry.w + 0.5);
 	p.to_sun = normalize(build.to_sun.xyz);
 	p = ring_haze_apply_storm(p, build.storm);
