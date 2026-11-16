@@ -285,6 +285,21 @@ Everything is under `.godot/perf_pass_real/` (ordinary test output, pruned after
 
 Not measured: VSync on with the display on; the A1000; the 70 ms spikes' source; the megastorm; a storm in the real world.
 
+### 0.10 Overnight results (2026-11-16)
+
+Kept (all measured on slot 3, optimized C#, 1600 x 900, VSync off, RTX 4070):
+
+| Commit | Change | Result |
+|---|---|---|
+| a682cb1 | Wet map published through one stable texture (no per-dispatch RID swap) | plains p95 26.4 -> 15.0 ms, frame setup p95 8.4 -> 0.36 ms; 1.2 km/s flight 34 -> 75 fps; byte-identical pixel A/B |
+| d1b40dd | Trees T0-T2: parallel selection with identical output (0 mismatches), bookkeeping budget, scopes | selection 4.6-7.0 -> 0.7-1.7 ms; flight at 150-300 m p50 22.5-25.2 -> ~20 ms, p95 33-36 -> 28-30 ms; 1.2 km/s p50 13.5 -> 10.5 ms |
+| 992bf48 | Static ground mist removed (user-approved); haze skips the mist layer at zero density | no visible change at the user's values; -0.03 ms |
+| 4b4d7f6 | rain_streaks_gpu_test camera interpolation reset | test flake fixed |
+
+Tried and dropped (no gain beyond noise): tree and terrain shadow-pass IN_SHADOW_PASS skips (0.02 ms trees, ~0.16 ms sun map), P3 install budget, G1 SustainedLowLatency (unmeasurable), P2 footprint-limited ocean refresh (0 mismatches over 188k checks but no gain), P0/P1 terrain scopes and publish garbage (no measurable gain; patch kept out of the tree).
+
+Still open, in order: the 70 ms periodic process spikes at the 9 km save in daylight (suspect `RingTerrainCloudSunVisibility`, 0.5 s timer; order E1 in 0.8); VSync behaviour with the display on (a 60 Hz FIFO swapchain may lock 17-20 ms forest frames to 30 fps); the GPU-side items that change the image (user decision, section 8): the 16k shadow atlas (1.8 ms), tree distances (trees 7.1 ms in forest), cloud resolution, far viewport scale.
+
 ## 1. Summary (fixture world)
 
 1. **Which settings decide the answer.** The game starts on **Very High** on this machine (hardware tier `desktop_mid_high`, `scripts/world_size_launcher.gd:1981`; Medium is the laptop tier default). The user's last-played world (slot 3) is saved at Very High, with their own overrides on top: tree LOD0 out to 200 m and cards from 550 to 900 m, a 16,384 shadow atlas, and grass and water overrides (section 2.2).
