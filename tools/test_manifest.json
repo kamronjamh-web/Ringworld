@@ -7744,6 +7744,18 @@
       "profile": "own-runner",
       "runner": "tools/perf_bench.ps1",
       "user_args": "-Label manifest -Quick"
+    },
+    "landscape_dressing_poses_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "landscape",
+        "terrain"
+      ],
+      "marker": "LANDSCAPE_DRESSING_POSES",
+      "expected_s": 30,
+      "timeout_s": 150
     }
   }
 }

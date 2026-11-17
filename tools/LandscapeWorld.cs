@@ -45,7 +45,28 @@ public static class LandscapeWorld
     public static Spec FromArgs(IEnumerable<string> args, int seed = Seed)
     {
         var selection = ParseGenerationArgs(args);
+        int? flagSeed = ParseSeedArg(args);
+        if (flagSeed.HasValue)
+        {
+            // T4-2: --seed=<n> for a review copy of another world (e.g. slot 3). Only v9 worlds carry an explicit seed through the launcher.
+            if (selection.Generation == 0) throw new ArgumentException("--seed needs an explicit --generation=N (N >= 1).");
+            seed = flagSeed.Value;
+        }
         return For(selection.Generation, selection.Review, seed);
+    }
+
+    public static int? ParseSeedArg(IEnumerable<string> args)
+    {
+        int? seed = null;
+        foreach (string arg in args)
+            if (arg == "--seed" || arg.StartsWith("--seed=", StringComparison.Ordinal))
+            {
+                if (seed.HasValue || arg == "--seed" ||
+                    !int.TryParse(arg["--seed=".Length..], NumberStyles.None, CultureInfo.InvariantCulture, out int parsed))
+                    throw new ArgumentException("Use one --seed=N flag with a nonnegative integer.");
+                seed = parsed;
+            }
+        return seed;
     }
 
     public static (int Generation, IReadOnlyList<string> Review, bool IsExplicit) ParseGenerationArgs(IEnumerable<string> args)
@@ -133,6 +154,7 @@ public static class LandscapeWorld
             Tag = IsDefault ? "" : $"g{recipe.WorldGeneration:D2}";
             if (recipe.ReviewFeatures.Count > 0)
                 Tag += "-review-" + string.Join("+", recipe.ReviewFeatures);
+            if (!IsDefault && recipe.Seed != Seed) Tag += "-s" + recipe.Seed;
         }
 
         public VoxelTerrainSettings CreateSettings() => EmitterSiteTestWorlds.CreateProductionSettings(checked((int)Recipe.Seed), Recipe);

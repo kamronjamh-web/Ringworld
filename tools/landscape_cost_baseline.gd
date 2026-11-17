@@ -4,6 +4,9 @@ extends SceneTree
 ## RUN (windowed Vulkan, nothing else on the GPU): tools/run_tests.ps1 -Label landscape_gpu -Tests landscape_cost_baseline
 ##   or Godot_console.exe --path . --resolution 1920x1080 --script res://tools/landscape_cost_baseline.gd -- [--poses=a,b] [--prefs=user|defaults|<dir>] [--preset=medium|keep] [--allow-blades] [--rounds=2] [--seconds=8] [--no-bracket]
 ##   Add --generation=N [--review-features=a,b] after -- to select a v9 world.
+##   T4-2: --poses= also takes the dressing poses (see landscape_look_baseline.gd); --feature-ab=<feature id|bit:N> adds the same-boot A-B-A case feature_off (baseline, feature_off, baseline_repeat) that clears the
+##   feature's bit in the published shader mask through the test-only hook tools/LandscapeFeatureAbBridge.cs; cost.md gets a "Feature A-B-A" table (delta above 0.1 ms flagged). Needs a world with the feature on,
+##   e.g. --generation=1 --review-features=ground.surface (today only water.rivers exists in the ledger, a no-op control). --quiet as in the look tool.
 ##   A1000 (authoritative) run: laptop, undocked, P0 / 35 W, memory clock 5300-5700 MHz; the same command.
 ## Machine rule: numbers are only authoritative on the A1000 laptop (P0 / 35 W); on any other GPU the output is stamped "non-authoritative" with the machine tag and adapter name.
 ## TR-1 tree LOD modes (docs/work-orders/terrain-vegetation/TR.md), selected after -- or through the LANDSCAPE_HARNESS_ARGS environment variable (tools/run_tests.ps1 has no argument pass-through):

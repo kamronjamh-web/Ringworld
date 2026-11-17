@@ -27,12 +27,14 @@ public partial class LandscapeWorldBridge : RefCounted
         try
         {
             SetSpec(LandscapeWorld.FromArgs(args));
-            return new Godot.Collections.Dictionary
+            var selection = new Godot.Collections.Dictionary
             {
                 ["generation"] = _spec.IsDefault ? 0 : _spec.Recipe.WorldGeneration,
                 ["review_features"] = System.Linq.Enumerable.ToArray(_spec.Recipe.ReviewFeatures),
                 ["world_tag"] = _spec.Tag
             };
+            if (_spec.Recipe.Seed != LandscapeWorld.Seed) selection["seed"] = (int)_spec.Recipe.Seed; // recorded only for a non-default seed, so default records are unchanged
+            return selection;
         }
         catch (Exception exception)
         {
@@ -56,6 +58,47 @@ public partial class LandscapeWorldBridge : RefCounted
     {
         _model ??= _spec.CreateShapedModel();
         return _model.CalculateHeight(around, across);
+    }
+
+    /// <summary>
+    /// T4-2: a river bank dressing pose resolved from the booted game's baked river graph (a water.rivers review world; the fixture cannot hold it, because the graph is baked per recipe).
+    /// Takes the longest stem, its midpoint, walks along the left normal until the terrain sample is no longer River, and stands 10 m beyond the bank looking at the centreline.
+    /// Returns {ok, pose, message}; `pose` has the fixture row fields (agl, 1.7 m eye).
+    /// </summary>
+    public Godot.Collections.Dictionary ResolveRiverBankPose(Node game)
+    {
+        var result = new Godot.Collections.Dictionary { ["ok"] = false, ["message"] = "" };
+        try
+        {
+            var grid = game.GetNodeOrNull<VoxelChunkGridManager>("ChunkGridManager");
+            using RingTerrainSampler? sampler = grid?.CreateIndependentTerrainSampler();
+            RingworldTechDemo.Terrain.Hydrology.RiverGraph? graph = sampler?.RuntimeRiverGraph;
+            if (graph == null) { result["message"] = "the booted world has no river graph (needs --generation=1 --review-features=water.rivers)"; return result; }
+            var net = graph.Network;
+            int stem = 0;
+            for (int i = 1; i < net.Curves.Length; i++) if (net.Curves[i].Length > net.Curves[stem].Length) stem = i;
+            net.CentreFrame(stem, net.Curves[stem].Length * 0.5, out double a, out double z, out double nx, out double ny);
+            double bank = -1;
+            for (double d = 0; d <= 400; d += 1)
+            {
+                double pa = net.WrapAround(a + nx * d), pz = z + ny * d;
+                TerrainSample s = sampler!.GetTerrainSample((long)Math.Floor(pa), (int)Math.Floor(pz));
+                if (s.WaterKind != SurfaceWaterKind.River) { bank = d; break; }
+            }
+            if (bank < 0) { result["message"] = "no bank within 400 m of the longest stem's midpoint"; return result; }
+            double standA = net.WrapAround(a + nx * (bank + 10)), standZ = z + ny * (bank + 10);
+            double yaw = (Math.Round(Math.Atan2(-ny, -nx) * 180d / Math.PI) % 360d + 360d) % 360d;
+            result["pose"] = new Godot.Collections.Dictionary
+            {
+                ["name"] = "river_bank_eye", ["reports"] = new Godot.Collections.Array { "t4" }, ["class"] = "River", ["habitat"] = "None",
+                ["around_m"] = standA, ["across_m"] = standZ, ["ground_m"] = GroundHeight(standA, standZ), ["vertical_mode"] = "agl", ["lift_m"] = 1.7,
+                ["yaw_deg"] = yaw, ["pitch_deg"] = -4.0,
+                ["notes"] = $"resolved at run time: longest river stem {stem} (length {net.Curves[stem].Length:F0} m), midpoint ({a:F0}, {z:F0}), bank {bank:F0} m left of the centreline, 10 m beyond it, looking at the river"
+            };
+            result["ok"] = true;
+        }
+        catch (Exception exception) { result["message"] = "river bank search failed: " + exception.Message; }
+        return result;
     }
 
     /// <summary>Exported-property differences between the game's terrain settings and the pinned ones (diagnostic for a sampler mismatch).</summary>

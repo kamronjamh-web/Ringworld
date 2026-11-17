@@ -12,6 +12,8 @@ const H := preload("res://tools/landscape_harness_common.gd")
 const BANDS := preload("res://tools/landscape_audit_bands.gd")
 const TIMING := preload("res://tools/LandscapeTimingBridge.cs")
 const PASS_EFFECT := preload("res://tools/landscape_pass_timestamp_effect.gd")
+const TREE_VIS := preload("res://tools/tree_visibility_world.gd")
+const FEATURE_AB := preload("res://tools/LandscapeFeatureAbBridge.cs")
 const COMMON := H.COMMON
 const WARMUP_FRAMES := 60
 const SETTLE_S := 1.0
@@ -79,6 +81,10 @@ static func setup(tree: SceneTree, marker: String, weather_pose_report := "t0") 
 		return {}
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	Engine.max_fps = 0
+	var seed_error := _seed_pose_error()
+	if seed_error != "":
+		push_error("%s=FAIL %s" % [marker, seed_error])
+		return {}
 	var res := COMMON.arg_value("--res=", "1920x1080").split("x")
 	if res.size() == 2:
 		tree.root.size = Vector2i(int(res[0]), int(res[1]))
@@ -92,7 +98,22 @@ static func setup(tree: SceneTree, marker: String, weather_pose_report := "t0") 
 	if monitor != null:
 		monitor.process_mode = Node.PROCESS_MODE_DISABLED # it re-configures the timestamp bridge every frame and would drain our events
 	COMMON.hold_world_clocks(game)
-	var weather := H.pin_weather(game, H.report_poses(weather_pose_report))
+	# T4-2: a run that selects a dressing pose (--poses=steep_eye,...) pins the weather over the T0 poses plus every dressing pose, so the cloud time does not depend on which
+	# dressing poses were picked. river_bank_eye is resolved from the booted world's river graph first (it only exists in a water.rivers review world).
+	var weather_poses := H.report_poses(weather_pose_report) if H.seed == H.PINNED_SEED else []
+	var river_bank_note := {}
+	var explicit := _register_explicit_poses(booted)
+	if explicit.has("error"):
+		push_error("%s=FAIL %s" % [marker, str(explicit["error"])])
+		return {"game": game, "fixture_root": booted["fixture_root"]}
+	if weather_pose_report == "t0" and (_selects_dressing() or H.seed != H.PINNED_SEED):
+		if harness_csv("--poses=").has(H.RIVER_BANK_POSE):
+			river_bank_note = H.resolve_river_bank(booted)
+			if river_bank_note.has("error"):
+				push_error("%s=FAIL %s" % [marker, str(river_bank_note["error"])])
+				return {"game": game, "fixture_root": booted["fixture_root"]}
+		weather_poses.append_array(H.dressing_poses())
+	var weather := H.pin_weather(game, weather_poses)
 	if weather.has("error"):
 		push_error("%s=FAIL %s" % [marker, str(weather["error"])])
 		return {"game": game, "fixture_root": booted["fixture_root"]}
@@ -115,10 +136,97 @@ static func setup(tree: SceneTree, marker: String, weather_pose_report := "t0") 
 		"explorer": explorer, "surface": surface, "grass": grass, "trees": trees, "scaled_far": scaled_far, "sun": sun, "preset": preset, "weather": weather, "ok": true}
 	ctx["ground_model"] = null if str(booted["world_tag"]).is_empty() else booted["world_bridge"]
 	ctx["record"] = _common_record(ctx)
+	if H.seed != H.PINNED_SEED:
+		ctx["record"]["seed"] = H.seed
+		ctx["record"]["explicit_poses"] = explicit.get("poses", [])
+	if _selects_dressing() and H.seed == H.PINNED_SEED:
+		ctx["record"]["dressing_fixture"] = {"path": H.DRESSING_FIXTURE, "weather_pinned_over": weather_poses.size(), "river_bank_eye": river_bank_note}
+	# `--quiet` hides the clouds, grass and gust debris (tools/tree_visibility_world.gd quiet_scene) so two stills of one pose can be compared pixel for pixel. Off by default:
+	# the clouds and grass are part of the cost a normal run measures.
+	# `--feature-off=<feature id | bit:N>` (look and cost runs): the whole run happens with that world feature's bit cleared in the shader mask (same world, same boot), so a look
+	# capture "feature off" needs no second world. The mask is recorded; the hook is tools-only (tools/LandscapeFeatureAbBridge.cs).
+	var off_spec := harness_arg("--feature-off=", "")
+	if off_spec != "":
+		var off_hook: RefCounted = FEATURE_AB.new()
+		var off_resolved: Dictionary = off_hook.call("Resolve", off_spec)
+		if not bool(off_resolved.get("ok", false)) or (int(off_hook.call("WorldMask")) >> int(off_resolved["bit"])) & 1 == 0:
+			var why := str(off_resolved.get("message", "")) if not bool(off_resolved.get("ok", false)) else "%s is not on in this world (mask 0x%x); boot a review world with the feature" % [off_spec, int(off_hook.call("WorldMask"))]
+			push_error("%s=FAIL --feature-off: %s" % [marker, why])
+			return {"game": game, "fixture_root": booted["fixture_root"]}
+		var off_mask := int(off_hook.call("Apply", int(off_resolved["bit"]), false))
+		ctx["feature_off_hook"] = off_hook
+		ctx["record"]["feature_off"] = {"spec": off_spec, "bit": int(off_resolved["bit"]), "world_mask": int(off_hook.call("WorldMask")), "published_mask": off_mask, "shader_readback": int(off_hook.call("ShaderMask"))}
+		print("%s feature off: %s published mask 0x%x (world mask 0x%x), hook last published 0x%x" % [marker, off_spec, off_mask, int(off_hook.call("WorldMask")), int(off_hook.call("ShaderMask"))])
+	if harness_flag("--quiet"):
+		ctx["quiet"] = TREE_VIS.quiet_scene(game)
+		ctx["record"]["quiet_scene"] = ctx["quiet"]
+		print("%s quiet scene: %s" % [marker, JSON.stringify(ctx["quiet"])])
 	return ctx
 
 
+## Pose names of the seed-1337 fixtures (T0 and dressing). With another --seed they are meaningless, so naming one fails the run.
+static func _fixture_pose_names() -> PackedStringArray:
+	var names := PackedStringArray()
+	var prior := H.seed
+	H.seed = H.PINNED_SEED
+	for pose in H.load_poses().get("poses", []):
+		names.append(str(pose["name"]))
+	for pose in H.dressing_poses():
+		if str(pose["name"]) != H.RIVER_BANK_POSE:
+			names.append(str(pose["name"]))
+	H.seed = prior
+	return names
+
+
+## `--seed=<n>` (n != 1337): the fixtures do not apply, so poses come from `--at=name:around,across,lift_m,yaw,pitch[;name2:...]` (lift is metres above the ground) or river_bank_eye.
+## "" when fine, else the reason.
+static func _seed_pose_error() -> String:
+	var seed_text := harness_arg("--seed=", "")
+	if seed_text == "" or int(seed_text) == H.PINNED_SEED:
+		return ""
+	var fixture := _fixture_pose_names()
+	var names := harness_csv("--poses=")
+	for name in names:
+		if fixture.has(name):
+			return "pose %s is a seed 1337 fixture pose and does not apply to --seed=%s; give explicit coordinates with --at=name:around,across,lift_m,yaw,pitch" % [name, seed_text]
+	if harness_arg("--at=", "") == "" and not names.has(H.RIVER_BANK_POSE):
+		return "--seed=%s has no fixture poses; pass --at=name:around,across,lift_m,yaw,pitch (several with ;) or --poses=river_bank_eye" % seed_text
+	return ""
+
+
+## Parses `--at=` into pose rows (vertical_mode agl) and registers them like river_bank_eye so `--poses=` and the default selection find them. Allowed with any seed.
+static func _register_explicit_poses(booted: Dictionary) -> Dictionary:
+	var text := harness_arg("--at=", "")
+	if text == "":
+		return {"poses": []}
+	var rows: Array = []
+	for item in text.split(";", false):
+		var parts := item.split(":")
+		var numbers := (parts[1] if parts.size() == 2 else "").split(",")
+		if parts.size() != 2 or numbers.size() != 5 or not parts[0].is_valid_identifier():
+			return {"error": "--at entry '%s' is not name:around,across,lift_m,yaw,pitch" % item}
+		var around := float(numbers[0])
+		var across := float(numbers[1])
+		var ground := float((booted["world_bridge"] as RefCounted).call("GroundHeight", around, across))
+		var pose := {"name": parts[0], "reports": ["at"], "class": "Explicit", "habitat": "None", "around_m": around, "across_m": across, "ground_m": ground, "vertical_mode": "agl",
+			"lift_m": float(numbers[2]), "yaw_deg": float(numbers[3]), "pitch_deg": float(numbers[4]), "notes": "explicit --at pose"}
+		H._runtime_poses[parts[0]] = pose
+		rows.append(pose)
+	return {"poses": rows}
+
+
+static func _selects_dressing() -> bool:
+	var wanted := H.dressing_pose_names()
+	for name in harness_csv("--poses="):
+		if wanted.has(name):
+			return true
+	return false
+
+
 static func cleanup(ctx: Dictionary) -> void:
+	if ctx.has("feature_off_hook"):
+		var restored := int((ctx["feature_off_hook"] as RefCounted).call("Restore"))
+		print("%s feature mask restored to 0x%x (world mask 0x%x)" % [ctx.get("marker", "LANDSCAPE"), restored, int((ctx["feature_off_hook"] as RefCounted).call("WorldMask"))])
 	var timing: Variant = ctx.get("timing", null)
 	if timing != null:
 		(timing as RefCounted).call("End")
@@ -156,8 +264,14 @@ static func _common_record(ctx: Dictionary) -> Dictionary:
 static func t0_poses() -> Array:
 	var names := harness_csv("--poses=")
 	var result: Array = []
-	for pose in H.report_poses("t0"):
-		if names.is_empty() or str(pose["name"]) in names:
+	if H.seed == H.PINNED_SEED:
+		for pose in H.report_poses("t0"):
+			if names.is_empty() or str(pose["name"]) in names:
+				result.append(pose)
+	# T4-2: dressing poses are only ever selected by name, so a run without --poses= is exactly the nine T0 poses as before.
+	# With another --seed the list holds only the run-time poses (--at= explicit ones, river_bank_eye); explicit ones are all used when --poses= is absent.
+	for pose in H.dressing_poses():
+		if str(pose["name"]) in names or (H.seed != H.PINNED_SEED and names.is_empty() and str(pose["reports"][0]) == "at"):
 			result.append(pose)
 	return result
 
@@ -334,6 +448,7 @@ static func capture_original_state(ctx: Dictionary) -> Dictionary:
 	state["world_environment"] = ctx["world_environment"]
 	state["scaled_far"] = ctx["scaled_far"]
 	state["extra_undo"] = []
+	state["feature_ab"] = ctx.get("feature_ab", {})
 	state["viewport"] = (ctx["tree"] as SceneTree).root
 	state["scale"] = (ctx["tree"] as SceneTree).root.scaling_3d_scale
 	return state
@@ -503,6 +618,14 @@ static func verify_case(state: Dictionary, full_label: String) -> String:
 			return "tree render layer was not applied for " + label
 		if int(expected[1]) != int(state["tree_cast"][index]) and int(node.cast_shadow) != int(expected[1]):
 			return "tree shadow casting was not applied for " + label
+	var ab: Dictionary = state.get("feature_ab", {})
+	if not ab.is_empty():
+		# The shader mask must read back as the world mask, with the feature bit cleared only in the feature_off case.
+		var world_mask := int((ab["hook"] as RefCounted).call("WorldMask"))
+		var wanted := (world_mask & ~(1 << int(ab["bit"]))) if label == "feature_off" else world_mask
+		var seen := int((ab["hook"] as RefCounted).call("ShaderMask"))
+		if seen >= 0 and seen != wanted:
+			return "shader feature mask reads 0x%x, expected 0x%x for %s" % [seen, wanted, label]
 	return ""
 
 
@@ -511,7 +634,9 @@ static func verify_case(state: Dictionary, full_label: String) -> String:
 
 ## Extra A-B-A cases for run_cost, selected with --extra-cases=a,b (or LANDSCAPE_HARNESS_ARGS). Each uses an existing runtime switch or a node property and pushes its undo
 ## on state["extra_undo"]; restore_state runs the undos. TEST ONLY.
-const EXTRA_CASES := ["clouds_off", "cloud_shadow_gen_off", "sun_map_off", "hs_receivers_off", "water_hidden", "ui_hidden", "clocks_running", "far_viewport_off", "env_post_off", "env_ssao_off", "env_ssr_off", "atlas_4096", "atlas_8192", "atlas_16384"]
+## T4.md C3: a 4070 feature delta above this at any pose is flagged to the primary (the A1000 numbers are the authoritative ones).
+const FEATURE_AB_FLAG_MS := 0.1
+const EXTRA_CASES := ["feature_off", "clouds_off", "cloud_shadow_gen_off", "sun_map_off", "hs_receivers_off", "water_hidden", "ui_hidden", "clocks_running", "far_viewport_off", "env_post_off", "env_ssao_off", "env_ssr_off", "atlas_4096", "atlas_8192", "atlas_16384"]
 const ENV_POST_FLAGS := ["glow_enabled", "ssao_enabled", "ssil_enabled", "ssr_enabled", "sdfgi_enabled", "volumetric_fog_enabled", "adjustment_enabled"]
 
 
@@ -519,6 +644,19 @@ static func _apply_extra(state: Dictionary, base: String) -> bool:
 	var game: Node = state["game"]
 	var undo: Array = state["extra_undo"]
 	match base:
+		"feature_off":
+			# T4-2 test-only hook (tools/LandscapeFeatureAbBridge.cs): republish the shader mask with the --feature-ab bit cleared. A placement feature (T5, T6) must also rebuild its
+			# tiles and wait for streaming idle here; only the shader-side part exists today.
+			var ab: Dictionary = state.get("feature_ab", {})
+			if ab.is_empty():
+				return false
+			var hook: RefCounted = ab["hook"]
+			var cleared := int(hook.call("Apply", int(ab["bit"]), false))
+			if cleared < 0:
+				return false
+			state["feature_off_mask"] = cleared
+			undo.append(func() -> void:
+				hook.call("Restore"))
 		"clouds_off", "cloud_shadow_gen_off":
 			var bridge := game.get_node_or_null("SunshineCloudBridge")
 			if bridge == null:
@@ -635,7 +773,10 @@ static func extra_probe(ctx: Dictionary) -> Dictionary:
 		for flag in ENV_POST_FLAGS:
 			flags[flag] = environment.get(flag)
 	var cycle := game.get_node_or_null("RingDayNightCycle")
-	return {"sun_shadow_enabled": sun.shadow_enabled, "sun_shadow_mode": sun.directional_shadow_mode, "sun_shadow_max_distance": sun.directional_shadow_max_distance,
+	var feature_mask: Variant = null
+	if ctx.has("feature_ab"):
+		feature_mask = (ctx["feature_ab"]["hook"] as RefCounted).call("ShaderMask")
+	return {"feature_mask": feature_mask, "sun_shadow_enabled": sun.shadow_enabled, "sun_shadow_mode": sun.directional_shadow_mode, "sun_shadow_max_distance": sun.directional_shadow_max_distance,
 		"clouds_enabled": bridge.get("CloudRenderingEnabled") if bridge != null else null, "cloud_shadow_gen": bridge.get("GpuShadowGenerationEnabled") if bridge != null else null,
 		"use_taa": root.use_taa, "msaa_3d": root.msaa_3d, "screen_space_aa": root.screen_space_aa, "scaling_3d_mode": root.scaling_3d_mode, "scaling_3d_scale": root.scaling_3d_scale,
 		"clock_paused": cycle.get("Paused") if cycle != null else null, "environment": flags,
@@ -836,6 +977,22 @@ static func run_cost(ctx: Dictionary) -> Dictionary:
 	var machine: Dictionary = ctx["machine"]
 	var rounds := maxi(1, int(harness_arg("--rounds=", "2")))
 	var seconds := maxf(1.0, float(harness_arg("--seconds=", "8")))
+	# T4-2 `--feature-ab=<feature id | bit:N>`: adds the same-boot A-B-A case feature_off (baseline, feature_off, baseline_repeat). Resolved before anything is measured.
+	var feature_spec := harness_arg("--feature-ab=", "")
+	if feature_spec != "":
+		var hook: RefCounted = FEATURE_AB.new()
+		var resolved: Dictionary = hook.call("Resolve", feature_spec)
+		if not bool(resolved.get("ok", false)):
+			var failure := "--feature-ab: " + str(resolved.get("message", "unresolved"))
+			push_error("%s=FAIL %s" % [marker, failure])
+			return {"failures": [failure], "status": "FAIL"}
+		if (int(hook.call("WorldMask")) >> int(resolved["bit"])) & 1 == 0:
+			var missing := "--feature-ab: %s is not on in this world (mask 0x%x); boot a review world with the feature, e.g. --generation=1 --review-features=%s" % [feature_spec, int(hook.call("WorldMask")), feature_spec]
+			push_error("%s=FAIL %s" % [marker, missing])
+			return {"failures": [missing], "status": "FAIL"}
+		ctx["feature_ab"] = {"hook": hook, "spec": feature_spec, "id": str(resolved["id"]), "bit": int(resolved["bit"]), "world_mask": int(hook.call("WorldMask")), "shader_mask_at_start": int(hook.call("ShaderMask"))}
+		print("%s feature A-B: %s = bit %d, world mask 0x%x, hook last published 0x%x; feature_off publishes 0x%x" % [marker, feature_spec, int(resolved["bit"]), int(ctx["feature_ab"]["world_mask"]),
+			int(ctx["feature_ab"]["shader_mask_at_start"]), int(ctx["feature_ab"]["world_mask"]) & ~(1 << int(resolved["bit"]))])
 	var out_dir := H.baseline_dir(str(machine["tag"]), "t0", "cost", ctx["booted"]["world_tag"])
 	H.copy_prefs_snapshot(ctx["booted"], out_dir)
 	var power_path := out_dir.path_join("power_log.csv")
@@ -858,8 +1015,11 @@ static func run_cost(ctx: Dictionary) -> Dictionary:
 			if str(pose["name"]) == str(extra[0]):
 				pose_times.append([pose, str(extra[1])])
 	var cases: Array = CASES.duplicate()
+	if ctx.has("feature_ab"):
+		cases.insert(cases.size() - 1, "feature_off")
 	for extra in harness_csv("--extra-cases="):
-		cases.insert(cases.size() - 1, str(extra))
+		if not cases.has(str(extra)):
+			cases.insert(cases.size() - 1, str(extra))
 	var plan_windows := pose_times.size() * rounds * cases.size()
 	print("%s plan: %d pose-times x %d rounds x %d cases = %d windows of %.1f s (+%d frames +%.1f s settle) rounds=%d" % [marker, pose_times.size(), rounds, CASES.size(), plan_windows, seconds, WARMUP_FRAMES, SETTLE_S, rounds])
 
@@ -967,6 +1127,10 @@ static func run_cost(ctx: Dictionary) -> Dictionary:
 	report.merge({"marker": marker, "tool": "landscape_cost_baseline", "label": "4070, non-authoritative" if not bool(machine["authoritative"]) else "A1000, authoritative only where every window is power-valid",
 		"rounds": rounds, "window_seconds": seconds, "warmup_frames": WARMUP_FRAMES, "settle_s": SETTLE_S, "bracket": bracket, "pose_times": results, "failures": failures, "windows": windows_total,
 		"power_valid_windows": valid, "power_valid_share": valid_share, "hide_class_effect_poses": class_effect, "status": status, "output": out_dir, "power_log": power_path})
+	if ctx.has("feature_ab"):
+		var ab: Dictionary = ctx["feature_ab"]
+		report["feature_ab"] = {"spec": ab["spec"], "id": ab["id"], "bit": ab["bit"], "world_mask": ab["world_mask"], "shader_mask_at_start": ab["shader_mask_at_start"],
+			"feature_off_mask": int(ab["world_mask"]) & ~(1 << int(ab["bit"])), "flag_delta_ms": FEATURE_AB_FLAG_MS}
 	_save_json(out_dir.path_join("cost.json"), report)
 	var markdown := _cost_markdown(report)
 	var file := FileAccess.open(out_dir.path_join("cost.md"), FileAccess.WRITE)
@@ -1096,6 +1260,24 @@ static func _cost_markdown(report: Dictionary) -> String:
 			prim_cells.append(_f(float(c[label]["primitive_delta"]), 0))
 		lines.append("| %s | %s | %s | %s | %s | %s | %s | %s |" % [record["pose"], record["time"], cells[0], cells[1], cells[2], cells[3], " / ".join(draw_cells), " / ".join(prim_cells)])
 	lines.append("")
+	if report.has("feature_ab"):
+		var ab: Dictionary = report["feature_ab"]
+		lines.append("## Feature A-B-A: `%s` (bit %d), shader mask 0x%x with the feature, 0x%x in feature_off" % [ab["spec"], int(ab["bit"]), int(ab["world_mask"]), int(ab["feature_off_mask"])])
+		lines.append("")
+		lines.append("Cost of the feature = baseline minus feature_off, root viewport GPU median ms, same boot, windows ordered baseline / feature_off / baseline_repeat. On the 4070 these are indicative; a delta above %.1f ms is flagged for the primary. A delta inside the noise floor is zero." % float(ab["flag_delta_ms"]))
+		lines.append("")
+		lines.append("| pose | time | on root GPU | off root GPU | cost (on - off) | far GPU cost | draws on - off | prims on - off | noise floor | flag |")
+		lines.append("|---|---|---|---|---|---|---|---|---|---|")
+		for record in report["pose_times"]:
+			if not record.has("derived") or not record["derived"]["classes"].has("feature_off"):
+				continue
+			var d3: Dictionary = record["derived"]
+			var c3: Dictionary = d3["classes"]["feature_off"]
+			var cost := float(c3["root_gpu_delta_ms"])
+			var flag := "FLAG" if cost > float(ab["flag_delta_ms"]) else ("within noise" if absf(cost) <= float(d3["noise_floor_root_gpu_ms"]) else "")
+			lines.append("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |" % [record["pose"], record["time"], _f(float(d3["baseline_root_gpu_ms"])), _f(float(c3["root_gpu_hidden_median_ms"])), _f(cost),
+				_f(float(c3["far_gpu_delta_ms"])), _f(float(c3["draw_delta"]), 0), _f(float(c3["primitive_delta"]), 0), _f(float(d3["noise_floor_root_gpu_ms"])), flag])
+		lines.append("")
 	lines.append("## Far viewport GPU delta (ms)")
 	lines.append("")
 	lines.append("| pose | time | near terrain | far terrain | trees | grass |")

@@ -15,6 +15,9 @@ const BANDS := preload("res://tools/landscape_audit_bands.gd")
 const LOADING := preload("res://scripts/Loading/ring_world_loading.gd")
 const DEPTH_EFFECT := preload("res://tools/shadow_depth_capture_effect.gd")
 const POSE_FIXTURE := "res://tools/fixtures/landscape_poses_v8_s1337.json"
+## T4-2: the dressing poses (steep, scree, cliff, breaks, mountain, lowland). `--poses=` and pose_by_name take names from either fixture; the T0 rows keep their meaning.
+const DRESSING_FIXTURE := "res://tools/fixtures/landscape_poses_dressing_s1337.json"
+const DRESSING_REPORT := "t4"
 ## Drawer Install*Defaults method -> the file name of the matching GameplayXDefaults.UserPath / AtmosphereVisualDefaults.UserPath constant.
 const PREF_FILES := [
 	["InstallGrassDefaults", "gameplay_grass_defaults.tres"],
@@ -33,6 +36,12 @@ const CLEAR_PRECIPITATION_MAX := 0.02
 const MAJOR_FRONT := 3 # WeatherSystemKind in scripts/RingVolumetricCloudLayer.cs:32
 
 static var _fixture := {}
+static var _dressing := {}
+## Poses resolved at run time (river_bank_eye, from the booted world's river graph), by name.
+static var _runtime_poses := {}
+## T4-2 `--seed=<n>`: the world seed of this run (1337 unless the flag is given). The T0 and dressing fixtures are seed 1337 coordinates and are ignored for any other seed.
+const PINNED_SEED := 1337
+static var seed := PINNED_SEED
 static var _stamp := ""
 
 
@@ -90,7 +99,47 @@ static func pose_by_name(name: String) -> Dictionary:
 	for pose in load_poses().get("poses", []):
 		if str(pose["name"]) == name:
 			return pose
+	for pose in dressing_poses():
+		if str(pose["name"]) == name:
+			return pose
 	return {}
+
+
+## The dressing fixture's rows plus the run-time resolved ones (T4-2); [] when the fixture is missing.
+static func dressing_poses() -> Array:
+	if seed != PINNED_SEED:
+		return _runtime_poses.values()
+	if _dressing.is_empty():
+		var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(DRESSING_FIXTURE))
+		if parsed is Dictionary:
+			_dressing = parsed
+	var rows: Array = (_dressing.get("poses", []) as Array).duplicate()
+	for name in _runtime_poses:
+		rows.append(_runtime_poses[name])
+	return rows
+
+
+## Names of every pose a `--poses=` list can select that is not a T0 pose (dressing fixture rows and run-time poses).
+static func dressing_pose_names() -> PackedStringArray:
+	var names := PackedStringArray()
+	for pose in dressing_poses():
+		names.append(str(pose["name"]))
+	if not names.has(RIVER_BANK_POSE):
+		names.append(RIVER_BANK_POSE)
+	return names
+
+
+const RIVER_BANK_POSE := "river_bank_eye"
+
+
+## Resolves river_bank_eye from the booted world's river graph (LandscapeWorldBridge.ResolveRiverBankPose) and registers it for `--poses=`. {} plus a push-free error string in
+## "error" when the world has no rivers.
+static func resolve_river_bank(boot_result: Dictionary) -> Dictionary:
+	var resolved: Dictionary = (boot_result["world_bridge"] as RefCounted).call("ResolveRiverBankPose", boot_result["game"])
+	if not bool(resolved.get("ok", false)):
+		return {"error": str(resolved.get("message", "river bank search failed"))}
+	_runtime_poses[RIVER_BANK_POSE] = resolved["pose"]
+	return resolved["pose"]
 
 
 static func report_poses(report: String) -> Array:
@@ -231,6 +280,7 @@ static func boot(tree: SceneTree, marker: String) -> Dictionary:
 		push_error("%s=FAIL %s" % [marker, error])
 		return {}
 	var world_tag: String = selection["world_tag"]
+	seed = int(selection.get("seed", PINNED_SEED))
 	var fixture_root := "res://.godot/captures/landscape/fixture_world/%s" % _world_stamp(world_tag)
 	var root := tree.root
 	var prior := root.get_node_or_null("WorldSession")
@@ -253,6 +303,12 @@ static func boot(tree: SceneTree, marker: String) -> Dictionary:
 	GENERATION_PIN.unpin()
 	await tree.process_frame
 	launcher.call("_on_certified_preset_pressed")
+	if seed != PINNED_SEED:
+		var seed_spin: SpinBox = launcher.get("terrain_seed_spin")
+		if seed_spin == null:
+			push_error("%s=FAIL launcher seed control missing" % marker)
+			return {}
+		seed_spin.value = seed
 	var selector: OptionButton = launcher.get("terrain_backend_selector")
 	if selector == null:
 		push_error("%s=FAIL launcher terrain backend selector missing" % marker)

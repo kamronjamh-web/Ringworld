@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "world": {"generator_id": "ringworld_surface_weather_lung_v8", "seed": 1337, "definition_hash": "0x1480032CB30B96CA", "settings": "res://resources/voxel/voxel_terrain_settings_ring_integration.tres"},
+  "eye_height_m": 1.7,
+  "times": {
+    "noon": {"mode": "noon"},
+    "sun_8_set": {"mode": "elevation", "value": 8.0, "rising": false},
+    "sun_2_set": {"mode": "elevation", "value": 2.0, "rising": false},
+    "night_planet": {"mode": "night_planet"}
+  },
+  "headings": {
+    "along_pos": {"yaw": 0.0, "pitch": 0.0}, "along_neg": {"yaw": 180.0, "pitch": 0.0},
+    "wall_hi": {"yaw": 90.0, "pitch": 0.0}, "wall_lo": {"yaw": 270.0, "pitch": 0.0},
+    "arch_up": {"yaw": 0.0, "pitch": 30.0}
+  },
+  "poses": [
+    {"name": "steep_eye", "reports": ["t4"], "class": "Mountain", "habitat": "None",
+     "around_m": 31414526.125, "across_m": 187500, "ground_m": 1463.8815146230395, "vertical_mode": "agl", "lift_m": 1.7,
+     "yaw_deg": 180, "pitch_deg": 13, "notes": "steep face on rock ground: 9 of 13 samples 30-150 m ahead have a 4 m slope in 45-90 deg, max 77.9, ground rises 48 m over 150 m; target (-1500, 187500) 70.9 deg"},
+    {"name": "scree_eye", "reports": ["t4"], "class": "Mountain", "habitat": "None",
+     "around_m": 31415472.485389695, "across_m": 190163.6396103068, "ground_m": 1160.149114427217, "vertical_mode": "agl", "lift_m": 1.7,
+     "yaw_deg": 315, "pitch_deg": 9, "notes": "scree slope: 10 of 13 samples 30-150 m ahead have a 4 m slope in 28-38 deg, max 38.5, ground rises 21 m over 150 m; target (-400, 190100) 29.4 deg"},
+    {"name": "cliff_eye", "reports": ["t4"], "class": "Mountain", "habitat": "None",
+     "around_m": 363.7646103067893, "across_m": 219336.3603896932, "ground_m": 2481.0255817209186, "vertical_mode": "agl", "lift_m": 1.7,
+     "yaw_deg": 135, "pitch_deg": 25, "notes": "cliff face: 3 of 13 samples 30-150 m ahead have a 4 m slope in 60-90 deg, max 66.8, ground rises 81 m over 150 m; target (300, 219400) 61.4 deg"},
+    {"name": "breaks_300m", "reports": ["t4"], "class": "Breaks", "habitat": "None",
+     "around_m": 157078.125, "across_m": 219000, "ground_m": 748.1792715212114, "vertical_mode": "agl", "lift_m": 300,
+     "yaw_deg": 63, "pitch_deg": -15, "notes": "Breaks on a 1 km ring (6 of 8), 300 m above ground, yaw = steepest ascent at 64 m"},
+    {"name": "mountain_2km", "reports": ["t4"], "class": "Mountain", "habitat": "None",
+     "around_m": 0.125, "across_m": 189000, "ground_m": 1150.8071710977172, "vertical_mode": "agl", "lift_m": 2000,
+     "yaw_deg": 295, "pitch_deg": -25, "notes": "Mountain on a 1.5 km ring, 2,000 m above ground, yaw = steepest ascent at 256 m"},
+    {"name": "lowland_eye", "reports": ["t4"], "class": "Rolling", "habitat": "None",
+     "around_m": 706853.125, "across_m": 211500, "ground_m": 487.78152808004046, "vertical_mode": "agl", "lift_m": 1.7,
+     "yaw_deg": 0, "pitch_deg": -3, "notes": "Rolling lowland on a 1 km ring (6 of 8), 4 m slope at most 8 deg, not dense forest"}
+  ]
+}
