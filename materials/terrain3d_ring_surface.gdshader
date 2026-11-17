@@ -154,6 +154,13 @@ void vertex() {
         float h = mix(texelFetch(_height_maps, uv_a, 0).r, texelFetch(_height_maps, uv_b, 0).r, vertex_lerp);
         v_vertex = frame_to_world(curve_ring(v_vertex, h));
     }
+    // fragment() discards everything farther than the handoff (the proxy terrain draws it), in every pass. A vertex
+    // farther than the handoff plus one triangle's extent (2.5 cells across, up to 32 m of height step) touches only
+    // triangles that are discarded whole, so drop it here: same picture and shadows, no rasterisation or fragment work.
+    if (ring_handoff_distance_meters > 0.0
+            && distance(ring_viewer_world_position, v_vertex) > ring_handoff_distance_meters + 3.0 * scale + 32.0) {
+        v_vertex.x = 0.0 / 0.0;
+    }
     VERTEX = (VIEW_MATRIX * vec4(v_vertex, 1.0)).xyz;
 }
 

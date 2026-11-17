@@ -62,7 +62,8 @@ func _run() -> void:
 	surface.SetHandoffDistance(84.0)
 	surface.UpdateCamera(Vector3(20, 30, 0))
 	_expect(body.transform.is_equal_approx(world) and old_body.transform.is_equal_approx(world), "rebase updates active and staged collision")
-	_expect(int(candidate.TerrainNode.get("mesh_lods")) == 2 and int(surface.TerrainNode.get("mesh_lods")) == 2 and int(candidate.TerrainNode.get("mesh_size")) == 32 and int(surface.TerrainNode.get("mesh_size")) == 32, "mesh tuning updates both residents")
+	# With the 84 m handoff, level 0 of a 32-cell mesh (124 m each side) covers everything Terrain3D may draw, so only one level is built (perf pass 0.15).
+	_expect(int(candidate.TerrainNode.get("mesh_lods")) == 1 and int(surface.TerrainNode.get("mesh_lods")) == 1 and int(candidate.TerrainNode.get("mesh_size")) == 32 and int(surface.TerrainNode.get("mesh_size")) == 32, "mesh tuning updates both residents (levels beyond the handoff are not built)")
 	await _physics_sync()
 	_expect(_ray_hits(surface, world, 10.0, old_body), "old ground remains live after staged rebase")
 	_expect(surface.ActivateStagedWindow(2), "first activation")
@@ -91,7 +92,7 @@ func _run() -> void:
 	_expect(_ray_hits(surface, world, 30.0, next_body), "second active collision uses forwarded world frame")
 	surface.SetMeshLods(3)
 	surface.SetMeshSize(48)
-	_expect(int(surface.TerrainNode.get("mesh_lods")) == 3 and int(surface.TerrainNode.get("mesh_size")) == 48, "active facade mesh tuning")
+	_expect(int(surface.TerrainNode.get("mesh_lods")) == 1 and int(surface.TerrainNode.get("mesh_size")) == 48, "active facade mesh tuning (one level reaches past the 84 m handoff)")
 	_expect(_same(surface.GetNativeHeight(Vector3.ZERO), 30.0), "active facade native query")
 	var mapped: Vector3 = surface.MapCanonicalPosition(20.25, 1004.5, 35.0)
 	var inverse: PackedFloat64Array = surface.GetCanonicalPosition(mapped)

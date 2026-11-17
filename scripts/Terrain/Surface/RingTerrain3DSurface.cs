@@ -111,6 +111,7 @@ public partial class RingTerrain3DSurface : Node3D
         if (_stagedPreparedSurface != null) _stagedPreparedSurface.SetHandoffDistance(meters);
         _handoffDistanceMeters = Mathf.Max(0.0f, meters);
         SetMaterialParameter(RingHandoffDistanceMetersName, _handoffDistanceMeters);
+        ApplyNativeMeshLods();
     }
 
     /// <summary>
@@ -247,7 +248,37 @@ public partial class RingTerrain3DSurface : Node3D
         if (_activePreparedSurface != null) { _activePreparedSurface.SetMeshLods(meshLods); _stagedPreparedSurface?.SetMeshLods(meshLods); _idlePreparedSurface?.SetMeshLods(meshLods); return; }
         if (_stagedPreparedSurface != null) _stagedPreparedSurface.SetMeshLods(meshLods);
         if (_terrain == null) return;
-        _terrain.Set("mesh_lods", Mathf.Clamp(meshLods, 1, 8));
+        ApplyNativeMeshLods();
+    }
+
+    /// <summary>
+    /// Clipmap levels Terrain3D actually builds. fragment() of terrain3d_ring_surface discards everything farther than the
+    /// handoff in every pass (the proxy terrain draws it), and level k reaches 2 * mesh_size cells of spacing * 2^k each side
+    /// of the camera. Levels that start beyond the handoff therefore never draw a pixel or a shadow texel; they only cost
+    /// vertex and shadow work (perf pass 0.15). The requested count is kept for every caller and the preference.
+    /// </summary>
+    internal static int EffectiveMeshLods(int requestedLods, int meshSize, float spacingMeters, float handoffMeters)
+    {
+        int requested = Mathf.Clamp(requestedLods, 1, 8);
+        if (!(handoffMeters > 0.0f) || !(spacingMeters > 0.0f) || meshSize <= 0) return requested;
+        int levels = 1;
+        // Level (levels - 1) must reach past the handoff, less up to two cells of clipmap snapping and an 8 m margin.
+        while (levels < requested)
+        {
+            float cell = spacingMeters * (1 << (levels - 1));
+            if (2.0f * meshSize * cell - 2.0f * cell >= handoffMeters + 8.0f) break;
+            levels++;
+        }
+        return levels;
+    }
+
+    private int NativeMeshLods => EffectiveMeshLods(_preparedMeshLods, _preparedMeshSize, WindowSpacingMeters, _handoffDistanceMeters);
+
+    private void ApplyNativeMeshLods()
+    {
+        if (_terrain == null) return;
+        int lods = NativeMeshLods;
+        if (_terrain.Get("mesh_lods").AsInt32() != lods) _terrain.Set("mesh_lods", lods);
     }
 
     /// <summary>Sets Terrain3D's native clipmap section size without changing the 2m height or collision lattice.</summary>
@@ -258,6 +289,7 @@ public partial class RingTerrain3DSurface : Node3D
         if (_stagedPreparedSurface != null) _stagedPreparedSurface.SetMeshSize(_preparedMeshSize);
         if (_terrain == null) return;
         _terrain.Set("mesh_size", _preparedMeshSize);
+        ApplyNativeMeshLods();
     }
 
     /// <summary>Configures a Terrain3DMaterial before tree entry so Terrain3D's initialize compiles the override shader once (no
@@ -275,7 +307,7 @@ public partial class RingTerrain3DSurface : Node3D
         _terrain!.Set("material", material);
         _terrainMaterial = null;
         _terrain.Set("collision_mode", 0);
-        if (setMeshLods) _terrain.Set("mesh_lods", _preparedMeshLods);
+        if (setMeshLods) _terrain.Set("mesh_lods", NativeMeshLods);
     }
 
     /// <summary>Terrain3D's GPU-picking MouseViewport renders once at creation and would draw the whole terrain (waiting on every terrain

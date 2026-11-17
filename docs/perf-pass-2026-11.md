@@ -283,6 +283,8 @@ Everything is under `.godot/perf_pass_real/` (ordinary test output, pruned after
 - Each run folder holds `report.json` (per-frame series and monitor rows per window), `console.log`, `power_log.csv` and `summary.md`; ablation tables are in `run1/ablations_plains_and_forest.md` and `run4_spawn/ablations_spawn.md`.
 - Driver `real_world_perf.gd`, runner `run_real.ps1` (isolated APPDATA, optimized DLL swap with restore, slot restore every run), `analyze.py` (tables, VSync estimate, `--hitch`), `ablate.py`, `poses_slot3_all.json`. The throwaway C# helper is saved as `TmpSlot3PerfProbe.cs.txt` and was removed from `tools/`.
 
+**Reusable benchmark.** The throwaway drivers above are replaced by `tools/perf_bench.ps1` (frozen slot 3 snapshot, fixed scenarios, A-A rounds, per-pass GPU, baseline deltas with a noise floor): see `docs/perf-bench.md`. Use it for any new before/after claim.
+
 Not measured: VSync on with the display on; the A1000; the 70 ms spikes' source; the megastorm; a storm in the real world.
 
 ### 0.10 Overnight results (2026-11-16)
@@ -679,6 +681,158 @@ The large GPU costs, near terrain and trees, are triangles (section 5). The CPU'
 - `gpub_run1/`: the three poses with 17 ablations each, the wet A/B and the stills; `report.json` holds the per-window `ts` segments and the shadow draw and primitive counts.
 - `gpub_run2/`: the cloud-shadow cadence at 5 and 2.5 Hz and an SSR repeat, at the plains and forest poses.
 - Driver `real_world_perf_gpub.gd`, runner `run_gpub.ps1`.
+
+### 0.15 Near terrain: where the terrain GPU time goes and what can go (2026-11-16)
+
+Question: near terrain was the largest item in 0.14 (4.5 to 5.1 ms of a 13 to 15.5 ms frame). Where does that time go, and how much can be cut without a visible change?
+
+**Answer in short.**
+- **The 0.14 bucket was not "near terrain".** Its ablation (`near_terrain_hidden`) hid the Terrain3D surface **and all 15 proxy LOD levels** (every `RingTerrainProxySector` level, out to 500 km, with their ocean and hull children). It also counted what appears behind hidden terrain (sky, clouds). And 0.14 ran the **Ultra** preset; the user now plays **High**.
+- **At High, the same bucket costs 1.8 to 2.4 ms** of main-viewport GPU at the save, plains and forest, and 3.0 ms of pre-sky passes at a valley pose looking up a slope (prepass plus opaque). **Switched to Ultra, it is 4.6 to 5.2 ms again**, so 0.14's figure is reproduced and nearly all of it is the proxy rings (4.5 to 5.3 ms at Ultra).
+- **Terrain3D (the near clipmap, 0 to 112 m) is the small part: 0.35 to 0.59 ms. The proxy rings are the large part: 1.3 to 2.0 ms.**
+- **Both are geometry-bound, not pixel-bound.** At half resolution the proxy rings cost the same, and Terrain3D 76 to 87 % as much. A flat fragment shader saves 0.15 to 0.41 ms on the proxies and 0.10 to 0.74 ms on Terrain3D.
+- **Terrain3D wasted most of its work.** It drew all six clipmap levels (380,000 triangles) in the prepass, the colour pass and both sun cascades, at every view direction, but only level 0 within the 112 m handoff can produce a pixel. Two identical changes are done (uncommitted): build only the levels that can draw, and drop vertices beyond the handoff. **Saving 0.16 to 0.28 ms at every pose; stills match the noise pair.**
+- **The proxy rings draw about 2.7 to 3.0 million triangles per camera pass**, about 230,000 to 330,000 per level whatever its distance. The 2 m level (Lod1) is the costliest single level (0.41 to 0.59 ms, including all proxy shadow casting). Levels 5 to 9 (4 to 500 km) together cost 0.58 to 0.68 ms for a thin band at the horizon.
+- **Further identical work:** proxy sectors wholly beyond their level's far fade are still drawn (about 10 % of proxy triangles in view at High): 0.08 to 0.16 ms at High, 0.4 to 1.4 ms at Ultra (order NT-2). Terrain3D's own shadow casting duplicates the proxy casters within 112 m: 0.05 to 0.13 ms, unchanged at noon (NT-4, needs a low-sun check). Everything bigger changes the image and needs the user's decision (section 4).
+
+**Method.**
+- Slot 3 copy through the real-world driver: `.godot/perf_pass_real/real_world_perf_nt.gd` (the 0.14 driver plus a `--nt` flow), runner `nt/run_nt.ps1` (GPU queue label `near-terrain`, isolated APPDATA, optimized C# swapped into the Debug slot and restored). Optimized C# built from HEAD `a785e4b` (runs r1 to r3) and HEAD plus NT-1 (r4 to r6).
+- 1600 x 900, VSync off, RTX 4070 at P0, **High** preset with the user's files (atlas 8,192 at 16-bit, 2 sun cascades 0 to 160 m and 160 to 400 m, tree near detail 10/20 m as the user set it, Terrain3D mesh LODs 6 from the user's `gameplay_surface_terrain_defaults.tres`, handoff 112 m). Noon with the clocks running.
+- Poses:
+  - **save**: 20,295.04 km around, 123.86 km across, 624 m, under a tree (`--force-pose`);
+  - **plains** (`plains_eye`) and **forest** (`forest_interior_eye`) from section 0.1;
+  - **slope**: the bottom of the steepest bowl near the old save (6,356,921 / 186,654, ground 1,210 m), looking up a 490 m rise (yaw 270).
+- Timing: A-X-A, 7 to 8 s windows, GPU p50. The main viewport is split by compositor timestamps: **prepass** (viewport start to `PRE_OPAQUE`) and **opaque** (`PRE_OPAQUE` to `POST_OPAQUE`, which also holds the sun shadow map). Noise between the two baselines around a case: 0.00 to 0.08 ms.
+- Counts: Godot's render info per pass (camera list = depth prepass and colour pass, which draw the same list; shadow = both cascades together), with Terrain3D or the proxies hidden, at four yaws per pose. A CPU census of every proxy mesh (custom AABB against the camera frustum, distance to the level's fades).
+- Fragment cost: the Terrain3D and proxy shaders were swapped at runtime for variants (flat: the discards only; no `light()`; no haze; no biome textures). The pixel share: the same hides at 50 % 3D scale.
+- Image checks: stills with clouds, grass and gust debris hidden and the clocks held, `ffmpeg_tools compare` against an A-A noise pair taken in the same sequence.
+
+**1. Where the time goes** (main-viewport GPU ms saved; prepass / opaque-plus-sun-map in brackets; r1 and r2, before the change):
+
+| part | save | plains | forest | slope |
+|---|---|---|---|---|
+| frame GPU, all viewports | 10.3 to 10.4 | 9.3 to 9.4 | 9.5 to 9.6 | 7.0 to 7.2 |
+| main viewport: prepass / opaque+sun map | 1.71 / 4.39 | 1.45 / 3.66 | 1.53 / 3.76 | 1.20 / 2.98 |
+| 0.14 bucket: Terrain3D + every proxy level hidden | 1.94 (0.64 / 1.39) | 2.39 (0.67 / 1.73) | 1.76 (0.57 / 1.23) | 0.97 (0.76 / 2.21; sky and clouds take over the freed pixels) |
+| **Terrain3D** hidden | 0.35 to 0.38 (0.05 / 0.31) | 0.46 to 0.47 (0.11 / 0.34) | 0.38 to 0.40 (0.06 / 0.33) | 0.58 to 0.59 (0.13 / 0.46) |
+| of which its sun-map casting | 0.25 | 0.26 | 0.30 | 0.32 |
+| **proxy rings** hidden | 1.59 to 1.61 (0.60 / 1.07) | 1.48 to 1.50 (0.56 / 0.95) | 1.33 to 1.35 (0.52 / 0.81) | 1.79 to 2.00 (0.59 / 1.16) |
+| of which proxy sun-map casting (Lod1 casters only) | 0.23 | 0.21 | 0.24 | 0.08 |
+| Lod1 (2 m, 112 to 493 m) hidden, incl. its casters | 0.45 | 0.46 | 0.41 | 0.59 |
+| Lod2 / Lod3 / Lod4 hidden | 0.12 / 0.17 / 0.18 | 0.14 / 0.11 / 0.09 | 0.13 / 0.08 / 0.10 | 0.00 / 0.13 / 0.08 |
+| Lod5 to Lod9 hidden (4 to 500 km; r5) | 0.58 (0.33 / 0.29) | 0.65 (0.28 / 0.29) | 0.67 (0.27 / 0.29) | 0.68 (0.27 / 0.28) |
+| at 50 % 3D scale: Terrain3D / proxies | 0.31 / 1.19 | 0.40 / 1.33 | 0.32 / 1.37 | 0.47 / 1.64 |
+| flat fragment shader: Terrain3D / proxies | 0.10 / 0.40 | 0.49 / 0.22 | 0.18 / 0.15 | 0.74 / 0.31 |
+
+- **Prepass against colour.** The proxies spend 0.52 to 0.60 ms in the depth prepass and 0.8 to 1.2 ms in the opaque span. Terrain3D spends only 0.04 to 0.13 ms in the prepass; almost all of its cost was in the opaque span, and most of that (0.25 to 0.32 ms) was its sun-map casting.
+- **Per cascade.** Terrain3D sent the same 380,000 triangles into both cascades (nothing of it is culled, see 2), so its casting splits evenly: about 0.13 to 0.16 ms per cascade. Only Lod1 of the proxies casts (the other levels have `CastTerrainShadows` off); by a census estimate, about 30 % of its caster triangles fall in cascade 0 (0 to 160 m) and 70 % in cascade 1; Godot culls the rest per cascade (0.37 to 0.42 M of the casters' 0.64 to 1.23 M triangles reach the map).
+- **Vertex against fragment.** Halving the resolution leaves the proxy cost unchanged (1.19 to 1.64 against 1.33 to 2.00 ms; the differences are within the pose-to-pose spread) and leaves 76 to 87 % of the Terrain3D cost. The fragment shader still matters where the terrain fills the screen (Terrain3D flat saves 0.49 to 0.74 ms on the plains and the slope): the triangles are so small near the horizon that the GPU shades mostly 2 x 2 quads that a triangle barely touches, so cheaper fragments help even though fewer pixels do not.
+- **Why 0.14 saw 4.5 to 5.1 ms.** At Ultra, Lod1 (2 m) reaches 650 to 800 m and Lod2 1,500 to 1,900 m instead of 320 to 450 and 800 to 1,100 m (`resources/voxel/ring_lod_ultra_video.tres` against `ring_lod_high.tres`), with a 0.85 px error target instead of 2.0. Measured at Ultra (r6, NT-1 already in; save / plains / slope):
+  - frame GPU, all viewports: 14.2 / 12.4 to 12.5 / 10.1 to 10.2 ms;
+  - the 0.14 bucket: **4.81 / 5.15 / 4.62 ms** (prepass 1.71 / 1.73 / 2.13);
+  - proxies: 4.54 / 4.47 / 5.28 ms, with **10.8 / 11.4 / 13.2 M proxy triangles per camera pass** (High: 2.7 to 3.0 M);
+  - Lod1 0.95 / 0.70 / 1.91 ms; Lod2 0.48 / 0.39 / 0.25 ms;
+  - Terrain3D 0.06 / 0.19 / 0.33 ms; NT-1 still saves 0.20 / 0.23 / 0.20 ms;
+  - the NT-2 oracle (sectors wholly beyond their far fade) saves **0.43 / 0.40 / 1.37 ms**.
+
+**2. Triangles per pass** (millions; camera list = depth prepass and colour pass each; shadow = both cascades):
+
+| | save | plains | forest | slope |
+|---|---|---|---|---|
+| terrain, camera list | 3.11 | 3.41 | 3.35 | 3.12 |
+| of which Terrain3D | 0.38 | 0.38 | 0.38 | 0.38 |
+| of which proxies | 2.73 | 3.03 | 2.97 | 2.74 |
+| terrain, shadow list | 1.14 | 1.18 | 1.16 | 1.16 |
+| of which Terrain3D | 0.76 | 0.76 | 0.76 | 0.76 |
+| of which proxy Lod1 casters | 0.37 | 0.42 | 0.40 | 0.40 |
+| terrain triangles submitted per frame (2 x camera + shadow) | 7.4 | 8.0 | 7.9 | 7.4 |
+
+- **Terrain3D is never frustum-culled.** Its triangle count is 380,000 in the camera list and 760,000 in the shadow list at every pose and at all four yaws. The Terrain3D node sits untransformed at the world origin and its shader moves the planar clipmap into the ring frame (`ring_frame_basis`, rotated about 37 degrees and with planar up mapped to a horizontal axis). To keep that safe, `RingTerrain3DSurface.ApplyWorldFrameMaterial` sets `cull_margin` to the window half-diagonal plus the height extent plus the frame offset (about 623 m), so every piece passes Godot's frustum and cascade tests.
+- **What of it can draw.** fragment() discards everything farther than the 112 m handoff (84 to 128 m in the menu) in every pass. Level 0 (2 m cells) reaches 192 m each side of the camera, so levels 1 to 5 (300,000 triangles, the 4 m to 64 m cells reaching out to 6 km, and mostly outside the 768 m height window where the vertex shader already writes NaN) never produce a pixel or a shadow texel. Of level 0's 80,000 triangles, about a quarter lie within the handoff and roughly a third of those in view: **about 2 % of the Terrain3D triangles submitted per pass can show.**
+- **The user's "Terrain3D mesh LODs" = 6** (default 4) is what made it 380,000; with the default it would be 260,000. The setting has no visible effect while the handoff is on.
+- **Mesh density.** Terrain3D level 0 and proxy Lod1 are both 2 m lattices, the same density as the height data. Each proxy level is about 70 sectors of 64 x 64 cells (8,704 triangles each, skirts included) whatever its cell size, so each level puts 210,000 to 340,000 triangles in view. Near the horizon those triangles are far below a pixel tall.
+- **Proxy triangles that cannot show** (census, triangles in the camera frustum):
+
+  | | save | plains | forest | slope |
+  |---|---|---|---|---|
+  | proxy triangles in view | 2.65 M | 2.96 M | 2.90 M | 2.66 M |
+  | in sectors wholly beyond their level's far fade (every fragment discarded) | 0.27 M (10 %) | 0.32 M (11 %) | 0.31 M (11 %) | 0.28 M (10 %) |
+  | in sectors wholly inside the next finer level's reach (vertex-collapsed by the coverage atlas, still vertex-processed) | 0.22 M (8 %) | 0.25 M (9 %) | 0.26 M (9 %) | 0.19 M (7 %) |
+  | in sectors wholly inside the near hole | 0 | 0 | 0 | 0 |
+
+- **Double coverage.** The proxies do not double-draw each other beyond the fade bands: each level discards inside its near fade or is collapsed where the finer level covers it. Terrain3D and Lod1 do overlap: Lod1 starts at the 112 m handoff while Terrain3D level 0 runs to 192 m (discarded there), and **within 112 m both cast sun shadows**, because the proxy shadow caster (`ring_terrain_proxy_shadow.gdshader`) has no near hole. Turning Terrain3D's casting off leaves noon stills unchanged (SSIM against the noise pair: 0.99966 / 0.99963, 0.99996 / 0.99994, 0.99998 / 0.99998, 0.99959 / 0.99962; same heatmaps); a low sun is not checked (NT-4).
+
+**3. The fragment shaders.**
+- **Terrain3D** (`materials/terrain3d_ring_surface.gdshader`) per pixel: 12 region-map lookups (each a loop over the 1,024-entry `_region_map` uniform) and 12 height `texelFetch`es for the smoothed normal and height, 4 colour fetches for biome weights, 6 biome albedo maps triplanar (up to 18 anisotropic taps; dirt skipped on fully flat ground), grass coverage, the analytic haze (`ring_haze_sample`), the local cloud shadow, wetness only while wet, and in `light()` the macro and planet shadow masks, the height-shadow clipmap, the shadow compose terms, contact shadows and PCF.
+  - Measured: `light()` 0.01 to 0.23 ms, haze 0.04 to 0.10, biome textures 0.00 to 0.20, everything (flat) 0.10 to 0.74. The rest of the flat saving is the 12 lookups and the normal.
+  - **Waste:** the three region lookups and the discard test come first, and in the shadow pass and for every fragment beyond the handoff they ran for nothing; the vertex drop (5) removes those fragments.
+- **Proxy** (`materials/ring_terrain_proxy.gdshader`): aperture and coverage discards, near and far fade discards, then a branchy biome triplanar (only the weights present), grass coverage, haze, the cloud and far-weather shadow, and in `light()` the height shadow, macro and planet masks, shadow terms and contact shadows. Measured: flat 0.15 to 0.40, `light()` 0.06 to 0.14, haze 0.05 to 0.08, biome textures 0.00 to 0.05. It is already lean; nothing large is computed and thrown away.
+- **Not worth it:** a cheaper triplanar or skipping layers at distance. Terrain3D only draws to 112 m, and the proxy texture work is at most 0.05 ms.
+
+**4. Options** (ms saved, measured unless marked est.; identical = no pixel can change by construction and stills match the noise pair; near-invisible = a change below what the stills show; image = needs the user's decision):
+
+| # | option | save / plains / forest / slope | image | status |
+|---|---|---|---|---|
+| NT-1 | **Terrain3D: build only the clipmap levels that can draw, drop vertices beyond the handoff** | **0.16 to 0.19 / 0.19 to 0.22 / 0.14 to 0.19 / 0.20 to 0.28** | identical | **done, uncommitted** (5) |
+| NT-2 | Proxy: take sectors wholly beyond their far fade (or inside the near hole) out of the camera layers; their casters are separate nodes and keep casting | High: 0.09 to 0.12 / 0.09 to 0.16 / 0.09 to 0.12 / 0.08 to 0.13; **Ultra: 0.43 / 0.40 / - / 1.37** | identical | order below |
+| NT-3 | Proxy: skip sectors whose every cell the coverage atlas marks covered (now vertex-collapsed, 7 to 9 % of proxy triangles in view) | est. 0.05 to 0.10 | identical | order below |
+| NT-4 | Terrain3D stops casting sun shadows; the proxy Lod1 casters (same 2 m lattice) already cover 0 to 112 m | after NT-1: 0.08 to 0.11 / 0.10 to 0.11 / 0.10 to 0.13 / 0.05 to 0.12 | near-invisible at noon (stills match the noise pair); low sun unchecked | order below; user sign-off |
+| NT-5 | Proper frustum culling of Terrain3D pieces (node transform = ring frame, real AABBs) | est. < 0.05 after NT-1 (80,000 triangles left, beyond-handoff ones already dropped) | identical | not worth it; needs Terrain3D's mesher to follow a transformed node (native rebuild) |
+| NT-6 | Proxy near-hole vertex collapse (oracle `proxy_holecollapse`) | 0.00 to 0.10 (noise) | identical | dropped |
+| NT-7 | Culling proxy pieces from cascades they cannot reach | 0 | | already done by Godot: only Lod1 casts, and its casters' custom AABBs are culled per cascade |
+| U-1 | Coarser far proxy levels: 32 x 32 sectors for Lod5 and beyond (4 km out), or a looser error target | est. half of the Lod5-9 cost (0.58 to 0.68 ms), so about 0.3 ms | image: distant silhouettes | user decision |
+| U-2 | Narrower Lod1 band: at High the 2 m proxy runs from 112 m to a 493 m handoff (`Lod1OutMeters` 320/450 in `ring_lod_high.tres`, widened by the screen-space selection); 240/320 as in the scene default | est. 0.15 to 0.25 (Lod1 is 0.41 to 0.59 ms) | image: the 4 m proxy from about 280 m | user decision; a preset value |
+| U-3 | Terrain3D fragment: drop the custom `light()` terms that matter little at 0 to 112 m | 0.01 to 0.23 | image | not recommended |
+| U-4 | Lower the user's terrain preset (Ultra to High already did this) | 0.14's 4.5 to 5.1 ms became 1.8 to 2.4 ms | image | already the user's choice |
+
+**5. Done: NT-1 (uncommitted).**
+- `scripts/Terrain/Surface/RingTerrain3DSurface.cs`: new `EffectiveMeshLods(requested, meshSize, spacing, handoff)` and `ApplyNativeMeshLods()`. Terrain3D is given only the levels whose reach (2 x mesh_size cells each side, less two cells of snapping) is needed to pass the handoff plus 8 m; with the shipped 48-cell mesh and any handoff from 84 to 128 m that is **one level**. The requested value is kept everywhere else (menu, preference, staging residents); with the handoff off (0) nothing changes. Re-applied when the handoff or mesh size changes. `RingTerrain3DSurface.PreparedWindow.cs` uses it at native creation.
+- `materials/terrain3d_ring_surface.gdshader`, `vertex()`: a vertex farther than handoff + 3 cells + 32 m from the viewer gets the same NaN the shader already writes for holes. Every triangle touching it lies wholly beyond the handoff (a triangle spans at most 2.5 cells across and the margin allows a 32 m height step over one cell), so fragment() would discard all of it; the same uniform drives both tests in every pass, shadows included.
+- `tools/terrain_generation_staging_test.gd`: its two native-`mesh_lods` expectations under an 84 m handoff now expect 1 (the clamp is the intended contract).
+- **Before/after** (r4, built with the change; "legacy" = the old shader code restored at runtime and `mesh_lods` 6; three A-X-A rounds per pose; GPU p50 of all viewports):
+
+  | pose | after | legacy | saved | prepass / opaque saved | noise |
+  |---|---|---|---|---|---|
+  | save | 10.21 to 10.26 | 10.40 to 10.41 | 0.16 to 0.19 | 0.00 / 0.18 to 0.19 | 0.01 to 0.03 |
+  | plains | 9.23 to 9.30 | 9.45 to 9.52 | 0.19 to 0.22 | 0.00 / 0.20 to 0.22 | 0.00 to 0.02 |
+  | forest | 9.41 to 9.53 | 9.63 to 9.64 | 0.14 to 0.19 | 0.00 / 0.14 to 0.19 | 0.01 to 0.06 |
+  | slope | 6.77 to 6.81 | 6.99 to 7.06 | 0.20 to 0.28 | 0.00 / 0.20 to 0.23 | 0.02 to 0.03 |
+
+  Terrain3D now submits 80,000 triangles per camera pass and 160,000 to the sun map (was 380,000 and 760,000). What Terrain3D still costs (r5, hidden against shown): 0.19 / 0.22 / 0.22 / 0.43 ms (was 0.35 to 0.59), of which sun-map casting 0.08 to 0.14 (was 0.25 to 0.32).
+- **Image.** Stills, after against legacy, with an after-after noise pair from the same sequence (`ffmpeg_tools compare`): SSIM of legacy against the two after stills, then of the after-after noise pair: save 0.99956 / 0.99967 against 0.99955; plains 0.99995 / 0.99994 against 0.99998; forest 0.99998 / 0.99998 against 0.99999; slope 0.99950 / 0.99972 against 0.99952. The heatmaps match the noise pairs: differences only in the sky (cloud shimmer) and in wind-moved distant trees on the horizon, which Terrain3D cannot reach. The oracles before the code change (runtime variants on HEAD) gave the same picture at all four poses.
+- **Tests:** `tools/run_tests.ps1 -Tests terrain_generation_staging_test,terrain3d_gameplay_smoke,terrain3d_surface_pilot_smoke,terrain_generation_playable_smoke,surface_terrain_settings_smoke,terrain3d_addon_smoke,terrain_lod_shadow_coverage_smoke_test,smooth_terrain_overlap_ownership_test,terrain3d_gameplay_stream_test,terrain_generation_world_smoke,terrain3d_godot48_compatibility_test,terrain3d_gameplay_native_test,terrain_surface_include_regression,terrain_cloud_receiver_gpu_test,terrain_storm_shadow_parity_smoke_test -Label near-terrain`: 15 of 15 pass (run 20261117-001437). The `-Files` selection is 108 tests, mostly terrain generation, which this change does not touch; leave it to the batch gate.
+- Not measured: the A1000; mesh sizes other than 48 (for 16 to 40 the formula keeps 2 or 3 levels; check with a still before shipping a smaller mesh size); the eclipse-hub and night lighting (the change is in geometry only, so lighting cannot interact).
+
+**6. Work orders.**
+
+**NT-2: proxy sectors beyond their far fade leave the camera (S/M, identical).**
+- Where: the proxy level's per-frame update (`RingTerrainProxySector`, the code that sets `camera_world_position` and the fade uniforms on the level material) or the coordinator's per-level camera update.
+- Change: for each sector node of a level with `far_fade_enabled`, when its custom AABB's nearest point is farther than the far handoff ((fade_out_start + fade_out_end) / 2) plus 1 m, set the sector's `Layers` to 0; restore when it comes back inside. With `near_fade_enabled`, the same when the AABB's farthest point is inside the near handoff minus 1 m. Touch only the sector `MeshInstance3D`; its `ShadowsOnly` caster child keeps its own layers (shadows unchanged). Only write `Layers` on a change; evaluate at most once per frame per level, or every few frames with a margin of the distance the camera can travel in between.
+- Proof: same fragments are discarded by the shader (`ring_terrain_proxy.gdshader` fragment), so identical by construction. Check with `.godot/perf_pass_real/real_world_perf_nt.gd` (`proxy_farcull` is the oracle) and stills against a noise pair at the four poses; flight at 240 m/s to watch for popping at the far-fade boundary (none expected; flicker check with `ffmpeg_tools flicker`).
+- Expected: 0.08 to 0.16 ms GPU at High, 0.4 to 1.4 ms at Ultra; also fewer draws (25 to 400 per frame).
+- Tests: `proxy_partial_coverage_test`, `terrain_lod_shadow_coverage_smoke_test`, `lod_altitude_activation_contract_test`, `proxy_coverage_culling_settings_smoke`.
+
+**NT-3: fully covered proxy sectors (S, identical; after NT-2).**
+- Sectors whose coverage-atlas rect is all covered are drawn as zero-area triangles (vertex collapse) but still pay vertex work, four atlas fetches per vertex included. When the level's CPU coverage mask (the source of the atlas) marks every cell of a sector covered and the finer level is resident (the same readiness gate the atlas uses), take the sector out of the camera layers as in NT-2.
+- Expected 0.05 to 0.10 ms est. Measure with an oracle first (hide the sectors the census marks covered); drop it if under 0.05 ms.
+
+**NT-4: Terrain3D stops casting sun shadows (S, near-invisible; user sign-off).**
+- Within the 112 m handoff both Terrain3D and the proxy Lod1 shadow casters cast into the sun map; Lod1 casters are the same 2 m lattice (`AlignSurfaceToTerrainSdf`, the canonical diagonal), so the map depth is nearly the same.
+- Change: `cast_shadows` = 0 on the gameplay Terrain3D nodes (`RingTerrain3DSurface`, where the native node is configured; prepared residents too).
+- Before shipping: stills at sun 5, 10 and 20 degrees at the slope pose and the save, against a noise pair (`real_world_perf_nt.gd` label `t3d_shadow_off`), and the shadow debug view (`ring_shadow_debug`) of the sun term. If the Lod1 caster misses any near self-shadow detail at low sun, drop the order.
+- Expected 0.05 to 0.13 ms after NT-1. Tests: `terrain_lod_shadow_coverage_smoke_test`, `terrain_storm_shadow_parity_smoke_test`, `shadow_compose_identity_gpu_test`.
+
+**U-1 / U-2 (user decisions).** Show the user the cost of the far proxy levels and of the 2 m Lod1 band with stills (Lod1 out 320/450 against 240/320; far levels at half the grid resolution), then decide. U-2 is a profile value (`resources/voxel/ring_lod_high.tres`); U-1 needs the far levels' sector grid made configurable (measure with an oracle first).
+
+**Evidence** (`.godot/perf_pass_real/nt/`; each run folder holds `report.json` with every window, the census and the per-yaw counts, plus `console.log`):
+- `r1/`: four poses, 18 ablations (hides, shadows, shader variants, half resolution, `mesh_lods`).
+- `r2/`: census, per-yaw counts, per-level proxy hides, the near-hole collapse oracle.
+- `r3/`: the vertex-drop and far-cull oracles and their combination.
+- `r4/`: built with NT-1: after against legacy, the per-sector census, and the stills `still_<pose>_{0_base,1_t3d_uncollapse_t3d_lods6,2_base}.png` with heatmaps `*_diff.png` (legacy against after; after against after).
+- `r5/`: built with NT-1: what Terrain3D and the proxies still cost, Lod5 to Lod9 hidden, Terrain3D shadows off with stills `still_<pose>_1_t3d_shadow_off.png` and heatmaps.
+- `r6/`: Ultra preset (`--graphics-preset=4`) at the save, plains and slope.
+- The oracle stills of r1 to r3 were compared and deleted; their SSIMs matched the noise pairs.
+- Scripts: driver `../real_world_perf_nt.gd` (its new part is `nt_part.gd.txt`), runner `run_nt.ps1` (takes the GPU queue as `near-terrain`), build `build_nt.ps1`, analysers `nt_an.py` (A-X-A deltas with the prepass / opaque split) and `census_an.py` (proxy triangles beyond the far fade or covered).
 
 ## 1. Summary (fixture world)
 
