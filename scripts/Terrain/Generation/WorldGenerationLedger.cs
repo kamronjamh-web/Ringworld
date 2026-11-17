@@ -13,7 +13,7 @@ public sealed class WorldGenerationLedger
 
     public static WorldGenerationLedger Production { get; } = new(
         new[] { new Row(1, "baseline", Array.Empty<string>(), "2026-11-10") },
-        new[] { new FeatureInfo("water.rivers", 0, "T2", 0) }, 1);
+        new[] { new FeatureInfo("water.rivers", 0, "T2", 0), new FeatureInfo("ground.surface", 2, "T4", 0) }, 1);
 
     private readonly Dictionary<string, FeatureInfo> _byId = new(StringComparer.Ordinal);
 

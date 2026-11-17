@@ -298,7 +298,7 @@ public partial class RingTerrain3DSurface : Node3D
     private void PreconfigureNativeBeforeTreeEntry(bool setMeshLods)
     {
         GodotObject material = ClassDB.Instantiate("Terrain3DMaterial").AsGodotObject() ?? throw new InvalidOperationException("Terrain3DMaterial native class is unavailable.");
-        Shader shader = GD.Load<Shader>("res://materials/terrain3d_ring_surface.gdshader") ?? throw new InvalidOperationException("Ring Terrain3D shader is missing.");
+        Shader shader = GD.Load<Shader>(RingGroundSurfaceVariants.Terrain3DShaderPath) ?? throw new InvalidOperationException("Ring Terrain3D shader is missing.");
         material.Set("world_background", 0);
         material.Set("shader_override", shader);
         material.Set("shader_override_enabled", true);
@@ -324,7 +324,7 @@ public partial class RingTerrain3DSurface : Node3D
         // global atmosphere revision.
         _atmosphereRevision = ulong.MaxValue;
         GodotObject material = _terrain!.Call("get_material").AsGodotObject() ?? throw new InvalidOperationException("Terrain3D did not initialize its material.");
-        Shader shader = GD.Load<Shader>("res://materials/terrain3d_ring_surface.gdshader") ?? throw new InvalidOperationException("Ring Terrain3D shader is missing.");
+        Shader shader = GD.Load<Shader>(RingGroundSurfaceVariants.Terrain3DShaderPath) ?? throw new InvalidOperationException("Ring Terrain3D shader is missing.");
         // The override shader is installed before tree entry (PreconfigureNativeBeforeTreeEntry).
         // Empty texture assets enable Terrain3D's diagnostic checkerboard by default.
         // The prototype shader supplies its own surface colours.

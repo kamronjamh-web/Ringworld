@@ -96,6 +96,8 @@
         "materials/terrain_gpu/**",
         "materials/terrain3d*",
         "materials/ring_surface*",
+        "materials/ring_ground_*",
+        "materials/ring_world_features*",
         "materials/voxel*",
         "native/**",
         "materials/ring_hull*",
@@ -6487,6 +6489,29 @@
       "marker": "TERRAIN_NEAR_LOD_PARITY_GPU_TEST",
       "expected_s": null,
       "timeout_s": 300
+    },
+    "terrain_rock_material_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "terrain",
+        "render-core"
+      ],
+      "marker": "TERRAIN_ROCK_MATERIAL",
+      "expected_s": 20,
+      "timeout_s": 60
+    },
+    "ground_surface_model_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "GROUND_SURFACE_MODEL",
+      "expected_s": 5,
+      "timeout_s": 60
     },
     "terrain_near_shadow_gpu_test": {
       "kind": "test",

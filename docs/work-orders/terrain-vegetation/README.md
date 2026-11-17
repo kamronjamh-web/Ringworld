@@ -47,7 +47,7 @@ Generation numbers are assigned when a phase freezes, in the order phases freeze
 | 5 | T3-10 | River sound: do you supply CC0 or CC-BY calm and rapids loops, or may an agent find them? | **Superseded 2026-11-14:** the loops are Stable Audio Open takes the user picked; real recordings are an option in the sound project (SFX-1). |
 | 6 | T3-1 | If no calibration reaches the danger targets, relax them? | Asked only if it happens. |
 | 7 | G2 | Swim the calm, fierce and torrent reaches and sign off before the rivers freeze. | — |
-| 8 | T4-1 | Rock texture: the existing alpine rock now, or wait for CC0 textures from T8? | Existing alpine rock now. |
+| 8 | T4-1 | Rock texture: the existing alpine rock now, or wait for CC0 textures from T8? | **Answered 2026-11-17: wait for T8 rock textures** (keep the alpine texture meanwhile; the T4 freeze waits). |
 | 9 | T6 | Split cost gate: new classes at most 0.3 ms and 16 draws, canopy within +5 % of generation 1, ground cover and far canopy at most 0.05 ms each. May trees cost more if the look needs it? | The split as stated. |
 | 10 | T5-2 | Does the 24-draw gate count shadow draws, and may it be relaxed? | Asked after T5-2 measures. |
 | 11 | all freezes | Freeze on 4070 numbers, or wait for the A1000 baseline? | The A1000 first. |

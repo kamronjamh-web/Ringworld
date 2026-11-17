@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Godot;
+using RingworldTechDemo.Terrain.Surface;
 
 namespace RingworldTechDemo.Terrain.Generation;
 
@@ -40,11 +41,17 @@ public static class WorldGeneration
             return false;
         }
         int mask = ledger.MaskFor(recipe.WorldGeneration, recipe.ReviewFeatures);
-        return PublishState(new WorldGenerationState(recipe.WorldGeneration, mask, recipe.ReviewFeatures, source));
+        if (!PublishState(new WorldGenerationState(recipe.WorldGeneration, mask, recipe.ReviewFeatures, source))) return false;
+        RingGroundSurfaceGlobals.PublishWorld(recipe);
+        return true;
     }
 
     public static bool PublishLegacy(string source)
-        => PublishState(new WorldGenerationState(1, 0, Array.Empty<string>(), source));
+    {
+        if (!PublishState(new WorldGenerationState(1, 0, Array.Empty<string>(), source))) return false;
+        RingGroundSurfaceGlobals.PublishWorld(null);
+        return true;
+    }
 
     public static bool Has(string id) => WorldGenerationLedger.Production.Has(Current.FeatureMask, id);
 

@@ -75,6 +75,14 @@ ringworld_world_features={
 "type": "int",
 "value": 0
 }
+ringworld_ground_world={
+"type": "vec4",
+"value": Vector4(40, 0, 0, 0)
+}
+ringworld_ground_look={
+"type": "vec4",
+"value": Vector4(38, 0.12, 1, 0)
+}
 ringworld_solar_visibility={
 "type": "float",
 "value": 1.0
