@@ -1,0 +1,37 @@
+{
+ "schema": 1,
+ "note": "Scenario list of tools/perf_bench.gd (docs/perf-bench.md). Poses come from the perf-pass doc sections 0.1 / 0.3 and tools/fixtures/tree_visibility_poses.json (slot 3, generator ringworld_surface_world_v9, seed 2028030306). Pose fields: around_m, across_m, yaw_deg, pitch_deg, then vertical_m (absolute height, noclip) or lift_m (metres above the ground there). Scenario kinds: stand (A-A windows at a pose), yaw_sweep (stand, then turn at deg_per_s), fly (noclip at speed_mps, W held, re-placed for every round). time is a shadow_harness_common.apply_time spec; the celestial and weather clocks keep running unless hold_clocks is true. quick = member of -Quick, still = -Stills takes one quiet still, vsync_pass = repeated with VSync on by -VsyncOn.",
+ "defaults": { "window_s": 12, "rounds": 2, "settle_s": 4, "time": { "mode": "noon" }, "hold_clocks": false },
+ "key_scopes": [
+  "Trees frame request", "Trees update (inclusive)", "Trees camera cull", "Trees output selection", "Trees install",
+  "Grass update (inclusive)", "Grass presentation (inclusive)", "Water update",
+  "Terrain macro shadow install", "Terrain macro shadow build", "Terrain LOD coordinator update (inclusive)",
+  "Terrain proxy update (inclusive)", "Terrain proxy install", "Far ring update (inclusive)"
+ ],
+ "poses": {
+  "save_spot": { "around_m": 20295044.84, "across_m": 123862.6, "vertical_m": 624.12, "yaw_deg": 144.49, "pitch_deg": 2.08, "notes": "the user's save spot during the 2026-11 perf pass (perf-pass doc 0.x, the nt/waste/gpub drivers): noclip hover at 624 m absolute" },
+  "spawn_9km": { "around_m": 6354521.27, "across_m": 189654.02, "vertical_m": 9011.34, "yaw_deg": 3.243, "pitch_deg": 3.76, "notes": "the old E1 pose: the earlier save, mountain ground 379 m, noclip at 9,011 m" },
+  "plains_eye": { "around_m": 6380021.26995006, "across_m": 166154.022585299, "lift_m": 1.7, "yaw_deg": 0.0, "pitch_deg": -3.0, "notes": "Plains on a 1.5 km ring, ground 741 m" },
+  "forest_edge_eye": { "around_m": 6382821.26995006, "across_m": 152404.022585299, "lift_m": 1.7, "yaw_deg": 225.0, "pitch_deg": 0.0, "notes": "edge, dense forest 100 m ahead, ground 635 m" },
+  "forest_interior_eye": { "around_m": 6381171.26995006, "across_m": 151854.022585299, "lift_m": 1.7, "yaw_deg": 0.0, "pitch_deg": 0.0, "notes": "dense forest, 6 trees within 30 m, ground 675 m" },
+  "forest_clearing_eye": { "around_m": 6382721.26995006, "across_m": 152604.022585299, "lift_m": 1.7, "yaw_deg": 0.0, "pitch_deg": 0.0, "notes": "clearing, ground 642 m" },
+  "coast_eye": { "around_m": 6338521.26995006, "across_m": 190404.022585299, "lift_m": 1.7, "yaw_deg": 112.5, "pitch_deg": -2.0, "notes": "land 3.8 m, ocean 250 m along yaw 112.5" },
+  "mountain_eye": { "around_m": 6354521.26995006, "across_m": 189654.022585299, "lift_m": 1.7, "yaw_deg": 0.0, "pitch_deg": -5.0, "notes": "ground of the old save, class Mountain, ground 379 m" }
+ },
+ "scenarios": [
+  { "name": "save_spot", "kind": "stand", "pose": "save_spot", "quick": true, "still": true, "vsync_pass": true },
+  { "name": "plains", "kind": "stand", "pose": "plains_eye", "quick": true, "still": true },
+  { "name": "forest_interior", "kind": "stand", "pose": "forest_interior_eye", "quick": true, "still": true, "vsync_pass": true },
+  { "name": "forest_edge", "kind": "stand", "pose": "forest_edge_eye", "still": true },
+  { "name": "forest_clearing", "kind": "stand", "pose": "forest_clearing_eye", "still": true },
+  { "name": "coast", "kind": "stand", "pose": "coast_eye", "still": true },
+  { "name": "mountain", "kind": "stand", "pose": "mountain_eye", "still": true },
+  { "name": "noon_9km", "kind": "stand", "pose": "spawn_9km", "quick": true, "still": true },
+  { "name": "night_plains", "kind": "stand", "pose": "plains_eye", "time": { "mode": "night_planet" }, "still": true },
+  { "name": "yaw_sweep_forest", "kind": "yaw_sweep", "pose": "forest_interior_eye", "deg_per_s": 360.0, "window_s": 10 },
+  { "name": "fly_72", "kind": "fly", "pose": "plains_eye", "lift_m": 150.0, "pitch_deg": 0.0, "speed_mps": 72.0, "window_s": 15 },
+  { "name": "fly_240", "kind": "fly", "pose": "plains_eye", "lift_m": 300.0, "pitch_deg": 0.0, "speed_mps": 240.0, "window_s": 15, "quick": true, "vsync_pass": true },
+  { "name": "fly_1200", "kind": "fly", "pose": "save_spot", "pitch_deg": 0.0, "speed_mps": 1200.0, "window_s": 15 },
+  { "name": "fly_36840", "kind": "fly", "pose": "save_spot", "pitch_deg": 0.0, "speed_mps": 36840.0, "window_s": 15 }
+ ]
+}

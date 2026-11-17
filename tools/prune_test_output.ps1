@@ -32,7 +32,8 @@ $keep = @(
   ".gdignore", "editor", "extension_list.cfg", "global_script_class_cache.cfg", "imported", "mono",
   "scene_groups_cache.cfg", "shader_cache", "uid_cache.bin",
   "gpu_queue", "shadow_baseline", "audit_baseline", "s5_before", "shadow_compose_identity_head_clouds", "shadow_compose_identity_storm_revamp_4070",
-  "terrain3d-native-src", "terrain3d-native-tools"
+  "terrain3d-native-src", "terrain3d-native-tools",
+  "perf_bench", "appdata_perf_bench"   # tools/perf_bench.ps1: kept reports and baselines (docs/perf-bench.md) and its one reused profile; the frozen world lives outside the repo
 ) + $Exclude
 
 function Get-EntrySize([IO.FileSystemInfo]$entry) {

@@ -7730,6 +7730,20 @@
       "profile": "own-runner",
       "runner": "tools/tree_visibility_run.ps1",
       "user_args": "-Test cull_verify"
+    },
+    "perf_bench": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "perf-telemetry"
+      ],
+      "marker": "PERF_BENCH",
+      "expected_s": 420,
+      "timeout_s": 3600,
+      "profile": "own-runner",
+      "runner": "tools/perf_bench.ps1",
+      "user_args": "-Label manifest -Quick"
     }
   }
 }
