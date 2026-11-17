@@ -951,6 +951,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 ServiceStructuralWallBuild();
             using (RingPerformanceTelemetry.MeasureCpu("Terrain proxy camera uniforms"))
                 UpdateCameraUniform();
+            ServiceCameraLayerCulling();
             ServiceCoverageSafetyInvalidation();
             using (RingworldTechDemo.Diagnostics.RingPerformanceTelemetry.MeasureCpu("Terrain proxy lighting uniforms"))
                 UpdateLightingUniforms();
@@ -1513,6 +1514,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
     private void RepositionActiveSectors(RingLodGeometrySnapshot geometry)
     {
         Transform3D ownerInverse = GlobalTransform.AffineInverse();
+        MarkCameraCullBoundsDirty();
         foreach ((RingTerrainSectorCoordinate coordinate, MeshInstance3D node) in _active)
         {
             Vector3 localOrigin = ResolveSectorLocalOrigin(coordinate, geometry, ownerInverse);
@@ -3124,6 +3126,134 @@ public partial class RingTerrainProxySector : MeshInstance3D
         bool retainsIndependentWater = _activeWaterSectors.Contains(coordinate);
         bool sectorActive = StreamingActive && !_transitHidden && !_warmUntil.ContainsKey(coordinate);
         node.Visible = sectorActive && ShouldRetainProxySurface(fullyCovered, retainsIndependentWater);
+    }
+
+    // Perf pass 0.15 (NT-2): a sector whose whole visual bound lies beyond the far handoff (or whole inside the near handoff) has every fragment
+    // discarded by ring_terrain_proxy.gdshader, so it leaves the camera layers. Its OpaqueShadowCaster child keeps its own layers, so shadows
+    // are unchanged. Only sectors that do not cast shadows themselves are touched. A water surface of the sector fades by the same distance (from its
+    // unmorphed source position) and has no near hole, so water sectors take part in the far cull only. The visual bound already holds the full
+    // geomorph reach, so a few metres of margin suffice. The verdict is re-evaluated only after the viewer has moved half the margin (a culled sector
+    // stays farther than the handoff), or when the handoffs, the sector set or the anchor change; between those the bounds stay cached.
+    private sealed class CameraCullEntry
+    {
+        public MeshInstance3D Node = null!;
+        public Vector3 Center, Half;
+        public bool Eligible, Water, Culled;
+        public uint Layers;
+    }
+
+    private readonly Dictionary<RingTerrainSectorCoordinate, CameraCullEntry> _cameraCullEntries = new();
+    private bool _cameraCullDirty = true;
+    private bool _cameraCullBoundsDirty = true;
+    private Vector3 _cameraCullViewer;
+    private float _cameraCullFarHandoff = -2.0f, _cameraCullNearHandoff = -2.0f;
+    private const float CameraCullMarginMeters = 8.0f;
+
+    /// <summary>Sectors currently out of the camera layers by the far/near handoff cull (diagnostics and tests).</summary>
+    public int CameraLayerCulledSectorCount
+    {
+        get
+        {
+            int count = 0;
+            foreach (CameraCullEntry entry in _cameraCullEntries.Values) if (entry.Culled) count++;
+            return count;
+        }
+    }
+
+    private bool _enableCameraLayerCulling = true;
+
+    /// <summary>Identical-by-construction perf cull of sectors beyond the far handoff; off only for A/B measurement and tests.</summary>
+    public bool EnableCameraLayerCulling
+    {
+        get => _enableCameraLayerCulling;
+        set { _enableCameraLayerCulling = value; _cameraCullDirty = true; }
+    }
+
+    private void MarkCameraCullBoundsDirty()
+    {
+        _cameraCullBoundsDirty = true;
+        _cameraCullDirty = true;
+    }
+
+    private void RefreshCameraCullBounds()
+    {
+        _cameraCullBoundsDirty = false;
+        Transform3D level = GlobalTransform;
+        foreach ((RingTerrainSectorCoordinate coordinate, MeshInstance3D node) in _active)
+        {
+            if (!_cameraCullEntries.TryGetValue(coordinate, out CameraCullEntry? entry))
+                _cameraCullEntries[coordinate] = entry = new CameraCullEntry();
+            if (!ReferenceEquals(entry.Node, node))
+            {
+                // A node that was freed or replaced under this coordinate keeps no culled state.
+                entry.Node = node;
+                entry.Culled = false;
+            }
+            entry.Eligible = false;
+            if (node.Mesh == null || node.CastShadow != ShadowCastingSetting.Off
+                || !_activeVisualBounds.TryGetValue(coordinate, out Aabb localBounds)
+                || !localBounds.Position.IsFinite() || !localBounds.Size.IsFinite()) continue;
+            Transform3D transform = _installedLocalPositions.TryGetValue(node, out Vector3 localPosition)
+                ? level * new Transform3D(Basis.Identity, localPosition)
+                : node.GlobalTransform;
+            Aabb bounds = transform * localBounds;
+            entry.Half = bounds.Size * 0.5f;
+            entry.Center = bounds.Position + entry.Half;
+            entry.Water = _activeWaterSectors.Contains(coordinate);
+            entry.Eligible = true;
+        }
+    }
+
+    private void ServiceCameraLayerCulling()
+    {
+        if (_focus == null) return;
+        float farHandoff = EnableFarFade && _enableCameraLayerCulling
+            ? (FadeOutStartMeters + Mathf.Max(FadeOutStartMeters + 1.0f, FadeOutEndMeters)) * 0.5f : -1.0f;
+        bool near = _uniformNearFadeEnabled == true && _enableCameraLayerCulling;
+        float nearHandoff = near ? (FadeStartMeters + Mathf.Max(FadeEndMeters, FadeStartMeters + 0.01f)) * 0.5f : -1.0f;
+        Vector3 viewer = _lastCameraWorldPosition;
+        if (!viewer.IsFinite()) return;
+        const float halfMargin = CameraCullMarginMeters * 0.5f;
+        if (!_cameraCullDirty
+            && farHandoff == _cameraCullFarHandoff && nearHandoff == _cameraCullNearHandoff
+            && viewer.DistanceSquaredTo(_cameraCullViewer) < halfMargin * halfMargin) return;
+        _cameraCullDirty = false;
+        _cameraCullViewer = viewer;
+        _cameraCullFarHandoff = farHandoff;
+        _cameraCullNearHandoff = nearHandoff;
+        if (_cameraCullBoundsDirty) RefreshCameraCullBounds();
+        float farLimit = farHandoff + CameraCullMarginMeters;
+        float nearLimit = nearHandoff - CameraCullMarginMeters;
+        foreach (CameraCullEntry entry in _cameraCullEntries.Values)
+        {
+            bool cull = false;
+            if (entry.Eligible)
+            {
+                Vector3 offset = viewer - entry.Center;
+                Vector3 absolute = new(Mathf.Abs(offset.X), Mathf.Abs(offset.Y), Mathf.Abs(offset.Z));
+                Vector3 outside = new(
+                    Mathf.Max(absolute.X - entry.Half.X, 0.0f),
+                    Mathf.Max(absolute.Y - entry.Half.Y, 0.0f),
+                    Mathf.Max(absolute.Z - entry.Half.Z, 0.0f));
+                if (farHandoff > 0.0f && outside.LengthSquared() > farLimit * farLimit) cull = true;
+                else if (near && !entry.Water && nearLimit > 0.0f && (absolute + entry.Half).LengthSquared() < nearLimit * nearLimit) cull = true;
+            }
+            if (cull == entry.Culled) continue;
+            entry.Culled = cull;
+            if (cull)
+            {
+                entry.Layers = entry.Node.Layers;
+                entry.Node.Layers = 0;
+            }
+            else entry.Node.Layers = entry.Layers;
+        }
+    }
+
+    private void ReleaseCameraCullEntry(RingTerrainSectorCoordinate coordinate, MeshInstance3D node)
+    {
+        if (!_cameraCullEntries.Remove(coordinate, out CameraCullEntry? entry)) return;
+        if (entry.Culled && ReferenceEquals(entry.Node, node)) node.Layers = entry.Layers;
+        _cameraCullDirty = true;
     }
 
     /// <summary>Terrain coverage may retire terrain, but never water without a water-ready replacement.</summary>
@@ -6004,6 +6134,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
             node.Visible = false;
             _active[data.Coordinate] = node;
             _activeVisualBounds[data.Coordinate] = data.VisualBounds;
+            ReleaseCameraCullEntry(data.Coordinate, node);
+            MarkCameraCullBoundsDirty();
             InstallFftWaterDemandMetadata(data);
             if (data.OceanIndices.Length > 0) _activeWaterSectors.Add(data.Coordinate);
             else _activeWaterSectors.Remove(data.Coordinate);
@@ -6306,6 +6438,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         SetOceanChildParameter(node, FftDistantOceanMaskRectName, Vector4.Zero);
         node.GetNodeOrNull<MeshInstance3D>("OpaqueShadowCaster")?.SetInstanceShaderParameter("coverage_atlas_rect", Vector4.Zero);
         node.Visible = false;
+        ReleaseCameraCullEntry(coordinate, node);
         ReleaseSectorSlot(coordinate, node);
         _installedMeshNodes.Remove(node);
         _installedLocalPositions.Remove(node);
