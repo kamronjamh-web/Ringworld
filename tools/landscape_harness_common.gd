@@ -440,6 +440,9 @@ static func go_pose(tree: SceneTree, game: Node, pose: Dictionary, time_name: St
 		heading: Dictionary = {}, settle_s := 2.0, idle_timeout_s := 300.0) -> Dictionary:
 	var info := {"pose": str(pose["name"]), "time_name": time_name}
 	var times: Dictionary = load_poses().get("times", {})
+	# NT-4 study: sun_<n>_set is any setting-sun elevation in degrees (sun_5_set, sun_10_set, ...) without a fixture row each.
+	if not times.has(time_name) and time_name.begins_with("sun_") and time_name.ends_with("_set") and time_name.trim_prefix("sun_").trim_suffix("_set").is_valid_float():
+		times[time_name] = {"mode": "elevation", "value": float(time_name.trim_prefix("sun_").trim_suffix("_set")), "rising": false}
 	if not times.has(time_name):
 		info["error"] = "unknown time '%s'" % time_name
 		return info

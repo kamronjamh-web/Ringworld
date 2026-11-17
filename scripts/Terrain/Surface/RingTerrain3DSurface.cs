@@ -292,6 +292,20 @@ public partial class RingTerrain3DSurface : Node3D
         ApplyNativeMeshLods();
     }
 
+    /// <summary>NT-4 study switch (default on): false stops the native Terrain3D clipmap casting sun shadows, leaving the Lod1 proxy casters to cover 0 to the handoff. Not shipped off; pictures first.</summary>
+    public bool CastSunShadows
+    {
+        get => _castSunShadows;
+        set
+        {
+            _castSunShadows = value;
+            _terrain?.Set("cast_shadows", value ? 1 : 0);
+            if (_activePreparedSurface != null) { _activePreparedSurface.CastSunShadows = value; if (_stagedPreparedSurface != null) _stagedPreparedSurface.CastSunShadows = value; if (_idlePreparedSurface != null) _idlePreparedSurface.CastSunShadows = value; }
+            else if (_stagedPreparedSurface != null) _stagedPreparedSurface.CastSunShadows = value;
+        }
+    }
+    private bool _castSunShadows = true;
+
     /// <summary>Configures a Terrain3DMaterial before tree entry so Terrain3D's initialize compiles the override shader once (no
     /// default-shader rebuilds, no NoiseTexture2D for the default shader's noise uniform). set_material runs Terrain3D's initialize, so
     /// collision_mode and mesh_lods set here also apply before the clipmap and collision are built.</summary>
@@ -308,6 +322,7 @@ public partial class RingTerrain3DSurface : Node3D
         _terrainMaterial = null;
         _terrain.Set("collision_mode", 0);
         if (setMeshLods) _terrain.Set("mesh_lods", NativeMeshLods);
+        if (!_castSunShadows) _terrain.Set("cast_shadows", 0);
     }
 
     /// <summary>Terrain3D's GPU-picking MouseViewport renders once at creation and would draw the whole terrain (waiting on every terrain

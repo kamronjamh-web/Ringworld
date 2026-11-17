@@ -1,0 +1,25 @@
+{
+ "schema": 1,
+ "note": "NT-4 shadow stills (docs/perf-pass-2026-11.md 0.15, NT-4): save, slope and forest poses of the slot 3 copy at sun 5, 10, 20 degrees and noon, still only. Run with tools/perf_bench.ps1 -ScenarioFile tools/fixtures/nt4_shadow_stills.json -Stills -WindowScale 0.05 -Rounds 1; set PERF_BENCH_NODE_PROPS to Terrain3DGameplay/Terrain3DSurface:CastSunShadows=false for the off run. Same schema as perf_bench_scenarios.json.",
+ "defaults": { "window_s": 2, "rounds": 1, "settle_s": 2, "time": { "mode": "noon" }, "hold_clocks": true },
+ "key_scopes": [ "Terrain proxy update (inclusive)" ],
+ "poses": {
+  "save_spot": { "around_m": 20295044.84, "across_m": 123862.6, "vertical_m": 624.12, "yaw_deg": 144.49, "pitch_deg": 2.08, "notes": "the user's save spot during the 2026-11 perf pass (perf-pass doc 0.x, the nt/waste/gpub drivers): noclip hover at 624 m absolute" },
+  "forest_interior_eye": { "around_m": 6381171.26995006, "across_m": 151854.022585299, "lift_m": 1.7, "yaw_deg": 0.0, "pitch_deg": 0.0, "notes": "dense forest, 6 trees within 30 m, ground 675 m" },
+  "slope_up": { "around_m": 6356921.0, "across_m": 186654.0, "lift_m": 1.7, "yaw_deg": 270.0, "pitch_deg": 5.0, "notes": "bottom of a steep bowl looking up a 490 m rise (perf-pass doc 0.15)" }
+ },
+ "scenarios": [
+  { "name": "save_sun5", "kind": "stand", "pose": "save_spot", "time": { "mode": "elevation", "value": 5.0, "rising": false }, "still": true },
+  { "name": "save_sun10", "kind": "stand", "pose": "save_spot", "time": { "mode": "elevation", "value": 10.0, "rising": false }, "still": true },
+  { "name": "save_sun20", "kind": "stand", "pose": "save_spot", "time": { "mode": "elevation", "value": 20.0, "rising": false }, "still": true },
+  { "name": "save_sunnoon", "kind": "stand", "pose": "save_spot", "time": { "mode": "noon" }, "still": true },
+  { "name": "slope_sun5", "kind": "stand", "pose": "slope_up", "time": { "mode": "elevation", "value": 5.0, "rising": false }, "still": true },
+  { "name": "slope_sun10", "kind": "stand", "pose": "slope_up", "time": { "mode": "elevation", "value": 10.0, "rising": false }, "still": true },
+  { "name": "slope_sun20", "kind": "stand", "pose": "slope_up", "time": { "mode": "elevation", "value": 20.0, "rising": false }, "still": true },
+  { "name": "slope_sunnoon", "kind": "stand", "pose": "slope_up", "time": { "mode": "noon" }, "still": true },
+  { "name": "forest_sun5", "kind": "stand", "pose": "forest_interior_eye", "time": { "mode": "elevation", "value": 5.0, "rising": false }, "still": true },
+  { "name": "forest_sun10", "kind": "stand", "pose": "forest_interior_eye", "time": { "mode": "elevation", "value": 10.0, "rising": false }, "still": true },
+  { "name": "forest_sun20", "kind": "stand", "pose": "forest_interior_eye", "time": { "mode": "elevation", "value": 20.0, "rising": false }, "still": true },
+  { "name": "forest_sunnoon", "kind": "stand", "pose": "forest_interior_eye", "time": { "mode": "noon" }, "still": true }
+ ]
+}

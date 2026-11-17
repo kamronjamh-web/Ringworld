@@ -32,6 +32,7 @@ public partial class RingTerrain3DSurface
         var active = new RingTerrain3DSurface { Name = "RingTerrain3DGameplayActive" };
         AddChild(active);
         active.SetSmoothTerrainShading(_smoothTerrainShading);
+        active._castSunShadows = _castSunShadows;
         active.SetWorldFrame(_worldFrame);
         active.SetHandoffDistance(_handoffDistanceMeters);
         active.SetMeshLods(_preparedMeshLods);
@@ -55,6 +56,7 @@ public partial class RingTerrain3DSurface
         var idle = new RingTerrain3DSurface { Name = "RingTerrain3DGameplayIdle", Visible = false, _stagingCandidate = true, _isBudgetedPreparation = true };
         AddChild(idle);
         idle.SetSmoothTerrainShading(_smoothTerrainShading);
+        idle._castSunShadows = _castSunShadows;
         idle.SetWorldFrame(_worldFrame);
         idle.SetHandoffDistance(_handoffDistanceMeters);
         idle.SetMeshLods(_preparedMeshLods);
@@ -110,6 +112,7 @@ public partial class RingTerrain3DSurface
         };
         AddChild(candidate);
         candidate.SetSmoothTerrainShading(_smoothTerrainShading);
+        candidate._castSunShadows = _castSunShadows;
         candidate.SetWorldFrame(_worldFrame);
         candidate.SetHandoffDistance(_handoffDistanceMeters);
         candidate.SetMeshLods(_preparedMeshLods);

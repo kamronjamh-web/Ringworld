@@ -157,6 +157,14 @@ static func setup(tree: SceneTree, marker: String, weather_pose_report := "t0") 
 		ctx["feature_off_hook"] = off_hook
 		ctx["record"]["feature_off"] = {"spec": off_spec, "bit": int(off_resolved["bit"]), "world_mask": int(off_hook.call("WorldMask")), "published_mask": off_mask, "shader_readback": int(off_hook.call("ShaderMask"))}
 		print("%s feature off: %s published mask 0x%x (world mask 0x%x), hook last published 0x%x" % [marker, off_spec, off_mask, int(off_hook.call("WorldMask")), int(off_hook.call("ShaderMask"))])
+	# NT-4 study: `--t3d-shadows-off` stops the native Terrain3D clipmap casting sun shadows (RingTerrain3DSurface.CastSunShadows) for the whole run; the Lod1 proxy casters remain.
+	if harness_flag("--t3d-shadows-off"):
+		var t3d_surface := game.get_node_or_null("Terrain3DGameplay/Terrain3DSurface")
+		if t3d_surface == null:
+			push_error("%s=FAIL --t3d-shadows-off: Terrain3DGameplay/Terrain3DSurface is missing" % marker)
+			return {"game": game, "fixture_root": booted["fixture_root"]}
+		t3d_surface.set("CastSunShadows", false)
+		ctx["record"]["t3d_shadows_off"] = true
 	if harness_flag("--quiet"):
 		ctx["quiet"] = TREE_VIS.quiet_scene(game)
 		ctx["record"]["quiet_scene"] = ctx["quiet"]
@@ -300,60 +308,68 @@ static func run_look(ctx: Dictionary) -> Dictionary:
 	var out_dir := H.baseline_dir(str(machine["tag"]), "t0", "look", ctx["booted"]["world_tag"])
 	H.copy_prefs_snapshot(ctx["booted"], out_dir)
 	var depth_effect := H.install_depth_effect(ctx["world_environment"])
-	var times := COMMON.csv_arg("--times=")
+	var times := harness_csv("--times=")
 	if times.is_empty():
 		times = PackedStringArray(["noon", "sun_8_set"])
 	var views: Array = []
 	var failures: Array = []
 	var first := true
-	for pose in t0_poses():
-		for time_name in times:
-			var info: Dictionary = await H.go_pose(tree, ctx["game"], pose, time_name, ctx["ground_model"])
-			if first and not info.has("error"):
-				await _disable_auto_exposure(ctx)
-				first = false
-			var view_name := "%s__%s" % [pose["name"], time_name]
-			var weather := H.weather_at(ctx["game"], float(pose["around_m"]), float(pose["across_m"]))
-			var view := {"view": view_name, "pose": pose["name"], "time": time_name, "go_pose": info, "weather": weather}
-			if info.has("error"):
-				view["failure"] = str(info["error"])
-				failures.append("%s: %s" % [view_name, view["failure"]])
+	var variants: Array = [""]
+	if harness_flag("--t3d-shadow-ab"):
+		variants = ["on", "off", "on2"]
+	var t3d_surface_ab := (ctx["game"] as Node).get_node_or_null("Terrain3DGameplay/Terrain3DSurface")
+	for variant in variants:
+		if variant != "" and t3d_surface_ab != null:
+			t3d_surface_ab.set("CastSunShadows", variant != "off")
+			await COMMON.settle(tree, 1.0)
+		for pose in t0_poses():
+			for time_name in times:
+				var info: Dictionary = await H.go_pose(tree, ctx["game"], pose, time_name, ctx["ground_model"])
+				if first and not info.has("error"):
+					await _disable_auto_exposure(ctx)
+					first = false
+				var view_name: String = ("%s__%s" % [pose["name"], time_name]) + ("" if variant == "" else "__" + variant)
+				var weather := H.weather_at(ctx["game"], float(pose["around_m"]), float(pose["across_m"]))
+				var view := {"view": view_name, "pose": pose["name"], "time": time_name, "go_pose": info, "weather": weather}
+				if info.has("error"):
+					view["failure"] = str(info["error"])
+					failures.append("%s: %s" % [view_name, view["failure"]])
+					views.append(view)
+					continue
+				var shot: Dictionary = await H.capture(tree, depth_effect)
+				var image: Image = shot["image"]
+				var w := image.get_width()
+				var h := image.get_height()
+				var distance := BANDS.distance_from_depth(shot["depth"], w, h)
+				var table := BANDS.compute(image, distance, w, h, 2)
+				image.save_png(out_dir.path_join(view_name + ".png"))
+				BANDS.band_image(distance, w, h).save_png(out_dir.path_join(view_name + "_bands.png"))
+				var total := 0.0
+				var weight := 0.0
+				for row in table:
+					if int(row["pixels"]) > 0:
+						total += float(row["mean_luma"]) * float(row["share"])
+						weight += float(row["share"])
+				var mean_luma := total / maxf(weight, 0.000001)
+				var idle := bool(info.get("streaming_idle", false)) and bool(info.get("streaming_idle_after", false))
+				view.merge({"size": [w, h], "depth_available": not (shot["depth"] as Dictionary).is_empty(), "band_table": table, "adjacent_steps": BANDS.adjacent_steps(table),
+					"non_empty_bands": BANDS.non_empty_bands(table), "mean_luma": mean_luma, "sun_elevation_deg": info.get("sun_elevation_deg", NAN), "streaming_idle": idle})
+				var why := ""
+				if weather.has("error"):
+					why = str(weather["error"])
+				elif ctx["weather"]["mode"] == "clear" and float(weather["precipitation"]) > H.CLEAR_PRECIPITATION_MAX:
+					why = "weather not clear"
+				elif mean_luma <= 0.01:
+					why = "view is black (mean linear luma %.4f)" % mean_luma
+				elif time_name == "sun_8_set" and absf(float(info.get("sun_elevation_deg", NAN)) - 8.0) > 0.5:
+					why = "sun elevation %.2f is not within 0.5 of 8" % float(info.get("sun_elevation_deg", NAN))
+				elif not idle:
+					why = "streaming not idle (before=%s after=%s)" % [str(info.get("streaming_idle")), str(info.get("streaming_idle_after"))]
+				if why != "":
+					view["failure"] = why
+					failures.append("%s: %s" % [view_name, why])
 				views.append(view)
-				continue
-			var shot: Dictionary = await H.capture(tree, depth_effect)
-			var image: Image = shot["image"]
-			var w := image.get_width()
-			var h := image.get_height()
-			var distance := BANDS.distance_from_depth(shot["depth"], w, h)
-			var table := BANDS.compute(image, distance, w, h, 2)
-			image.save_png(out_dir.path_join(view_name + ".png"))
-			BANDS.band_image(distance, w, h).save_png(out_dir.path_join(view_name + "_bands.png"))
-			var total := 0.0
-			var weight := 0.0
-			for row in table:
-				if int(row["pixels"]) > 0:
-					total += float(row["mean_luma"]) * float(row["share"])
-					weight += float(row["share"])
-			var mean_luma := total / maxf(weight, 0.000001)
-			var idle := bool(info.get("streaming_idle", false)) and bool(info.get("streaming_idle_after", false))
-			view.merge({"size": [w, h], "depth_available": not (shot["depth"] as Dictionary).is_empty(), "band_table": table, "adjacent_steps": BANDS.adjacent_steps(table),
-				"non_empty_bands": BANDS.non_empty_bands(table), "mean_luma": mean_luma, "sun_elevation_deg": info.get("sun_elevation_deg", NAN), "streaming_idle": idle})
-			var why := ""
-			if weather.has("error"):
-				why = str(weather["error"])
-			elif ctx["weather"]["mode"] == "clear" and float(weather["precipitation"]) > H.CLEAR_PRECIPITATION_MAX:
-				why = "weather not clear"
-			elif mean_luma <= 0.01:
-				why = "view is black (mean linear luma %.4f)" % mean_luma
-			elif time_name == "sun_8_set" and absf(float(info.get("sun_elevation_deg", NAN)) - 8.0) > 0.5:
-				why = "sun elevation %.2f is not within 0.5 of 8" % float(info.get("sun_elevation_deg", NAN))
-			elif not idle:
-				why = "streaming not idle (before=%s after=%s)" % [str(info.get("streaming_idle")), str(info.get("streaming_idle_after"))]
-			if why != "":
-				view["failure"] = why
-				failures.append("%s: %s" % [view_name, why])
-			views.append(view)
-			print("%s view %s luma=%.3f sun=%.2f bands=%d idle=%s %s" % [marker, view_name, mean_luma, float(info.get("sun_elevation_deg", NAN)), BANDS.non_empty_bands(table), str(idle), why])
+				print("%s view %s luma=%.3f sun=%.2f bands=%d idle=%s %s" % [marker, view_name, mean_luma, float(info.get("sun_elevation_deg", NAN)), BANDS.non_empty_bands(table), str(idle), why])
 	var references: Array = []
 	for name in REFERENCE_SET:
 		for view in views:

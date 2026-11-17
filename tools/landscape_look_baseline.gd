@@ -51,5 +51,6 @@ func _fail(message: String) -> void:
 		return
 	finished = true
 	push_error("%s=FAIL %s" % [MARKER, message])
+	quit(1) # quit first: it only takes effect at the end of the frame, so a failing cleanup cannot leave the run hanging
 	BASE.cleanup(ctx)
-	quit(1)
+
