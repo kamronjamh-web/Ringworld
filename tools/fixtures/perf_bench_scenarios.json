@@ -16,7 +16,10 @@
   "forest_interior_eye": { "around_m": 6381171.26995006, "across_m": 151854.022585299, "lift_m": 1.7, "yaw_deg": 0.0, "pitch_deg": 0.0, "notes": "dense forest, 6 trees within 30 m, ground 675 m" },
   "forest_clearing_eye": { "around_m": 6382721.26995006, "across_m": 152604.022585299, "lift_m": 1.7, "yaw_deg": 0.0, "pitch_deg": 0.0, "notes": "clearing, ground 642 m" },
   "coast_eye": { "around_m": 6338521.26995006, "across_m": 190404.022585299, "lift_m": 1.7, "yaw_deg": 112.5, "pitch_deg": -2.0, "notes": "land 3.8 m, ocean 250 m along yaw 112.5" },
-  "mountain_eye": { "around_m": 6354521.26995006, "across_m": 189654.022585299, "lift_m": 1.7, "yaw_deg": 0.0, "pitch_deg": -5.0, "notes": "ground of the old save, class Mountain, ground 379 m" }
+  "mountain_eye": { "around_m": 6354521.26995006, "across_m": 189654.022585299, "lift_m": 1.7, "yaw_deg": 0.0, "pitch_deg": -5.0, "notes": "ground of the old save, class Mountain, ground 379 m" },
+  "hill_forest_valley_eye": { "around_m": 6375100.0, "across_m": 147700.0, "lift_m": 1.7, "yaw_deg": 90.0, "pitch_deg": 0.0, "notes": "forest valley floor, ground 674 m, 200 m rise within 600 m (tree-occlusion study, docs/occlusion-culling-plan.md section 9)" },
+  "hill_forest_valley2_eye": { "around_m": 6375400.0, "across_m": 162100.0, "lift_m": 1.7, "yaw_deg": 90.0, "pitch_deg": 0.0, "notes": "forest valley, ground 760 m, 134 m rise within 600 m (section 9)" },
+  "mountain_valley_eye": { "around_m": 6359300.0, "across_m": 184200.0, "lift_m": 1.7, "yaw_deg": 0.0, "pitch_deg": 0.0, "notes": "mountain valley floor, ground 507 m, 289 m rise within 600 m, sparse trees (section 9)" }
  },
  "scenarios": [
   { "name": "save_spot", "kind": "stand", "pose": "save_spot", "quick": true, "still": true, "vsync_pass": true },
@@ -26,6 +29,9 @@
   { "name": "forest_clearing", "kind": "stand", "pose": "forest_clearing_eye", "still": true },
   { "name": "coast", "kind": "stand", "pose": "coast_eye", "still": true },
   { "name": "mountain", "kind": "stand", "pose": "mountain_eye", "still": true },
+  { "name": "hill_forest_valley", "kind": "stand", "pose": "hill_forest_valley_eye", "still": true },
+  { "name": "hill_forest_valley2", "kind": "stand", "pose": "hill_forest_valley2_eye", "still": true },
+  { "name": "mountain_valley", "kind": "stand", "pose": "mountain_valley_eye", "still": true },
   { "name": "noon_9km", "kind": "stand", "pose": "spawn_9km", "quick": true, "still": true },
   { "name": "night_plains", "kind": "stand", "pose": "plains_eye", "time": { "mode": "night_planet" }, "still": true },
   { "name": "yaw_sweep_forest", "kind": "yaw_sweep", "pose": "forest_interior_eye", "deg_per_s": 360.0, "window_s": 10 },
