@@ -33,10 +33,32 @@ public sealed class GameplayLodTransitionDefaults
             GameplayLodTransitionSettings? loaded = ResourceLoader.Load<GameplayLodTransitionSettings>(
                 GetPath(), cacheMode: ResourceLoader.CacheMode.Ignore);
             if (loaded == null) LastError = "Invalid LOD transition settings";
-            else Settings.IntermediateLodTiersEnabled = loaded.IntermediateLodTiersEnabled;
+            else
+            {
+                Settings.IntermediateLodTiersEnabled = loaded.IntermediateLodTiersEnabled;
+                Settings.FarProxyErrorScale = SanitizeFarProxyErrorScale(loaded.FarProxyErrorScale);
+            }
         }
         catch (Exception error) { LastError = error.Message; }
         Dirty = false;
+    }
+
+    public void Reset()
+    {
+        Settings = new GameplayLodTransitionSettings();
+        Dirty = true;
+    }
+
+    public static float SanitizeFarProxyErrorScale(float value)
+        => float.IsFinite(value) ? Mathf.Clamp(value, 1f, 4f) : 1f;
+
+    public bool SetFarProxyErrorScale(float value)
+    {
+        value = SanitizeFarProxyErrorScale(value);
+        if (Settings.FarProxyErrorScale == value) return false;
+        Settings.FarProxyErrorScale = value;
+        Dirty = true;
+        return true;
     }
 
     public bool SetIntermediateLodTiersEnabled(bool enabled)

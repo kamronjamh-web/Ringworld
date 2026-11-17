@@ -76,6 +76,9 @@ public partial class RingLodPauseMenu : CanvasLayer
     private GameplayProxyCoverageCullingDefaults _proxyCoverageCullingDefaults = new();
     private double _proxyCoverageCullingSaveElapsed;
     private double _proxyCoverageCullingRetryElapsed;
+    private GameplayLodTransitionDefaults _lodTransitionDefaults = new();
+    private double _lodTransitionSaveElapsed;
+    private double _lodTransitionRetryElapsed;
     private RingCertificationMonitor? _certificationMonitor;
     private double _renderResolutionSaveElapsed;
     private double _renderResolutionRetryElapsed;
@@ -116,6 +119,8 @@ public partial class RingLodPauseMenu : CanvasLayer
         _renderResolutionDefaults.Load((int)DefaultUpscalingPreset);
         _proxyCoverageCullingDefaults.Load();
         ApplySavedProxyCoverageCulling();
+        _lodTransitionDefaults.Load();
+        _coordinator?.SetFarProxyErrorScale(_lodTransitionDefaults.Settings.FarProxyErrorScale);
         BuildMenu();
         ApplySavedRenderResolution(updateStatus: false);
         _renderResolutionReady = true;
@@ -154,6 +159,14 @@ public partial class RingLodPauseMenu : CanvasLayer
             if (_proxyCoverageCullingSaveElapsed >= 0.5
                 && (_proxyCoverageCullingDefaults.LastError.Length == 0 || _proxyCoverageCullingRetryElapsed >= 5.0))
                 FlushProxyCoverageCullingSettings();
+        }
+        if (_lodTransitionDefaults.Dirty)
+        {
+            _lodTransitionSaveElapsed += delta;
+            _lodTransitionRetryElapsed += delta;
+            if (_lodTransitionSaveElapsed >= 0.5
+                && (_lodTransitionDefaults.LastError.Length == 0 || _lodTransitionRetryElapsed >= 5.0))
+                FlushLodTransitionSettings();
         }
         if (_renderResolutionReady && _renderResolutionDefaults.Settings.Preset == (int)UpscalingPreset.Auto
             && ResolveAutoForCurrentState() != _lastAutoResolved)
@@ -541,6 +554,7 @@ public partial class RingLodPauseMenu : CanvasLayer
         if (session != null && session.HasMethod("end_play_session")) session.Call("end_play_session");
         FlushRenderResolutionSettings();
         FlushProxyCoverageCullingSettings();
+        FlushLodTransitionSettings();
         GetTree().Paused = false;
         Input.MouseMode = Input.MouseModeEnum.Visible;
         Error changed = GetTree().ChangeSceneToFile("res://scenes/StartMenu.tscn");
@@ -680,6 +694,23 @@ public partial class RingLodPauseMenu : CanvasLayer
         _proxyCoverageCullingSaveElapsed = 0.0;
         _proxyCoverageCullingRetryElapsed = 0.0;
         return _proxyCoverageCullingDefaults.Save();
+    }
+
+    /// <summary>Far proxy terrain coarseness (1 = off, 1..4); persisted and applied live.</summary>
+    public void SetFarProxyErrorScale(float scale)
+    {
+        bool changed = _lodTransitionDefaults.SetFarProxyErrorScale(scale);
+        _coordinator?.SetFarProxyErrorScale(_lodTransitionDefaults.Settings.FarProxyErrorScale);
+        if (changed) { _lodTransitionSaveElapsed = 0.0; _lodTransitionRetryElapsed = 0.0; }
+    }
+
+    public float FarProxyErrorScale => _lodTransitionDefaults.Settings.FarProxyErrorScale;
+
+    public bool FlushLodTransitionSettings()
+    {
+        _lodTransitionSaveElapsed = 0.0;
+        _lodTransitionRetryElapsed = 0.0;
+        return _lodTransitionDefaults.Save();
     }
 
     public string GetPartialCoverageMeshCullingStatus() => BuildProxyCoverageCullingStatus();
@@ -1063,6 +1094,7 @@ public partial class RingLodPauseMenu : CanvasLayer
                 RestoreGameplayHud();
                 FlushRenderResolutionSettings();
                 FlushProxyCoverageCullingSettings();
+                FlushLodTransitionSettings();
             }
             _menuOpen = open;
         }
@@ -1079,6 +1111,7 @@ public partial class RingLodPauseMenu : CanvasLayer
     {
         FlushRenderResolutionSettings();
         FlushProxyCoverageCullingSettings();
+        FlushLodTransitionSettings();
         base._ExitTree();
     }
 

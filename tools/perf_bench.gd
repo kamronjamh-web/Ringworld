@@ -5,6 +5,7 @@ extends SceneTree
 ## per scenario, A-A rounds of one window each (stand / yaw_sweep / fly), with per-frame wall, frame setup, main-thread process, render CPU and GPU,
 ## draw calls, primitives, VRAM, GC, per-viewport GPU, every RingPerformanceGpu detailed interval and the key CPU scopes.
 ## Args (after --): --out=<abs dir> --scenarios=<abs json> [--select=all|quick|a,b] [--vsync-pass] [--stills] [--rounds=N] [--window-scale=F]
+## Poses may be {"poi": "weather_lung"|"emitter", "viewpoint": N}, reached through the live tuning drawer's teleports. Scenarios of kind "ssr_fade" run last, after the stills.
 ## Verdict line: PERF_BENCH=PASS when every selected scenario completed (stills and the VSync pass included), PERF_BENCH=FAIL <reason> otherwise.
 ## It refuses to run when user:// is not the isolated appdata_perf_bench profile, so it can never touch the player's save.
 
@@ -26,6 +27,7 @@ var held := {}
 var t_start := 0
 var spec := {}
 var key_scopes: PackedStringArray = []
+var quiet_done := false
 
 
 func _initialize() -> void:
@@ -119,6 +121,40 @@ func _run() -> void:
 		return
 	monitor.set("Enabled", true)
 	monitor.set("DetailedGpuEnabled", true)
+	# A/B of debug switches on the tree layer: PERF_BENCH_TREE_PROPS="TreeDropFaintInstances=1,TreeShadowCulling=0" (environment, applied once after boot).
+	var tree_props := OS.get_environment("PERF_BENCH_TREE_PROPS")
+	if tree_props != "" and trees != null:
+		for pair in tree_props.split(",", false):
+			var kv := pair.split("=")
+			if kv.size() == 2:
+				trees.set(kv[0].strip_edges(), kv[1].strip_edges() == "1")
+				_log("tree prop %s = %s" % [kv[0], kv[1]])
+		report["tree_props"] = tree_props
+	# A/B of node properties anywhere in the game: PERF_BENCH_NODE_PROPS="WetWorld:SsrPolicyTargetOverride=0;Node/Path:Prop=1.5" (numbers, true/false).
+	var node_props := OS.get_environment("PERF_BENCH_NODE_PROPS")
+	if node_props != "":
+		for item in node_props.split(";", false):
+			var colon := item.find(":")
+			var target := game.get_node_or_null(item.substr(0, colon).strip_edges()) if colon > 0 else null
+			var rest := item.substr(colon + 1).strip_edges() if colon > 0 else ""
+			if target != null and rest.ends_with(")") and rest.find("(") > 0:
+				# Method call with numeric arguments: WetWorld:ForceUniform(0.02,0.02,0,0)
+				var open := rest.find("(")
+				var call_args: Array = []
+				for a in rest.substr(open + 1, rest.length() - open - 2).split(",", false):
+					call_args.append(float(a.strip_edges()))
+				target.callv(rest.substr(0, open), call_args)
+				_log("node call %s.%s%s" % [item.substr(0, colon), rest.substr(0, open), str(call_args)])
+				continue
+			var kv := rest.split("=") if colon > 0 else PackedStringArray()
+			if target == null or kv.size() != 2:
+				report["errors"].append("PERF_BENCH_NODE_PROPS: cannot apply '%s'" % item)
+				continue
+			var text := kv[1].strip_edges()
+			var value: Variant = (text == "true") if text in ["true", "false"] else float(text)
+			target.set(kv[0].strip_edges(), value)
+			_log("node prop %s = %s" % [item.substr(0, colon), str(value)])
+		report["node_props"] = node_props
 	report["state"] = _state()
 	report["spawn_pose"] = COMMON.pose_now(game)
 	_log("booted in %.1f s; spawn pose %s" % [float(report["boot_s"]), str(report["spawn_pose"])])
@@ -126,6 +162,8 @@ func _run() -> void:
 	_write()
 	# ---------------------------------------------------------------- scenarios
 	var failed := 0
+	var ssr_scenarios := chosen.filter(func(s): return String(s["kind"]) == "ssr_fade")
+	chosen = chosen.filter(func(s): return String(s["kind"]) != "ssr_fade")
 	for sc in chosen:
 		var result := await _scenario(sc, false)
 		report["scenarios"].append(result)
@@ -146,6 +184,11 @@ func _run() -> void:
 		await _stills(chosen)
 		for s in report["stills"]:
 			failed += 1 if s.has("error") else 0
+	for sc in ssr_scenarios:
+		var result := await _ssr_fade(sc)
+		report["scenarios"].append(result)
+		failed += 1 if result.has("error") else 0
+		_write()
 	if failed > 0:
 		_finish(1, "%d scenario(s) or stills failed: see driver_report.json" % failed)
 		return
@@ -185,7 +228,11 @@ func _scenario(sc: Dictionary, vsync_on: bool) -> Dictionary:
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	var speed := float(sc.get("speed_mps", 0.0))
 	var began := Time.get_ticks_msec()
-	_place(pose, sc, speed)
+	var place_error: String = await _place(pose, sc, speed)
+	if place_error != "":
+		result["error"] = "placement: %s" % place_error
+		_log("scenario %s FAILED: %s" % [name, result["error"]])
+		return result
 	await COMMON.settle(self, 0.4)
 	var idle: bool = await COMMON.wait_builds_idle(self, game, 180.0)
 	var time_info := _apply_time(_opt(sc, "time"), bool(_opt(sc, "hold_clocks")))
@@ -195,9 +242,22 @@ func _scenario(sc: Dictionary, vsync_on: bool) -> Dictionary:
 		return result
 	await COMMON.settle(self, float(_opt(sc, "settle_s")))
 	idle = idle and await COMMON.wait_builds_idle(self, game, 90.0)
-	result["setup"] = {"idle": idle, "settle_ms": Time.get_ticks_msec() - began, "reached": COMMON.pose_now(game), "time": time_info,
-		"ground_m": float(surface.call("SampleHeight", float(pose["around_m"]), float(pose["across_m"])))}
-	_log("  placed, idle=%s after %d ms, sun %.1f deg" % [str(idle), int(result["setup"]["settle_ms"]), float(time_info.get("sun_elevation_deg", NAN))])
+	var reached: Dictionary = COMMON.pose_now(game)
+	var ground_at := Vector2(float(pose["around_m"]), float(pose["across_m"])) if not pose.has("poi") else Vector2(float(reached["around"]), float(reached["across"]))
+	result["setup"] = {"idle": idle, "settle_ms": Time.get_ticks_msec() - began, "reached": reached, "time": time_info,
+		"ground_m": float(surface.call("SampleHeight", ground_at.x, ground_at.y))}
+	# Wet world and engine SSR state at the start of the windows (the SSR-only-while-wet policy depends on both).
+	var wet := game.get_node_or_null("WetWorld")
+	var env_node := game.get_node_or_null("WorldEnvironment") as WorldEnvironment
+	result["setup"]["wet_valid"] = wet.get("Valid") if wet != null else null
+	result["setup"]["ssr_enabled"] = env_node.environment.ssr_enabled if env_node != null and env_node.environment != null else null
+	result["setup"]["ssr_policy_weight"] = wet.get("SsrPolicyWeight") if wet != null else null
+	result["setup"]["ssr_gate_wet_signal"] = wet.get("SsrGateWetSignal") if wet != null else null
+	result["setup"]["ssr_gate_wet"] = wet.get("SsrGateWet") if wet != null else null
+	result["setup"]["ssr_gate_poi_near"] = wet.get("SsrGatePoiNear") if wet != null else null
+	_log("  placed, idle=%s after %d ms, sun %.1f deg, wet_valid=%s ssr=%s weight=%s gate wet=%s (signal %s) poi=%s" % [str(idle), int(result["setup"]["settle_ms"]), float(time_info.get("sun_elevation_deg", NAN)),
+		str(result["setup"]["wet_valid"]), str(result["setup"]["ssr_enabled"]), str(result["setup"]["ssr_policy_weight"]), str(result["setup"]["ssr_gate_wet"]),
+		str(result["setup"]["ssr_gate_wet_signal"]), str(result["setup"]["ssr_gate_poi_near"])])
 	for r in rounds:
 		var tag := "%s_r%d" % [name, r]
 		var w: Dictionary
@@ -205,7 +265,11 @@ func _scenario(sc: Dictionary, vsync_on: bool) -> Dictionary:
 		if kind == "fly":
 			if r > 0:
 				DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
-				_place(pose, sc, speed)
+				var replace_error: String = await _place(pose, sc, speed)
+				if replace_error != "":
+					result["error"] = "re-placement: %s" % replace_error
+					DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+					return result
 				await COMMON.settle(self, 0.4)
 				await COMMON.wait_builds_idle(self, game, 120.0)
 				DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_ENABLED if vsync_on else DisplayServer.VSYNC_DISABLED)
@@ -229,20 +293,76 @@ func _scenario(sc: Dictionary, vsync_on: bool) -> Dictionary:
 	return result
 
 
-func _place(pose: Dictionary, sc: Dictionary, speed: float) -> void:
+## Returns "" on success, an error text otherwise. POI poses go through the live tuning drawer's teleports (as shadow_harness_common.go_pose).
+func _place(pose: Dictionary, sc: Dictionary, speed: float) -> String:
+	if pose.has("poi"):
+		return await _place_poi(pose)
 	var a := float(pose["around_m"])
 	var z := float(pose["across_m"])
 	var yaw := float(sc.get("yaw_deg", pose.get("yaw_deg", 0.0)))
 	var pitch := float(sc.get("pitch_deg", pose.get("pitch_deg", 0.0)))
 	if pose.has("vertical_m") and not sc.has("lift_m"):
 		probe.PlaceNoclip(explorer, a, float(pose["vertical_m"]), z, yaw, pitch, speed)
-		return
+		return ""
 	var ground := float(surface.call("SampleHeight", a, z))
 	var lift := float(sc.get("lift_m", pose.get("lift_m", 1.7)))
 	if speed > 0.0:
 		probe.PlaceNoclip(explorer, a, ground + lift, z, yaw, pitch, speed)
 	else:
 		explorer.call("TeleportToCanonicalMeters", a, ground + lift, z, yaw, pitch, true)
+	return ""
+
+
+func _place_poi(pose: Dictionary) -> String:
+	var drawer := game.get_node_or_null("LiveTuningDrawer")
+	if drawer == null:
+		return "LiveTuningDrawer missing"
+	var viewpoint := int(pose.get("viewpoint", 0))
+	var kind := String(pose["poi"])
+	var state_prop := ""
+	var message_prop := ""
+	var streamer: Node = null
+	if kind == "emitter":
+		var site := int(drawer.call("FindEmitterSite", "main"))
+		if site < 0 or not bool(drawer.call("RequestEmitterTeleport", site, viewpoint)):
+			return "emitter teleport refused (site %d)" % site
+		state_prop = "EmitterTeleportState"
+		message_prop = "EmitterTeleportMessage"
+	elif kind == "weather_lung":
+		streamer = game.get_node_or_null("WeatherLung")
+		if streamer == null or not bool(drawer.call("RequestWeatherLungTeleport", viewpoint)):
+			return "weather lung teleport refused (streamer %s)" % str(streamer != null)
+		state_prop = "WeatherLungTeleportState"
+		message_prop = "WeatherLungTeleportMessage"
+	else:
+		return "unknown poi kind '%s'" % kind
+	var start := Time.get_ticks_msec()
+	while Time.get_ticks_msec() - start < 180000:
+		await physics_frame
+		var state := str(drawer.get(state_prop))
+		if state == "Arrived":
+			break
+		if state == "Failed" or state == "TimedOut":
+			return "%s teleport %s: %s" % [kind, state, str(drawer.get(message_prop))]
+	if str(drawer.get(state_prop)) != "Arrived":
+		return "%s teleport did not arrive within 180 s" % kind
+	if kind == "emitter":
+		var landing := 0
+		while landing < 180 and not bool(explorer.get("NoclipEnabled")) and not bool(explorer.call("is_on_floor")):
+			landing += 1
+			await physics_frame
+	else:
+		if viewpoint != 2:
+			var attach_start := Time.get_ticks_msec()
+			while int(streamer.get("DetailState")) != 2 and Time.get_ticks_msec() - attach_start < 120000:
+				await physics_frame
+			if int(streamer.get("DetailState")) != 2:
+				return "weather lung detail never attached: " + str(streamer.call("DescribeStatus"))
+		var controller: Node = streamer.get("Controller")
+		if controller != null:
+			controller.call("ScrubTo", COMMON.WEATHER_LUNG_FROZEN_PHASE)
+			controller.set("FreezePhase", true)
+	return ""
 
 
 ## Sets the celestial state at the explorer's spot; the clocks run again from there unless hold_clocks.
@@ -279,7 +399,7 @@ func _release_keys() -> void:
 func _stills(chosen: Array) -> void:
 	var dir := out_dir.path_join("stills")
 	DirAccess.make_dir_recursive_absolute(dir)
-	var hidden := false
+	var hidden := quiet_done
 	for sc in chosen:
 		if not bool(sc.get("still", false)):
 			continue
@@ -287,7 +407,11 @@ func _stills(chosen: Array) -> void:
 		var entry := {"name": name, "pose_name": String(sc["pose"])}
 		var pose: Dictionary = spec["poses"][String(sc["pose"])]
 		DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
-		_place(pose, sc, 0.0)
+		var place_error: String = await _place(pose, sc, 0.0)
+		if place_error != "":
+			entry["error"] = "placement: %s" % place_error
+			report["stills"].append(entry)
+			continue
 		await COMMON.settle(self, 0.4)
 		await COMMON.wait_builds_idle(self, game, 180.0)
 		var time_info := _apply_time(_opt(sc, "time"), true)
@@ -301,6 +425,7 @@ func _stills(chosen: Array) -> void:
 			entry["hidden"] = TVW.quiet_scene(game)
 			TVW.hide_overlays(game)
 			hidden = true
+			quiet_done = true
 		TVW.freeze_world(game)
 		report["still_noise"] = TVW.freeze_noise(self, game, PackedStringArray(["clouds", "taa"]))
 		for _i in 20:
@@ -317,6 +442,157 @@ func _stills(chosen: Array) -> void:
 		report["stills"].append(entry)
 		_log("still %s -> %s" % [name, path])
 		_write()
+
+
+# ------------------------------------------------------------------ ssr fade
+
+func _ssr_env() -> Environment:
+	var env_node := game.get_node_or_null("WorldEnvironment") as WorldEnvironment
+	if env_node != null and env_node.environment != null:
+		return env_node.environment
+	return root.world_3d.environment if root.world_3d != null else null
+
+
+## Runs frames until `until` is true (an empty Callable: none) plus extra_s more, at most max_s. Without grab_dir it records per frame wall ms,
+## SsrPolicyWeight and env ssr_enabled into rec; with grab_dir every frame is saved as f%05d.png (rec["frame_index"] counts across calls) and only
+## the ssr_enabled flips are noted. Returns the first and last recorded frame index.
+func _ssr_frames(wet: Node, env: Environment, rec: Dictionary, until: Callable, extra_s: float, max_s: float, grab_dir: String) -> Vector2i:
+	var first: int = rec["ms"].size() if grab_dir == "" else int(rec["frame_index"])
+	var begin := Time.get_ticks_usec()
+	if not rec.has("last_us"):
+		rec["last_us"] = begin
+	var reached_at := -1
+	while true:
+		TVW.hold_wind()
+		await RenderingServer.frame_post_draw
+		var now := Time.get_ticks_usec()
+		var enabled: bool = env.ssr_enabled if env != null else false
+		var flipped: bool = rec.has("last_enabled") and bool(rec["last_enabled"]) != enabled
+		rec["last_enabled"] = enabled
+		if grab_dir != "":
+			var idx := int(rec["frame_index"])
+			var img := TVW.grab(self)
+			img.save_png(grab_dir.path_join("f%05d.png" % idx))
+			rec["frame_index"] = idx + 1
+			if flipped:
+				rec["flip_indices"].append(idx)
+		else:
+			rec["ms"].append(float(now - int(rec["last_us"])) * 0.001)
+			rec["weight"].append(float(wet.get("SsrPolicyWeight")))
+			rec["enabled"].append(enabled)
+			if flipped:
+				rec["flip_frames"].append(rec["ms"].size() - 1)
+		rec["last_us"] = now
+		if reached_at < 0 and (until.is_null() or bool(until.call())):
+			reached_at = now
+		if reached_at >= 0 and float(now - reached_at) * 0.000001 >= extra_s:
+			break
+		if float(now - begin) * 0.000001 > max_s:
+			rec["timeouts"] += 1
+			break
+	var last: int = (rec["ms"].size() if grab_dir == "" else int(rec["frame_index"])) - 1
+	return Vector2i(first, last)
+
+
+func _ssr_fade(sc: Dictionary) -> Dictionary:
+	var name := String(sc["name"])
+	var pose: Dictionary = spec["poses"][String(sc["pose"])]
+	var result := {"name": name, "kind": "ssr_fade", "pose_name": String(sc["pose"]), "pose": pose, "vsync": false, "window_s": 0.0, "rounds": [], "setup": {}}
+	_log("scenario %s (ssr_fade)" % name)
+	_release_keys()
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+	var wet := game.get_node_or_null("WetWorld")
+	if wet == null or wet.get("SsrPolicyWeight") == null:
+		result["error"] = "ssr policy not available"
+		_log("scenario %s FAILED: %s" % [name, result["error"]])
+		return result
+	var began := Time.get_ticks_msec()
+	var place_error: String = await _place(pose, sc, 0.0)
+	if place_error != "":
+		result["error"] = "placement: %s" % place_error
+		_log("scenario %s FAILED: %s" % [name, result["error"]])
+		return result
+	await COMMON.settle(self, 0.4)
+	var idle: bool = await COMMON.wait_builds_idle(self, game, 180.0)
+	var time_info := _apply_time(_opt(sc, "time"), true)
+	if time_info.has("error"):
+		result["error"] = "time of day: %s" % String(time_info["error"])
+		_log("scenario %s FAILED: %s" % [name, result["error"]])
+		return result
+	await COMMON.settle(self, float(_opt(sc, "settle_s")))
+	idle = idle and await COMMON.wait_builds_idle(self, game, 90.0)
+	if not quiet_done:
+		report["ssr_quiet"] = TVW.quiet_scene(game)
+		TVW.hide_overlays(game)
+		quiet_done = true
+	TVW.freeze_world(game)
+	report["still_noise"] = TVW.freeze_noise(self, game, PackedStringArray(["clouds", "taa"]))
+	result["setup"] = {"idle": idle, "settle_ms": Time.get_ticks_msec() - began, "reached": COMMON.pose_now(game), "time": time_info}
+	var env := _ssr_env()
+	var dir := out_dir.path_join("ssr_fade")
+	DirAccess.make_dir_recursive_absolute(dir)
+	var summary := {"stills": [], "frame_dir": "", "toggle_count_before": int(wet.get("SsrToggleCount"))}
+	# a. weight stills
+	for w in [1.0, 0.75, 0.5, 0.25, 0.1, 0.0]:
+		wet.set("SsrPolicyWeightOverride", w)
+		for _i in 20:
+			TVW.hold_wind()
+			await process_frame
+		await RenderingServer.frame_post_draw
+		var img := TVW.grab(self)
+		var path := dir.path_join("%s_w%d.png" % [name, roundi(w * 100.0)])
+		if img.save_png(path) != OK:
+			result["error"] = "save_png failed (%s)" % path
+		summary["stills"].append(path)
+	wet.set("SsrPolicyWeightOverride", -1.0)
+	# b. timing pass (no grabs)
+	var at_full := func() -> bool: return float(wet.get("SsrPolicyWeight")) >= 0.999
+	var at_zero := func() -> bool: return float(wet.get("SsrPolicyWeight")) <= 0.0001
+	var rec := {"ms": [], "weight": [], "enabled": [], "flip_frames": [], "timeouts": 0}
+	wet.set("SsrPolicyTargetOverride", 1.0)
+	await _ssr_frames(wet, env, {"ms": [], "weight": [], "enabled": [], "flip_frames": [], "timeouts": 0}, at_full, 0.0, 10.0, "")
+	var steady := await _ssr_frames(wet, env, rec, Callable(), 1.0, 5.0, "")
+	wet.set("SsrPolicyTargetOverride", 0.0)
+	var out_range := await _ssr_frames(wet, env, rec, at_zero, 2.0, 30.0, "")
+	wet.set("SsrPolicyTargetOverride", 1.0)
+	var in_range := await _ssr_frames(wet, env, rec, at_full, 2.0, 30.0, "")
+	var ms: Array = rec["ms"]
+	var sorted := ms.duplicate()
+	sorted.sort()
+	var flip_ms: Array = []
+	for i in rec["flip_frames"]:
+		flip_ms.append(ms[i])
+	summary["max_frame_ms"] = sorted[sorted.size() - 1] if not sorted.is_empty() else 0.0
+	summary["median_frame_ms"] = sorted[sorted.size() / 2] if not sorted.is_empty() else 0.0
+	summary["flip_frame_ms"] = flip_ms
+	summary["flip_frames"] = rec["flip_frames"]
+	summary["timing_ranges"] = {"steady": [steady.x, steady.y], "fade_out": [out_range.x, out_range.y], "fade_in": [in_range.x, in_range.y]}
+	var timeouts := int(rec["timeouts"])
+	# c. frame pass (every frame saved)
+	var frames_dir := dir.path_join("%s_frames" % name)
+	DirAccess.make_dir_recursive_absolute(frames_dir)
+	summary["frame_dir"] = frames_dir
+	var frec := {"ms": [], "frame_index": 0, "flip_indices": [], "timeouts": 0}
+	wet.set("SsrPolicyTargetOverride", 1.0)
+	await _ssr_frames(wet, env, {"ms": [], "weight": [], "enabled": [], "flip_frames": [], "timeouts": 0}, at_full, 0.0, 10.0, "")
+	await _ssr_frames(wet, env, frec, Callable(), 0.5, 5.0, frames_dir)
+	var before_out := int(frec["frame_index"])
+	wet.set("SsrPolicyTargetOverride", 0.0)
+	var f_out := await _ssr_frames(wet, env, frec, at_zero, 1.0, 30.0, frames_dir)
+	await _ssr_frames(wet, env, frec, Callable(), 0.5, 5.0, frames_dir)
+	var before_in := int(frec["frame_index"])
+	wet.set("SsrPolicyTargetOverride", 1.0)
+	var f_in := await _ssr_frames(wet, env, frec, at_full, 1.0, 30.0, frames_dir)
+	summary["frame_ranges"] = {"fade_out": [before_out, f_out.y], "fade_in": [before_in, f_in.y], "total": int(frec["frame_index"])}
+	summary["frame_flip_indices"] = frec["flip_indices"]
+	summary["timeouts"] = timeouts + int(frec["timeouts"])
+	# d. release
+	wet.set("SsrPolicyTargetOverride", -1.0)
+	summary["toggle_count_after"] = int(wet.get("SsrToggleCount"))
+	result["ssr_fade"] = {"summary": summary, "ms": rec["ms"], "weight": rec["weight"], "enabled": rec["enabled"]}
+	_log("ssr_fade %s: max %.2f ms, median %.2f ms, flips %s ms, toggles %d -> %d, frames %d, timeouts %d" % [name, float(summary["max_frame_ms"]), float(summary["median_frame_ms"]),
+		str(flip_ms), int(summary["toggle_count_before"]), int(summary["toggle_count_after"]), int(frec["frame_index"]), int(summary["timeouts"])])
+	return result
 
 
 # ------------------------------------------------------------------ measurement

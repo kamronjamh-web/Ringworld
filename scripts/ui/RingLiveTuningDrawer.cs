@@ -79,6 +79,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
     private Label? _effectiveCloudHandoffStatus;
     private CheckButton? _partialCoverageMeshCullingToggle;
     private Label? _partialCoverageMeshCullingStatus;
+    private HSlider? _proxyFarErrorScaleSlider;
     private GameplayCloudDefaults _cloudDefaults = null!;
     private Label? _cloudSaveStatus;
     private double _cloudSaveDelay, _cloudSaveRetryDelay;
@@ -939,10 +940,42 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         _partialCoverageMeshCullingStatus = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted };
         coverage.AddChild(_partialCoverageMeshCullingStatus);
         RefreshPartialCoverageMeshCullingStatus();
+        _proxyFarErrorScaleSlider = AddProxyDetailSlider(
+            handoff, "ProxyFarErrorScale", "Far terrain coarseness", 1, 4, 0.25,
+            _lodPauseMenu?.FarProxyErrorScale ?? 1f,
+            "Coarser proxy terrain beyond about 4 km: 1 = full detail. 2 halves the detail of distant terrain and saves about 0.3 ms.",
+            value => _lodPauseMenu?.SetFarProxyErrorScale((float)value));
+    }
+
+    private HSlider AddProxyDetailSlider(
+        VBoxContainer parent, string name, string label, double min, double max, double step,
+        double initial, string tooltip, Action<double> apply)
+    {
+        parent.AddChild(new Label { Text = label, TooltipText = tooltip });
+        var row = new HBoxContainer();
+        var slider = new HSlider
+        {
+            Name = name, MinValue = min, MaxValue = max, Step = step, Value = initial, TooltipText = tooltip,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+        var value = new Label { Text = initial.ToString("0.###"), CustomMinimumSize = new Vector2(58, 0) };
+        slider.ValueChanged += current => { value.Text = current.ToString("0.###"); apply(current); };
+        row.AddChild(slider); row.AddChild(value); parent.AddChild(row);
+        return slider;
+    }
+
+    private void RefreshProxyDetailSliders()
+    {
+        if (_lodPauseMenu == null) return;
+        // Skip when the slider already maps to the stored value.
+        if (_proxyFarErrorScaleSlider != null
+            && GameplayLodTransitionDefaults.SanitizeFarProxyErrorScale((float)_proxyFarErrorScaleSlider.Value) != _lodPauseMenu.FarProxyErrorScale)
+            _proxyFarErrorScaleSlider.SetValueNoSignal(_lodPauseMenu.FarProxyErrorScale);
     }
 
     private void RefreshPartialCoverageMeshCullingStatus()
     {
+        RefreshProxyDetailSliders();
         if (_partialCoverageMeshCullingStatus == null) return;
         if (_lodPauseMenu == null)
         {

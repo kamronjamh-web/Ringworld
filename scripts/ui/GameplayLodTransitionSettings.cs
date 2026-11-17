@@ -7,4 +7,7 @@ namespace RingworldTechDemo.UI;
 public partial class GameplayLodTransitionSettings : Resource
 {
     [Export] public bool IntermediateLodTiersEnabled { get; set; } = true;
+    // Older files without the field below load its default (off). Saves that still carry the retired Lod1ReachCapMeters are ignored.
+    /// <summary>Far proxy terrain pixel-error multiplier cap (1 = off, 1..4).</summary>
+    [Export] public float FarProxyErrorScale { get; set; } = 1f;
 }

@@ -1,0 +1,42 @@
+{
+ "schema": 1,
+ "note": "Scenario list for the visible-perf-options before/after study (run with tools/perf_bench.ps1 -ScenarioFile tools/fixtures/perf_bench_visible_opts.json, optionally -SettingsOverlay <dir>). Same schema as perf_bench_scenarios.json (see its note and docs/perf-bench.md). Extra pose kind: {poi: weather_lung|emitter, viewpoint: N} reached through the live tuning drawer teleports. Extra scenario kind ssr_fade: runs last, records the SSR policy fade (needs the RingWetWorld SSR policy).",
+ "defaults": { "window_s": 8, "rounds": 2, "settle_s": 4, "time": { "mode": "noon" }, "hold_clocks": false },
+ "key_scopes": [
+  "Trees frame request", "Trees update (inclusive)", "Trees camera cull", "Trees output selection", "Trees install",
+  "Grass update (inclusive)", "Grass presentation (inclusive)", "Water update",
+  "Terrain macro shadow install", "Terrain macro shadow build", "Terrain LOD coordinator update (inclusive)",
+  "Terrain proxy update (inclusive)", "Terrain proxy install", "Far ring update (inclusive)"
+ ],
+ "poses": {
+  "save_spot": { "around_m": 20295044.84, "across_m": 123862.6, "vertical_m": 624.12, "yaw_deg": 144.49, "pitch_deg": 2.08, "notes": "the user's save spot during the 2026-11 perf pass (perf-pass doc 0.x, the nt/waste/gpub drivers): noclip hover at 624 m absolute" },
+  "spawn_9km": { "around_m": 6354521.27, "across_m": 189654.02, "vertical_m": 9011.34, "yaw_deg": 3.243, "pitch_deg": 3.76, "notes": "the old E1 pose: the earlier save, mountain ground 379 m, noclip at 9,011 m" },
+  "plains_eye": { "around_m": 6380021.26995006, "across_m": 166154.022585299, "lift_m": 1.7, "yaw_deg": 0.0, "pitch_deg": -3.0, "notes": "Plains on a 1.5 km ring, ground 741 m" },
+  "plains_arch": { "around_m": 6380021.26995006, "across_m": 166154.022585299, "lift_m": 1.7, "yaw_deg": 0.0, "pitch_deg": 8.0, "notes": "plains_eye with pitch 8: the distant terrain band at eye level and the arch above" },
+  "forest_interior_eye": { "around_m": 6381171.26995006, "across_m": 151854.022585299, "lift_m": 1.7, "yaw_deg": 0.0, "pitch_deg": 0.0, "notes": "dense forest, 6 trees within 30 m, ground 675 m" },
+  "coast_eye": { "around_m": 6338521.26995006, "across_m": 190404.022585299, "lift_m": 1.7, "yaw_deg": 112.5, "pitch_deg": -2.0, "notes": "land 3.8 m, ocean 250 m along yaw 112.5" },
+  "mountain_eye": { "around_m": 6354521.26995006, "across_m": 189654.022585299, "lift_m": 1.7, "yaw_deg": 0.0, "pitch_deg": -5.0, "notes": "ground of the old save, class Mountain, ground 379 m" },
+  "slope_up": { "around_m": 6356921.0, "across_m": 186654.0, "lift_m": 1.7, "yaw_deg": 270.0, "pitch_deg": 5.0, "notes": "bottom of a steep bowl looking up a 490 m rise (perf-pass doc 0.15)" },
+  "alt300_plains": { "around_m": 6380021.26995006, "across_m": 166154.022585299, "lift_m": 300.0, "yaw_deg": 0.0, "pitch_deg": -15.0, "notes": "plains_eye 300 m up, pitched down 15" },
+  "alt300_slope": { "around_m": 6356921.0, "across_m": 186654.0, "lift_m": 300.0, "yaw_deg": 270.0, "pitch_deg": -20.0, "notes": "slope_up 300 m up, pitched down 20" },
+  "wl_dam": { "poi": "weather_lung", "viewpoint": 0, "notes": "Weather Lung viewpoint 0 (dam), breath frozen" },
+  "wl_overlook": { "poi": "weather_lung", "viewpoint": 1, "notes": "Weather Lung viewpoint 1 (overlook), breath frozen" },
+  "emitter_rim": { "poi": "emitter", "viewpoint": 0, "notes": "main emitter site, viewpoint 0" }
+ },
+ "scenarios": [
+  { "name": "save_spot", "kind": "stand", "pose": "save_spot", "quick": true, "still": true },
+  { "name": "plains", "kind": "stand", "pose": "plains_eye", "quick": true, "still": true },
+  { "name": "plains_arch", "kind": "stand", "pose": "plains_arch", "still": true },
+  { "name": "mountain", "kind": "stand", "pose": "mountain_eye", "still": true },
+  { "name": "coast", "kind": "stand", "pose": "coast_eye", "still": true },
+  { "name": "forest_interior", "kind": "stand", "pose": "forest_interior_eye", "quick": true, "still": true },
+  { "name": "slope_up", "kind": "stand", "pose": "slope_up", "quick": true, "still": true },
+  { "name": "noon_9km", "kind": "stand", "pose": "spawn_9km", "quick": true, "still": true },
+  { "name": "alt300_plains", "kind": "stand", "pose": "alt300_plains", "still": true },
+  { "name": "alt300_slope", "kind": "stand", "pose": "alt300_slope", "still": true },
+  { "name": "wl_dam", "kind": "stand", "pose": "wl_dam", "still": true },
+  { "name": "wl_overlook", "kind": "stand", "pose": "wl_overlook", "still": true },
+  { "name": "emitter_rim", "kind": "stand", "pose": "emitter_rim", "still": true },
+  { "name": "ssr_fade_wl_dam", "kind": "ssr_fade", "pose": "wl_dam" }
+ ]
+}

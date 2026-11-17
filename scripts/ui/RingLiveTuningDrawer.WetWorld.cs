@@ -25,6 +25,9 @@ public partial class RingLiveTuningDrawer
         AddWetWorldNumber(group, "Puddles", "Puddles", .01, "Puddle amount. 0 = no puddles.");
         AddWetWorldNumber(group, "DryingSpeed", "Drying speed", .01, "How fast wet ground dries after the rain (sun and wind speed it up).");
         AddWetWorldNumber(group, "LensDroplets", "Lens droplets", .01, "Rain drops on the camera lens. 0 = off.");
+        string ssrTip = "Screen-space reflections are traced only while surfaces near you are visibly wet, or a glossy landmark (emitter, projector tower, Weather Lung) is close. Saves 0.2 to 0.9 ms in dry weather; dry glossy ground then reflects only the sky. Blends over 3 s.";
+        var ssrToggle = new CheckButton { Name = "WetWorldSsrOnlyWhileWet", Text = "Reflections only while wet", TooltipText = ssrTip, ButtonPressed = RingWetWorldSettings.Current.SsrOnlyWhileWet };
+        ssrToggle.Toggled += on => SetWetWorldTuningValue("SsrOnlyWhileWet", on); group.AddChild(ssrToggle);
         var row = new HBoxContainer();
         var save = new Button { Name = "WetWorldSaveNow", Text = "Save wet world", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         save.Pressed += () => FlushWetWorldDefaults(); row.AddChild(save);
@@ -98,7 +101,11 @@ public partial class RingLiveTuningDrawer
             string name = child.Name.ToString();
             string key = name.StartsWith("WetWorld", StringComparison.Ordinal) ? name[8..] : "";
             if (key.EndsWith("Entry", StringComparison.Ordinal)) key = key[..^5];
-            if (GameplayWetWorldDefaults.Limits.ContainsKey(key))
+            if (GameplayWetWorldDefaults.BoolKeys.Contains(key))
+            {
+                if (child is CheckButton toggle) toggle.SetPressedNoSignal(RingWetWorldSettings.Current.Get(key).AsBool());
+            }
+            else if (GameplayWetWorldDefaults.Limits.ContainsKey(key))
             {
                 double value = RingWetWorldSettings.Current.Get(key).AsDouble();
                 if (child is HSlider slider) slider.SetValueNoSignal(value);

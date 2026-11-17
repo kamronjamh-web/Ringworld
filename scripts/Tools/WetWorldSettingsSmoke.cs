@@ -15,7 +15,7 @@ public partial class WetWorldSettingsSmoke : RefCounted
 {
     static readonly string[] Keys = { "Wetness", "WetGloss", "Puddles", "DryingSpeed", "LensDroplets" };
 
-    static void Reset(RingWetWorldSettings s) { s.Wetness = 1f; s.WetGloss = 0.18f; s.Puddles = 1f; s.DryingSpeed = 1f; s.LensDroplets = 0.7f; }
+    static void Reset(RingWetWorldSettings s) { s.Wetness = 1f; s.WetGloss = 0.18f; s.Puddles = 1f; s.DryingSpeed = 1f; s.LensDroplets = 0.7f; s.SsrOnlyWhileWet = true; }
 
     public Godot.Collections.Dictionary Run(string path, string legacyPath)
     {
@@ -121,8 +121,52 @@ public partial class WetWorldSettingsSmoke : RefCounted
             foreach (string cleanup in new[] { migratePath, untouchedPath, clampPath, legacyPath }) if (File.Exists(ProjectSettings.GlobalizePath(cleanup))) File.Delete(ProjectSettings.GlobalizePath(cleanup));
             // The preset-owned (non menu) values keep their own defaults.
             bool presetOwned = runtime.RippleLayers == 4 && runtime.DripBudget == 512;
-            bool pass = missing && cleanSave && changed && setAll && saved && roundTrip && clamps && ranges && sanitize && reset && failure && unknown && oldFile && migration && presetOwned;
-            return new() { ["pass"] = pass, ["detail"] = $"missing={missing} clean_save={cleanSave} changed={changed} set_all={setAll} saved={saved} roundtrip={roundTrip} clamps={clamps} ranges={ranges} sanitize={sanitize} reset={reset} failure_retry={failure} unknown={unknown} old_file={oldFile} migration={migration} preset_owned={presetOwned}" };
+            // 12. SsrOnlyWhileWet (bool key): default on, set false/save/reload, type check, reset, older file, and the policy math.
+            string ssrPath = path + ".ssr.tres";
+            Reset(runtime);
+            bool ssr = runtime.SsrOnlyWhileWet && new RingWetWorldSettings().SsrOnlyWhileWet;
+            var ssrDefaults = new GameplayWetWorldDefaults(ssrPath) { LegacySurfaceTerrainPath = legacyPath }; ssrDefaults.Initialize();
+            ssr &= ssrDefaults.SetOverride("SsrOnlyWhileWet", false) && ssrDefaults.Dirty && !runtime.SsrOnlyWhileWet && !ssrDefaults.SetOverride("SsrOnlyWhileWet", false) && ssrDefaults.Save();
+            Reset(runtime);
+            var ssrLoaded = new GameplayWetWorldDefaults(ssrPath) { LegacySurfaceTerrainPath = legacyPath }; ssrLoaded.Initialize();
+            ssr &= !runtime.SsrOnlyWhileWet && !RingWetWorldSettings.Current.SsrOnlyWhileWet;
+            ssr &= !GameplayWetWorldDefaults.TryValidate("SsrOnlyWhileWet", 1, out _) && !GameplayWetWorldDefaults.TryValidate("SsrOnlyWhileWet", 1.0f, out _)
+                && !GameplayWetWorldDefaults.TryValidate("SsrOnlyWhileWet", "true", out _) && GameplayWetWorldDefaults.TryValidate("SsrOnlyWhileWet", false, out Variant ssrClean) && !ssrClean.AsBool()
+                && !ssrLoaded.SetOverride("SsrOnlyWhileWet", 1);
+            ssrLoaded.Reset();
+            ssr &= runtime.SsrOnlyWhileWet && ssrLoaded.Save();
+            var ssrOld = new GameplayWetWorldSettings(); ssrOld.Overrides["LensDroplets"] = 0.4f;
+            ResourceSaver.Save(ssrOld, ssrPath);
+            Reset(runtime);
+            new GameplayWetWorldDefaults(ssrPath) { LegacySurfaceTerrainPath = legacyPath }.Initialize();
+            ssr &= runtime.SsrOnlyWhileWet;
+            if (File.Exists(ProjectSettings.GlobalizePath(ssrPath))) File.Delete(ProjectSettings.GlobalizePath(ssrPath));
+            bool ssrMath = RingWetWorld.SsrFadeExtraExponent(1f) == 0f && RingWetWorld.SsrFadeExtraExponent(2f) == 0f && float.IsFinite(RingWetWorld.SsrFadeExtraExponent(0f))
+                && RingWetWorld.SsrFadeExtraExponent(0.5f) > 0f && RingWetWorld.SsrFadeExtraExponent(0.25f) > RingWetWorld.SsrFadeExtraExponent(0.5f)
+                && RingWetWorld.SsrFadeExtraExponent(0.05f) > RingWetWorld.SsrFadeExtraExponent(0.25f) && RingWetWorld.SsrFadeExtraExponent(0f) >= RingWetWorld.SsrFadeExtraExponent(0.05f);
+            float stepped = 0f;
+            for (int i = 0; i < 30; i++) stepped = RingWetWorld.StepSsrWeight(stepped, 1f, 0.1f, 3f);
+            ssrMath &= Math.Abs(stepped - 1f) < 1e-4f && RingWetWorld.StepSsrWeight(0.9f, 1f, 10f, 3f) == 1f && RingWetWorld.StepSsrWeight(0.1f, 0f, 10f, 3f) == 0f
+                && Math.Abs(RingWetWorld.StepSsrWeight(1f, 0f, 1.5f, 3f) - 0.5f) < 1e-5f && RingWetWorld.StepSsrWeight(float.NaN, 0.5f, 0.1f, 3f) >= 0f
+                && float.IsFinite(RingWetWorld.StepSsrWeight(0.5f, float.NaN, float.NaN, 0f)) && RingWetWorld.StepSsrWeight(0.5f, 2f, 100f, 3f) == 1f;
+            // Wet gate hysteresis.
+            bool gate = RingWetWorld.StepSsrWetGate(false, 0.049f, 0f, out _, 0.5f) == false && RingWetWorld.StepSsrWetGate(false, 0.05f, 0f, out float held0, 0.5f) && held0 == 0f;
+            bool gateOn = true; float held = 0f; int steps = 0;
+            gateOn = RingWetWorld.StepSsrWetGate(gateOn, 0.03f, held, out held, 0.5f) && held == 0f; // stays on at 0.03
+            for (int i = 0; i < 19; i++) gateOn = RingWetWorld.StepSsrWetGate(gateOn, 0.01f, held, out held, 0.5f);
+            gate &= gateOn && held >= 9.4f; // 9.5 s below 0.02: still on
+            gateOn = RingWetWorld.StepSsrWetGate(gateOn, 0.03f, held, out held, 0.5f);
+            gate &= gateOn && held == 0f; // timer reset
+            for (int i = 0; i < 19; i++) { gateOn = RingWetWorld.StepSsrWetGate(gateOn, 0.0f, held, out held, 0.5f); steps++; }
+            gate &= gateOn;
+            gateOn = RingWetWorld.StepSsrWetGate(gateOn, 0.0f, held, out held, 0.5f);
+            gate &= !gateOn && steps == 19; // off after 10 s
+            gateOn = true; held = 0f;
+            for (int i = 0; i < 20; i++) gateOn = RingWetWorld.StepSsrWetGate(gateOn, float.NaN, held, out held, 0.5f);
+            gate &= !gateOn && !RingWetWorld.StepSsrWetGate(false, float.NaN, 0f, out _, 0.5f);
+            ssrMath &= gate;
+            bool pass = ssr && ssrMath && missing && cleanSave && changed && setAll && saved && roundTrip && clamps && ranges && sanitize && reset && failure && unknown && oldFile && migration && presetOwned;
+            return new() { ["pass"] = pass, ["detail"] = $"missing={missing} clean_save={cleanSave} changed={changed} set_all={setAll} saved={saved} roundtrip={roundTrip} clamps={clamps} ranges={ranges} sanitize={sanitize} reset={reset} failure_retry={failure} unknown={unknown} old_file={oldFile} migration={migration} preset_owned={presetOwned} ssr_setting={ssr} ssr_math={ssrMath}" };
         }
         finally
         {
@@ -142,7 +186,11 @@ public partial class WetWorldSettingsSmoke : RefCounted
         var gloss = (HSlider)drawer.FindChild("WetWorldWetGloss", true, false)!;
         puddles.Value = 0; gloss.Value = 0.3;
         bool edits = RingWetWorldSettings.Current.Puddles == 0f && entry.Value == 0 && Math.Abs(RingWetWorldSettings.Current.WetGloss - 0.3f) < 1e-5f && drawer.FlushWetWorldDefaults();
+        if (drawer.FindChild("WetWorldSsrOnlyWhileWet", true, false) is not CheckButton ssrToggle || !ssrToggle.ButtonPressed) return false;
+        ssrToggle.ButtonPressed = false;
+        edits &= !RingWetWorldSettings.Current.SsrOnlyWhileWet && drawer.FlushWetWorldDefaults();
         drawer.ResetWetWorldSettings();
+        edits &= RingWetWorldSettings.Current.SsrOnlyWhileWet && ssrToggle.ButtonPressed;
         return edits && Math.Abs(puddles.Value - 1.0) < 1e-5 && Math.Abs(gloss.Value - 0.18) < 1e-5 && !drawer.GetWetWorldTuningDiagnostics()["dirty"].AsBool();
     }
 }

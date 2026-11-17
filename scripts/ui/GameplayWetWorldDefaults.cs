@@ -87,10 +87,17 @@ public sealed class GameplayWetWorldDefaults
     {
         ["Wetness"]=(0,1.5f), ["WetGloss"]=(.05f,.6f), ["Puddles"]=(0,2), ["DryingSpeed"]=(.25f,4), ["LensDroplets"]=(0,1)
     };
-    public static IEnumerable<string> Keys => Limits.Keys;
+    /// <summary>Boolean keys (only a Bool variant is accepted).</summary>
+    public static readonly HashSet<string> BoolKeys = new() { "SsrOnlyWhileWet" };
+    public static IEnumerable<string> Keys => System.Linq.Enumerable.Concat(Limits.Keys, BoolKeys);
     public static bool TryValidate(string key, Variant value, out Variant clean)
     {
         clean = default;
+        if (BoolKeys.Contains(key))
+        {
+            if (value.VariantType != Variant.Type.Bool) return false;
+            clean = value.AsBool(); return true;
+        }
         if (!Limits.TryGetValue(key, out var range) || value.VariantType is not (Variant.Type.Int or Variant.Type.Float) || !double.IsFinite(value.AsDouble())) return false;
         clean = (float)Math.Clamp(value.AsDouble(), range.Min, range.Max); return true;
     }

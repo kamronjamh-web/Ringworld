@@ -38,6 +38,8 @@ param(
   [switch]$LiveSettings,
   [string]$Resolution = "1600x900",
   [string]$EngineArgs = "",
+  [string]$ScenarioFile = "",
+  [string]$SettingsOverlay = "",
   [int]$Rounds = 0,
   [double]$WindowScale = 1.0,
   [switch]$Build,
@@ -52,7 +54,12 @@ $project = Split-Path -Parent $PSScriptRoot
 $name = "RingworldTechDemo"
 $real = Join-Path $env:APPDATA "Godot\app_userdata\$name"
 $benchWorlds = Join-Path $real "bench_worlds"
-$scenarioFile = Join-Path $PSScriptRoot "fixtures\perf_bench_scenarios.json"
+# $scenarioPath, not $scenarioFile: PowerShell names are case-insensitive, so that would overwrite the -ScenarioFile parameter.
+$scenarioPath = Join-Path $PSScriptRoot "fixtures\perf_bench_scenarios.json"
+if ($ScenarioFile) {
+  $scenarioPath = if ([System.IO.Path]::IsPathRooted($ScenarioFile)) { $ScenarioFile } else { Join-Path (Split-Path -Parent $PSScriptRoot) $ScenarioFile }
+  if (-not (Test-Path -LiteralPath $scenarioPath)) { Write-Host "PERF_BENCH=FAIL scenario file not found: $scenarioPath"; exit 2 }
+}
 $benchRoot = Join-Path $project ".godot\perf_bench"
 $isoRoot = Join-Path $project ".godot\appdata_perf_bench"
 $iso = Join-Path $isoRoot "Godot\app_userdata\$name"
@@ -224,7 +231,9 @@ function Build-Report([string]$out, [hashtable]$ctx) {
   }
   foreach ($s in $drv.scenarios) {
     $entry = [ordered]@{ name = $s.name; kind = $s.kind; pose_name = $s.pose_name; pose = $s.pose; vsync = $s.vsync; window_s = $s.window_s; rounds = @($s.rounds).Count; setup = $s.setup }
-    if ($s.ContainsKey("error")) { $entry["error"] = $s.error } else {
+    if ($s.ContainsKey("error")) { $entry["error"] = $s.error }
+    elseif ($s.kind -eq "ssr_fade") { $entry["ssr_fade"] = $s.ssr_fade.summary }
+    else {
       $entry["metrics"] = Get-Metrics $s
       $entry["busy_fraction"] = @($s.rounds | ForEach-Object { $_.busy_fraction })
       $entry["monitor_dropped"] = @($s.rounds | ForEach-Object { $_.monitor_dropped })
@@ -327,6 +336,7 @@ function Write-ReportMd($rep, [string]$path) {
   foreach ($n in $rep.scenarios.Keys) {
     $sc = $rep.scenarios[$n]
     if ($sc.Contains("error")) { $L.Add("| $n | | FAILED: $($sc.error) |||||||||||||"); continue }
+    if (-not $sc.Contains("metrics")) { continue }
     $mm = $sc.metrics
     $cell = { param($k) "{0} +/- {1}" -f (Format-Num $mm[$k].value $k), (Format-Num $mm[$k].noise $k) }
     $L.Add("| $n | $($sc.rounds) x $([math]::Round($sc.window_s)) | $(& $cell 'fps') | $(& $cell 'wall_p50') | $(& $cell 'wall_p95') | $(& $cell 'wall_p99') | $(& $cell 'wall_max') | $(Format-Num $mm.hitch33_count.value 'hitch33_count') ($(Format-Num $mm.hitch33_worst_ms.value 'x') ms) | $(& $cell 'setup_p50') | $(& $cell 'process_p50') | $(& $cell 'render_cpu_p50') | $(& $cell 'gpu_total_p50') | $(Format-Num $mm.draws_p50.value 'draws_p50') | $(Format-Num $mm.prims_p50.value 'prims_p50') | $(Format-Num $mm.vram_mb.value 'vram_mb') |")
@@ -336,8 +346,17 @@ function Write-ReportMd($rep, [string]$path) {
   if ($flights.Count -gt 0) {
     $L.Add("Flights: " + (($flights | ForEach-Object { "$_ mean speed $([math]::Round($rep.scenarios[$_].metrics.speed_mps.value)) m/s, $([math]::Round($rep.scenarios[$_].metrics.distance_m.value / 1000.0, 1)) km flown; GC gen2 $([math]::Round($rep.scenarios[$_].metrics.gc_gen2.value)), allocated $([math]::Round($rep.scenarios[$_].metrics.alloc_mb_s.value)) MB/s" }) -join " | ")); $L.Add("")
   }
+  $ssrNames = @($rep.scenarios.Keys | Where-Object { $rep.scenarios[$_].Contains("ssr_fade") })
+  if ($ssrNames.Count -gt 0) {
+    $L.Add("## SSR fade"); $L.Add("")
+    foreach ($n in $ssrNames) {
+      $f = $rep.scenarios[$n].ssr_fade
+      $L.Add("- ${n}: max frame $("{0:N2}" -f [double]$f.max_frame_ms) ms, median $("{0:N2}" -f [double]$f.median_frame_ms) ms, frames where ssr_enabled flipped: $((@($f.flip_frame_ms) | ForEach-Object { "{0:N2}" -f [double]$_ }) -join ', ') ms, toggles $($f.toggle_count_before) -> $($f.toggle_count_after); weight stills: $(@($f.stills).Count) ($(@($f.stills) -join ', ')); frame dir: $($f.frame_dir)")
+    }
+    $L.Add("")
+  }
   # per-pass GPU and key scopes matrices
-  $names = @($rep.scenarios.Keys | Where-Object { -not $rep.scenarios[$_].Contains("error") })
+  $names = @($rep.scenarios.Keys | Where-Object { -not $rep.scenarios[$_].Contains("error") -and $rep.scenarios[$_].Contains("metrics") })
   foreach ($grp in @(@{ prefix = "gpu."; title = "GPU per pass (ms per frame, RingPerformanceGpu detailed intervals; nested stages overlap their parents, never sum)"; min = 0.01 },
       @{ prefix = "vp."; title = "GPU per viewport (p50 ms)"; min = 0.01 }, @{ prefix = "cpu."; title = "Key CPU scopes on the main thread (ms per frame)"; min = -1 }, @{ prefix = "worker."; title = "Worker-thread scopes (ms of work per frame, not frame-critical)"; min = 0.3 })) {
     $keys = @{}
@@ -418,7 +437,7 @@ if ($ReportFrom) {
 if (-not $Label -and -not $SnapshotOnly) { Write-Host "$marker=FAIL -Label is required"; exit 2 }
 if (-not (Test-Path (Join-Path $real "worlds\slot_3")) -and -not $World) { Write-Host "$marker=FAIL the real profile has no worlds\slot_3 and no snapshot exists"; exit 2 }
 if (Get-UserPlaying) { Write-Host "USER_PLAYING"; Write-Host "$marker=FAIL the user is playing (a Godot with --remote-debug, or bin\DebugPlaySaved holds an assembly); exit 9"; exit 9 }
-$spec = Read-JsonHash $scenarioFile
+$spec = Read-JsonHash $scenarioPath
 $allNames = @($spec.scenarios | ForEach-Object { $_.name })
 foreach ($n in $Scenarios) { foreach ($x in ($n -split ",")) { if ($x -and $x -notin $allNames) { Write-Host "$marker=FAIL unknown scenario '$x'. Known: $($allNames -join ', ')"; exit 2 } } }
 $Scenarios = @($Scenarios | ForEach-Object { $_ -split "," } | Where-Object { $_ })
@@ -434,7 +453,11 @@ if (-not $InQueue) {
   foreach ($sw in @("VsyncOn", "Stills", "FailOnRegression", "LiveSettings", "Build", "SkipBuild")) { if ((Get-Variable $sw).Value) { $inner += " -$sw" } }
   if ($Baseline) { $inner += " -Baseline $(Quote $Baseline)" }
   if ($EngineArgs) { $inner += " -EngineArgs $(Quote $EngineArgs)" }
-  & (Join-Path $PSScriptRoot "gpu_queue.ps1") -Label "perf_bench" -Wrap $inner
+  if ($ScenarioFile) { $inner += " -ScenarioFile $(Quote $scenarioPath)" }
+  if ($SettingsOverlay) { $inner += " -SettingsOverlay $(Quote $SettingsOverlay)" }
+  # One queue ticket per run: gpu_queue finds tickets by label, so a shared label let a second bench match the first one's ticket,
+  # run at once on the shared appdata_perf_bench profile and release the other run's ticket (2026-11-17).
+  & (Join-Path $PSScriptRoot "gpu_queue.ps1") -Label "perf_bench_$($Label)_$RunId" -Wrap $inner
   exit $LASTEXITCODE
 }
 
@@ -459,6 +482,8 @@ if ((-not (Test-Path $iso))) {
     Copy-Item -Recurse $d.FullName (Join-Path $iso $d.Name)
   }
 }
+$otherBench = @(Get-CimInstance Win32_Process -Filter "Name like 'Godot%'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*res://tools/perf_bench.gd*" })
+if ($otherBench.Count -gt 0) { Write-Host "$marker=FAIL another perf_bench Godot is still running (pid $($otherBench[0].ProcessId)) on the shared profile; not touching it"; exit 2 }
 $isoSlot = Join-Path $iso "worlds\slot_3"
 if (Test-Path $isoSlot) {
   if ((Resolve-Path $isoSlot).Path -notlike "*\.godot\appdata_perf_bench\*") { throw "refusing: $isoSlot" }
@@ -474,6 +499,13 @@ if ($LiveSettings -or -not $worldInfo.settings -or -not (Test-Path $worldInfo.se
 } else {
   Get-ChildItem $worldInfo.settings -File -Filter *.tres | Copy-Item -Destination $iso -Force
   $settingsSource = "frozen with the snapshot $($worldInfo.meta.name)"
+}
+if ($SettingsOverlay) {
+  $overlayDir = if ([System.IO.Path]::IsPathRooted($SettingsOverlay)) { $SettingsOverlay } else { Join-Path $project $SettingsOverlay }
+  if (-not (Test-Path -LiteralPath $overlayDir)) { Write-Host "$marker=FAIL settings overlay directory not found: $overlayDir"; exit 2 }
+  $overlayFiles = @(Get-ChildItem -LiteralPath $overlayDir -File -Filter *.tres)
+  $overlayFiles | Copy-Item -Destination $iso -Force
+  $settingsSource += " + overlay $overlayDir ($(($overlayFiles | ForEach-Object { $_.Name }) -join ', '))"
 }
 $settings = Get-SettingsValues $iso
 
@@ -506,7 +538,7 @@ if ($Build -or (-not $SkipBuild -and $stale)) {
 if (-not (Test-Path $optDll)) { Write-Host "$marker=FAIL no OptRelease build (run with -Build)"; exit 1 }
 
 $select = if ($Quick) { "quick" } elseif ($Scenarios.Count -gt 0) { $Scenarios -join "," } else { "all" }
-$drvArgs = @("--out=$out", "--scenarios=$scenarioFile", "--select=$select")
+$drvArgs = @("--out=$out", "--scenarios=$scenarioPath", "--select=$select")
 if ($VsyncOn) { $drvArgs += "--vsync-pass" }
 if ($Stills) { $drvArgs += "--stills" }
 if ($Rounds -gt 0) { $drvArgs += "--rounds=$Rounds" }
@@ -549,7 +581,7 @@ if (-not (Test-Path (Join-Path $out "driver_report.json"))) {
   Write-Host "$marker=FAIL no driver_report.json (godot exit $code); see $out\console.log"
   exit 1
 }
-$ctx = @{ label = $Label; run_id = $RunId; started = $started; mode = $mode; args = @{ quick = [bool]$Quick; scenarios = $Scenarios; vsync_on = [bool]$VsyncOn; stills = [bool]$Stills; rounds = $Rounds; window_scale = $WindowScale; baseline = $Baseline; live_settings = [bool]$LiveSettings }
+$ctx = @{ label = $Label; run_id = $RunId; started = $started; mode = $mode; args = @{ quick = [bool]$Quick; scenarios = $Scenarios; scenario_file = $ScenarioFile; settings_overlay = $SettingsOverlay; vsync_on = [bool]$VsyncOn; stills = [bool]$Stills; rounds = $Rounds; window_scale = $WindowScale; baseline = $Baseline; live_settings = [bool]$LiveSettings }
   git = (Get-GitInfo); world_meta = $worldInfo.meta; settings_source = $settingsSource; settings = $settings; resolution = $Resolution; godot_exit = $code }
 $rep = Build-Report $out $ctx
 if ($baseRun) {

@@ -121,6 +121,7 @@ public partial class RingWetWorld : Node
     private void ReleaseOnExit()
     {
         PublishParams(false);
+        RestoreSsrPolicy();
         ReleaseGpu();
     }
 
@@ -235,6 +236,7 @@ public partial class RingWetWorld : Node
         float puddles = Mathf.Clamp(float.IsFinite(s.Puddles) ? s.Puddles : 1.0f, 0.0f, 2.0f);
         Valid = valid && strength > 0.0f;
         ApplySsrHalfSize(Valid);
+        UpdateSsrPolicy();
         var value = new Vector4(strength, gloss, puddles, Valid ? 1.0f : 0.0f);
         if (value != _paramsPublished) { _paramsPublished = value; RenderingServer.GlobalShaderParameterSet(GlobalParams, value); }
     }

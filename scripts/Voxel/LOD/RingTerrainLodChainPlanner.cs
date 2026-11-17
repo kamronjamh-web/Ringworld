@@ -51,6 +51,20 @@ internal static class RingTerrainLodChainPlanner
         return new Vector2(fadeStart, fadeEnd);
     }
 
+    /// <summary>Spacing from which the far-terrain coarseness setting applies (Lod5 at 4 km and beyond).</summary>
+    public const float FarErrorScaleMinSpacing = 32.0f;
+
+    /// <summary>
+    /// Pixel-error multiplier of a far proxy level: 1 below 32 m spacing, then Sqrt(spacing / 16)
+    /// capped at farScale, so band ends stay strictly increasing (spacing / scale grows by >= 1.41 per level).
+    /// </summary>
+    public static float FarLevelErrorScale(float spacingMeters, float farScale)
+    {
+        if (!float.IsFinite(farScale) || farScale <= 1.0f || !float.IsFinite(spacingMeters)
+            || spacingMeters < FarErrorScaleMinSpacing) return 1.0f;
+        return Mathf.Clamp(Mathf.Sqrt(spacingMeters / 16.0f), 1.0f, farScale);
+    }
+
     /// <summary>Projected size in pixels of one cell edge seen from the near end of its slant interval.</summary>
     public static float ProjectedErrorPixels(
         float spacingMeters,

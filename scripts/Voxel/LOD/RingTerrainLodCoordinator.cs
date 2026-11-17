@@ -276,6 +276,40 @@ public partial class RingTerrainLodCoordinator : Node
         ConfigureVoxelTransition(_voxelFadeStart, _voxelFadeEnd);
     }
 
+    /// <summary>Pixel-error multiplier cap for proxy levels of 32 m spacing and beyond; 1 = off.</summary>
+    public float FarProxyErrorScale { get; private set; } = 1.0f;
+    private bool _logRuntimeBands;
+
+    public void SetFarProxyErrorScale(float scale)
+    {
+        scale = float.IsFinite(scale) ? Mathf.Clamp(scale, 1.0f, 4.0f) : 1.0f;
+        if (FarProxyErrorScale == scale) return;
+        FarProxyErrorScale = scale;
+        ReapplyRuntimeBandsAfterSettingChange();
+    }
+
+    private void ReapplyRuntimeBandsAfterSettingChange()
+    {
+        _logRuntimeBands = true;
+        if (!IsInsideTree() || _currentProfile == null || _levels.Count == 0) return;
+        RebuildRuntimeBands(_currentProfile);
+        ConfigureVoxelTransition(_voxelFadeStart, _voxelFadeEnd);
+        RefreshGlobalBackdropAfterBandChange(_currentProfile);
+    }
+
+    /// <summary>Re-plans the global backdrop handoff after the runtime bands changed.</summary>
+    private void RefreshGlobalBackdropAfterBandChange(RingLodQualityProfile profile)
+    {
+        GlobalBackdropPlan backdrop = PlanGlobalBackdrop(
+            profile, _mediumGlobalAroundSegments, _mediumGlobalAcrossSegments);
+        _globalLod?.ApplyRuntimeQuality(
+            backdrop.AroundSegments,
+            backdrop.AcrossSegments,
+            backdrop.Band.X,
+            backdrop.Band.Y);
+        UpdateTerminalGlobalMorphTarget();
+    }
+
     public bool ApplyMemoryPressureFallback(string reason = "")
     {
         if (_manualPresetSelected && !AllowAdaptiveFallbackAfterManualSelection)
@@ -572,18 +606,8 @@ public partial class RingTerrainLodCoordinator : Node
         if (Mathf.Abs(viewportHeight - _lastViewportHeight) < 1.0f && Mathf.Abs(cameraFov - _lastCameraFov) < 0.05f) return;
         RebuildRuntimeBands(_currentProfile);
         ConfigureVoxelTransition(_voxelFadeStart, _voxelFadeEnd);
-        if (_levels.Count > 0)
-        {
-            // The global band is screen-space planned too; keep it following viewport/FOV changes.
-            GlobalBackdropPlan backdrop = PlanGlobalBackdrop(
-                _currentProfile, _mediumGlobalAroundSegments, _mediumGlobalAcrossSegments);
-            _globalLod?.ApplyRuntimeQuality(
-                backdrop.AroundSegments,
-                backdrop.AcrossSegments,
-                backdrop.Band.X,
-                backdrop.Band.Y);
-            UpdateTerminalGlobalMorphTarget();
-        }
+        // The global band is screen-space planned too; keep it following viewport/FOV changes.
+        if (_levels.Count > 0) RefreshGlobalBackdropAfterBandChange(_currentProfile);
     }
 
     public void ApplyQualityPreset(QualityPreset preset)
@@ -982,18 +1006,33 @@ public partial class RingTerrainLodCoordinator : Node
 
         for (int i = 0; i < _levels.Count; i++)
         {
-            Vector2 authored = GetAuthoredBandForPhysicalLevel(profile, i);
+            float spacing = _levels[i].SampleSpacingMeters;
+            float farScale = RingTerrainLodChainPlanner.FarLevelErrorScale(spacing, FarProxyErrorScale);
+            Vector2 band;
             if (!profile.UseScreenSpaceError)
             {
-                _runtimeBands.Add(authored);
-                continue;
+                band = GetAuthoredBandForPhysicalLevel(profile, i);
+                if (farScale > 1.0f) band /= farScale;
             }
+            else
+            {
+                band = RingTerrainLodChainPlanner.ScreenSpaceBand(
+                    spacing,
+                    projectionScale,
+                    profile.TargetPixelError * farScale,
+                    profile.TransitionFraction);
+            }
+            _runtimeBands.Add(band);
+        }
 
-            _runtimeBands.Add(RingTerrainLodChainPlanner.ScreenSpaceBand(
-                _levels[i].SampleSpacingMeters,
-                projectionScale,
-                profile.TargetPixelError,
-                profile.TransitionFraction));
+        if (_logRuntimeBands)
+        {
+            _logRuntimeBands = false;
+            var ends = new System.Text.StringBuilder();
+            for (int i = 0; i < _runtimeBands.Count; i++)
+                ends.Append(i > 0 ? ", " : "").Append(_levels[i].SampleSpacingMeters.ToString("0.#"))
+                    .Append("m=").Append(_runtimeBands[i].Y.ToString("0"));
+            GD.Print($"LOD_BANDS far_scale={FarProxyErrorScale:0.##} ends: {ends}");
         }
     }
 

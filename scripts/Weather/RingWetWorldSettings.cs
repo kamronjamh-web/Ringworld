@@ -16,6 +16,8 @@ public partial class RingWetWorldSettings : Resource
     [Export(PropertyHint.Range, "0.25,4,0.01")] public float DryingSpeed { get; set; } = 1f;
     /// <summary>Rain drops on the camera lens; 0 = off.</summary>
     [Export(PropertyHint.Range, "0,1,0.01")] public float LensDroplets { get; set; } = 0.7f;
+    /// <summary>Engine screen-space reflections are traced only while the world is wet (blends over 3 s); dry glossy surfaces then reflect only the sky. Older preference files without the key load true (default on).</summary>
+    [Export] public bool SsrOnlyWhileWet { get; set; } = true;
 
     // Owned by the graphics quality preset (not persisted by the menu).
     /// <summary>Ripple layers per surface (1 Low .. 4 Very High).</summary>
