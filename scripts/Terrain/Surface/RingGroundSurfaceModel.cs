@@ -59,6 +59,27 @@ public static class RingGroundSurfaceModel
     /// <summary>D5: C64 metres to a value in (-1, 1).</summary>
     public static double Relief(double c64) => c64 / (Math.Abs(c64) + ReliefRefM);
 
+    /// <summary>D5: the canonical lattice the convexity nodes sit on, and the tap distance, in metres.</summary>
+    public const double ReliefLatticeM = 32.0, ReliefTapM = 64.0;
+
+    /// <summary>D5: C64 at a lattice node (around and across on the 32 m lattice): the height less the mean of the four height taps 64 m away. Metres; positive on a crest. <paramref name="heightAt"/> clamps across itself.</summary>
+    public static double NodeConvexity(Func<double, double, double> heightAt, double around, double across)
+        => heightAt(around, across) - 0.25 * (heightAt(around + ReliefTapM, across) + heightAt(around - ReliefTapM, across)
+            + heightAt(around, across + ReliefTapM) + heightAt(around, across - ReliefTapM));
+
+    /// <summary>D5: C64 at any point, the bilinear value of the four nodes of its 32 m cell.</summary>
+    public static double Convexity64(Func<double, double, double> heightAt, double around, double across)
+    {
+        double ua = around / ReliefLatticeM, uc = across / ReliefLatticeM;
+        double a0 = Math.Floor(ua), c0 = Math.Floor(uc), fa = ua - a0, fc = uc - c0;
+        double Node(double da, double dc) => NodeConvexity(heightAt, (a0 + da) * ReliefLatticeM, (c0 + dc) * ReliefLatticeM);
+        double v00 = Node(0, 0);
+        double v10 = fa > 0.0 ? Node(1, 0) : 0.0;
+        double v01 = fc > 0.0 ? Node(0, 1) : 0.0;
+        double v11 = fa > 0.0 && fc > 0.0 ? Node(1, 1) : 0.0;
+        return (v00 * (1.0 - fa) + v10 * fa) * (1.0 - fc) + (v01 * (1.0 - fa) + v11 * fa) * fc;
+    }
+
     private static uint Pcg(uint v)
     {
         unchecked

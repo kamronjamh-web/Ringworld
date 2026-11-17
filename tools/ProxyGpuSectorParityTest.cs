@@ -34,19 +34,29 @@ public partial class ProxyGpuSectorParityTest : Node
     public async void Start()
     {
         string result;
-        try { result = await Run(); }
+        try
+        {
+            result = await Run(false);
+            // T4-4a: the same sectors in a ground.surface world, where K2 also packs C64 into attr.z bits 16 to 31 (8 LSB = 8 mm allowed against the CPU builder).
+            if (result.StartsWith("PASS", StringComparison.Ordinal))
+            {
+                string feature = await Run(true);
+                result = feature.StartsWith("PASS", StringComparison.Ordinal) ? result + " | ground.surface " + feature : feature;
+            }
+        }
         catch (Exception error) { result = "FAIL " + error; }
         Result = result;
     }
 
     private void Log(string line) { _lines.Add(line); GD.Print("PROXY_GPU_SECTOR_DETAIL " + line); }
 
-    private async Task<string> Run()
+    private async Task<string> Run(bool feature)
     {
         if (RenderingServer.GetRenderingDevice() == null) return "FAIL RenderingDevice required";
         string showcase = JsonDocument.Parse(Godot.FileAccess.GetFileAsString("res://resources/menu/showcase_world.json"))
             .RootElement.GetProperty("generation_settings").GetProperty("surface_generation_recipe_json").GetString()!;
         TerrainGenerationParameters recipe = TerrainGenerationParameters.FromJson(showcase);
+        if (feature) recipe = TerrainGenerationParameters.WorldDefault(1, recipe.Seed, new[] { "ground.surface" });
         using var settings = new VoxelTerrainSettings
         {
             Seed = unchecked((int)recipe.Seed), SurfaceGenerationRecipeJson = recipe.CanonicalJson,
@@ -61,13 +71,13 @@ public partial class ProxyGpuSectorParityTest : Node
         int sectorsTotal = 0, dry = 0, ocean = 0, coastal = 0;
         foreach (int spacing in Spacings)
         {
-            (int n, int d, int o, int c) = await RunLevel(sampler, recipe, climate, spacing, failures);
+            (int n, int d, int o, int c) = await RunLevel(sampler, recipe, climate, spacing, failures, feature);
             sectorsTotal += n; dry += d; ocean += o; coastal += c;
         }
         string detail = string.Join("\n", _lines);
         string dir = ProjectSettings.GlobalizePath("res://.godot/proxy_gpu_sector_parity");
         System.IO.Directory.CreateDirectory(dir);
-        System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "report.txt"), detail + "\n");
+        System.IO.File.WriteAllText(System.IO.Path.Combine(dir, feature ? "report_ground_surface.txt" : "report.txt"), detail + "\n");
         if (failures.Count != 0) return "FAIL " + string.Join(" | ", failures.Take(16));
         return $"PASS sectors={sectorsTotal} dry={dry} ocean={ocean} coastal={coastal}";
     }
@@ -76,7 +86,7 @@ public partial class ProxyGpuSectorParityTest : Node
         => s.OceanIndexCount == 0 ? "dry" : s.FullyOceanSurface ? "ocean" : "coastal";
 
     private async Task<(int Sectors, int Dry, int Ocean, int Coastal)> RunLevel(RingTerrainSampler sampler, TerrainGenerationParameters recipe,
-        ProxyGpuClimateSettings climate, int spacing, List<string> failures)
+        ProxyGpuClimateSettings climate, int spacing, List<string> failures, bool feature)
     {
         int size = Cells * spacing, ringWidth = sampler.RingAcrossWidthMeters;
         long aroundSectors = (sampler.AroundRingVoxelLength + size - 1) / size;
@@ -102,7 +112,7 @@ public partial class ProxyGpuSectorParityTest : Node
             var coordinate = new RingTerrainSectorCoordinate(around, across);
             long around0 = around * size;
             bool site = sampler.IntersectsSiteInfluence(around0 - 4L * spacing, around0 + size + 4L * spacing, (double)across * size - 4.0 * spacing, (double)across * size + size + 4.0 * spacing);
-            if (!RingTerrainProxySector.GpuSectorRoutable(coordinate, size, spacing, ringWidth, false, site, false, false)) continue;
+            if (!RingTerrainProxySector.GpuSectorRoutable(coordinate, size, spacing, ringWidth, false, site, false, false, feature ? RingTerrainProxySector.GroundReliefReachMetersPublic : 0)) continue;
             var geometry = new RingLodGeometrySnapshot(new Transform3D(gridBasis, new Vector3(3, 4, 5)), new Vector3(1, 2, 3), new Vector3(11, 12, 13),
                 CertifiedRingScale.EffectiveRadiusMeters, 17.0, 120.5, sampler.AroundRingVoxelLength,
                 CertifiedRingScale.TerrainFloorMeters, CertifiedRingScale.StructuralWallTopMeters,
@@ -122,7 +132,7 @@ public partial class ProxyGpuSectorParityTest : Node
         if (fixtures.Count == 0) { failures.Add($"spacing {spacing}: no routable fixture sector found"); return (0, 0, 0, 0); }
 
         // GPU side: the production backend into its own pool.
-        using var backend = new ProxyGpuSectorBackend(spacing, recipe, climate);
+        using var backend = new ProxyGpuSectorBackend(spacing, recipe, climate, relief: feature);
         for (int frame = 0; frame < 1200 && !backend.Ready && !backend.Failed; frame++) await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
         if (!backend.Ready) { failures.Add($"spacing {spacing}: backend not ready: {backend.Error}"); return (0, 0, 0, 0); }
         var pool = new RingTerrainProxySector.VertexTablePool(Cells, fixtures.Count + 2, hasChord: true, gpuWritable: true);
@@ -192,7 +202,7 @@ public partial class ProxyGpuSectorParityTest : Node
                 if (r.Heights != null) CheckHeights(sampler, fixtures[j].Coordinate, spacing, size, r.Heights, worst, failures);
                 if (gpuClass == "coastal") continue; // the GPU declines these; their slot content is not used
                 CompareSlot(_readbacks[(0, gpuSlots[j])], _readbacks[(1, gpuSlots[j])], _readbacks[(2, gpuSlots[j])],
-                    _readbacks[(3, cpuSlots[j])], _readbacks[(4, cpuSlots[j])], _readbacks[(5, cpuSlots[j])], cpuClass == "ocean", Track, normalAngles);
+                    _readbacks[(3, cpuSlots[j])], _readbacks[(4, cpuSlots[j])], _readbacks[(5, cpuSlots[j])], cpuClass == "ocean", Track, normalAngles, feature);
                 // Summary against the worker's bounds and masks.
                 Aabb cpuVisual = sector.VisualBounds;
                 Vector3 gMin = r.VisualMin, gMax = r.VisualMax;
@@ -233,13 +243,48 @@ public partial class ProxyGpuSectorParityTest : Node
             {
                 double[] perSector = recent.Select(b => b.Microseconds / b.Sectors).OrderBy(v => v).ToArray();
                 double[] batch = recent.Select(b => b.Microseconds).OrderBy(v => v).ToArray();
-                Log($"spacing={spacing} warm_batches={recent.Length} sectors_per_batch_median={recent.Select(b => b.Sectors).OrderBy(v => v).ElementAt(recent.Length / 2)} "
+                Log($"feature={feature} spacing={spacing} warm_batches={recent.Length} sectors_per_batch_median={recent.Select(b => b.Sectors).OrderBy(v => v).ElementAt(recent.Length / 2)} "
                     + $"us_per_sector_median={perSector[perSector.Length / 2]:0.0} us_per_sector_p90={perSector[(int)(perSector.Length * 0.9)]:0.0} batch_us_median={batch[batch.Length / 2]:0.0} batch_us_max={batch[^1]:0.0} pass_us_mean_SBAK={string.Join("/", backend.PassMicrosecondsMean().Select(v => v.ToString("0.0")))}");
+            }
+            if (feature && Array.IndexOf(OS.GetCmdlineUserArgs(), "--relief-ab") >= 0)
+            {
+                // T4-4a cost: the same recipe, sectors and slots; only the K2 RELIEF define differs. Alternating rounds, warm.
+                using var offBackend = new ProxyGpuSectorBackend(spacing, recipe, climate, relief: false);
+                ProxyGpuSectorBackend.ReliefApronInPassB = true;
+                using var rtBackend = new ProxyGpuSectorBackend(spacing, recipe, climate, relief: true);
+                ProxyGpuSectorBackend.ReliefApronInPassB = false;
+                for (int frame = 0; frame < 1200 && !(offBackend.Ready && rtBackend.Ready) && !offBackend.Failed && !rtBackend.Failed; frame++) await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                if (!offBackend.Ready || !rtBackend.Ready) { failures.Add($"spacing {spacing}: A/B backends not ready"); return (fixtures.Count, dry, ocean, coastal); }
+                var perSector = new Dictionary<string, List<double>> { ["on_S"] = new(), ["on_B"] = new(), ["off"] = new() };
+                for (int round = 0; round < 16; round++)
+                foreach ((string name, ProxyGpuSectorBackend be) in new[] { ("on_S", backend), ("on_B", rtBackend), ("off", offBackend) })
+                {
+                    long before = be.MeasuredBatches;
+                    for (int j = 0; j < fixtures.Count; j++)
+                        be.Enqueue(new ProxyGpuSectorJob(fixtures[j].Coordinate.AroundSector, fixtures[j].Coordinate.AcrossSector, gpuSlots[j], 1UL, pool.Generation));
+                    int taken = 0;
+                    for (int frame = 0; frame < 3000 && taken < fixtures.Count; frame++)
+                    {
+                        be.Pump(globals, () => new ProxyGpuSlotTargets(pool.PosRid, pool.ChordRid, pool.AttrRid, generation, pool.Ready));
+                        be.PollTimes();
+                        while (be.TryTakeResult(out _)) taken++;
+                        await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                    }
+                    for (int frame = 0; frame < 6; frame++) { be.PollTimes(); await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame); }
+                    if (round >= 4) { var all = be.RecentBatches(); foreach (var batch in all.Skip(Math.Max(0, all.Length - (int)Math.Min(all.Length, be.MeasuredBatches - before)))) perSector[name].Add(batch.Microseconds / batch.Sectors); }
+                }
+                foreach (string name in new[] { "off", "on_B", "on_S" })
+                {
+                    double[] v = perSector[name].OrderBy(x => x).ToArray();
+                    double[] pm = (name == "on_S" ? backend : name == "on_B" ? rtBackend : offBackend).PassMicrosecondsMean();
+                    if (v.Length > 0)
+                        Log($"RELIEF_AB spacing={spacing} {name} n={v.Length} us_per_sector median={v[v.Length / 2]:0.0} p10={v[(int)(v.Length * 0.1)]:0.0} p90={v[(int)(v.Length * 0.9)]:0.0} pass_us_mean_SBAK={string.Join("/", pm.Select(x => x.ToString("0.0")))}");
+                }
             }
             ProxyGpuSectorBackend.PassTimingEnabled = false;
             normalAngles.Sort();
             double p999 = normalAngles.Count == 0 ? 0.0 : normalAngles[Math.Min(normalAngles.Count - 1, (int)(normalAngles.Count * 0.999))];
-            Log($"spacing={spacing} sectors={fixtures.Count} dry={dry} ocean={ocean} coastal={coastal} class_mismatch={classMismatch} "
+            Log($"feature={feature} spacing={spacing} sectors={fixtures.Count} dry={dry} ocean={ocean} coastal={coastal} class_mismatch={classMismatch} "
                 + string.Join(" ", worst.OrderBy(k => k.Key).Select(k => $"{k.Key}={k.Value:0.0000}")) + $" normal_deg_p99.9={p999:0.0000}"
                 + $" target_batch_sectors={backend.TargetBatchSectors} max_batch_us={backend.MaxMeasuredBatchMicroseconds:0.0} batches={backend.BatchesDispatched}");
             void Limit(string key, double limit) { if (worst.GetValueOrDefault(key) > limit) failures.Add($"spacing {spacing}: {key}={worst.GetValueOrDefault(key):0.0000} > {limit}"); }
@@ -250,6 +295,7 @@ public partial class ProxyGpuSectorParityTest : Node
             if (p999 > 0.5) failures.Add($"spacing {spacing}: normal p99.9 {p999:0.0000} deg > 0.5");
             Limit("terrain_color_byte", 3); Limit("water_color_byte", 2); Limit("skirt_color_byte", 1);
             Limit("flag_word_mismatch", 0); Limit("skirt_uv_word_mismatch", 0);
+            if (feature) { Limit("relief_lsb", 8); Limit("relief_water_bits", 0); }
             Limit("visual_bounds_min", 0.3); Limit("visual_bounds_max", 0.3); Limit("mesh_bounds_min", 0.1); Limit("mesh_bounds_max", 0.1);
             Limit("ocean_cell_flips", 0); Limit("ocean_depth_byte_diff", 1);
             Limit("height_window_m", 0.02);
@@ -282,7 +328,7 @@ public partial class ProxyGpuSectorParityTest : Node
     }
 
     private static void CompareSlot(byte[] gPos, byte[] gChord, byte[] gAttr, byte[] cPos, byte[] cChord, byte[] cAttr, bool ocean,
-        Action<string, double> track, List<double> normalAngles)
+        Action<string, double> track, List<double> normalAngles, bool feature)
     {
         const int lattice = 65 * 65;
         int texels = 2 * lattice + 4 * 64 * 4;
@@ -321,7 +367,16 @@ public partial class ProxyGpuSectorParityTest : Node
                 for (int c = 0; c < 4; c++) diff = Math.Max(diff, Math.Abs((int)((gColor >> (c * 8)) & 255u) - (int)((cColor >> (c * 8)) & 255u)));
                 track(group + "_color_byte", diff);
             }
-            if (ga[t * 4 + 2] != ca[t * 4 + 2]) track("flag_word_mismatch", 1);
+            // T4-4a: terrain lattice texels of a ground.surface world carry C64 in z bits 16 to 31 (snorm16, 1 mm); the flag bits below compare exactly.
+            uint gz = ga[t * 4 + 2], cz = ca[t * 4 + 2];
+            if (feature && group == "terrain")
+            {
+                track("relief_lsb", Math.Abs((int)(short)(gz >> 16) - (int)(short)(cz >> 16)));
+                track("relief_nonzero_texels", (short)(cz >> 16) != 0 ? 1 : 0);
+                gz &= 0xFFFFu; cz &= 0xFFFFu;
+            }
+            else if (feature && group == "water" && ((gz >> 16) != 0 || (cz >> 16) != 0)) track("relief_water_bits", 1);
+            if (gz != cz) track("flag_word_mismatch", 1);
             if (group == "skirt" && ga[t * 4 + 3] != ca[t * 4 + 3]) track("skirt_uv_word_mismatch", 1);
             track("textures_nonzero_checked", 1);
         }

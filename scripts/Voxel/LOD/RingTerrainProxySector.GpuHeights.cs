@@ -73,13 +73,15 @@ public partial class RingTerrainProxySector
     /// (structural walls, clamped rows) and sectors the GPU already declined as coastal stay on the CPU (docs/gpu-offload-plan.md 4.1).
     /// </summary>
     internal static bool GpuSectorRoutable(RingTerrainSectorCoordinate coordinate, int size, int spacing, int ringWidth,
-        bool touchesEdits, bool touchesSite, bool touchesRiver, bool declinedByGpu)
+        bool touchesEdits, bool touchesSite, bool touchesRiver, bool declinedByGpu, int reliefReachMeters = 0)
     {
         if (touchesEdits || touchesSite || touchesRiver || declinedByGpu) return false;
         long acrossStart = (long)coordinate.AcrossSector * size;
         long acrossEnd = acrossStart + size;
         // Window halo, parent samples and the 16 m biome centres all stay two lattice steps inside the last presentation row.
-        return acrossStart - 2L * spacing >= 0 && acrossEnd + 2L * spacing <= ringWidth - 2L - 8L;
+        // T4-4a: a ground.surface sector also keeps the convexity stencil (reliefReachMeters beyond the lattice) inside the ring, so the GPU never clamps across.
+        long reach = Math.Max(2L * spacing, reliefReachMeters);
+        return acrossStart - reach >= 0 && acrossEnd + reach <= ringWidth - 2L - 8L;
     }
 
     /// <summary>
@@ -114,7 +116,7 @@ public partial class RingTerrainProxySector
         if (climate == null) { _gpuBackendReason = "no climate settings"; return; }
         try
         {
-            _gpuBackend = new ProxyGpuSectorBackend(SampleSpacingMeters, sampler.RuntimeSurfaceRecipe!, climate);
+            _gpuBackend = new ProxyGpuSectorBackend(SampleSpacingMeters, sampler.RuntimeSurfaceRecipe!, climate, BuildsGroundRelief(sampler, SampleSpacingMeters));
             _gpuBackendReason = "gpu";
             _gpuSelfCheckQueued = false;
             _gpuSelfCheckPassed = false;
@@ -189,6 +191,7 @@ public partial class RingTerrainProxySector
         var cpu = new List<RingTerrainSectorCoordinate>(missing.Count);
         // Hybrid routing: the GPU only gets what it can finish within a short horizon; the rest builds on the CPU workers as before.
         int room = backend.RoutingRoom;
+        int reliefReach = BuildsGroundRelief(sampler, spacing) ? GroundReliefReachMeters : 0;
         foreach (RingTerrainSectorCoordinate coordinate in missing)
         {
             if (backend.IsQueued(coordinate.AroundSector, coordinate.AcrossSector)) continue; // already in flight
@@ -199,7 +202,7 @@ public partial class RingTerrainProxySector
             if (touchesEdits || touchesSite) RingProxyBuildCounters.AddGpuEditedToCpu(SampleSpacingMeters);
             bool touchesRiver = SectorTouchesRiver(sampler, coordinate, size, spacing, parentSpacing);
             if (touchesRiver) RingProxyBuildCounters.AddGpuRiverToCpu(SampleSpacingMeters);
-            if (room <= 0 || !GpuSectorRoutable(coordinate, size, spacing, ringWidth, touchesEdits, touchesSite, touchesRiver, _gpuCpuRoute.Contains(coordinate))
+            if (room <= 0 || !GpuSectorRoutable(coordinate, size, spacing, ringWidth, touchesEdits, touchesSite, touchesRiver, _gpuCpuRoute.Contains(coordinate), reliefReach)
                 || !pool.TryAcquire(out int slot))
             {
                 cpu.Add(coordinate);

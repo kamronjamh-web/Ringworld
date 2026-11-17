@@ -89,6 +89,39 @@ layout(push_constant, std430) uniform Params
 
 #define INF uintBitsToFloat(0x7f800000u)
 
+#ifdef RELIEF
+// T4-4a (D5): ground.surface worlds only (the host prepends RELIEF; generation 1 compiles the original text). Each sector's heights region grows by the apron nodes of the 32 m
+// convexity lattice: a cross of two nodes (64 m) around the lattice, depth 1 and 2 on every side (depth 1 only on the 32 m level, where it is the window's halo ring).
+#define NODE_M 32
+#ifdef RELIEF_N
+// The host also prepends RELIEF_N (nodes per side: 16, 32 or 64) when it compiles one core per level, so the strides below are compile-time constants.
+int relief_nodes() { return RELIEF_N; }
+int relief_spacing() { return RELIEF_N / 2; }                                      // sectors are 64 cells: N = 2 x spacing
+#else
+int relief_nodes() { return G_I(H_SIZE) / NODE_M; }                               // N: 16, 32 or 64 (the lattice has N + 1 nodes per side)
+int relief_spacing() { return G_I(H_SPACING); }
+#endif
+int relief_depths() { return relief_spacing() >= NODE_M ? 1 : 2; }               // apron depths evaluated (the 32 m level reads depth 1 from the window)
+int relief_apron_count() { return 4 * relief_depths() * (relief_nodes() + 1); }
+int hstride() { return WSTRIDE + relief_apron_count(); }
+#define HSTRIDE hstride()
+// Apron node a (0 .. relief_apron_count() - 1): side (around -, around +, across -, across +), depth 1 or 2 (2 only on the 32 m level), position t along the side. Returns the pass-S style
+// sample arguments: around relative to the sector anchor, absolute across.
+void relief_apron_coords(int a, int base, out int da, out int ac)
+{
+	int n = relief_nodes(), n1 = n + 1, dc = relief_depths();
+	int t = a % n1, sd = a / n1;
+	int side = sd / dc;
+	int d = sd - side * dc + (dc == 1 ? 2 : 1);
+	int ni = side == 0 ? -d : (side == 1 ? n + d : t);
+	int nj = side == 2 ? -d : (side == 3 ? n + d : t);
+	da = ni * NODE_M;
+	ac = G_I(base + 1) + nj * NODE_M;
+}
+#else
+#define HSTRIDE WSTRIDE
+#endif
+
 // ------------------------------------------------------------------------------------------------------------ geometry
 vec3 g_rows(int off, vec3 p)
 {
@@ -187,13 +220,39 @@ float parent_height(int hb, int x, int z, bool positive, bool water)
 }
 
 #if defined(PASS_S)
+#ifdef RELIEF
 void main()
 {
 	uint gid = gl_GlobalInvocationID.x;
 	touch_all();
-	int s = int(gid) / WSTRIDE;
+#ifdef RELIEF_APRON_B
+	int sthreads = WSTRIDE; // the apron nodes are evaluated by pass B's spare threads
+#else
+	int sthreads = HSTRIDE; // the apron nodes follow the window in the same dispatch
+#endif
+	int s = int(gid) / sthreads;
 	if (s >= pc.count) return;
-	int i = int(gid) - s * WSTRIDE;
+	int i = int(gid) - s * sthreads;
+	int wz = i / WIN, wx = i - wz * WIN;
+	int base = H_SECTORS + s * SECTOR_WORDS;
+	int spacing = G_I(H_SPACING);
+	hm_set_anchor(G_I(base), vec2(G_F(base + 4), G_F(base + 5)), vec2(G_F(base + 6), G_F(base + 7)));
+	int da = (wx - 1) * spacing, ac = G_I(base + 1) + (wz - 1) * spacing;
+#ifndef RELIEF_APRON_B
+	if (i >= WSTRIDE) relief_apron_coords(i - WSTRIDE, base, da, ac);
+#endif
+	// One hm_sample call site (a second inlined copy of the height model costs registers and occupancy).
+	HmResult r = hm_sample(da, ac);
+	heights.h[s * HSTRIDE + i] = r.height;
+}
+#else
+void main()
+{
+	uint gid = gl_GlobalInvocationID.x;
+	touch_all();
+	int s = int(gid) / HSTRIDE;
+	if (s >= pc.count) return;
+	int i = int(gid) - s * HSTRIDE;
 	int wz = i / WIN, wx = i - wz * WIN;
 	int base = H_SECTORS + s * SECTOR_WORDS;
 	int spacing = G_I(H_SPACING);
@@ -201,6 +260,7 @@ void main()
 	HmResult r = hm_sample((wx - 1) * spacing, G_I(base + 1) + (wz - 1) * spacing);
 	heights.h[gid] = r.height;
 }
+#endif
 #elif defined(PASS_B)
 void main()
 {
@@ -210,6 +270,10 @@ void main()
 	// One thread per distinct 16 m centre: 33 x 33 at 8 m (every second vertex), 65 x 65 at 16 and 32 m (every vertex).
 	int bw = spacing >= 16 ? ROW : 33;
 	int perSector = bw * bw;
+#if defined(RELIEF) && defined(RELIEF_APRON_B)
+	int biomeThreads = perSector;
+	perSector += relief_apron_count(); // spare threads after the biome centres evaluate the convexity apron
+#endif
 	int s = int(gid) / perSector;
 	if (s >= pc.count) return;
 	int i = int(gid) - s * perSector;
@@ -218,7 +282,13 @@ void main()
 	int base = H_SECTORS + s * SECTOR_WORDS;
 	hm_set_anchor(G_I(base), vec2(G_F(base + 4), G_F(base + 5)), vec2(G_F(base + 6), G_F(base + 7)));
 	int dA = x * spacing + 8, across = G_I(base + 1) + z * spacing + 8;
+#if defined(RELIEF) && defined(RELIEF_APRON_B)
+	if (i >= biomeThreads) relief_apron_coords(i - biomeThreads, base, dA, across);
+#endif
 	HmResult r = hm_sample(dA, across);
+#if defined(RELIEF) && defined(RELIEF_APRON_B)
+	if (i >= biomeThreads) { heights.h[s * HSTRIDE + WSTRIDE + (i - biomeThreads)] = r.height; return; }
+#endif
 	RcFields f = rc_sample_fields(dA, across);
 	vec4 w = rc_biome_weights(r.height, r.continental, r.ridge, f);
 	uint o = uint((s * BIOME_STRIDE + zi * ROW + xi) * BIOME_FLOATS);
@@ -226,6 +296,49 @@ void main()
 	biome.v[o + 4u] = f.moisture;
 }
 #elif defined(PASS_A)
+
+#ifdef RELIEF
+// Height of lattice node (i, j), indices -2 .. N + 2 along one axis (the stencil is a cross, so never both out): lattice nodes are window vertices, the cross beyond comes from the apron region.
+float node_h(int hb, int i, int j)
+{
+	int n = relief_nodes(), spacing = relief_spacing();
+	int per = max(NODE_M / spacing, 1); // window cells per node: 4, 2, 1
+	if (i >= 0 && i <= n && j >= 0 && j <= n) return hwin(hb, i * per, j * per);
+	int side, d, t;
+	if (i < 0) { side = 0; d = -i; t = j; }
+	else if (i > n) { side = 1; d = i - n; t = j; }
+	else if (j < 0) { side = 2; d = -j; t = i; }
+	else { side = 3; d = j - n; t = i; }
+	if (spacing >= NODE_M && d == 1) return hwin(hb, i, j); // 32 m level: the node is a window vertex of the halo ring
+	int dc = relief_depths();
+	return heights.h[hb + WSTRIDE + (side * dc + d - (dc == 1 ? 2 : 1)) * (n + 1) + t];
+}
+
+// NodeConvexity: C64 = h - 0.25 * (the four heights 64 m away).
+float node_c(int hb, int i, int j)
+{
+	precise float tap = node_h(hb, i + 2, j) + node_h(hb, i - 2, j) + node_h(hb, i, j + 2) + node_h(hb, i, j - 2);
+	return node_h(hb, i, j) - 0.25 * tap;
+}
+
+// Convexity64: bilinear value of the four nodes of the vertex's 32 m cell (zero-weight nodes are not evaluated).
+float vertex_relief(int hb, int x, int z)
+{
+	int per = max(NODE_M / relief_spacing(), 1);
+	int i0 = x / per, j0 = z / per;
+	float fx = float(x - i0 * per) / float(per), fz = float(z - j0 * per) / float(per);
+	float v00 = node_c(hb, i0, j0);
+	float v10 = fx > 0.0 ? node_c(hb, i0 + 1, j0) : 0.0;
+	float v01 = fz > 0.0 ? node_c(hb, i0, j0 + 1) : 0.0;
+	float v11 = fx > 0.0 && fz > 0.0 ? node_c(hb, i0 + 1, j0 + 1) : 0.0;
+	precise float r = (v00 * (1.0 - fx) + v10 * fx) * (1.0 - fz) + (v01 * (1.0 - fx) + v11 * fx) * fz;
+	return r;
+}
+// attr.z bits 16 to 31 of a terrain lattice texel: snorm16(C64 / 32 m).
+#define RELIEF_Z(hb, x, z) ((uint(snorm16(vertex_relief((hb), (x), (z)) * (1.0 / 32.0))) & 0xFFFFu) << 16)
+#else
+#define RELIEF_Z(hb, x, z) 0u
+#endif
 
 // Water vertex colour: RingWaterModel.EncodeWaterKind(ResolveSeededColor(ocean vertex)). Moisture comes from the 16 m centre.
 vec4 water_color(float h, float moisture)
@@ -253,7 +366,7 @@ void main()
 	int base = H_SECTORS + max(s, 0) * SECTOR_WORDS;
 	if (live)
 	{
-		int hb = s * WSTRIDE;
+		int hb = s * HSTRIDE;
 		int spacing = G_I(H_SPACING), size = G_I(H_SIZE), parentSpacing = G_I(H_PARENT);
 		float underlay = G_F(H_UNDERLAY), punder = G_F(H_PUNDER);
 		int slot = G_I(base + 2);
@@ -315,7 +428,7 @@ void main()
 		precise float morphW = parent_height(hb, x, z, false, true) - wh + underlay - G_F(H_OWN_WR) - punder + G_F(H_PAR_WR);
 
 		int t = i;
-		store_texel(slot, t, vec4(pos, morphT), vec4(chord, 0.0), uvec4(enc_oct(nt), terrainColor, 0u, 0u));
+		store_texel(slot, t, vec4(pos, morphT), vec4(chord, 0.0), uvec4(enc_oct(nt), terrainColor, RELIEF_Z(hb, x, z), 0u));
 		store_texel(slot, LATTICE + t, vec4(wpos, morphW), vec4(0.0), uvec4(enc_oct(nw), waterColor, 1u, 0u));
 
 		// -------- summary inputs: CalculateCompleteVisualBounds over terrain and water lattice (chord endpoint for terrain, radial reach for water)
@@ -433,7 +546,7 @@ void main()
 		int q = int(gid) - s * 4 * CELLS;
 		int edge = q / CELLS, quad = q - edge * CELLS;
 		int base = H_SECTORS + s * SECTOR_WORDS;
-		int hb = s * WSTRIDE;
+		int hb = s * HSTRIDE;
 		int spacing = G_I(H_SPACING), size = G_I(H_SIZE);
 		float underlay = G_F(H_UNDERLAY), punder = G_F(H_PUNDER), depth = G_F(H_SKIRT);
 		int slot = G_I(base + 2);

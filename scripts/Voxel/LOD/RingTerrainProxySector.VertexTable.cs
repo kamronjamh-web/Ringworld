@@ -406,6 +406,8 @@ public partial class RingTerrainProxySector
             uint skirtBits = 0u, skirtWord = 0u;
             if (skirt && !TryEncodeSkirtUv(data.Uvs[i], cells, out skirtBits, out skirtWord)) return null;
             attr[texel * 4 + 2] = (data.MorphData[i].Y >= 0.5f ? 1u : 0u) | (skirt ? 2u : 0u) | skirtBits;
+            // T4-4a (D5): a terrain lattice texel of a ground.surface sector carries C64 as snorm16 (1 mm steps) in z bits 16 to 31; water rows and skirts are unchanged (skirts keep their UV index there).
+            if (data.Relief != null && i < layout.LatticeVertices) attr[texel * 4 + 2] |= (uint)EncodeReliefSnorm16(data.Relief[i]) << 16;
             // T2R-12c (S13.2): a terrain lattice vertex carries its river line coverage c as float bits in w (0 today for non-skirts); water rows and skirts are unchanged.
             float lineMorph = data.MorphData[i].Y;
             attr[texel * 4 + 3] = !skirt && i < layout.LatticeVertices && lineMorph > 0f && lineMorph < 0.5f ? BitConverter.SingleToUInt32Bits(lineMorph / RiverLineMorphScale) : skirtWord;
@@ -934,6 +936,12 @@ public partial class RingTerrainProxySector
 
         public VertexTableSlotBlocks Blocks { get; }
         public bool UsesRuntimeParentChord => _data.UsesRuntimeParentChord;
+        /// <summary>T4-4a: C64 per source vertex in metres (terrain lattice first), null when the sector carries none.</summary>
+        public float[]? Relief => _data.Relief;
+        public int LatticeVertexCount => new VertexTableLayout(_cells).LatticeVertices;
+        public Vector3[] SourceVertices => _data.Vertices;
+        /// <summary>T4-4a: the CUSTOM0 array and format a mesh install would upload, null when there is none.</summary>
+        public float[]? MeshCustom0(out Mesh.ArrayFormat format) => BuildCustom0(_data.ParentChordOffsets, _data.UsesRuntimeParentChord, _data.Relief, out format);
         public bool FullyOceanSurface => _data.FullyOceanSurface;
         public int OceanIndexCount => _data.OceanIndices.Length;
         public bool[] OceanCells => _data.OceanSurfaceMask?.CoveredCells ?? Array.Empty<bool>();
@@ -951,18 +959,28 @@ public partial class RingTerrainProxySector
             arrays[(int)Mesh.ArrayType.TexUV] = _data.Uvs;
             arrays[(int)Mesh.ArrayType.TexUV2] = _data.MorphData;
             arrays[(int)Mesh.ArrayType.Index] = _data.Indices;
-            Mesh.ArrayFormat format = 0;
-            if (_data.UsesRuntimeParentChord)
-            {
-                var custom = new float[_data.ParentChordOffsets.Length * 3];
-                for (int i = 0; i < _data.ParentChordOffsets.Length; i++)
-                { custom[i * 3] = _data.ParentChordOffsets[i].X; custom[i * 3 + 1] = _data.ParentChordOffsets[i].Y; custom[i * 3 + 2] = _data.ParentChordOffsets[i].Z; }
-                arrays[(int)Mesh.ArrayType.Custom0] = custom;
-                format = (Mesh.ArrayFormat)((ulong)Mesh.ArrayCustomFormat.RgbFloat << (int)Mesh.ArrayFormat.FormatCustom0Shift);
-            }
+            float[]? custom0 = BuildCustom0(_data.ParentChordOffsets, _data.UsesRuntimeParentChord, _data.Relief, out Mesh.ArrayFormat format);
+            if (custom0 != null) arrays[(int)Mesh.ArrayType.Custom0] = custom0;
             var mesh = new ArrayMesh();
             mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays, null, null, format);
             return mesh;
+        }
+
+        /// <summary>T4-4a: FNV-1a over the worker arrays, the packed slot blocks and the mesh CUSTOM0 array, as the installers receive them (the generation 1 identity golden).</summary>
+        public ulong DataHash()
+        {
+            ulong h = 14695981039346656037UL;
+            void Add<T>(T[] values) where T : unmanaged
+            {
+                foreach (byte b in MemoryMarshal.AsBytes<T>(values)) h = (h ^ b) * 1099511628211UL;
+                h = (h ^ 0xA5UL) * 1099511628211UL;
+            }
+            Add(_data.Vertices); Add(_data.Normals); Add(_data.Colors); Add(_data.Uvs); Add(_data.MorphData); Add(_data.ParentChordOffsets);
+            Add(_data.Indices); Add(_data.OceanIndices);
+            Add(Blocks.PosMorph); Add(Blocks.Attr); Add(Blocks.Chord ?? Array.Empty<byte>());
+            float[]? custom0 = BuildCustom0(_data.ParentChordOffsets, _data.UsesRuntimeParentChord, _data.Relief, out _);
+            if (custom0 != null) Add(custom0);
+            return h;
         }
 
         /// <summary>Centre, mean surface normal and extent of the terrain lattice, to frame a camera.</summary>
@@ -1054,6 +1072,12 @@ public partial class RingTerrainProxySector
                     float lineMorph = _data.MorphData[i].Y;
                     uint expectedLine = i < layout.LatticeVertices && lineMorph > 0f && lineMorph < 0.5f ? BitConverter.SingleToUInt32Bits(lineMorph / RiverLineMorphScale) : 0u;
                     if (attrU[texel * 4 + 3] != expectedLine) return $"river line payload differs at vertex {i}";
+                }
+                // T4-4a: z bits 16 to 31 of a terrain lattice texel are C64; every other non-skirt texel leaves them 0.
+                if (!skirt)
+                {
+                    uint expectedRelief = _data.Relief != null && i < layout.LatticeVertices ? EncodeReliefSnorm16(_data.Relief[i]) : 0u;
+                    if (attrU[texel * 4 + 2] >> 16 != expectedRelief) return $"relief bits differ at vertex {i}";
                 }
                 if (BitConverter.SingleToInt32Bits(uv.X) != BitConverter.SingleToInt32Bits(_data.Uvs[i].X)
                     || BitConverter.SingleToInt32Bits(uv.Y) != BitConverter.SingleToInt32Bits(_data.Uvs[i].Y))

@@ -474,6 +474,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         public required int[] TerrainIndices { get; init; }
         public required int[] OceanIndices { get; init; }
         public required bool UsesRuntimeParentChord { get; init; }
+        public float[]? Relief { get; init; }
         public required int Cells { get; init; }
         public required Mesh FullMesh { get; init; }
         public Mesh? FilteredMesh { get; set; }
@@ -482,7 +483,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         public long ReservedBytes { get; set; }
         public long SourceBytes => Vertices.LongLength * 12L + Normals.LongLength * 12L
             + Colors.LongLength * 16L + Uvs.LongLength * 8L + MorphData.LongLength * 8L
-            + ParentChordOffsets.LongLength * 12L + (TerrainIndices.LongLength + OceanIndices.LongLength) * 4L;
+            + ParentChordOffsets.LongLength * 12L + (Relief?.LongLength ?? 0L) * 4L + (TerrainIndices.LongLength + OceanIndices.LongLength) * 4L;
     }
 
     private sealed record SectorData(RingTerrainSectorCoordinate Coordinate, ulong RequestVersion, ulong EditVersion, Vector3 LocalOrigin, Vector3[] Vertices, Vector3[] Normals, Color[] Colors, Vector2[] Uvs, Vector2[] MorphData, Vector3[] ParentChordOffsets, bool UsesRuntimeParentChord, Aabb VisualBounds, int[] Indices, int[] OceanIndices, SurfaceCoverageMask? CoverageMask, SurfaceCoverageMask? OceanSurfaceMask, bool FullyOceanSurface, FftShorelineTile? ShorelineTile, int SkirtVertexStart = -1)
@@ -502,6 +503,9 @@ public partial class RingTerrainProxySector : MeshInstance3D
         /// <summary>Set by the worker (before the sector is published) when this level installs through vertex-table slots.</summary>
         public SlotInstallPayload? SlotPayload { get; set; }
 
+        /// <summary>T4-4a: C64 per vertex (length of Vertices; 0 beyond the terrain lattice) in worlds with ground.surface on levels of 64 m and finer; null otherwise (generation 1 data is unchanged).</summary>
+        public float[]? Relief { get; set; }
+
         public long EstimatedBytes => Vertices.LongLength * 12L
             + Normals.LongLength * 12L
             + Colors.LongLength * 16L
@@ -510,7 +514,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
             + ParentChordOffsets.LongLength * 12L
             + (Indices.LongLength + OceanIndices.LongLength) * 4L
             + (ShorelineTile?.InteriorBytes.LongLength ?? 0L)
-            + (SlotPayload?.Bytes ?? 0L);
+            + (SlotPayload?.Bytes ?? 0L)
+            + (Relief?.LongLength ?? 0L) * 4L;
     }
     private sealed record BuildBatch(ulong RequestVersion, ulong EditVersion, int SectorCount, int CacheHits, int CacheWrites, double WorkerMilliseconds);
     private sealed record StructuralWallRequest(
@@ -4401,6 +4406,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         Aabb visualBounds = CalculateCompleteVisualBounds(
             finalVertices, finalMorphData, finalParentChordOffsets, runtimeParentChord);
         SectorData result = new(coordinate, requestVersion, editSnapshot.Version, localOrigin, finalVertices, normals.ToArray(), colors.ToArray(), uvs.ToArray(), finalMorphData, finalParentChordOffsets, runtimeParentChord, visualBounds, indexList.ToArray(), oceanIndexList.ToArray(), coverageMask, new SurfaceCoverageMask(cells, 1, oceanSurfaceCells, oceanDeepWaterVertexDepths), fullyOceanSurface, shorelineTile, buildSkirts ? skirtVertexStart : -1);
+        if (BuildsGroundRelief(sampler, spacing)) result.Relief = BuildSectorRelief(sampleCache, coordinate, size, spacing, cells, alignSurfaceToTerrainSdf, finalVertices.Length);
         long allocated = GC.GetAllocatedBytesForCurrentThread() - allocationsBefore;
         if (allocated > 0) Interlocked.Add(ref _workerAllocatedBytesSinceStartup, allocated);
         return result;
@@ -6207,17 +6213,9 @@ public partial class RingTerrainProxySector : MeshInstance3D
         arrays[(int)Godot.Mesh.ArrayType.Color] = data.Colors;
         arrays[(int)Godot.Mesh.ArrayType.TexUV] = data.Uvs;
         arrays[(int)Godot.Mesh.ArrayType.TexUV2] = data.MorphData;
-        if (data.UsesRuntimeParentChord)
-        {
-            var custom = new float[data.ParentChordOffsets.Length * 3];
-            for (int i = 0; i < data.ParentChordOffsets.Length; i++)
-            { custom[i * 3] = data.ParentChordOffsets[i].X; custom[i * 3 + 1] = data.ParentChordOffsets[i].Y; custom[i * 3 + 2] = data.ParentChordOffsets[i].Z; }
-            arrays[(int)Godot.Mesh.ArrayType.Custom0] = custom;
-        }
+        float[]? custom0 = BuildCustom0(data.ParentChordOffsets, data.UsesRuntimeParentChord, data.Relief, out Mesh.ArrayFormat meshFormat);
+        if (custom0 != null) arrays[(int)Godot.Mesh.ArrayType.Custom0] = custom0;
         var mesh = new ArrayMesh();
-        Mesh.ArrayFormat meshFormat = data.UsesRuntimeParentChord
-            ? (Mesh.ArrayFormat)((ulong)Mesh.ArrayCustomFormat.RgbFloat << (int)Mesh.ArrayFormat.FormatCustom0Shift)
-            : 0;
         if (data.Indices.Length > 0)
         {
             arrays[(int)Godot.Mesh.ArrayType.Index] = data.Indices;
@@ -6565,7 +6563,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             Vertices = data.Vertices, Normals = data.Normals, Colors = data.Colors, Uvs = data.Uvs,
             MorphData = data.MorphData, ParentChordOffsets = data.ParentChordOffsets,
             TerrainIndices = data.Indices, OceanIndices = data.OceanIndices,
-            UsesRuntimeParentChord = data.UsesRuntimeParentChord,
+            UsesRuntimeParentChord = data.UsesRuntimeParentChord, Relief = data.Relief,
             Cells = Mathf.Max(1, SectorSizeMeters / Mathf.Max(1, SampleSpacingMeters)), FullMesh = fullMesh
         };
         long limit = Math.Min(MaximumPartialCoverageRetainedBytesAllLevels,
@@ -6660,15 +6658,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
         arrays[(int)Godot.Mesh.ArrayType.Color] = source.Colors;
         arrays[(int)Godot.Mesh.ArrayType.TexUV] = source.Uvs;
         arrays[(int)Godot.Mesh.ArrayType.TexUV2] = source.MorphData;
-        Mesh.ArrayFormat format = 0;
-        if (source.UsesRuntimeParentChord)
-        {
-            var custom = new float[source.ParentChordOffsets.Length * 3];
-            for (int i = 0; i < source.ParentChordOffsets.Length; i++)
-            { custom[i * 3] = source.ParentChordOffsets[i].X; custom[i * 3 + 1] = source.ParentChordOffsets[i].Y; custom[i * 3 + 2] = source.ParentChordOffsets[i].Z; }
-            arrays[(int)Godot.Mesh.ArrayType.Custom0] = custom;
-            format = (Mesh.ArrayFormat)((ulong)Mesh.ArrayCustomFormat.RgbFloat << (int)Mesh.ArrayFormat.FormatCustom0Shift);
-        }
+        float[]? custom0 = BuildCustom0(source.ParentChordOffsets, source.UsesRuntimeParentChord, source.Relief, out Mesh.ArrayFormat format);
+        if (custom0 != null) arrays[(int)Godot.Mesh.ArrayType.Custom0] = custom0;
         var mesh = new ArrayMesh();
         arrays[(int)Godot.Mesh.ArrayType.Index] = terrainIndices;
         mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays, null, null, format);
@@ -6686,7 +6677,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
     {
         long vertexStreams = source.Vertices.LongLength * 12L + source.Normals.LongLength * 12L
             + source.Colors.LongLength * 16L + source.Uvs.LongLength * 8L + source.MorphData.LongLength * 8L
-            + (source.UsesRuntimeParentChord ? source.ParentChordOffsets.LongLength * 12L : 0L);
+            + (source.UsesRuntimeParentChord ? source.ParentChordOffsets.LongLength * 12L : 0L)
+            + (source.Relief?.LongLength ?? 0L) * 4L;
         return vertexStreams + ((long)terrainIndexCount + source.OceanIndices.LongLength) * sizeof(int);
     }
 

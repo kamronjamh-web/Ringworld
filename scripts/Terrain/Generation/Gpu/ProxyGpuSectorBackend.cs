@@ -56,6 +56,9 @@ public sealed class ProxyGpuSectorBackend : IDisposable
     public const int Contexts = 3;
     public const int WindowFloats = 67 * 67, BiomeEntries = 65 * 65, BiomeFloats = 8, SummaryWords = 1208;
     public const int HeaderWords = 64, SectorWords = 16;
+    /// <summary>T4-4a: the convexity lattice is 32 m; a ground.surface backend evaluates a cross of apron nodes (two deep, one deep on the 32 m level) outside the sector window.</summary>
+    private const int ReliefNodeMeters = 32;
+    private const ulong ReliefCoreSalt = 0x5245_4C49_4546_3434UL;
     private const string TimestampPrefix = "ringpx:";
     private const string PassPrefix = "ringpxp:";
     /// <summary>Test and perf diagnostics: one compute list and one timestamp pair per pass (S, B, A, K) instead of a single list.</summary>
@@ -131,6 +134,13 @@ public sealed class ProxyGpuSectorBackend : IDisposable
 
     private readonly Link _link = new();
     private readonly ulong _coreKey;
+    private readonly bool _relief;
+    private readonly bool _reliefConst;
+    /// <summary>T4-4a: compile one core per level with RELIEF_N, so the heights stride is a compile-time constant. Test knob for the A/B cost run; on by default.</summary>
+    public static bool ReliefConstantStride { get; set; } = true;
+    private readonly bool _reliefApronB;
+    /// <summary>T4-4a: evaluate the convexity apron in pass B's spare threads instead of after the window in pass S. Test knob for the A/B cost run.</summary>
+    public static bool ReliefApronInPassB { get; set; }
     private readonly TerrainGenerationParameters _recipe;
     private readonly ProxyGpuClimateSettings _climate;
     private readonly List<ProxyGpuSectorJob> _queue = new();
@@ -142,6 +152,10 @@ public sealed class ProxyGpuSectorBackend : IDisposable
     private bool _disposed;
 
     public int Spacing { get; }
+    /// <summary>Floats of one sector's heights region: the 67 x 67 window, plus the convexity apron when <paramref name="relief"/> (T4-4a; sectors are 64 cells, so the lattice has 2 x spacing nodes per side).</summary>
+    public static int HeightStrideFloats(int spacing, bool relief)
+        => WindowFloats + (relief ? 4 * (spacing >= ReliefNodeMeters ? 1 : 2) * (spacing * 64 / ReliefNodeMeters + 1) : 0);
+    public int HeightStride => HeightStrideFloats(Spacing, _relief);
     public bool Ready => _link.Ready;
     public bool Failed => _link.Failed;
     public string Error => _link.Error;
@@ -174,12 +188,15 @@ public sealed class ProxyGpuSectorBackend : IDisposable
 
     public static bool IsSupported(TerrainGenerationParameters recipe, out string reason) => ProxyGpuHeightKernel.IsSupported(recipe, out reason);
 
-    public ProxyGpuSectorBackend(int spacing, TerrainGenerationParameters recipe, ProxyGpuClimateSettings climate)
+    public ProxyGpuSectorBackend(int spacing, TerrainGenerationParameters recipe, ProxyGpuClimateSettings climate, bool relief = false)
     {
         Spacing = spacing;
         _recipe = recipe;
         _climate = climate;
-        _coreKey = recipe.DefinitionHash;
+        _relief = relief;
+        _reliefConst = relief && ReliefConstantStride;
+        _reliefApronB = relief && ReliefApronInPassB;
+        _coreKey = relief ? recipe.DefinitionHash ^ ReliefCoreSalt ^ (_reliefConst ? 0x9E3779B97F4A7C15UL * (ulong)(spacing + 1) : 0UL) ^ (_reliefApronB ? 0xC2B2AE3D27D4EB4FUL : 0UL) : recipe.DefinitionHash;
         Link link = _link;
         RenderingServer.CallOnRenderThread(Callable.From(() => InitOnRenderThread(link)));
     }
@@ -199,7 +216,7 @@ public sealed class ProxyGpuSectorBackend : IDisposable
                 var ctx = new Context
                 {
                     Batch = rd.StorageBufferCreate((uint)((HeaderWords + SectorWords * MaxBatch) * 4)),
-                    Heights = rd.StorageBufferCreate((uint)(MaxBatch * WindowFloats * 4)),
+                    Heights = rd.StorageBufferCreate((uint)(MaxBatch * HeightStride * 4)),
                     Biome = rd.StorageBufferCreate((uint)((long)MaxBatch * BiomeEntries * BiomeFloats * 4)),
                     Summary = rd.StorageBufferCreate((uint)(MaxBatch * SummaryWords * 4)),
                 };
@@ -226,7 +243,7 @@ public sealed class ProxyGpuSectorBackend : IDisposable
                 string source = ProxyGpuHeightKernel.ExpandIncludes(ReadResource("ring_proxy_sector_k2.glsl"));
                 for (int p = 0; p < 4; p++)
                 {
-                    string text = source.Replace("#version 450\n", "#version 450\n#define PASS_" + PassNames[p] + "\n");
+                    string text = source.Replace("#version 450\n", "#version 450\n#define PASS_" + PassNames[p] + "\n" + (_relief ? "#define RELIEF\n" + (_reliefConst ? "#define RELIEF_N " + (Spacing * 64 / ReliefNodeMeters) + "\n" : "") + (_reliefApronB ? "#define RELIEF_APRON_B\n" : "") : ""));
                     var src = new RDShaderSource { Language = RenderingDevice.ShaderLanguage.Glsl, SourceCompute = text };
                     RDShaderSpirV spirv = rd.ShaderCompileSpirVFromSource(src);
                     if (!string.IsNullOrEmpty(spirv.CompileErrorCompute)) throw new InvalidOperationException("K2 " + PassNames[p] + " compile: " + spirv.CompileErrorCompute);
@@ -432,8 +449,8 @@ public sealed class ProxyGpuSectorBackend : IDisposable
                 rd.CaptureTimestamp(TimestampPrefix + seq + ":B");
                 int[] groups =
                 {
-                    (count * WindowFloats + 63) / 64,
-                    (count * (Spacing >= 16 ? BiomeEntries : 33 * 33) + 63) / 64,
+                    (count * (_reliefApronB ? WindowFloats : HeightStride) + 63) / 64,
+                    (count * ((Spacing >= 16 ? BiomeEntries : 33 * 33) + (_reliefApronB ? HeightStride - WindowFloats : 0)) + 63) / 64,
                     (count * BiomeEntries + 63) / 64,
                     (count * 4 * 64 + 63) / 64,
                 };
