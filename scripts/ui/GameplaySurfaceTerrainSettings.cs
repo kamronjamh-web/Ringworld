@@ -8,7 +8,6 @@ public partial class GameplaySurfaceTerrainSettings : Resource
 {
     [Export] public float BrushRadiusMeters { get; set; } = 8.0f;
     [Export] public float BrushStepMeters { get; set; } = 2.0f;
-    [Export] public int MeshLods { get; set; } = 4;
     // Terrain3D native clipmap section size. Kept independent from the
     // 2m height-cache lattice so mesh tuning never changes collision data.
     [Export] public int MeshSize { get; set; } = 48;

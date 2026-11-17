@@ -12,8 +12,6 @@ public sealed class GameplaySurfaceTerrainDefaults
     public const float MaximumBrushRadiusMeters = 48.0f;
     public const float MinimumBrushStepMeters = .25f;
     public const float MaximumBrushStepMeters = 8.0f;
-    public const int MinimumMeshLods = 2;
-    public const int MaximumMeshLods = 6;
     public const int MinimumMeshSize = 16;
     public const int MaximumMeshSize = 64;
     public const float MinimumHandoffDistanceMeters = 84.0f;
@@ -69,13 +67,6 @@ public sealed class GameplaySurfaceTerrainDefaults
         value = ClampBrushStepMeters(value);
         if (Mathf.IsEqualApprox(Settings.BrushStepMeters, value)) return false;
         Settings.BrushStepMeters = value; Dirty = true; return true;
-    }
-
-    public bool SetMeshLods(int value)
-    {
-        value = ClampMeshLods(value);
-        if (Settings.MeshLods == value) return false;
-        Settings.MeshLods = value; Dirty = true; return true;
     }
 
     public bool SetMeshSize(int value)
@@ -154,7 +145,6 @@ public sealed class GameplaySurfaceTerrainDefaults
             if (loaded == null) { LastError = "Invalid surface terrain settings"; return; }
             Settings.BrushRadiusMeters = ClampBrushRadiusMeters(loaded.BrushRadiusMeters);
             Settings.BrushStepMeters = ClampBrushStepMeters(loaded.BrushStepMeters);
-            Settings.MeshLods = ClampMeshLods(loaded.MeshLods);
             Settings.MeshSize = ClampMeshSize(loaded.MeshSize);
             Settings.HandoffDistanceMeters = ClampHandoffDistanceMeters(loaded.HandoffDistanceMeters);
             Settings.MoveSpeedMetersPerSecond = ClampMoveSpeedMetersPerSecond(loaded.MoveSpeedMetersPerSecond);
@@ -180,7 +170,6 @@ public sealed class GameplaySurfaceTerrainDefaults
     {
         Settings.BrushRadiusMeters = ClampBrushRadiusMeters(Settings.BrushRadiusMeters);
         Settings.BrushStepMeters = ClampBrushStepMeters(Settings.BrushStepMeters);
-        Settings.MeshLods = ClampMeshLods(Settings.MeshLods);
         Settings.MeshSize = ClampMeshSize(Settings.MeshSize);
         Settings.HandoffDistanceMeters = ClampHandoffDistanceMeters(Settings.HandoffDistanceMeters);
         Settings.MoveSpeedMetersPerSecond = ClampMoveSpeedMetersPerSecond(Settings.MoveSpeedMetersPerSecond);
@@ -200,7 +189,6 @@ public sealed class GameplaySurfaceTerrainDefaults
 
     public static float ClampBrushRadiusMeters(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumBrushRadiusMeters, MaximumBrushRadiusMeters) : 8.0f;
     public static float ClampBrushStepMeters(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumBrushStepMeters, MaximumBrushStepMeters) : 2.0f;
-    public static int ClampMeshLods(int value) => Mathf.Clamp(value, MinimumMeshLods, MaximumMeshLods);
     public static int ClampMeshSize(int value) => Mathf.Clamp(Mathf.RoundToInt(value / 8.0f) * 8, MinimumMeshSize, MaximumMeshSize);
     public static float ClampHandoffDistanceMeters(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumHandoffDistanceMeters, MaximumHandoffDistanceMeters) : 112.0f;
     public static float ClampMoveSpeedMetersPerSecond(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumMoveSpeedMetersPerSecond, MaximumMoveSpeedMetersPerSecond) : 12.0f;

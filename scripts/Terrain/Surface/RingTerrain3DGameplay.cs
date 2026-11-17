@@ -295,7 +295,6 @@ public partial class RingTerrain3DGameplay : Node3D
         ApplySurfaceAppearanceSettings(settings);
         _brushRadius = GameplaySurfaceTerrainDefaults.ClampBrushRadiusMeters(settings.BrushRadiusMeters);
         _brushStep = GameplaySurfaceTerrainDefaults.ClampBrushStepMeters(settings.BrushStepMeters);
-        _meshLods = GameplaySurfaceTerrainDefaults.ClampMeshLods(settings.MeshLods);
         _meshSize = GameplaySurfaceTerrainDefaults.ClampMeshSize(settings.MeshSize);
         _handoffDistanceMeters = GameplaySurfaceTerrainDefaults.ClampHandoffDistanceMeters(settings.HandoffDistanceMeters);
         _actualWalkSpeed = GameplaySurfaceTerrainDefaults.ClampMoveSpeedMetersPerSecond(settings.MoveSpeedMetersPerSecond);

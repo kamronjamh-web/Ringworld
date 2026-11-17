@@ -158,7 +158,6 @@ public partial class RingTerrain3DPilot : Node3D
         _brushRadius = GameplaySurfaceTerrainDefaults.ClampBrushRadiusMeters(settings.BrushRadiusMeters);
         _brushStep = GameplaySurfaceTerrainDefaults.ClampBrushStepMeters(settings.BrushStepMeters);
         _moveSpeed = GameplaySurfaceTerrainDefaults.ClampMoveSpeedMetersPerSecond(settings.MoveSpeedMetersPerSecond);
-        _meshLods = GameplaySurfaceTerrainDefaults.ClampMeshLods(settings.MeshLods);
         _meshSize = GameplaySurfaceTerrainDefaults.ClampMeshSize(settings.MeshSize);
         _surface?.SetMeshLods(_meshLods);
         _surface?.SetMeshSize(_meshSize);
