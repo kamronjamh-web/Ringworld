@@ -42,8 +42,10 @@ uniform vec3 ring_atmosphere_to_sun = vec3(0.0, 1.0, 0.0);
 #endif
 // Defaults preserve existing materials that do not participate in the
 // celestial presentation bridge.
+#ifndef RING_SKY_LIVE_GLOBALS
 uniform vec3 ring_atmosphere_planet_direction = vec3(-1.0, 0.0, 0.0);
 uniform float eclipse_solar_transmittance : hint_range(0.0, 1.0) = 1.0;
+#endif
 // The analytic atmosphere is cylindrical in the ring's around/up plane. This
 // width guard prevents its haze from continuing beyond the physical side walls.
 // A large default preserves materials that are not ring-width-aware.

@@ -199,6 +199,54 @@ ringworld_reflection_model={
 "type": "float",
 "value": 0.0
 }
+ringworld_sky_live0={
+"type": "vec4",
+"value": Vector4(-1, 0, 0, 1)
+}
+ringworld_sky_live1={
+"type": "vec4",
+"value": Vector4(0, 1, 0, 0)
+}
+ringworld_sky_live2={
+"type": "vec4",
+"value": Vector4(1, 0, 0, 1)
+}
+ringworld_sky_live3={
+"type": "vec4",
+"value": Vector4(1, 0.96, 0.86, 300)
+}
+ringworld_sky_live4={
+"type": "vec4",
+"value": Vector4(0.12, 0.28, 0.52, 1)
+}
+ringworld_sky_live5={
+"type": "vec4",
+"value": Vector4(0.5, 0.6, 0.69, 0)
+}
+ringworld_sky_live6={
+"type": "vec4",
+"value": Vector4(-1, 0, 0, 0)
+}
+ringworld_sky_live7={
+"type": "vec4",
+"value": Vector4(0.92, 0.97, 1, 0.15)
+}
+ringworld_sky_live8={
+"type": "vec4",
+"value": Vector4(-1, 0, 0, 1)
+}
+ringworld_sky_live9={
+"type": "vec4",
+"value": Vector4(-1, 0, 0, 30.8242334)
+}
+ringworld_sky_live10={
+"type": "vec4",
+"value": Vector4(1, 0, 0, 0)
+}
+ringworld_sky_live11={
+"type": "vec4",
+"value": Vector4(1, 1, -0.2, 0.35)
+}
 ringworld_sky_reflection={
 "type": "float",
 "value": 1.0

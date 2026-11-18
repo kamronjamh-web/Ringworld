@@ -97,6 +97,15 @@ extends Node
 
 @export_group("Space Stars")
 @export var stars_enabled: bool = true
+# Write radiance_epoch every frame, which keeps the sky radiance map rebuilding every frame (not a menu row).
+@export var sky_radiance_epoch_every_frame: bool = true
+# R1-6c debug switch (not a menu row): refresh the radiance map by rule (RingSkyRadianceCadence) instead of every frame. Off = today's per-frame epoch write.
+@export var sky_radiance_cadence_enabled: bool = false
+# Read-only counters for the bench and tests: epoch writes (every one, cadence on or off), and individual sky material writes.
+var sky_radiance_refresh_count: int = 0
+var sky_material_write_count: int = 0
+var sky_material_write_frames: int = 0
+var sky_radiance_last_refresh_reason: String = ""
 @export_range(0.0, 100000.0, 100.0) var stars_fade_start_height_meters: float = 20000.0
 @export_range(1000.0, 150000.0, 100.0) var stars_full_height_meters: float = 26000.0
 @export_range(32.0, 1024.0, 1.0) var star_cell_density: float = 420.0
@@ -770,15 +779,17 @@ func _update_underwater_view_effect(strength: float, depth_factor: float) -> voi
 	_set_param_if_changed(underwater_view_material, _underwater_param_cache, "red_absorption", clampf(underwater_red_absorption, 0.0, 1.0))
 
 
-func _set_param_if_changed(material: ShaderMaterial, cache: Dictionary, param: StringName, value: Variant) -> void:
+func _set_param_if_changed(material: ShaderMaterial, cache: Dictionary, param: StringName, value: Variant) -> bool:
 	if cache.has(param) and typeof(cache[param]) == typeof(value) and cache[param] == value:
-		return
+		return false
 	cache[param] = value
 	material.set_shader_parameter(param, value)
+	return true
 
 
 func _set_sky_param(param: StringName, value: Variant) -> void:
-	_set_param_if_changed(ring_sky_material, _sky_param_cache, param, value)
+	if _set_param_if_changed(ring_sky_material, _sky_param_cache, param, value):
+		sky_material_write_count += 1
 
 
 func _ensure_ring_sky(environment: Environment) -> void:
@@ -1288,6 +1299,73 @@ func _exit_tree() -> void:
 	_publish_hub_light(0.0, 0.0)
 
 
+# Sky inputs that change from frame to frame live in global shader parameters (ringworld_sky_live0..11), not in the sky material:
+# a global write does not dirty the sky radiance map, a material write does. materials/ring_local_sky_live.gdshaderinc unpacks them.
+# Each row is one vec4 (Vector3 names take three components, floats and bools one, bools as 0.0/1.0).
+const _SKY_LIVE_LAYOUT: Array = [
+	[&"local_surface_up", &"camera_radial_ratio"],
+	[&"ring_axis_direction", &"camera_across_ratio"],
+	[&"sun_direction", &"atmosphere_factor"],
+	[&"sun_color", &"sky_camera_height_meters"],
+	[&"sky_top_color", &"ring_interior_factor"],
+	[&"sky_horizon_color", &"star_visibility"],
+	[&"hub_direction", &"hub_level"],
+	[&"hub_color", &"hub_halo_intensity"],
+	[&"ring_atmosphere_planet_direction", &"eclipse_solar_transmittance"],
+	[&"giant_direction", &"planet_angular_radius_degrees"],
+	[&"hub_in_scatter", &"eclipse_coverage", &"starfield_rotation_radians", &"gas_giant_spin_radians"],
+	[&"planet_haze_enabled", &"planet_enabled", &"day_start_dot", &"day_full_dot"],
+]
+# Debug only (no menu row, not persisted): values applied over the computed live inputs by the packer.
+var _sky_live_overrides: Dictionary = {}
+var _sky_live_published: Dictionary = {}
+var _sky_live_cache: Array = []
+var _sky_radiance_epoch: int = 0
+var _sky_radiance_cadence: RefCounted = null
+var _sky_radiance_cadence_load_failed: bool = false
+var _sky_radiance_cadence_reset: bool = true
+var _sky_cadence_packed: PackedFloat64Array = PackedFloat64Array()
+
+
+func set_sky_live_override(input_name: StringName, value: Variant) -> void:
+	_sky_live_overrides[input_name] = value
+
+
+func clear_sky_live_overrides() -> void:
+	_sky_live_overrides.clear()
+
+
+# The live sky inputs as last published to the globals (Vector3, float, bool), for tests and diagnostics.
+func get_sky_live_inputs() -> Dictionary:
+	return _sky_live_published.duplicate()
+
+
+func _pack_sky_live_inputs(live: Dictionary) -> void:
+	for override_name in _sky_live_overrides:
+		live[override_name] = _sky_live_overrides[override_name]
+	_sky_live_published = live
+	if _sky_live_cache.size() != _SKY_LIVE_LAYOUT.size():
+		_sky_live_cache.clear()
+		_sky_live_cache.resize(_SKY_LIVE_LAYOUT.size())
+	for index in _SKY_LIVE_LAYOUT.size():
+		var components := PackedFloat32Array()
+		for input_name: StringName in _SKY_LIVE_LAYOUT[index]:
+			var value: Variant = live[input_name]
+			if value is Vector3:
+				components.append(value.x)
+				components.append(value.y)
+				components.append(value.z)
+			elif value is bool:
+				components.append(1.0 if value else 0.0)
+			else:
+				components.append(float(value))
+		var packed := Vector4(components[0], components[1], components[2], components[3])
+		if _sky_live_cache[index] is Vector4 and _sky_live_cache[index] == packed:
+			continue
+		_sky_live_cache[index] = packed
+		RenderingServer.global_shader_parameter_set(&"ringworld_sky_live%d" % index, packed)
+
+
 func _update_sky(
 		environment: Environment,
 		day_factor: float,
@@ -1296,6 +1374,7 @@ func _update_sky(
 		surface_up: Vector3,
 		to_sun: Vector3,
 		giant_direction: Vector3) -> void:
+	var sky_writes_at_start := sky_material_write_count
 	_ensure_ring_sky(environment)
 	if ring_sky_material == null:
 		return
@@ -1312,59 +1391,65 @@ func _update_sky(
 	if ring_sky_material != _sky_param_cache_owner:
 		_sky_param_cache_owner = ring_sky_material
 		_sky_param_cache.clear()
+		_sky_radiance_cadence_reset = true
+	var live := {}
 	var ring_radius := _get_ring_radius_meters()
 	var viewer_frame := _viewer_atmosphere_frame(surface_up)
 	var ring_axis: Vector3 = viewer_frame["axis"]
 	var viewer_across: float = viewer_frame["across"]
 	var viewer_radial: Vector3 = viewer_frame["radial"]
 	var viewer_outward: Vector3 = viewer_frame["outward"]
-	_set_sky_param("local_surface_up", -viewer_outward)
-	_set_sky_param("ring_axis_direction", ring_axis)
+	live[&"local_surface_up"] = -viewer_outward
+	live[&"ring_axis_direction"] = ring_axis
 	# The sky shader uses normalized ray geometry, but still needs the real radius
 	# to convert its normalized air path back into physical extinction metres.
 	# GraphicsQuality also registers the material with RingAtmosphereModel in the
 	# exploration build; setting the radius here keeps standalone demo scenes
 	# correct without changing the shared authored atmosphere controls.
-	# Also written by RingAtmosphereModel.ConfigureMaterial (after registration), so never cached.
-	ring_sky_material.set_shader_parameter("ring_radius_meters", ring_radius)
-	_set_sky_param("camera_radial_ratio", viewer_radial.length() / ring_radius)
-	_set_sky_param("camera_across_ratio", viewer_across / ring_radius)
-	_set_sky_param("sky_camera_height_meters", float(viewer_frame["height"]))
+	# Also written by RingAtmosphereModel.ConfigureMaterial (after registration), so compare with the material's own value, not a local cache.
+	# Any material write dirties the sky radiance map, so write only on change.
+	var written_ring_radius: Variant = ring_sky_material.get_shader_parameter("ring_radius_meters")
+	if not written_ring_radius is float or written_ring_radius != ring_radius:
+		ring_sky_material.set_shader_parameter("ring_radius_meters", ring_radius)
+		sky_material_write_count += 1
+	live[&"camera_radial_ratio"] = viewer_radial.length() / ring_radius
+	live[&"camera_across_ratio"] = viewer_across / ring_radius
+	live[&"sky_camera_height_meters"] = float(viewer_frame["height"])
 	_set_sky_param(
 		"ring_half_width_ratio",
 		maxf(_get_ring_width_meters() * 0.5 / ring_radius, 0.000001))
-	_set_sky_param("ring_interior_factor", _sky_ring_interior_factor())
+	live[&"ring_interior_factor"] = _sky_ring_interior_factor()
 	var active_day_start_dot := float(_get_celestial_value(
 			"DaylightStartDot", "daylight_start_dot", day_start_dot))
 	var active_day_full_dot := float(_get_celestial_value(
 			"DaylightFullDot", "daylight_full_dot", day_full_dot))
-	_set_sky_param("day_start_dot", active_day_start_dot)
-	_set_sky_param("day_full_dot", active_day_full_dot)
-	_set_sky_param("sky_top_color", Vector3(top_color.r, top_color.g, top_color.b))
-	_set_sky_param("sky_horizon_color", Vector3(horizon_color.r, horizon_color.g, horizon_color.b))
+	live[&"day_start_dot"] = active_day_start_dot
+	live[&"day_full_dot"] = active_day_full_dot
+	live[&"sky_top_color"] = Vector3(top_color.r, top_color.g, top_color.b)
+	live[&"sky_horizon_color"] = Vector3(horizon_color.r, horizon_color.g, horizon_color.b)
 	_set_sky_param("space_color", Vector3(space_sky_color.r, space_sky_color.g, space_sky_color.b))
-	_set_sky_param("atmosphere_factor", atmosphere_factor)
-	_set_sky_param("sun_direction", to_sun.normalized())
+	live[&"atmosphere_factor"] = atmosphere_factor
+	live[&"sun_direction"] = to_sun.normalized()
 	# Hub zenith halo (spec E.1): the hub hangs over the local zenith. hub_level 0 draws nothing.
-	_set_sky_param("hub_direction", -viewer_outward)
-	_set_sky_param("hub_level", current_hub_level)
-	_set_sky_param("hub_color", Vector3(current_hub_color.r, current_hub_color.g, current_hub_color.b))
-	_set_sky_param("hub_halo_intensity", current_hub_halo_intensity)
-	_set_sky_param("hub_in_scatter", current_hub_in_scatter)
-	_set_sky_param("sun_color", Vector3(sun_light.light_color.r, sun_light.light_color.g, sun_light.light_color.b))
+	live[&"hub_direction"] = -viewer_outward
+	live[&"hub_level"] = current_hub_level
+	live[&"hub_color"] = Vector3(current_hub_color.r, current_hub_color.g, current_hub_color.b)
+	live[&"hub_halo_intensity"] = current_hub_halo_intensity
+	live[&"hub_in_scatter"] = current_hub_in_scatter
+	live[&"sun_color"] = Vector3(sun_light.light_color.r, sun_light.light_color.g, sun_light.light_color.b)
 	_set_sky_param("sun_disk_angular_radius_degrees", maxf(0.01, float(_get_celestial_value(
 			"StarAngularRadiusDegrees", "star_angular_radius_degrees", 0.265))))
 	# Compatibility uniform mirrors the canonical shared raw solar visibility.
 	# Do not use GameplayEclipseDarkness: its legacy safety cap is not received
 	# stellar light and must not prevent totality.
-	_set_sky_param("eclipse_coverage", current_eclipse_coverage)
-	_set_sky_param("eclipse_solar_transmittance", current_solar_visibility)
-	_set_sky_param("ring_atmosphere_planet_direction", giant_direction.normalized())
+	live[&"eclipse_coverage"] = current_eclipse_coverage
+	live[&"eclipse_solar_transmittance"] = current_solar_visibility
+	live[&"ring_atmosphere_planet_direction"] = giant_direction.normalized()
 	_set_sky_param("atmosphere_sun_forward_scattering", atmosphere_sun_forward_scattering)
 	_set_sky_param("exterior_day_scattering_boost", exterior_day_scattering_boost)
 	_set_sky_param("exterior_night_scattering_boost", exterior_night_scattering_boost)
 	_set_sky_param("stars_enabled", stars_enabled)
-	_set_sky_param("star_visibility", star_visibility)
+	live[&"star_visibility"] = star_visibility
 	_set_sky_param("star_cell_density", star_cell_density)
 	_set_sky_param("star_density", star_density)
 	_set_sky_param("star_brightness", star_brightness)
@@ -1374,17 +1459,17 @@ func _update_sky(
 	# simulation state all reproduce the same sky.
 	var starfield_rotation_radians := deg_to_rad(fposmod(float(_get_celestial_value(
 			"RingRotationAngleDegrees", "ring_rotation_angle_degrees", 0.0)), 360.0))
-	_set_sky_param("starfield_rotation_radians", starfield_rotation_radians)
+	live[&"starfield_rotation_radians"] = starfield_rotation_radians
 	var giant_enabled := bool(_get_gas_giant_configuration_value("Enabled", planet_enabled))
 	var physical_giant_radius := maxf(0.0, float(_get_gas_giant_configuration_value("RadiusKm", 1.0)))
 	var visual_giant_enabled := planet_enabled and giant_enabled and physical_giant_radius > 0.0 \
 		and current_giant_angular_radius_degrees > 0.0
-	_set_sky_param("planet_enabled", visual_giant_enabled)
-	_set_sky_param("giant_direction", giant_direction.normalized())
+	live[&"planet_enabled"] = visual_giant_enabled
+	live[&"giant_direction"] = giant_direction.normalized()
 	var celestial_visual_seed := int(_get_celestial_value("DeterministicVisualSeed", "deterministic_visual_seed", 1))
 	_set_sky_param("celestial_seed_offset", _celestial_seed_offset(celestial_visual_seed))
 	# Zero is a valid physical result: do not resurrect the old inspector disk.
-	_set_sky_param("planet_angular_radius_degrees", current_giant_angular_radius_degrees)
+	live[&"planet_angular_radius_degrees"] = current_giant_angular_radius_degrees
 	_set_sky_param("planet_brightness", planet_brightness)
 	_set_sky_param("planet_detail_scale", planet_detail_scale)
 	_set_sky_param("gas_giant_light_band_color", Vector3(gas_giant_light_band_color.r, gas_giant_light_band_color.g, gas_giant_light_band_color.b))
@@ -1395,7 +1480,7 @@ func _update_sky(
 	_set_sky_param("gas_giant_axial_tilt_radians", deg_to_rad(float(_get_gas_giant_configuration_value("AxialTiltDegrees", 3.13))))
 	var giant_rotation_period := maxf(1.0, float(_get_gas_giant_configuration_value("RotationPeriodSeconds", 35730.0)))
 	var giant_simulation_seconds := float(celestial_clock.call("get_simulation_seconds")) if celestial_clock != null and celestial_clock.has_method("get_simulation_seconds") else 0.0
-	_set_sky_param("gas_giant_spin_radians", fposmod(giant_simulation_seconds / giant_rotation_period * TAU, TAU))
+	live[&"gas_giant_spin_radians"] = fposmod(giant_simulation_seconds / giant_rotation_period * TAU, TAU)
 	_set_sky_param("planet_ocean_color", Vector3(planet_ocean_color.r, planet_ocean_color.g, planet_ocean_color.b))
 	_set_sky_param("planet_land_color", Vector3(planet_land_color.r, planet_land_color.g, planet_land_color.b))
 	_set_sky_param("planet_highland_color", Vector3(planet_highland_color.r, planet_highland_color.g, planet_highland_color.b))
@@ -1405,11 +1490,114 @@ func _update_sky(
 	_set_sky_param("planet_light_color", Vector3(planet_light_color.r, planet_light_color.g, planet_light_color.b))
 	_set_sky_param("planet_haze_scattering_energy", planet_haze_scattering_energy)
 	var giant_visible_phase := clampf((1.0 - giant_direction.normalized().dot(to_sun.normalized())) * 0.5, 0.0, 1.0)
-	_set_sky_param("planet_haze_enabled", visual_giant_enabled and planet_light_enabled and giant_visible_phase > 0.05)
+	live[&"planet_haze_enabled"] = visual_giant_enabled and planet_light_enabled and giant_visible_phase > 0.05
 	_set_sky_param("planet_haze_horizon_start_dot", planet_light_horizon_fade_start_dot)
 	_set_sky_param("planet_haze_horizon_full_dot", planet_light_horizon_full_dot)
 	_set_sky_param("planet_haze_twilight_end_day_factor", planet_light_twilight_end_day_factor)
+	_pack_sky_live_inputs(live)
+	var static_sky_write := sky_material_write_count != sky_writes_at_start
+	if sky_radiance_cadence_enabled:
+		# Any material write marks the sky radiance map dirty; write the epoch only when the cadence rule says the map should refresh.
+		# A static uniform write this frame already dirtied it, so that frame counts as a refresh without an epoch write.
+		if _sky_radiance_cadence_step(live, viewer_frame, static_sky_write) and not static_sky_write:
+			_write_sky_radiance_epoch()
+	elif sky_radiance_epoch_every_frame:
+		# This one write per frame keeps today's per-frame rebuild.
+		_write_sky_radiance_epoch()
+	if sky_material_write_count != sky_writes_at_start:
+		sky_material_write_frames += 1
 	_update_sky_haze_lut(viewer_frame, ring_radius, to_sun)
+
+
+func _write_sky_radiance_epoch() -> void:
+	_sky_radiance_epoch = (_sky_radiance_epoch + 1) % 16777216
+	ring_sky_material.set_shader_parameter("radiance_epoch", float(_sky_radiance_epoch))
+	sky_radiance_refresh_count += 1
+	sky_material_write_count += 1
+
+
+# Feeds RingSkyRadianceCadence (layout in the class) once per frame after the live inputs are packed; true when the radiance map should refresh.
+func _sky_radiance_cadence_step(live: Dictionary, viewer_frame: Dictionary, static_write: bool) -> bool:
+	if _sky_radiance_cadence == null and not _sky_radiance_cadence_load_failed:
+		var script := load("res://scripts/Atmosphere/RingSkyRadianceCadence.cs") as Script
+		if script != null:
+			_sky_radiance_cadence = script.new() as RefCounted
+		_sky_radiance_cadence_load_failed = _sky_radiance_cadence == null
+	if _sky_radiance_cadence == null:
+		_write_sky_radiance_epoch()
+		return false
+	if _sky_radiance_cadence_reset:
+		_sky_radiance_cadence_reset = false
+		_sky_radiance_cadence.call("Reset")
+	_ensure_haze_sky()
+	var revision := 0
+	var storm_revision := 0
+	if _haze_sky != null:
+		revision = int(_haze_sky.call("GetRevision"))
+		storm_revision = int(_haze_sky.call("GetStormRevision"))
+	var lut_valid := false
+	if _atmosphere_luts != null:
+		lut_valid = Vector4(_atmosphere_luts.call("GetPublishedKey")).w > 0.5
+	# ringworld_haze_storm: every publish bumps RingAtmosphereModel.StormRevision, which the controller tracks, so no copy is needed here.
+	var haze_storm := Vector4.ZERO
+	var storm_light := _sky_cadence_storm_light()
+	if _sky_cadence_packed.size() != 53:
+		_sky_cadence_packed.resize(53)
+	var packed := _sky_cadence_packed
+	var cursor := 0
+	for name: StringName in [&"sun_direction", &"hub_direction", &"giant_direction", &"local_surface_up"]:
+		var v: Vector3 = live[name]
+		packed[cursor] = v.x
+		packed[cursor + 1] = v.y
+		packed[cursor + 2] = v.z
+		cursor += 3
+	packed[12] = float(live[&"sky_camera_height_meters"])
+	packed[13] = float(viewer_frame["across"])
+	var position := _get_viewer_position()
+	packed[14] = position.x
+	packed[15] = position.y
+	packed[16] = position.z
+	_sky_cadence_set_vec3(packed, 17, _published_haze_sun_global)
+	_sky_cadence_set_vec3(packed, 20, _published_haze_ambient_day_global)
+	_sky_cadence_set_vec3(packed, 23, _published_haze_ambient_night)
+	packed[26] = float(live[&"atmosphere_factor"])
+	packed[27] = float(live[&"ring_interior_factor"])
+	packed[28] = float(live[&"eclipse_coverage"])
+	packed[29] = float(live[&"eclipse_solar_transmittance"])
+	packed[30] = float(live[&"hub_level"])
+	packed[31] = float(live[&"star_visibility"])
+	packed[32] = haze_storm.x
+	packed[33] = haze_storm.y
+	packed[34] = haze_storm.z
+	packed[35] = haze_storm.w
+	packed[36] = storm_light.x
+	packed[37] = _published_storm_light_mega.x
+	packed[38] = _published_storm_light_mega.y
+	packed[39] = _published_storm_light_mega.z
+	_sky_cadence_set_vec3(packed, 40, live[&"sky_top_color"])
+	_sky_cadence_set_vec3(packed, 43, live[&"sky_horizon_color"])
+	_sky_cadence_set_vec3(packed, 46, live[&"sun_color"])
+	_sky_cadence_set_vec3(packed, 49, live[&"hub_color"])
+	packed[52] = float(live[&"gas_giant_spin_radians"])
+	var refresh := bool(_sky_radiance_cadence.call("Update", packed, revision, storm_revision, lut_valid,
+			float(Time.get_ticks_usec()) / 1000000.0, static_write))
+	sky_radiance_last_refresh_reason = str(_sky_radiance_cadence.call("GetLastReason")) if refresh else ""
+	return refresh
+
+
+# The storm light the cloud bridge last published (ringworld_storm_light). Read from the bridge, not with RenderingServer.global_shader_parameter_get,
+# which is editor-only at run time (R3a-1) and returns Nil there.
+func _sky_cadence_storm_light() -> Vector4:
+	if cloud_lighting_bridge == null or not cloud_lighting_bridge.has_method("GetStormPublishedLight"):
+		return Vector4.ZERO
+	var value: Variant = cloud_lighting_bridge.call("GetStormPublishedLight")
+	return value if value is Vector4 else Vector4.ZERO
+
+
+func _sky_cadence_set_vec3(packed: PackedFloat64Array, index: int, value: Vector3) -> void:
+	packed[index] = value.x
+	packed[index + 1] = value.y
+	packed[index + 2] = value.z
 
 
 # Keeps the sky-view LUT (a phase-factored cache of ring_haze_eval_sky, used only by ring_local_sky) in step with the sky's camera and sun.

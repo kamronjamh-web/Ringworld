@@ -1,25 +1,23 @@
 shader_type sky;
 
+// The per-frame sky inputs are global shader parameters (see ring_local_sky_live.gdshaderinc), so writing them does not dirty the sky
+// radiance map. ring_atmosphere_planet_direction and eclipse_solar_transmittance are used inside ring_atmosphere.gdshaderinc, so
+// their live definitions must precede that include (they come from ringworld_sky_live8).
+#define RING_SKY_LIVE_GLOBALS
+global uniform vec4 ringworld_sky_live8;
+#define ring_atmosphere_planet_direction (ringworld_sky_live8.xyz)
+#define eclipse_solar_transmittance (ringworld_sky_live8.w)
 #include "res://materials/ring_atmosphere.gdshaderinc"
 #include "res://materials/atmosphere/ring_haze_sky_view.gdshaderinc"
+#include "res://materials/ring_local_sky_live.gdshaderinc"
 
-uniform vec3 local_surface_up = vec3(-1.0, 0.0, 0.0);
-uniform vec3 ring_axis_direction = vec3(0.0, 1.0, 0.0);
-uniform float camera_radial_ratio = 1.0;
-uniform float camera_across_ratio = 0.0;
+// Written whenever the sky radiance map should refresh (any material write dirties it); never read for its value.
+uniform float radiance_epoch = 0.0;
+
 // Camera altitude above the nominal floor in metres (Physical haze model; the Legacy path derives it from camera_radial_ratio).
-uniform float sky_camera_height_meters = 300.0;
 uniform float ring_half_width_ratio = 0.002;
-uniform float ring_interior_factor : hint_range(0.0, 1.0) = 1.0;
-uniform float day_start_dot = -0.2;
-uniform float day_full_dot = 0.35;
-uniform vec3 sky_top_color : source_color = vec3(0.12, 0.28, 0.52);
-uniform vec3 sky_horizon_color : source_color = vec3(0.50, 0.60, 0.69);
 uniform vec3 space_color : source_color = vec3(0.0);
-uniform float atmosphere_factor : hint_range(0.0, 1.0) = 1.0;
 uniform float horizon_width : hint_range(0.05, 1.0) = 0.52;
-uniform vec3 sun_direction = vec3(1.0, 0.0, 0.0);
-uniform vec3 sun_color : source_color = vec3(1.0, 0.96, 0.86);
 uniform float sun_disk_angular_radius_degrees : hint_range(0.05, 2.0) = 0.265;
 uniform float sun_disk_intensity : hint_range(0.0, 10.0) = 2.55;
 uniform float sun_halo_intensity : hint_range(0.0, 2.0) = 0.20;
@@ -27,32 +25,21 @@ uniform float atmosphere_sun_forward_scattering : hint_range(0.0, 2.0) = 0.30;
 uniform float exterior_day_scattering_boost : hint_range(0.0, 8.0) = 1.0;
 uniform float exterior_night_scattering_boost : hint_range(0.0, 8.0) = 1.8;
 // Eclipse hub sun (spec C.2, E.1): a wide glow around the local zenith, scaled by the hub level. hub_level 0 draws nothing.
-uniform vec3 hub_direction = vec3(-1.0, 0.0, 0.0);
-uniform float hub_level : hint_range(0.0, 2.5) = 0.0;
-uniform vec3 hub_color : source_color = vec3(0.92, 0.97, 1.0);
-uniform float hub_halo_intensity : hint_range(0.0, 2.0) = 0.15;
 // Strength of the hub in-scatter phase in the sky (EclipseHubBodySettings.SkyInScatter); weighted below by the hub level and hub day.
-uniform float hub_in_scatter : hint_range(0.0, 4.0) = 1.0;
 // Saturated Rayleigh blue of the hub-lit air (the palette lean toward the cool hub tint desaturates the sky; this puts the blue back).
 uniform vec3 hub_scatter_color : source_color = vec3(0.04, 0.20, 0.55);
 
 uniform bool stars_enabled = true;
-uniform float star_visibility : hint_range(0.0, 1.0) = 0.0;
 uniform float star_cell_density : hint_range(32.0, 1024.0) = 420.0;
 uniform float star_density : hint_range(0.0, 0.25) = 0.045;
 uniform float star_brightness : hint_range(0.0, 8.0) = 2.2;
 uniform vec3 star_color : source_color = vec3(0.76, 0.84, 1.0);
 // RingDayNightCycle's authoritative wrapped ring angle. It is deliberately
 // supplied by script instead of TIME so a paused or restored simulation is stable.
-uniform float starfield_rotation_radians : hint_range(0.0, 6.2831853) = 0.0;
 
-uniform bool planet_enabled = true;
 // Evaluated by the deterministic celestial clock; no longer inferred as anti-sun.
-uniform vec3 giant_direction = vec3(-1.0, 0.0, 0.0);
 // A compact, CPU-derived offset avoids precision-dependent large float hashes.
 uniform vec3 celestial_seed_offset = vec3(0.0);
-uniform float planet_angular_radius_degrees : hint_range(0.0, 89.9) = 30.8242334;
-uniform float eclipse_coverage : hint_range(0.0, 1.0) = 0.0;
 uniform float planet_brightness : hint_range(0.0, 4.0) = 1.15;
 uniform float planet_detail_scale : hint_range(0.5, 24.0) = 7.0;
 // Gas-giant controls intentionally sit beside the legacy planet palette below,
@@ -63,7 +50,6 @@ uniform vec3 gas_giant_cream_color : source_color = vec3(0.94, 0.83, 0.62);
 uniform vec3 gas_giant_storm_color : source_color = vec3(0.78, 0.28, 0.13);
 uniform float gas_giant_band_count : hint_range(4.0, 32.0) = 13.0;
 uniform float gas_giant_axial_tilt_radians : hint_range(-1.57, 1.57) = 0.0546;
-uniform float gas_giant_spin_radians : hint_range(0.0, 6.2831853) = 0.0;
 uniform vec3 planet_ocean_color : source_color = vec3(0.035, 0.13, 0.28);
 uniform vec3 planet_land_color : source_color = vec3(0.25, 0.34, 0.20);
 uniform vec3 planet_highland_color : source_color = vec3(0.48, 0.40, 0.27);
@@ -72,7 +58,6 @@ uniform vec3 planet_atmosphere_color : source_color = vec3(0.18, 0.52, 1.0);
 uniform float planet_atmosphere_rim_brightness : hint_range(0.0, 4.0) = 1.35;
 uniform vec3 planet_light_color : source_color = vec3(0.62, 0.72, 0.90);
 uniform float planet_haze_scattering_energy : hint_range(0.0, 2.0) = 0.18;
-uniform bool planet_haze_enabled = true;
 uniform float planet_haze_horizon_start_dot : hint_range(-0.25, 0.25) = -0.02;
 uniform float planet_haze_horizon_full_dot : hint_range(0.01, 0.8) = 0.24;
 uniform float planet_haze_twilight_end_day_factor : hint_range(0.05, 0.8) = 0.32;
@@ -365,5 +350,6 @@ void sky() {
 		// air rather than painting a separate giant rim or overwriting its silhouette.
 		color = color * (1.0 - curved_air.a) + curved_air.rgb;
 	}
+	color += vec3(radiance_epoch * 0.0);
 	COLOR = color;
 }

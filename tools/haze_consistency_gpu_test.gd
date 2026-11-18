@@ -196,7 +196,7 @@ func _build_materials() -> void:
 		"day_full_dot": _day_side.day_full_dot,
 	}
 	for key in fixed:
-		_sky_material.set_shader_parameter(key, fixed[key])
+		_set_sky_input(key, fixed[key])
 
 	var probe := Shader.new()
 	var probe_body := """	RingHaze haze = ring_haze_sample(ring_atmosphere_camera_world_position, probe_world, vec3(0.0), 0.0);
@@ -334,6 +334,9 @@ func _uniforms_to_globals(source: String, material: ShaderMaterial) -> String:
 			out += "mat4 ringworld_storm_frame = mat4(vec4(0.0, 0.0, 1.0, 0.0), vec4(0.0, 1.0, 0.0, 0.0), vec4(1.0, 0.0, 0.0, 0.0), vec4(0.0, 0.0, 0.0, 0.0));
 "
 			continue
+		elif name.begins_with("ringworld_sky_live"):
+			# The sky's per-frame inputs are packed globals; this harness keeps writing them by name on the sky material and packs them here.
+			value = _sky_live_vec4(name, material)
 		elif value == null and line.strip_edges().begins_with("global"):
 			# global_shader_parameter_get is editor-only; the project defaults are what an unpublished global holds.
 			var declared: Variant = ProjectSettings.get_setting("shader_globals/" + name, null)
@@ -344,6 +347,49 @@ func _uniforms_to_globals(source: String, material: ShaderMaterial) -> String:
 			literal = default_text
 		out += (glsl_type + " " + name + (" = " + literal if not literal.is_empty() else "") + ";\n")
 	return out
+
+## Same packing as DaySideAtmosphere._SKY_LIVE_LAYOUT (ringworld_sky_live0..11); names the material does not hold keep the project default.
+const SKY_LIVE_LAYOUT: Array = [
+	[&"local_surface_up", &"camera_radial_ratio"],
+	[&"ring_axis_direction", &"camera_across_ratio"],
+	[&"sun_direction", &"atmosphere_factor"],
+	[&"sun_color", &"sky_camera_height_meters"],
+	[&"sky_top_color", &"ring_interior_factor"],
+	[&"sky_horizon_color", &"star_visibility"],
+	[&"hub_direction", &"hub_level"],
+	[&"hub_color", &"hub_halo_intensity"],
+	[&"ring_atmosphere_planet_direction", &"eclipse_solar_transmittance"],
+	[&"giant_direction", &"planet_angular_radius_degrees"],
+	[&"hub_in_scatter", &"eclipse_coverage", &"starfield_rotation_radians", &"gas_giant_spin_radians"],
+	[&"planet_haze_enabled", &"planet_enabled", &"day_start_dot", &"day_full_dot"],
+]
+
+## The real sky render reads the packed globals, so a live input written here is also published to ringworld_sky_live0..11.
+func _set_sky_input(input_name: String, value: Variant) -> void:
+	_sky_material.set_shader_parameter(input_name, value)
+	for index in SKY_LIVE_LAYOUT.size():
+		RenderingServer.global_shader_parameter_set("ringworld_sky_live%d" % index, _sky_live_vec4("ringworld_sky_live%d" % index, _sky_material))
+
+func _sky_live_vec4(global_name: String, material: ShaderMaterial) -> Variant:
+	var index := int(global_name.substr("ringworld_sky_live".length()))
+	var declared: Variant = ProjectSettings.get_setting("shader_globals/" + global_name, null)
+	var result: Vector4 = declared["value"] if declared is Dictionary and declared.has("value") else Vector4.ZERO
+	var slot := 0
+	for input_name: StringName in SKY_LIVE_LAYOUT[index]:
+		var written: Variant = material.get_shader_parameter(input_name)
+		var width := 3 if (written is Vector3 or (written == null and input_name in [&"local_surface_up", &"ring_axis_direction", &"sun_direction", &"sun_color", &"sky_top_color", &"sky_horizon_color", &"hub_direction", &"hub_color", &"ring_atmosphere_planet_direction", &"giant_direction"])) else 1
+		if written != null:
+			var comps: Array[float] = []
+			if written is Vector3:
+				comps = [written.x, written.y, written.z]
+			elif written is bool:
+				comps = [1.0 if written else 0.0]
+			else:
+				comps = [float(written)]
+			for k in comps.size():
+				result[slot + k] = comps[k]
+		slot += width
+	return result
 
 func _build_compute_source() -> String:
 	var seen := {}
@@ -1137,10 +1183,10 @@ func _render_crosschecks(results: Array) -> Dictionary:
 	for light in ["noon", "dusk", "night"]:
 		_set_globals(light)
 		var palette := _sky_palette(light)
-		_sky_material.set_shader_parameter("sun_direction", _to_sun(light))
+		_set_sky_input("sun_direction", _to_sun(light))
 		_sky_material.set_shader_parameter("ring_atmosphere_to_sun", _to_sun(light))
-		_sky_material.set_shader_parameter("sky_top_color", palette[0])
-		_sky_material.set_shader_parameter("sky_horizon_color", palette[1])
+		_set_sky_input("sky_top_color", palette[0])
+		_set_sky_input("sky_horizon_color", palette[1])
 		for elev in [0.0, 10.0, 45.0]:
 			var viewport := _make_viewport(16)
 			var env := Environment.new()
@@ -1232,11 +1278,11 @@ func _run_sky_lut_contracts() -> Array:
 		_set_globals(light)
 		var palette := _sky_palette(light)
 		var to_sun := _to_sun(light)
-		_sky_material.set_shader_parameter("sun_direction", to_sun)
+		_set_sky_input("sun_direction", to_sun)
 		_sky_material.set_shader_parameter("ring_atmosphere_to_sun", to_sun)
-		_sky_material.set_shader_parameter("sky_top_color", palette[0])
-		_sky_material.set_shader_parameter("sky_horizon_color", palette[1])
-		_sky_material.set_shader_parameter("sky_camera_height_meters", _altitude)
+		_set_sky_input("sky_top_color", palette[0])
+		_set_sky_input("sky_horizon_color", palette[1])
+		_set_sky_input("sky_camera_height_meters", _altitude)
 		_request_sky_lut(luts, to_sun)
 		var waited := 0
 		while not bool(luts.call("IsReady")) or int(luts.call("GetBuildsCompleted")) == 0:
@@ -1264,12 +1310,12 @@ func _run_sky_lut_contracts() -> Array:
 				render_label = "%s elev %.0f" % [light, elev]
 				render_worst_detail = "lut=%s analytic=%s" % [lut_pixel, analytic_pixel]
 			# Fallback: valid key for _altitude, but the material is 1 m higher (outside the 0.5 m match) -> analytic at that height.
-			_sky_material.set_shader_parameter("sky_camera_height_meters", _altitude + 1.0)
+			_set_sky_input("sky_camera_height_meters", _altitude + 1.0)
 			var analytic_high: Color = await _render_sky_pixel(elev)
 			luts.call("SetSkyViewEnabled", true)
 			_request_sky_lut(luts, to_sun)
 			var mismatched: Color = await _render_sky_pixel(elev)
-			_sky_material.set_shader_parameter("sky_camera_height_meters", _altitude)
+			_set_sky_input("sky_camera_height_meters", _altitude)
 			fallback_max = maxf(fallback_max, maxf(maxf(absf(mismatched.r - analytic_high.r), absf(mismatched.g - analytic_high.g)), absf(mismatched.b - analytic_high.b)))
 			if _failed: return []
 		# sky_lut_path_taken: build the LUT for the OTHER light's sun and render with this light's material sun; a LUT read must differ.

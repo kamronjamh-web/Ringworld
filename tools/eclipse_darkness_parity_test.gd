@@ -89,8 +89,9 @@ func _sample(clock: Node, atmosphere: Node, t: float) -> Dictionary:
 	if planet != null:
 		out["planet_energy"] = planet.light_energy
 	if sky != null:
+		var sky_live: Dictionary = atmosphere.call("get_sky_live_inputs")
 		for p in ["sky_top_color", "sky_horizon_color", "star_visibility", "atmosphere_factor"]:
-			out["sky_" + p] = sky.get_shader_parameter(p)
+			out["sky_" + p] = sky_live.get(p)
 	return out
 
 

@@ -75,6 +75,8 @@ public partial class RingSunshineCloudBridge
     private float _cloudAmbientAppliedK = 1.0f;
     /// <summary>Last published validity of the storm-light globals (test and diagnostics hook).</summary>
     public bool StormLightValid => _stormPublishedValid;
+    /// <summary>The ringworld_storm_light value last published (the sky radiance cadence reads it; global_shader_parameter_get is editor-only at run time).</summary>
+    public Vector4 GetStormPublishedLight() => _stormPublishedLight;
 
     /// <summary>
     /// CPU storm level D at a canonical position: the C# mirror of ring_ws_apply_macro's g_ws_storm (max of the storm term and the heavy-overcast

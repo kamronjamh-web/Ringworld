@@ -17,6 +17,8 @@ var _atmosphere: Node
 var _viewport: SubViewport
 var _camera: Camera3D
 var _sky_material: ShaderMaterial
+# Diagnostic overrides of the live sky inputs (these are global shader parameters, not material uniforms); mirrored so main-view captures can drop them.
+var _live_diagnostic: Dictionary = {}
 var _effective_day_viewport: SubViewport
 var _effective_day_material: ShaderMaterial
 
@@ -103,28 +105,28 @@ func _run() -> void:
 	var giant_fov := maxf(14.0, giant_diameter * 1.7)
 	# Actual gameplay source: air must veil the lit giant rather than relying on
 	# the later atmosphere-free geometry diagnostic.
-	_sky_material.set_shader_parameter("planet_enabled", true)
+	_set_live_input(&"planet_enabled", true)
 	_sky_material.set_shader_parameter("ring_atmosphere_enabled", true)
 	var lit_hazed_giant := await _capture("lit_hazed_giant", giant_direction, giant_fov)
-	_sky_material.set_shader_parameter("planet_enabled", false)
+	_set_live_input(&"planet_enabled", false)
 	var lit_without_giant := await _capture("lit_hazed_sky_without_giant", giant_direction, giant_fov)
 	if _mean_abs_difference(lit_hazed_giant, lit_without_giant) < 0.00005:
 		return _fail("actual source lit capture did not retain isolated giant contrast")
-	_sky_material.set_shader_parameter("planet_enabled", true)
+	_set_live_input(&"planet_enabled", true)
 	_sky_material.set_shader_parameter("ring_atmosphere_enabled", false)
 	var lit_same_base_no_shell := await _capture("lit_giant_no_shell_control", giant_direction, giant_fov)
 	if _mean_abs_difference(lit_hazed_giant, lit_same_base_no_shell) < 0.00005:
 		return _fail("actual source physical shell did not veil the lit giant")
-	_sky_material.set_shader_parameter("atmosphere_factor", 0.0)
+	_set_live_input(&"atmosphere_factor", 0.0)
 	var lit_no_air_giant := await _capture("lit_giant_no_air_control", giant_direction, giant_fov)
 	_sky_material.set_shader_parameter("ring_atmosphere_enabled", true)
-	_sky_material.set_shader_parameter("atmosphere_factor", 1.0)
+	_set_live_input(&"atmosphere_factor", 1.0)
 	_configure_diagnostic(false, true)
-	if absf(float(_sky_material.get_shader_parameter("planet_angular_radius_degrees")) * 2.0 - giant_diameter) > 0.0001:
+	if absf(float((_atmosphere.call("get_sky_live_inputs") as Dictionary).get("planet_angular_radius_degrees", NAN)) * 2.0 - giant_diameter) > 0.0001:
 		return _fail("sky shader does not use the authoritative giant angular diameter")
 	var giant_on := await _capture("giant_on", giant_direction, giant_fov)
 	await _capture_main_view_celestial("main_view_giant_direction", giant_direction)
-	_sky_material.set_shader_parameter("planet_enabled", false)
+	_set_live_input(&"planet_enabled", false)
 	var giant_off := await _capture("giant_off", giant_direction, giant_fov)
 	var giant_delta := _mean_abs_difference(giant_on, giant_off)
 	var giant_changed := _changed_pixels(giant_on, giant_off, 0.04)
@@ -148,7 +150,7 @@ func _run() -> void:
 	_camera.keep_aspect = Camera3D.KEEP_HEIGHT
 	_configure_diagnostic(false, true)
 	var normal_on := await _capture("giant_normal_fov_on", giant_direction, gameplay_camera.fov)
-	_sky_material.set_shader_parameter("planet_enabled", false)
+	_set_live_input(&"planet_enabled", false)
 	var normal_off := await _capture("giant_normal_fov_off", giant_direction, gameplay_camera.fov)
 	var measured_width := _center_scan_changed_width_fraction(normal_on, normal_off)
 	var normal_aspect := float(normal_size.x) / float(normal_size.y)
@@ -175,7 +177,7 @@ func _run() -> void:
 	_sky_material.set_shader_parameter("sun_halo_intensity", 0.0)
 	var sun_direction := _clock.get("ToSun") as Vector3
 	var eclipse_on := await _capture("eclipse_giant_on", sun_direction, 3.0)
-	_sky_material.set_shader_parameter("planet_enabled", false)
+	_set_live_input(&"planet_enabled", false)
 	var eclipse_off := await _capture("eclipse_giant_off", sun_direction, 3.0)
 	var visible_on := _photosphere_bright_fraction(eclipse_on, 3.0)
 	var visible_off := _photosphere_bright_fraction(eclipse_off, 3.0)
@@ -198,7 +200,7 @@ func _run() -> void:
 	var star_light := _world.get_node_or_null("StarLight") as DirectionalLight3D
 	var source_total := _atmosphere.get("ring_sky_material") as ShaderMaterial
 	if star_light == null or source_total == null \
-			or float(source_total.get_shader_parameter("eclipse_solar_transmittance")) > 0.000001 \
+			or float((_atmosphere.call("get_sky_live_inputs") as Dictionary).get("eclipse_solar_transmittance", 1.0)) > 0.000001 \
 			or star_light.light_energy > 0.000001:
 		return _fail("total eclipse did not zero the raw direct-solar bridge")
 	var main_environment := _world.get_node_or_null("WorldEnvironment") as WorldEnvironment
@@ -212,17 +214,17 @@ func _run() -> void:
 	_sky_material = _source_faithful_snapshot(source_total)
 	(_viewport.get_child(0) as WorldEnvironment).environment.sky.sky_material = _sky_material
 	_sky_material.set_shader_parameter("stars_enabled", true)
-	_sky_material.set_shader_parameter("star_visibility", 1.0)
+	_set_live_input(&"star_visibility", 1.0)
 	var hazed_giant := await _capture("hazed_giant", _clock.get("GiantDirection") as Vector3, giant_fov)
-	_sky_material.set_shader_parameter("planet_enabled", false)
+	_set_live_input(&"planet_enabled", false)
 	var night_without_giant := await _capture("real_total_night", _clock.get("GiantDirection") as Vector3, giant_fov)
 	if _mean_abs_difference(hazed_giant, night_without_giant) < 0.00005:
 		return _fail("total-night source capture did not retain an isolated giant contrast")
-	_sky_material.set_shader_parameter("planet_enabled", true)
+	_set_live_input(&"planet_enabled", true)
 	_sky_material.set_shader_parameter("ring_atmosphere_enabled", false)
-	_sky_material.set_shader_parameter("atmosphere_factor", 0.0)
+	_set_live_input(&"atmosphere_factor", 0.0)
 	var no_air_giant := await _capture("hazed_giant_no_air_control", _clock.get("GiantDirection") as Vector3, giant_fov)
-	_sky_material.set_shader_parameter("atmosphere_factor", 1.0)
+	_set_live_input(&"atmosphere_factor", 1.0)
 	_print_totality_sky_snapshot(source_total, _sky_material, hazed_giant)
 	if _mean_abs_difference(hazed_giant, no_air_giant) < 0.00005:
 		return _fail("physical sky air did not affect the distant giant at totality")
@@ -233,7 +235,7 @@ func _run() -> void:
 	_sky_material.set_shader_parameter("sun_halo_intensity", 0.0)
 	var total_sun_direction := _clock.get("ToSun") as Vector3
 	var total_on := await _capture("total_eclipse_giant_on", total_sun_direction, 3.0)
-	_sky_material.set_shader_parameter("planet_enabled", false)
+	_set_live_input(&"planet_enabled", false)
 	var total_off := await _capture("total_eclipse_giant_off", total_sun_direction, 3.0)
 	var total_visible_on := _photosphere_bright_fraction(total_on, 3.0)
 	var total_visible_off := _photosphere_bright_fraction(total_off, 3.0)
@@ -261,6 +263,7 @@ func _run() -> void:
 		return _fail("stars are not periodic/stable (full=%.6f paused=%.6f)" % [full_delta, paused_delta])
 
 	print("CELESTIAL_VISUAL_SMOKE_TEST=PASS diameter=%.5f giant_delta=%.6f giant_pixels=%d normal_width=%.6f normal_expected=%.6f partial=%.5f/%.5f total=%.5f/%.5f stars=%.6f/%.6f/%.6f output=%s" % [giant_diameter, giant_delta, giant_changed, measured_width, expected_width, visible_on, visible_off, total_visible_on, total_visible_off, quarter_delta, full_delta, paused_delta, _output_dir])
+	_clear_live_inputs()
 	quit(0)
 
 
@@ -313,22 +316,32 @@ func _set_time(seconds: float) -> void:
 	await process_frame
 
 
+func _set_live_input(input_name: StringName, value: Variant) -> void:
+	_live_diagnostic[input_name] = value
+	_atmosphere.call("set_sky_live_override", input_name, value)
+
+
+func _clear_live_inputs() -> void:
+	_live_diagnostic.clear()
+	_atmosphere.call("clear_sky_live_overrides")
+
+
 func _configure_diagnostic(stars: bool, planet: bool) -> void:
 	var source := _atmosphere.get("ring_sky_material") as ShaderMaterial
 	if source != null:
 		var expected_rotation := deg_to_rad(fposmod(float(_clock.get("RingRotationAngleDegrees")), 360.0))
-		var bridged_rotation := float(source.get_shader_parameter("starfield_rotation_radians"))
+		var bridged_rotation := float((_atmosphere.call("get_sky_live_inputs") as Dictionary).get("starfield_rotation_radians", NAN))
 		if _wrapped_angle_delta(bridged_rotation, expected_rotation) > 0.0001:
 			_fail("DaySideAtmosphere starfield bridge differs from clock (uniform=%.7f expected=%.7f)" % [bridged_rotation, expected_rotation])
 		_sky_material = _source_faithful_snapshot(source)
 		var sky := (_viewport.get_child(0) as WorldEnvironment).environment.sky
 		sky.sky_material = _sky_material
-	_sky_material.set_shader_parameter("atmosphere_factor", 0.0)
+	_set_live_input(&"atmosphere_factor", 0.0)
 	_sky_material.set_shader_parameter("ring_atmosphere_enabled", false)
-	_sky_material.set_shader_parameter("planet_haze_enabled", false)
+	_set_live_input(&"planet_haze_enabled", false)
 	_sky_material.set_shader_parameter("stars_enabled", stars)
-	_sky_material.set_shader_parameter("star_visibility", 1.0 if stars else 0.0)
-	_sky_material.set_shader_parameter("planet_enabled", planet)
+	_set_live_input(&"star_visibility", 1.0 if stars else 0.0)
+	_set_live_input(&"planet_enabled", planet)
 	_sky_material.set_shader_parameter("sun_disk_intensity", 0.0 if stars else 2.55)
 	_sky_material.set_shader_parameter("sun_halo_intensity", 0.0 if stars else 0.20)
 
@@ -347,8 +360,10 @@ func _source_faithful_snapshot(source: ShaderMaterial) -> ShaderMaterial:
 			snapshot.set_shader_parameter(uniform_name, value)
 	# These values specifically catch the prior sky-palette regression, while
 	# sun direction and atmosphere factor cover the dynamic event bridge.
+	# These are live (global) inputs now, so the snapshot shares them with the source by construction; check the atmosphere publishes them.
+	var live_inputs: Dictionary = _atmosphere.call("get_sky_live_inputs")
 	for required_name: StringName in [&"sky_top_color", &"sky_horizon_color", &"sun_direction", &"atmosphere_factor"]:
-		if snapshot.get_shader_parameter(required_name) != source.get_shader_parameter(required_name):
+		if not live_inputs.has(required_name):
 			_fail("source-faithful sky snapshot lost %s" % required_name)
 	return snapshot
 
@@ -401,6 +416,9 @@ func _capture_main_view_celestial(label: String, direction: Vector3) -> void:
 	if gameplay_camera == null:
 		return _fail("main gameplay camera is missing")
 	var saved_transform := gameplay_camera.global_transform
+	# The main viewport shows the real sky: drop the diagnostic live-input overrides for this frame.
+	var saved_live_diagnostic := _live_diagnostic.duplicate()
+	_atmosphere.call("clear_sky_live_overrides")
 	var hidden_huds: Array[CanvasLayer] = []
 	for layer: CanvasLayer in _world.find_children("*", "CanvasLayer", true, false):
 		if layer.layer > 0 and layer.visible:
@@ -412,6 +430,8 @@ func _capture_main_view_celestial(label: String, direction: Vector3) -> void:
 	await RenderingServer.frame_post_draw
 	var image := _world.get_viewport().get_texture().get_image()
 	gameplay_camera.global_transform = saved_transform
+	for live_name in saved_live_diagnostic:
+		_atmosphere.call("set_sky_live_override", live_name, saved_live_diagnostic[live_name])
 	for layer in hidden_huds:
 		layer.show()
 	if image == null or image.is_empty() or _mean_luma(image) <= 0.00001:
@@ -506,14 +526,15 @@ func _verify_effective_day_helper() -> bool:
 func _print_totality_sky_snapshot(source: ShaderMaterial, duplicate: ShaderMaterial, image: Image) -> void:
 	# Source/duplicate values make a blue totality frame diagnosable without
 	# modifying either material or its exposure.
+	var live_inputs: Dictionary = _atmosphere.call("get_sky_live_inputs")
 	var sampled_background: float = _luma(image.get_pixel(8, 8)) if image != null and not image.is_empty() else -1.0
 	print("CELESTIAL_TOTALITY_SKY source_top=%s source_horizon=%s source_atmosphere=%.5f duplicate_top=%s duplicate_horizon=%s duplicate_atmosphere=%.5f visibility=%.5f sampled_background=%.5f" % [
-		source.get_shader_parameter("sky_top_color"),
-		source.get_shader_parameter("sky_horizon_color"),
-		float(source.get_shader_parameter("atmosphere_factor")),
-		duplicate.get_shader_parameter("sky_top_color"),
-		duplicate.get_shader_parameter("sky_horizon_color"),
-		float(duplicate.get_shader_parameter("atmosphere_factor")),
+		live_inputs.get("sky_top_color"),
+		live_inputs.get("sky_horizon_color"),
+		float(live_inputs.get("atmosphere_factor", NAN)),
+		live_inputs.get("sky_top_color"),
+		live_inputs.get("sky_horizon_color"),
+		float(live_inputs.get("atmosphere_factor", NAN)),
 		float(_atmosphere.get("current_solar_visibility")),
 		sampled_background])
 

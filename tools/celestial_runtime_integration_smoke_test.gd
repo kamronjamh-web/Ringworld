@@ -67,11 +67,12 @@ func _run() -> void:
 			or absf(float(authored_giant.get("OrbitSeconds")) - 28187.36649295002) > 0.01 \
 			or absf(float(authored_giant.get("GrazingMissDegrees")) - 10.87182510946549) > 0.0001:
 		return _fail("authored celestial Resource did not retain the physical 40%-width preset")
-	var shader_rotation := float(sky_material.get_shader_parameter("starfield_rotation_radians"))
+	var sky_live: Dictionary = atmosphere.call("get_sky_live_inputs")
+	var shader_rotation := float(sky_live.get("starfield_rotation_radians", NAN))
 	var clock_rotation := deg_to_rad(float(clock.get("RingRotationAngleDegrees")))
 	if absf(wrapf(shader_rotation - clock_rotation, -PI, PI)) > 0.01:
 		return _fail("starfield did not receive the authoritative ring rotation")
-	if not bool(sky_material.get_shader_parameter("planet_enabled")):
+	if not bool(sky_live.get("planet_enabled", false)):
 		return _fail("the default enabled giant was disabled in the rendered sky")
 	if debug_hud.visible:
 		return _fail("optional celestial debug overlay should start hidden")
@@ -156,11 +157,12 @@ func _verify_preview_controls(clock: Node, hud: CanvasLayer) -> String:
 		return "totality did not reach full eclipse darkness: weight=%.3f sky=%.3f ambient=%.3f" % [darkness_weight, sky_multiplier, ambient_multiplier]
 	var night_star_floor := float(atmosphere.get("night_surface_star_visibility"))
 	var expected_star_floor := maxf(night_star_floor, float(atmosphere.get("eclipse_star_floor")))
-	var actual_star_visibility := float(sky_material.get_shader_parameter("star_visibility"))
+	var sky_live: Dictionary = atmosphere.call("get_sky_live_inputs")
+	var actual_star_visibility := float(sky_live.get("star_visibility", NAN))
 	var expected_top := (atmosphere.get("night_sky_top_color") as Color) * sky_multiplier
 	var expected_horizon := (atmosphere.get("night_sky_horizon_color") as Color) * sky_multiplier
-	var actual_top := sky_material.get_shader_parameter("sky_top_color") as Vector3
-	var actual_horizon := sky_material.get_shader_parameter("sky_horizon_color") as Vector3
+	var actual_top := sky_live.get("sky_top_color", Vector3(NAN, NAN, NAN)) as Vector3
+	var actual_horizon := sky_live.get("sky_horizon_color", Vector3(NAN, NAN, NAN)) as Vector3
 	if expected_star_floor < night_star_floor or absf(actual_star_visibility - expected_star_floor) > 0.0001 \
 			or actual_top.distance_to(Vector3(expected_top.r, expected_top.g, expected_top.b)) > 0.0001 \
 			or actual_horizon.distance_to(Vector3(expected_horizon.r, expected_horizon.g, expected_horizon.b)) > 0.0001:

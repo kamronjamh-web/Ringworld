@@ -8136,6 +8136,31 @@
       "marker": "REFLECTION_ENVIRONMENT_CONTRACT",
       "expected_s": 20,
       "timeout_s": 90
+    },
+    "sky_radiance_cadence_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "atmosphere-haze",
+        "celestial"
+      ],
+      "marker": "SKY_RADIANCE_CADENCE",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "sky_material_write_invariant_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "atmosphere-haze",
+        "celestial"
+      ],
+      "world": "integration",
+      "marker": "SKY_MATERIAL_WRITE_INVARIANT",
+      "expected_s": 20,
+      "timeout_s": 90
     }
   }
 }
