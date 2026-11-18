@@ -62,6 +62,7 @@ Read the test's header comment; the filename is not reliable.
   `.\tools\gpu_queue.ps1 -Acquire -Label <task>` (blocks until you hold the GPU), `-Heartbeat` at least every 10 min,
   `-Release` when done, `-Status` to see the queue. A ticket not refreshed for 15 min is stale.
   Or run the command inside it: `.\tools\gpu_queue.ps1 -Label <task> -Wrap { <command> }`.
+  A single windowed launch of one script or scene should go through `.\tools\run_godot.ps1` instead of a hand-written `-Wrap`: it takes and releases the ticket itself.
 - Note the `Using Device` line in the log; results are only valid on that GPU.
   RTX A1000 laptop = goldens and baselines; RTX 4070 desktop = `desktop_mid_high`.
   See the `visual-golden-check` skill.
@@ -90,11 +91,11 @@ Profile flags:
 **Anything else: one `tools/<name>.gd` SceneTree wrapper per C# test.** There is no dispatcher.
 
 ```powershell
-$exe = "artifacts\engine-upgrade\Godot_v4.8-dev7_mono_win64\Godot_v4.8-dev7_mono_win64_console.exe"
-$log = ".godot\<task_label>_<name>.log"
-& $exe --headless --path . --script res://tools/<name>.gd -- <user args> *> $log   # drop --headless for GPU
-"exit=$LASTEXITCODE"
+.\tools\run_godot.ps1 -Headless -Script res://tools/<name>.gd -UserArgs "<user args>" -Marker <NAME>
+.\tools\run_godot.ps1 -Script res://tools/<name>.gd -AppData .\.godot\adhoc_<task_label> -Marker <NAME> -Label <task_label>   # windowed (GPU)
 ```
+
+Use `run_godot.ps1`, not a hand-written `& $exe ... *> $log`: it parse-checks the script first (exit 2, nothing launched), never loses the log under `$ErrorActionPreference = 'Stop'`, kills a stalled run (`-StallMinutes`, default 10) or a hung one (`-TimeoutMin`, default 30), and takes the GPU queue itself for windowed runs. It prints the status, the exit code, the `-Marker` lines and the log path (default `.godot\captures\run_godot\<name>_<stamp>.log`). Exit 0 / 1 / 2 preflight / 9 user playing.
 
 - Some tests are scenes: `--headless --path . res://scenes/<X>.tscn -- --flag`.
 - **Isolate the profile** for anything that loads, saves or writes `user://`:

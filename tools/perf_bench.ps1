@@ -21,7 +21,10 @@
   world mirror (robocopy /MIR), assembly swap and launch inside it, the report and baseline deltas after it. The optimized C# assembly (bin\OptRelease, as tools/play.ps1) is
   swapped into the Debug slot and restored in a finally block. It is rebuilt when a .cs file is newer (or with -Build); -SkipBuild reuses it. Never kills a Godot it did not start.
   Output: .godot\perf_bench\<Label>\<run id>\ (report.json, report.md, driver_report.json, console.log, power_log.csv, stills\). Verdict line PERF_BENCH=PASS / FAIL.
-  Exit: 0 pass, 1 fail (a scenario failed, no verdict, or -FailOnRegression and a regression), 2 setup problem, 9 user playing.
+  Exit: 0 pass, 1 fail (a scenario failed, no verdict, a stalled / timed-out / load-failed Godot, or -FailOnRegression and a regression), 2 setup problem or failed pre-launch check, 9 user playing.
+  Pre-launch check: before the build and the ticket, res://tools/perf_bench.gd (and its preloads) is parse-checked headless (tools/testing/GpuJob.psm1, no GPU, no queue); a parse error prints PERF_BENCH=FAIL preflight: ... and exits 2.
+  Watchdog: Godot runs under Invoke-GodotJob and is killed (its own process tree only) when it prints nothing for -StallMinutes (default 10; job_status stalled), after -TimeoutMin active minutes (timeout) or when the entry script fails to load (load-failed).
+  run_context.json carries job_status and job_detail; a status other than exited is a FAIL, but a driver_report.json that exists is still turned into a report first.
   VSync: all windows are VSync off (GPU-bound numbers, comparable with the perf-pass doc); -VsyncOn adds one extra pass of the scenarios marked vsync_pass with VSync as shipped.
   If the monitor is off, VSync-on runs at ~4 fps: the pass is skipped with a note (and the VSync-off runs are unaffected).
 #>
@@ -46,6 +49,7 @@ param(
   [switch]$Build,
   [switch]$SkipBuild,
   [int]$TimeoutMin = 90,
+  [double]$StallMinutes = 10,
   [string]$RunId = "",
   [string]$ReportFrom = "",
   [switch]$InQueue
@@ -79,6 +83,7 @@ function Get-UserPlaying {
   return ($playing.Count -gt 0 -or (Test-Path (Join-Path $project ".godot\mono\temp\bin\DebugPlaySaved\$name.dll")))
 }
 function Get-GitInfo {
+  $ErrorActionPreference = "Continue"   # 5.1 turns native stderr (git CRLF warnings) into terminating errors otherwise
   $head = (& git -C $project rev-parse --short HEAD) 2>$null
   $branch = (& git -C $project rev-parse --abbrev-ref HEAD) 2>$null
   $dirty = @(& git -C $project status --porcelain) 2>$null
@@ -517,7 +522,17 @@ if (-not $InQueue) {
     $overlayDir = if ([System.IO.Path]::IsPathRooted($SettingsOverlay)) { $SettingsOverlay } else { Join-Path $project $SettingsOverlay }
     if (-not (Test-Path -LiteralPath $overlayDir)) { Write-Host "$marker=FAIL settings overlay directory not found: $overlayDir"; exit 2 }
   }
-  # Everything that does not need the GPU happens before the ticket: the build (staleness check, lock) and the prune.
+  # Pre-launch check (no GPU, no ticket): the driver and its preloads must parse. The engine exits 0 on a parse error and would idle with the ticket held.
+  Import-Module (Join-Path $PSScriptRoot "testing\GpuJob.psm1") -Force -DisableNameChecking
+  $pfFiles = @($scenarioPath); if ($SettingsOverlay) { $pfFiles += $overlayDir }
+  $pfRes = @(Invoke-GodotPreflight -EntryScripts @('res://tools/perf_bench.gd') -RequiredFiles $pfFiles 6>&1)
+  $pfLines = @($pfRes | Where-Object { $_ -is [System.Management.Automation.InformationRecord] } | ForEach-Object { "$($_.MessageData)" })
+  $pfLines | ForEach-Object { Write-Host $_ }
+  if ($pfRes[-1] -ne $true) {
+    $first = ($pfLines | Where-Object { $_ -like 'PREFLIGHT problem:*' } | Select-Object -First 1) -replace '^PREFLIGHT problem:\s*', ''
+    Write-Host "$marker=FAIL preflight: $first"; exit 2
+  }
+  # Everything else that does not need the GPU happens before the ticket: the build (staleness check, lock) and the prune.
   $buildRc = Invoke-OptBuild
   if ($buildRc -ne 0) { exit $buildRc }
   & (Join-Path $PSScriptRoot "prune_test_output.ps1") -Apply -Quiet -Exclude "appdata_perf_bench", "perf_bench"
@@ -527,7 +542,7 @@ if (-not $InQueue) {
   $ctxPath = Join-Path $out "run_context.json"
   Remove-Item -LiteralPath $ctxPath -Force -ErrorAction SilentlyContinue
   # The inner part (in the ticket) only launches Godot; the build, report and baseline comparison are done here.
-  $inner = "& $(Quote $PSCommandPath) -InQueue -Label $(Quote $Label) -RunId $RunId -Resolution $Resolution -TimeoutMin $TimeoutMin -World $(Quote $worldInfo.dir) -WindowScale $WindowScale -Rounds $Rounds"
+  $inner = "& $(Quote $PSCommandPath) -InQueue -Label $(Quote $Label) -RunId $RunId -Resolution $Resolution -TimeoutMin $TimeoutMin -StallMinutes $StallMinutes -World $(Quote $worldInfo.dir) -WindowScale $WindowScale -Rounds $Rounds"
   if ($Quick) { $inner += " -Quick" }
   if ($Scenarios.Count -gt 0) { $inner += " -Scenarios " + (($Scenarios | ForEach-Object { Quote $_ }) -join ",") }
   foreach ($sw in @("VsyncOn", "Stills", "LiveSettings")) { if ((Get-Variable $sw).Value) { $inner += " -$sw" } }
@@ -545,8 +560,11 @@ if (-not $InQueue) {
   }
   $rc = Read-JsonHash $ctxPath
   $code = $rc.godot_exit
-  Write-Host "godot exit $code, output $out"
+  $jobStatus = if ($rc.ContainsKey("job_status")) { [string]$rc.job_status } else { "exited" }
+  $jobDetail = if ($rc.ContainsKey("job_detail")) { [string]$rc.job_detail } else { "" }
+  Write-Host "godot exit $code, job status $jobStatus, output $out"
   if (-not (Test-Path (Join-Path $out "driver_report.json"))) {
+    if ($jobStatus -ne "exited") { Write-Host "$marker=FAIL ${jobStatus}: $jobDetail; see $out\console.log"; exit 1 }
     Write-Host "$marker=FAIL no driver_report.json (godot exit $code); see $out\console.log"
     exit 1
   }
@@ -563,6 +581,7 @@ if (-not $InQueue) {
   $regressed = if ($rep.Contains("baseline")) { [int]$rep.baseline.counts.regressed } else { 0 }
   if ($rep.Contains("baseline")) { Write-Host "BASELINE_DELTAS improved=$($rep.baseline.counts.improved) regressed=$regressed within_noise=$($rep.baseline.counts.within_noise)" }
   & (Join-Path $PSScriptRoot "prune_test_output.ps1") -Apply -Quiet -Exclude "appdata_perf_bench", "perf_bench"
+  if ($jobStatus -ne "exited") { Write-Host "$marker=FAIL ${jobStatus}: $jobDetail (partial report above)"; exit 1 }
   if ($rep.verdict -ne "PASS") { Write-Host "$marker=FAIL $($rep.verdict_reasons -join '; ')"; exit 1 }
   if ($FailOnRegression -and $regressed -gt 0) { Write-Host "$marker=FAIL $regressed regressed metric(s) against baseline $Baseline (-FailOnRegression)"; exit 1 }
   Write-Host "$marker=PASS"
@@ -634,22 +653,21 @@ Copy-Item -Force $slotDll, $slotPdb $savedDir
 Copy-Item -Force $optDll $slotDll
 Copy-Item -Force $optPdb $slotPdb
 $code = -1
-$savedAppData = $env:APPDATA
 $smi = $null
+$job = $null
 $started = (Get-Date).ToString("s")
 try {
-  $env:APPDATA = $isoRoot
-  $env:RINGWORLD_TEST_NO_GRAB = "1"
   $arguments = @("--path", $project, "--resolution", $Resolution)
   if ($EngineArgs) { $arguments += ($EngineArgs -split " " | Where-Object { $_ }) }
   $arguments += @("--script", "res://tools/perf_bench.gd", "--") + $drvArgs
-  $log = Join-Path $out "console.log"
-  $proc = Start-Process -FilePath $exe -ArgumentList $arguments -RedirectStandardOutput $log -RedirectStandardError (Join-Path $out "stderr.log") -PassThru -NoNewWindow
+  Import-Module (Join-Path $PSScriptRoot "testing\GpuJob.psm1") -Force -DisableNameChecking
   $smi = Start-Process -FilePath "nvidia-smi" -ArgumentList @("--query-gpu=timestamp,pstate,clocks.gr,clocks.mem,power.draw,temperature.gpu,utilization.gpu,memory.used,clocks_event_reasons.active", "--format=csv", "-lms", "1000") -RedirectStandardOutput (Join-Path $out "power_log.csv") -PassThru -NoNewWindow
-  if (-not $proc.WaitForExit($TimeoutMin * 60 * 1000)) { Write-Host "TIMEOUT: killing own Godot $($proc.Id)"; Stop-Process -Id $proc.Id -Force }
-  $code = $proc.ExitCode
+  # Raw stdout / stderr files (console.log keeps its format: other tools grep ^PB in it); the child inherits the rest of this environment.
+  $job = Invoke-GodotJob -Exe $exe -Arguments $arguments -WorkDir $project -StdOutLog (Join-Path $out "console.log") -StdErrLog (Join-Path $out "stderr.log") `
+    -Env @{ APPDATA = $isoRoot; RINGWORLD_TEST_NO_GRAB = "1" } -TimeoutS ($TimeoutMin * 60) -StallS ($StallMinutes * 60) -EntryScript "res://tools/perf_bench.gd"
+  if ($job.Status -ne "exited") { Write-Host "GODOT_JOB $($job.Status): $($job.Detail)" }
+  $code = if ($null -ne $job.ExitCode) { $job.ExitCode } else { -1 }
 } finally {
-  $env:APPDATA = $savedAppData
   if ($smi) { Stop-Process -Id $smi.Id -Force -ErrorAction SilentlyContinue }
   # Restore only when nobody rebuilt the Debug slot meanwhile (another agent's newer build must not be clobbered).
   if ((Get-FileHash $slotDll).Hash -eq (Get-FileHash $optDll).Hash) {
@@ -660,5 +678,5 @@ try {
   Remove-Item -Recurse -Force $savedDir -ErrorAction SilentlyContinue
 }
 # What only this part knows; the outer part builds the report from it once the ticket is released.
-[ordered]@{ started = $started; godot_exit = $code; settings_source = $settingsSource; settings = $settings } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $out "run_context.json") -Encoding UTF8
+[ordered]@{ started = $started; godot_exit = $code; settings_source = $settingsSource; settings = $settings; job_status = $(if ($job) { $job.Status } else { "error" }); job_detail = $(if ($job) { $job.Detail } else { "" }) } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $out "run_context.json") -Encoding UTF8
 exit 0
