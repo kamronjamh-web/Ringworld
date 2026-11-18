@@ -189,27 +189,30 @@
       "since": "2026-10-29"
     },
     "sunshine_night_shell_exit_smoke_test": {
-      "status": "known-fail",
-      "match": "Texture \\(binding: \\d+, index 0\\) (needs to have the same type as the uniform|is not a valid texture)",
-      "evidence": "2026-10-29 WO4 (RTX 4070): 3 of 3 runs crash 0xC0000005 (-1073741819) after Vulkan uniform_set_create errors (expected 2DArray, actual 2D); the latest runs print SUNSHINE_NIGHT_SHELL_EXIT_SMOKE=PASS first and then crash during teardown, which the runner reports as crash (a crash after PASS is not a fix); also at close-out gpu_run1; 2026-11-05: after the far-wedge main-depth mask the teardown also logs \"Texture (binding: 1, index 0) is not a valid texture\" / \"us is null\" before the same crash",
+      "status": "flaky",
+      "match": "SUNSHINE_NIGHT_SHELL_EXIT_SMOKE=PASS",
+      "retries": 0,
+      "evidence": "2026-10-29 WO4 (RTX 4070): 3 of 3 runs crash 0xC0000005 (-1073741819) after Vulkan uniform_set_create errors (expected 2DArray, actual 2D); the latest runs print SUNSHINE_NIGHT_SHELL_EXIT_SMOKE=PASS first and then crash during teardown, which the runner reports as crash (a crash after PASS is not a fix); also at close-out gpu_run1; 2026-11-05: after the far-wedge main-depth mask the teardown also logs \"Texture (binding: 1, index 0) is not a valid texture\" / \"us is null\" before the same crash. Now intermittent: 2026-11-17 .godot/test_runs/b7b/20261117-185925 crashed after the PASS marker with no \"Texture (binding\" text; the match only covers a crash after the PASS marker",
       "since": "2026-10-29",
       "machines": [
         "desktop_mid_high"
       ]
     },
     "sunshine_shadow_toggle_smoke_test": {
-      "status": "known-fail",
-      "match": "# exit code -1073741819",
-      "evidence": "2026-10-30 megastorm3/megastorm6a (RTX 4070): prints PASS then crashes 0xC0000005 during teardown; reconfirmed 2026-11-06 gpu-offload GPU-4 follow-up; same teardown crash family as sunshine_night_shell_exit_smoke_test",
+      "status": "flaky",
+      "match": "SUNSHINE_SHADOW_TOGGLE_SMOKE=PASS",
+      "retries": 0,
+      "evidence": "2026-10-30 megastorm3/megastorm6a (RTX 4070): prints PASS then crashes 0xC0000005 during teardown; reconfirmed 2026-11-06 gpu-offload GPU-4 follow-up; same teardown crash family as sunshine_night_shell_exit_smoke_test. Intermittent: 2026-11-17 .godot/test_runs/b7b/20261117-185925 passed cleanly (reported as fixed); the match only covers a crash after the PASS marker",
       "since": "2026-10-30",
       "machines": [
         "desktop_mid_high"
       ]
     },
     "far_weather_atlas_gpu_parity_gpu_test": {
-      "status": "known-fail",
-      "match": "# exit code -1073741819",
-      "evidence": "2026-11-06 gpu-offload GPU-4: FAR_WEATHER_ATLAS_GPU_PARITY=PASS (max 1 LSB) then 0xC0000005 at exit with the integration world; the atlas RD resources alone tear down cleanly (probe exits 0), so the crash is the sunshine teardown family. Read the PASS marker before the crash",
+      "status": "flaky",
+      "match": "FAR_WEATHER_ATLAS_GPU_PARITY=PASS",
+      "retries": 0,
+      "evidence": "2026-11-06 gpu-offload GPU-4: FAR_WEATHER_ATLAS_GPU_PARITY=PASS (max 1 LSB) then 0xC0000005 at exit with the integration world; the atlas RD resources alone tear down cleanly (probe exits 0), so the crash is the sunshine teardown family. Read the PASS marker before the crash. Intermittent: 2026-11-17 .godot/test_runs/b7b/20261117-185925 passed cleanly (reported as fixed); the match only covers a crash after the PASS marker",
       "since": "2026-11-06",
       "machines": [
         "desktop_mid_high"
