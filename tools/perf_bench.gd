@@ -5,17 +5,20 @@ extends SceneTree
 ## per scenario, A-A rounds of one window each (stand / yaw_sweep / fly), with per-frame wall, frame setup, main-thread process, render CPU and GPU,
 ## draw calls, primitives, VRAM, GC, per-viewport GPU, every RingPerformanceGpu detailed interval and the key CPU scopes.
 ## Args (after --): --out=<abs dir> --scenarios=<abs json> [--select=all|quick|a,b] [--vsync-pass] [--stills] [--rounds=N] [--window-scale=F]
-## Poses may be {"poi": "weather_lung"|"emitter", "viewpoint": N}, reached through the live tuning drawer's teleports. Scenarios of kind "ssr_fade" run last, after the stills.
+## Poses may be {"poi": "weather_lung"|"emitter", "viewpoint": N}, reached through the live tuning drawer's teleports. Scenarios of kind "ssr_fade" run last, after the stills, then those of kind "reflection_probe" (tools/perf_bench_reflection_probe.gd; results in report["reflection_probes"]).
+## Scenarios of kind "ab_matrix" (tools/perf_bench_ab_matrix.gd; baseline plus named variants, interleaved A-X-A windows, optional stills) run right after the generic measured loop; results in report["ab_matrices"].
 ## Verdict line: PERF_BENCH=PASS when every selected scenario completed (stills and the VSync pass included), PERF_BENCH=FAIL <reason> otherwise.
 ## It refuses to run when user:// is not the isolated appdata_perf_bench profile, so it can never touch the player's save.
 
 const PROBE := preload("res://tools/PerfBenchProbe.cs")
 const COMMON := preload("res://tools/shadow_harness_common.gd")
 const TVW := preload("res://tools/tree_visibility_world.gd")
+const REFLECTION_PROBE := preload("res://tools/perf_bench_reflection_probe.gd")
+const AB_MATRIX := preload("res://tools/perf_bench_ab_matrix.gd")
 
 var args := {}
 var out_dir := ""
-var report := {"scenarios": [], "stills": [], "events": [], "errors": [], "skipped": []}
+var report := {"scenarios": [], "stills": [], "reflection_probes": [], "ab_matrices": [], "events": [], "errors": [], "skipped": []}
 var probe
 var game: Node
 var explorer: Node
@@ -163,10 +166,17 @@ func _run() -> void:
 	# ---------------------------------------------------------------- scenarios
 	var failed := 0
 	var ssr_scenarios := chosen.filter(func(s): return String(s["kind"]) == "ssr_fade")
-	chosen = chosen.filter(func(s): return String(s["kind"]) != "ssr_fade")
+	var probe_scenarios := chosen.filter(func(s): return String(s["kind"]) == "reflection_probe")
+	var ab_scenarios := chosen.filter(func(s): return String(s["kind"]) == "ab_matrix")
+	chosen = chosen.filter(func(s): return String(s["kind"]) != "ssr_fade" and String(s["kind"]) != "reflection_probe" and String(s["kind"]) != "ab_matrix")
 	for sc in chosen:
 		var result := await _scenario(sc, false)
 		report["scenarios"].append(result)
+		failed += 1 if result.has("error") else 0
+		_write()
+	for sc in ab_scenarios:
+		var result: Dictionary = await AB_MATRIX.measure(self, sc)
+		report["ab_matrices"].append(result)
 		failed += 1 if result.has("error") else 0
 		_write()
 	if args.has("vsync-pass"):
@@ -187,6 +197,15 @@ func _run() -> void:
 	for sc in ssr_scenarios:
 		var result := await _ssr_fade(sc)
 		report["scenarios"].append(result)
+		failed += 1 if result.has("error") else 0
+		_write()
+	for sc in ab_scenarios:
+		if bool(sc.get("stills", false)):
+			var still_error: String = await AB_MATRIX.stills(self, sc)
+			failed += 1 if still_error != "" else 0
+	for sc in probe_scenarios:
+		var result: Dictionary = await REFLECTION_PROBE.run(self, sc)
+		report["reflection_probes"].append(result)
 		failed += 1 if result.has("error") else 0
 		_write()
 	if failed > 0:

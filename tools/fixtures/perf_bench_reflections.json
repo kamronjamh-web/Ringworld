@@ -1,0 +1,151 @@
+{
+ "schema": 1,
+ "note": "Scenario list for the reflections study (docs/reflections-plan.md 2.5, B1): reflection_probe scenarios take A/B stills (reflected_light_source as found vs sky, engine SSR forced on vs off, with and without two metallic test spheres) into <out>/reflection_probe/ and record the Environment/SSR configuration in driver_report.json under reflection_probes. Run: tools/perf_bench.ps1 -Label reflections_b1 -ScenarioFile tools/fixtures/perf_bench_reflections.json . Same schema as perf_bench_visible_opts.json; the stand scenario only keeps the runner's report non-empty. force_wet is [film, soak, standing, rain] for WetWorld.ForceUniform.",
+ "defaults": {
+  "window_s": 8,
+  "rounds": 2,
+  "settle_s": 4,
+  "time": {
+   "mode": "noon"
+  },
+  "hold_clocks": false
+ },
+ "key_scopes": [
+  "Trees frame request",
+  "Trees update (inclusive)",
+  "Trees camera cull",
+  "Trees output selection",
+  "Trees install",
+  "Grass update (inclusive)",
+  "Grass presentation (inclusive)",
+  "Water update",
+  "Terrain macro shadow install",
+  "Terrain macro shadow build",
+  "Terrain LOD coordinator update (inclusive)",
+  "Terrain proxy update (inclusive)",
+  "Terrain proxy install",
+  "Far ring update (inclusive)"
+ ],
+ "poses": {
+  "plains_eye": {
+   "around_m": 6380021.26995006,
+   "across_m": 166154.022585299,
+   "lift_m": 1.7,
+   "yaw_deg": 0.0,
+   "pitch_deg": -3.0,
+   "notes": "Plains on a 1.5 km ring, ground 741 m"
+  },
+  "plains_arch": {
+   "around_m": 6380021.26995006,
+   "across_m": 166154.022585299,
+   "lift_m": 1.7,
+   "yaw_deg": 0.0,
+   "pitch_deg": 8.0,
+   "notes": "plains_eye with pitch 8: the distant terrain band at eye level and the arch above"
+  },
+  "coast_eye": {
+   "around_m": 6338521.26995006,
+   "across_m": 190404.022585299,
+   "lift_m": 1.7,
+   "yaw_deg": 112.5,
+   "pitch_deg": -2.0,
+   "notes": "land 3.8 m, ocean 250 m along yaw 112.5"
+  },
+  "forest_interior_eye": {
+   "around_m": 6381171.26995006,
+   "across_m": 151854.022585299,
+   "lift_m": 1.7,
+   "yaw_deg": 0.0,
+   "pitch_deg": 0.0,
+   "notes": "dense forest, 6 trees within 30 m, ground 675 m"
+  },
+  "alt300_plains": {
+   "around_m": 6380021.26995006,
+   "across_m": 166154.022585299,
+   "lift_m": 300.0,
+   "yaw_deg": 0.0,
+   "pitch_deg": -15.0,
+   "notes": "plains_eye 300 m up, pitched down 15"
+  },
+  "wl_dam": {
+   "poi": "weather_lung",
+   "viewpoint": 0,
+   "notes": "Weather Lung viewpoint 0 (dam), breath frozen"
+  },
+  "wl_overlook": {
+   "poi": "weather_lung",
+   "viewpoint": 1,
+   "notes": "Weather Lung viewpoint 1 (overlook), breath frozen"
+  },
+  "emitter_rim": {
+   "poi": "emitter",
+   "viewpoint": 0,
+   "notes": "main emitter site, viewpoint 0"
+  }
+ },
+ "scenarios": [
+  {
+   "name": "plains",
+   "kind": "stand",
+   "pose": "plains_eye",
+   "window_s": 4,
+   "rounds": 1
+  },
+  {
+   "name": "refl_plains_dry",
+   "kind": "reflection_probe",
+   "pose": "plains_eye",
+   "pitch_deg": -12
+  },
+  {
+   "name": "refl_plains_wet",
+   "kind": "reflection_probe",
+   "pose": "plains_eye",
+   "pitch_deg": -12,
+   "force_wet": [
+    1.0,
+    1.0,
+    0.9,
+    0.0
+   ]
+  },
+  {
+   "name": "refl_plains_arch_wet",
+   "kind": "reflection_probe",
+   "pose": "plains_arch",
+   "force_wet": [
+    1.0,
+    1.0,
+    0.9,
+    0.0
+   ]
+  },
+  {
+   "name": "refl_coast",
+   "kind": "reflection_probe",
+   "pose": "coast_eye"
+  },
+  {
+   "name": "refl_coast_lift",
+   "kind": "reflection_probe",
+   "pose": "coast_eye",
+   "lift_m": 25,
+   "pitch_deg": -6
+  },
+  {
+   "name": "refl_wl_dam",
+   "kind": "reflection_probe",
+   "pose": "wl_dam"
+  },
+  {
+   "name": "refl_wl_overlook",
+   "kind": "reflection_probe",
+   "pose": "wl_overlook"
+  },
+  {
+   "name": "refl_emitter_rim",
+   "kind": "reflection_probe",
+   "pose": "emitter_rim"
+  }
+ ]
+}
