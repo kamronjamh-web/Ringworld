@@ -12,6 +12,7 @@
   .\tools\run_tests.ps1 -Files scripts/ui/GameplayGrassDefaults.cs -DryRun   # explicit changed paths instead of git
 .NOTES
   Smoke is always part of -Changed and -Suite runs. -Since <rev|green> diffs against a revision (green = last green run of the label).
+  -UnmappedPolicy smoke|full: what a changed file that no glob maps selects (default smoke = smoke set only, with a warning; full = every headless test).
   Profile: .godot\test_runs\appdata_<Label> (reused; first run copies the warm caches). -ManifestPath is for scratch manifests.
 #>
 [CmdletBinding()]
@@ -33,7 +34,8 @@ param(
     [string]$Resume = '',
     [switch]$RetryFailed,
     [string]$ManifestPath = '',
-    [string]$KnownFailuresPath = ''
+    [string]$KnownFailuresPath = '',
+    [ValidateSet('smoke', 'full')][string]$UnmappedPolicy = 'smoke'
 )
 $ErrorActionPreference = 'Stop'
 try {

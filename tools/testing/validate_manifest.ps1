@@ -61,6 +61,17 @@ $mf = 'tools/test_manifest.json'
 $tagNames = @{}
 if (-not (Has $m 'tags')) { Fail $mf "missing 'tags'" } else {
     foreach ($p in $m.tags.PSObject.Properties) { $tagNames[$p.Name] = $true; Test-Globs (Get-Val $p.Value 'globs') "tag '$($p.Name)'" }
+    # parent tags: the parent must exist and the chain must not loop
+    foreach ($p in $m.tags.PSObject.Properties) {
+        $par = Get-Val $p.Value 'parent'
+        if ($null -eq $par) { continue }
+        if (-not $tagNames.ContainsKey([string]$par)) { Fail $mf "tag '$($p.Name)' has parent '$par' which is not a tag"; continue }
+        $cur = [string]$par; $hops = 0
+        while ($cur -and $hops++ -le $tagNames.Count) {
+            if ($cur -eq $p.Name) { Fail $mf "tag '$($p.Name)' is its own ancestor (parent cycle)"; break }
+            $next = Get-Val $m.tags.$cur 'parent'; $cur = if ($next) { [string]$next } else { '' }
+        }
+    }
 }
 Test-Globs (Get-Val $m 'core_globs') 'core_globs'
 Test-Globs (Get-Val $m 'ignore_globs') 'ignore_globs'
@@ -142,6 +153,23 @@ if (-not (Has $kf 'failures')) { Fail $kfile "missing 'failures'" } else {
     }
 }
 
+# --- coverage: tracked files nothing maps (same rules as the runner: Get-UnmappedFiles in TestRunner.psm1) ---
+$unmappedPaths = @()
+try {
+    Import-Module (Join-Path $PSScriptRoot 'TestRunner.psm1') -Force -DisableNameChecking
+    $ctx = Import-TestManifest $manifestPath $knownPath
+    $unmappedPaths = @(Get-UnmappedFiles $ctx)
+} catch { Fail $mf "coverage check could not run: $($_.Exception.Message)" }
+$max = Get-Val (Get-Val $m 'defaults') 'unmapped_max'
+if ($null -eq $max) { Fail $mf "defaults.unmapped_max is missing (the allowed number of unmapped tracked files)" }
+elseif ($unmappedPaths.Count -gt [int]$max) {
+    Fail $mf "$($unmappedPaths.Count) tracked files are unmapped, above defaults.unmapped_max ${max} (add a glob to a tag or an ignore_globs entry); first: $(($unmappedPaths | Select-Object -First 5) -join ', ')"
+}
+if (-not $Quiet) {
+    Write-Host ("  unmapped tracked files: {0} (unmapped_max {1})" -f $unmappedPaths.Count, $max)
+    foreach ($u in ($unmappedPaths | Select-Object -First 30)) { Write-Host "    $u" }
+    if ($unmappedPaths.Count -gt 30) { Write-Host "    ... and $($unmappedPaths.Count - 30) more" }
+}
 # --- report ---
 if (-not $Quiet) {
     Write-Host ("validate_manifest: {0} entries, {1} tags, marker_fix pending: {2}" -f $entries.Count, $tagNames.Count, $markerFix.Count)

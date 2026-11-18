@@ -5,6 +5,7 @@
   "defaults": {
     "headless_parallel": 6,
     "gpu_local_parallel": 3,
+    "unmapped_max": 0,
     "timeout_rule": "max(60, 3 x expected_s) rounded up to 10 s, capped at 900; unknown 300 gpu / 120 headless"
   },
   "tags": {
@@ -34,7 +35,16 @@
         "materials/ring_cloud*",
         "materials/*cloud*",
         "addons/clouds_lp/**",
-        "resources/**/*cloud*"
+        "resources/**/*cloud*",
+        "resources/clouds/**",
+        "scenes/*Cloud*",
+        "tools/cloud_history_gameplay_diagnostic.gd",
+        "tools/cloud_history_targeted_gameplay_gpu_test.gd",
+        "tools/cloud_lightning_history_gpu_test.gd",
+        "tools/cloud_sky_history_gpu_test.gd",
+        "tools/cloud_slowdown_attribution_test.gd",
+        "tools/cloud_terrain_sun_lighting_gpu_test.gd",
+        "tools/far_cloud_patch_gpu_test.gd"
       ]
     },
     "sunshine-compute": {
@@ -60,7 +70,9 @@
         "scripts/**/*Far[A-Z]*",
         "materials/ring_far_*",
         "scripts/render/RingFar*",
-        "scripts/render/ring_far*"
+        "scripts/render/ring_far*",
+        "scenes/FarRegional*",
+        "scripts/Tools/far_*"
       ]
     },
     "world-generation": {
@@ -105,7 +117,20 @@
         "scripts/Voxel/LOD/RingScaleAnchor*",
         "scripts/Voxel/LOD/RingCertification*",
         "scripts/Voxel/LOD/RingMachineMemory*",
-        "scripts/Voxel/LOD/RingAnalyticGlobalLod*"
+        "scripts/Voxel/LOD/RingAnalyticGlobalLod*",
+        "scripts/Voxel/LOD/RingNaturalTerrain*",
+        "materials/biomes/**",
+        "materials/third_party/voxelgame/**",
+        "materials/landmark_glow.tres",
+        "materials/ring_construction_surface*",
+        "scenes/Terrain*",
+        "scenes/Smooth*",
+        "scenes/RingSegment.tscn",
+        "scenes/VoxelPhase*",
+        "scenes/VoxelDebugAnchoredMarker.tscn",
+        "third_party/Terrain3D/**",
+        "tools/terrain/**",
+        "scripts/Voxel/LOD/RingMinimapTrackable.cs"
       ]
     },
     "voxel-caves": {
@@ -115,14 +140,17 @@
         "scripts/Voxel/Save/**",
         "scripts/Underground/**",
         "scripts/Terrain/Editable/**",
-        "resources/voxel/**"
+        "resources/voxel/**",
+        "scenes/UndergroundEnvironment*",
+        "tools/underground_environment_lighting_smoke_test.gd"
       ]
     },
     "containment-field": {
       "globs": [
         "scripts/ContainmentField/**",
         "docs/containment-field-design.md",
-        "tools/ContainmentField*"
+        "tools/ContainmentField*",
+        "materials/ring_containment*"
       ]
     },
     "weather": {
@@ -133,7 +161,10 @@
         "scripts/**/*Storm*",
         "scripts/**/*Climate*",
         "materials/ring_far_weather*",
-        "materials/*storm*"
+        "materials/*storm*",
+        "materials/ring_snow_particle*",
+        "materials/ring_lens_droplets*",
+        "tools/storm_light_gpu_test.gd"
       ]
     },
     "rain": {
@@ -161,7 +192,8 @@
         "scripts/**/*Lightning*",
         "scripts/**/*Thunder*",
         "materials/*lightning*",
-        "scripts/**/*Sprite*"
+        "scripts/**/*Sprite*",
+        "materials/ring_field_strike*"
       ]
     },
     "audio": {
@@ -186,7 +218,8 @@
         "prototypes/pda-voice/LlmBench.cs",
         "tools/build_pda_worker.ps1",
         "scripts/Weather/Megastorm/MegastormPda*",
-        "scripts/Weather/Megastorm/MegastormSound*"
+        "scripts/Weather/Megastorm/MegastormSound*",
+        "tools/PdaLoadProbe.cs"
       ]
     },
     "ui-menu": {
@@ -209,7 +242,11 @@
         "scenes/StartMenu.tscn",
         "scenes/WorldSizeLauncher.tscn",
         "resources/menu/**",
-        "scripts/Voxel/LOD/RingLodPauseMenu*"
+        "scripts/Voxel/LOD/RingLodPauseMenu*",
+        "scripts/ui/RingUiStyle.cs",
+        "scripts/ui/menu_*",
+        "scripts/launcher_default_config.gd",
+        "resources/launcher/**"
       ]
     },
     "settings": {
@@ -229,7 +266,15 @@
         "materials/ring_poi*",
         "materials/ring_emitter*",
         "materials/ring_eclipse_hub*",
-        "scripts/Sunblocker*"
+        "scripts/Sunblocker*",
+        "scenes/SunblockerDemo.tscn",
+        "Start Sunblocker Demo.cmd",
+        "tools/poi/**",
+        "tools/EclipseEventDirectorGridTest.cs",
+        "tools/EclipseHubBeamCloudTest.cs",
+        "tools/EclipseHubBeamRefuelTest.cs",
+        "tools/EmitterGridLayerEventTest.cs",
+        "tools/WeatherLungRigCheck.cs"
       ]
     },
     "vegetation": {
@@ -248,7 +293,28 @@
         "materials/grass*",
         "resources/grass/**",
         "resources/trees/**",
-        "scripts/Biomes/**"
+        "scripts/Biomes/**",
+        "addons/biome_workshop/**",
+        "resources/biomes/**",
+        "materials/grass_cards_spike/**",
+        "scenes/*Tree*",
+        "scenes/*Forest*",
+        "scenes/BiomeAuthoring*",
+        "scenes/GrassMeadow*",
+        "scenes/grass_cards_spike/**",
+        "scripts/grass_cards_spike/**",
+        "scripts/grass_meadow_benchmark.gd",
+        "scripts/Tools/BiomeAuthoringPreview*",
+        "scripts/Tools/ForestRegionPreview*",
+        "scripts/Tools/PlayableForest*",
+        "scripts/ui/BiomeAuthoringControls*",
+        "tools/GrassMeadowBenchmarkDriver.cs",
+        "tools/PreparedTreeAssets.targets",
+        "tools/author_meadow_grass.py",
+        "tools/grass_scenario_cost_capture.gd",
+        "tools/shared_wind_vegetation_gpu_test.gd",
+        "tools/tr7d_card_thinning_prototype.py",
+        "tools/tree_visibility_summary.py"
       ]
     },
     "water": {
@@ -259,7 +325,11 @@
         "scripts/**/*Shore*",
         "materials/ring_water*",
         "materials/ring_ocean*",
-        "materials/*water*"
+        "materials/*water*",
+        "third_party/godot_ocean_waves/compute/**",
+        "resources/water/**",
+        "scenes/*Water*",
+        "tools/water_shared_wind_gpu_test.gd"
       ]
     },
     "atmosphere-haze": {
@@ -270,7 +340,8 @@
         "materials/atmosphere/**",
         "materials/ring_atmosphere*",
         "materials/*haze*",
-        "scripts/day_side_atmosphere.gd"
+        "scripts/day_side_atmosphere.gd",
+        "materials/ring_local_sky*"
       ]
     },
     "shadows": {
@@ -290,7 +361,8 @@
         "scripts/sun_visual_anchor.gd",
         "scripts/RingSunDirectionThrottle*",
         "materials/celestial*",
-        "materials/ring_eclipse*"
+        "materials/ring_eclipse*",
+        "resources/celestial/**"
       ]
     },
     "wind": {
@@ -308,14 +380,19 @@
         "scripts/Voxel/Save/**",
         "scripts/Voxel/LOD/RingVoxelExplorerController.Loading*",
         "scripts/**/*Warm*",
-        "scripts/**/*Startup*"
+        "scripts/**/*Startup*",
+        "tools/warm_stall_report.py"
       ]
     },
     "quality-presets": {
       "globs": [
         "scripts/**/RingGraphicsQualityController*",
         "scripts/**/*Quality*",
-        "scripts/ui/*Preset*"
+        "scripts/ui/*Preset*",
+        "scripts/hardware_profile.gd",
+        "tools/quality_preset_capture_entry.tscn",
+        "tools/quality_preset_probe_report.py",
+        "tools/quality_preset_report.py"
       ]
     },
     "render-core": {
@@ -325,20 +402,26 @@
         "scripts/**/*AntiAliasing*",
         "scripts/**/*Resolution*",
         "scripts/**/*Fsr*",
-        "scripts/**/*Compositor*"
+        "scripts/**/*Compositor*",
+        "scripts/*AmbientOcclusion*"
       ]
     },
     "perf-telemetry": {
       "globs": [
         "scripts/diagnostics/**",
-        "scripts/**/*Performance*"
+        "scripts/**/*Performance*",
+        "tools/fixtures/perf_bench_*",
+        "tools/fixtures/nt4_*"
       ]
     },
     "tooling-policy": {
       "globs": [
         "tools/*.ps1",
         "scripts/RingGeneratedOutputPaths*",
-        "tools/generated_output*"
+        "tools/generated_output*",
+        "scripts/Tools/TestRunMouseRelease*",
+        "scripts/ui/RingShortsCapture*",
+        "scenes/VerticalShortCapture.tscn"
       ]
     }
   },
@@ -352,7 +435,13 @@
     "scripts/Voxel/Integration/**",
     "scripts/Voxel/LOD/RingVoxelExplorerController.cs",
     "export_presets.cfg",
-    "artifacts/engine-upgrade/**"
+    "artifacts/engine-upgrade/**",
+    "NuGet.Config",
+    "scenes/Player.tscn",
+    "scripts/player_controller.gd",
+    "scripts/gravity_controller.gd",
+    "scripts/floating_origin.gd",
+    "scripts/ringworld_generator.gd"
   ],
   "ignore_globs": [
     "docs/**",
@@ -364,7 +453,14 @@
     "prototypes/**",
     "onedrive_conflict_archive/**",
     "**/*.uid",
-    "**/*.import"
+    "**/*.import",
+    ".gitignore",
+    ".gitattributes",
+    "icon.svg",
+    "artifacts/.gdignore",
+    "demo/**",
+    "third_party/godot_ocean_waves/LICENSE",
+    "tools/media/**"
   ],
   "smoke": {
     "headless": [

@@ -261,9 +261,12 @@ function ConvertTo-GlobRegex([string]$glob) {
     [void]$sb.Append('$')
     return $sb.ToString()
 }
+# One combined regex per set (a path is tested against thousands of globs when the validator checks coverage).
 function New-GlobSet($globs) {
     $set = New-Object System.Collections.Generic.List[regex]
-    foreach ($g in @($globs)) { if ($g) { $set.Add([regex]::new((ConvertTo-GlobRegex ([string]$g)))) } }
+    $alts = New-Object System.Collections.Generic.List[string]
+    foreach ($g in @($globs)) { if ($g) { $r = ConvertTo-GlobRegex ([string]$g); $alts.Add($r.Substring(1, $r.Length - 2)) } }   # strip ^ and $
+    if ($alts.Count -gt 0) { $set.Add([regex]::new('\A(?:' + ($alts -join '|') + ')\z', [System.Text.RegularExpressions.RegexOptions]::Compiled)) }
     return , $set
 }
 function Test-GlobSet($set, [string]$path) {
@@ -285,10 +288,13 @@ function Import-TestManifest([string]$ManifestPath, [string]$KnownPath) {
     }
     $tagGlobs = [ordered]@{}
     foreach ($p in $m.tags.PSObject.Properties) { $tagGlobs[$p.Name] = New-GlobSet $p.Value.globs }
+    $tagParent = @{}
+    foreach ($p in $m.tags.PSObject.Properties) { $par = [string](Get-Val $p.Value 'parent'); if ($par) { $tagParent[$p.Name] = $par } }
     $tests = [ordered]@{}
     foreach ($p in ($m.tests.PSObject.Properties | Sort-Object Name)) { $tests[$p.Name] = $p.Value }
     return [pscustomobject]@{
-        Manifest = $m; Tests = $tests; Known = $known; TagGlobs = $tagGlobs
+        Manifest = $m; Tests = $tests; Known = $known; TagGlobs = $tagGlobs; TagParent = $tagParent
+        TagNames = @($tagGlobs.Keys); TagRegex = @($tagGlobs.Keys | ForEach-Object { , $(if ($tagGlobs[$_].Count -gt 0) { $tagGlobs[$_][0] } else { $null }) })   # parallel arrays: the coverage check tests every tracked file
         CoreSet = (New-GlobSet $m.core_globs); IgnoreSet = (New-GlobSet $m.ignore_globs)
     }
 }
@@ -345,48 +351,281 @@ function Get-ChangedFiles([string]$Base, [string]$Since, [string]$Label) {
 # Meta files of the test tooling itself: change = run smoke (which includes the manifest validator), nothing more.
 $script:MetaSet = New-GlobSet @('tools/test_manifest.json', 'tools/test_known_failures.json', 'tools/testing/**', 'tools/run_tests.ps1')
 
-function Get-WrapperDependants([string]$helperFile) {
-    $wrappers = New-Object System.Collections.Generic.List[string]
-    foreach ($f in Get-ChildItem -LiteralPath (Join-Path $script:Root 'tools') -Filter '*.gd' -File) {
-        if ((Get-Content -LiteralPath $f.FullName -Raw) -match [regex]::Escape($helperFile)) { $wrappers.Add($f.BaseName) }
+# File lists and file text are read once per process (selection must stay fast): git ls-files plus untracked files.
+$script:RepoFiles = $null; $script:TextCache = @{}; $script:ShaderIndex = $null; $script:ToolIndex = $null
+
+function Reset-SelectionCaches { $script:RepoFiles = $null; $script:TextCache = @{}; $script:ShaderIndex = $null; $script:ToolIndex = $null }
+
+function Get-RepoFiles {
+    if ($null -eq $script:RepoFiles) {
+        $set = New-Object System.Collections.Generic.HashSet[string]
+        foreach ($f in (Invoke-Git @('ls-files'))) { [void]$set.Add($f) }
+        foreach ($f in (Invoke-Git @('ls-files', '--others', '--exclude-standard'))) { [void]$set.Add($f) }
+        $script:RepoFiles = @($set | Sort-Object)
     }
-    return $wrappers
+    return $script:RepoFiles
+}
+
+# Text of a repo-relative file ('' when it does not exist, e.g. tracked but deleted in the working tree).
+function Get-FileText([string]$rel) {
+    $t = $script:TextCache[$rel]
+    if ($null -eq $t) {
+        $p = Join-Path $script:Root $rel
+        $t = if ([System.IO.File]::Exists($p)) { [System.IO.File]::ReadAllText($p) } else { '' }
+        $script:TextCache[$rel] = $t
+    }
+    return $t
+}
+
+# Tool-file index: tools/*.gd and tools/*.cs. Tok maps a lower-cased file name with a known extension
+# ("landscape_poses_v8_s1337.json") to the files that name it. Names without such an extension (a fixture folder) and
+# C# class names are searched linearly instead (Find-ToolText, cached in Scan).
+$script:ToolNameExt = '\.(?:gd|cs|json|txt|png|gz|glslinc|gdshader|gdshaderinc|glsl|tres|tscn|res|csv|bin)$'
+
+function Get-ToolIndex {
+    if ($null -eq $script:ToolIndex) {
+        $files = New-Object System.Collections.Generic.List[object]
+        $tok = @{}
+        $rx = [regex]'[A-Za-z0-9_\-]+(?:\.[A-Za-z0-9_\-]+)*\.(?:gd|cs|json|txt|png|gz|glslinc|gdshader|gdshaderinc|glsl|tres|tscn|res|csv|bin)\b'
+        foreach ($rel in (Get-RepoFiles)) {
+            if ($rel -notmatch '^tools/([^/]+\.(?:gd|cs))$') { continue }
+            $file = $Matches[1]
+            $kind = if ($file.EndsWith('.cs')) { 'cs' } else { 'gd' }
+            $id = $files.Count
+            $text = Get-FileText $rel
+            $files.Add([pscustomobject]@{ File = $file; Kind = $kind; Norm = (ConvertTo-ToolName $file); Text = $text })
+            foreach ($m in $rx.Matches($text)) {
+                $k = $m.Value.ToLowerInvariant()
+                $l = $tok[$k]
+                if ($null -eq $l) { $l = New-Object System.Collections.Generic.List[int]; $tok[$k] = $l }
+                if ($l.Count -eq 0 -or $l[$l.Count - 1] -ne $id) { $l.Add($id) }
+            }
+        }
+        $script:ToolIndex = [pscustomobject]@{ Files = $files; Tok = $tok; Scan = @{} }
+    }
+    return $script:ToolIndex
+}
+
+# A partial part X.Y.cs is named through X.cs.
+function ConvertTo-ToolName([string]$file) {
+    if ($file.EndsWith('.cs')) { $b = $file.Substring(0, $file.Length - 3); if ($b.Contains('.')) { return ($b.Split('.')[0] + '.cs') } }
+    return $file
+}
+
+# Files whose text contains a name: a whole word in a .cs file (class name, case-sensitive) or a plain substring in any tool file.
+function Find-ToolText($ix, [string]$name, [bool]$ClassWord) {
+    $key = "$ClassWord|$name"
+    $hit = $ix.Scan[$key]
+    if ($null -ne $hit) { return $hit }
+    $hit = New-Object System.Collections.Generic.List[int]
+    for ($i = 0; $i -lt $ix.Files.Count; $i++) {
+        $f = $ix.Files[$i]
+        if ($ClassWord) {
+            if ($f.Kind -ne 'cs') { continue }
+            $at = 0; $txt = $f.Text
+            while (($at = $txt.IndexOf($name, $at, [System.StringComparison]::Ordinal)) -ge 0) {
+                $e = $at + $name.Length
+                $bOk = ($at -eq 0) -or -not ([char]::IsLetterOrDigit($txt[$at - 1]) -or $txt[$at - 1] -eq '_')
+                $aOk = ($e -ge $txt.Length) -or -not ([char]::IsLetterOrDigit($txt[$e]) -or $txt[$e] -eq '_')
+                if ($bOk -and $aOk) { $hit.Add($i); break }
+                $at = $e
+            }
+        } elseif ($f.Text.IndexOf($name, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $hit.Add($i) }
+    }
+    $ix.Scan[$key] = $hit
+    return $hit
+}
+
+# Tests that load a tool file, transitively. Breadth-first over file names (visited set, bounded): a tools/*.gd that names N
+# is a referrer (a manifest test goes into the result, and its own name is queued either way); a tools/*.cs that names N
+# (for a .cs name also its class name as a whole word) is a referrer and its name is queued. Returns the tests (test ->
+# reason showing the chain's first hop) and the number of referrers found. $Label is 'fixture' or 'helper'.
+function Get-ToolDependants($M, [string]$StartName, [string]$Label, [string]$Path) {
+    $ix = Get-ToolIndex
+    $res = [ordered]@{}; $refs = 0
+    $start = ConvertTo-ToolName $StartName; $startL = $start.ToLowerInvariant()
+    $seen = New-Object System.Collections.Generic.HashSet[string]; $queue = New-Object System.Collections.Generic.Queue[string]
+    $first = @{}   # queued name (lower) -> first hop of the chain
+    [void]$seen.Add($startL); $queue.Enqueue($start); $first[$startL] = ''
+    $guard = 0
+    while ($queue.Count -gt 0 -and $guard++ -lt 400) {
+        $n = $queue.Dequeue(); $nl = $n.ToLowerInvariant(); $hop0 = $first[$nl]
+        $ids = New-Object System.Collections.Generic.HashSet[int]
+        if ($n -match $script:ToolNameExt) {
+            if ($ix.Tok.ContainsKey($nl)) { foreach ($i in $ix.Tok[$nl]) { [void]$ids.Add($i) } }
+        } else { foreach ($i in (Find-ToolText $ix $n $false)) { [void]$ids.Add($i) } }
+        if ($n.EndsWith('.cs')) { foreach ($i in (Find-ToolText $ix $n.Substring(0, $n.Length - 3) $true)) { [void]$ids.Add($i) } }
+        foreach ($i in ($ids | Sort-Object)) {
+            $f = $ix.Files[$i]
+            $nk = $f.Norm.ToLowerInvariant()
+            if ($nk -eq $nl -or $nk -eq $startL) { continue }
+            $refs++
+            $hop = if ($hop0) { $hop0 } else { $f.File }
+            if ($f.Kind -eq 'gd') {
+                $tn = $f.File.Substring(0, $f.File.Length - 3)
+                if ($M.Tests.Contains($tn) -and -not $res.Contains($tn)) {
+                    $res[$tn] = if ($hop -eq $f.File) { "$Label $Path <- $($f.File)" } else { "$Label $Path <- $hop <- ... <- $($f.File)" }
+                }
+            }
+            if ($seen.Add($nk)) { $queue.Enqueue($f.Norm); $first[$nk] = $hop }
+        }
+    }
+    return [pscustomobject]@{ Tests = $res; Referrers = $refs }
+}
+
+# Shader include graph and the scripts that name shader files, built once from the repo file list.
+#   Inc[<lower base name>]  = shader files (.gdshader/.gdshaderinc/.glsl) that #include a file of that name
+#   Refs[<lower base name>] = .cs/.gd files under scripts/ and addons/ that name a shader file of that name
+function Get-ShaderIndex {
+    if ($null -eq $script:ShaderIndex) {
+        $inc = @{}; $refs = @{}
+        $incRx = [regex]'#include\s+"([^"]+)"'
+        $nameRx = [regex]'([A-Za-z0-9_\-\.]+\.(?:gdshaderinc|gdshader|glsl))\b'
+        foreach ($rel in (Get-RepoFiles)) {
+            if ($rel -match '\.(gdshader|gdshaderinc|glsl)$') {
+                $txt = Get-FileText $rel
+                if ($txt.IndexOf('#include', [System.StringComparison]::Ordinal) -lt 0) { continue }
+                foreach ($m in $incRx.Matches($txt)) {
+                    $k = ([System.IO.Path]::GetFileName($m.Groups[1].Value)).ToLowerInvariant()
+                    if (-not $inc.ContainsKey($k)) { $inc[$k] = New-Object System.Collections.Generic.HashSet[string] }
+                    [void]$inc[$k].Add($rel)
+                }
+            }
+            elseif ($rel -match '^(scripts|addons)/.*\.(cs|gd)$') {
+                $txt = Get-FileText $rel
+                if ($txt.IndexOf('.gdshader', [System.StringComparison]::Ordinal) -lt 0 -and $txt.IndexOf('.glsl', [System.StringComparison]::Ordinal) -lt 0) { continue }
+                foreach ($m in $nameRx.Matches($txt)) {
+                    $k = ([System.IO.Path]::GetFileName($m.Groups[1].Value)).ToLowerInvariant()
+                    if (-not $refs.ContainsKey($k)) { $refs[$k] = New-Object System.Collections.Generic.HashSet[string] }
+                    [void]$refs[$k].Add($rel)
+                }
+            }
+        }
+        $script:ShaderIndex = [pscustomobject]@{ Inc = $inc; Refs = $refs }
+    }
+    return $script:ShaderIndex
+}
+
+# Referrers of a shader include / compute shader: shader files that #include it (transitively, cycle-safe, bounded) and the
+# scripts that name it (by file name; scripts naming an including shader are not followed). Returns repo-relative paths.
+function Get-ShaderReferrers([string]$path) {
+    $ix = Get-ShaderIndex
+    $out = New-Object System.Collections.Generic.List[string]; $seenPaths = New-Object System.Collections.Generic.HashSet[string]
+    $seen = New-Object System.Collections.Generic.HashSet[string]; $queue = New-Object System.Collections.Generic.Queue[string]
+    $k0 = ([System.IO.Path]::GetFileName($path)).ToLowerInvariant()
+    [void]$seen.Add($k0); $queue.Enqueue($k0); $guard = 0
+    while ($queue.Count -gt 0 -and $guard++ -lt 400) {
+        $k = $queue.Dequeue()
+        if ($ix.Inc.ContainsKey($k)) {
+            foreach ($s in $ix.Inc[$k]) {
+                if ($s -ne $path -and $seenPaths.Add($s)) { $out.Add($s) }
+                $bk = ([System.IO.Path]::GetFileName($s)).ToLowerInvariant()
+                if ($seen.Add($bk)) { $queue.Enqueue($bk) }
+            }
+        }
+        if ($k -eq $k0 -and $ix.Refs.ContainsKey($k)) { foreach ($s in $ix.Refs[$k]) { if ($seenPaths.Add($s)) { $out.Add($s) } } }
+        if ($out.Count -gt 2000) { break }
+    }
+    return $out
+}
+
+# Tags whose globs match a path. A child tag (manifest "parent") hides its ancestors for that path.
+function Get-PathTagHits($M, [string]$path, [switch]$First) {
+    $hit = New-Object System.Collections.Generic.List[string]
+    $rxs = $M.TagRegex
+    for ($i = 0; $i -lt $rxs.Count; $i++) { if ($null -ne $rxs[$i] -and $rxs[$i].IsMatch($path)) { $hit.Add($M.TagNames[$i]); if ($First) { break } } }
+    if ($hit.Count -gt 1 -and $M.TagParent.Count -gt 0) {
+        $drop = New-Object System.Collections.Generic.HashSet[string]
+        foreach ($t in $hit) {
+            $p = $M.TagParent[$t]; $g = 0
+            while ($p -and $g++ -lt 20) { [void]$drop.Add([string]$p); $p = $M.TagParent[[string]$p] }
+        }
+        return @($hit | Where-Object { -not $drop.Contains($_) })
+    }
+    return @($hit)
+}
+
+# The one mapping implementation (runner selection and the manifest validator's coverage check).
+# Returns Ignored, Core, Tags (tag -> reason file), Direct (test -> reason, launched), ParseOnly (name -> reason, not launched), Meta, Mapped.
+# A dependant found through Get-ToolDependants is Direct only when its entry is kind test with tier smoke/gate/slow; manual tools and extended
+# entries (landscape_look_baseline, perf_bench, ...) go to ParseOnly. Kept Direct whatever the tier: the changed file's own entry, and for a changed
+# tools/*.cs (scripts/Tools/*, tools/support/*) file the wrappers that name it directly (first hop).
+# -MappedOnly stops at the first sign that the file is mapped (the coverage check does not need every tag).
+function Resolve-FileMapping($M, [string]$path, [switch]$MappedOnly) {
+    $r = [pscustomobject]@{ Ignored = $false; Core = $false; Tags = [ordered]@{}; Direct = [ordered]@{}; ParseOnly = [ordered]@{}; Meta = $false; Mapped = $false }
+    if (Test-GlobSet $M.IgnoreSet $path) { $r.Ignored = $true; return $r }
+    if (Test-GlobSet $M.CoreSet $path) { $r.Core = $true; $r.Mapped = $true }
+    foreach ($t in @(Get-PathTagHits $M $path -First:$MappedOnly)) { if (-not $r.Tags.Contains($t)) { $r.Tags[$t] = $path }; $r.Mapped = $true }
+    if ($MappedOnly -and $r.Mapped) { return $r }
+    # Tool files map through the tests that load them (transitively); tag globs above always apply as well.
+    $dep = $null
+    if ($path -match '^tools/fixtures/(.+)$') {
+        $rest = $Matches[1]; $dep = @{ Label = 'fixture'; Name = $(if ($rest.Contains('/')) { $rest.Split('/')[0] } else { $rest }) }
+    }
+    elseif ($path -match '^tools/([^/]+)\.gd$') {
+        if ($M.Tests.Contains($Matches[1])) { $r.Direct[$Matches[1]] = "direct <- $path"; $r.Mapped = $true }
+        $dep = @{ Label = 'helper'; Name = "$($Matches[1]).gd" }
+    }
+    elseif ($path -match '^tools/([^/]+\.cs)$') { $dep = @{ Label = 'helper'; Name = $Matches[1] } }
+    elseif ($path -match '^tools/shaders/(?:.+/)?([^/]+)$' -or $path -match '^tools/([^/]+\.gdshader)$') { $dep = @{ Label = 'helper'; Name = $Matches[1] } }
+    elseif ($path -match '^(?:scripts/Tools|tools/support)/([^/]+\.(?:cs|gd))$') { $dep = @{ Label = 'helper'; Name = $Matches[1] } }
+    elseif ($path -match '^tools/[^/]+\.ps1$') {
+        foreach ($n in $M.Tests.Keys) {
+            if ((Get-Val $M.Tests[$n] 'runner') -eq $path -and -not $r.Direct.Contains($n)) { $r.Direct[$n] = "direct <- runner $path"; $r.Mapped = $true }
+        }
+    }
+    if ($dep) {
+        $d = Get-ToolDependants $M $dep.Name $dep.Label $path
+        $csRule = ($path -match '^tools/[^/]+\.cs$') -or ($path -match '^(?:scripts/Tools|tools/support)/[^/]+\.(?:cs|gd)$')
+        foreach ($n in $d.Tests.Keys) {
+            if ($r.Direct.Contains($n)) { continue }
+            $e = $M.Tests[$n]
+            $launch = ([string](Get-Val $e 'kind') -eq 'test') -and ([string](Get-Val $e 'tier') -in @('smoke', 'gate', 'slow'))
+            if (-not $launch -and $csRule -and $d.Tests[$n] -notmatch '<- \.\.\. <-') { $launch = $true }
+            if ($launch) { $r.Direct[$n] = $d.Tests[$n] } elseif (-not $r.ParseOnly.Contains($n)) { $r.ParseOnly[$n] = $d.Tests[$n] }
+        }
+        if ($d.Referrers -gt 0 -or $r.Direct.Count -gt 0 -or $r.ParseOnly.Count -gt 0) { $r.Mapped = $true }
+    }
+    # Shader includes and compute shaders that nothing else maps take the tags of what includes or names them.
+    if (-not $r.Mapped -and $path -match '\.(gdshaderinc|glsl)$') {
+        foreach ($ref in (Get-ShaderReferrers $path)) {
+            foreach ($t in @(Get-PathTagHits $M $ref)) { if (-not $r.Tags.Contains($t)) { $r.Tags[$t] = "$path (via $ref)" }; $r.Mapped = $true }
+        }
+    }
+    if (Test-GlobSet $script:MetaSet $path) { $r.Meta = $true; $r.Mapped = $true }
+    return $r
+}
+# Tracked files that nothing maps (ignore_globs excluded), by the same rules the runner uses. Used by validate_manifest.ps1.
+function Get-UnmappedFiles($M) {
+    $out = New-Object System.Collections.Generic.List[string]
+    foreach ($f in (Invoke-Git @('ls-files'))) {
+        $r = Resolve-FileMapping $M $f -MappedOnly
+        if (-not $r.Ignored -and -not $r.Mapped) { $out.Add($f) }
+    }
+    return @($out)
 }
 
 # Returns Items (name -> list of reasons), Skipped (name -> why not), plus the tag/core/unmapped summary.
 function Get-Selection {
-    param($M, [string[]]$Files, [string[]]$Tags, [string[]]$Tests, [string]$Suite, [bool]$UseFiles)
+    param($M, [string[]]$Files, [string[]]$Tags, [string[]]$Tests, [string]$Suite, [bool]$UseFiles, [string]$UnmappedPolicy = 'full')
 
     $items = [ordered]@{}; $skipped = [ordered]@{}
     $tagHit = [ordered]@{}   # tag -> first file (or '-Tags')
     $direct = @{}            # test name -> reason
+    $parseOnly = [ordered]@{}   # entry name -> reason (dependants that are not launched)
     $core = $null; $unmapped = New-Object System.Collections.Generic.List[string]; $ignored = 0; $meta = $false
 
     if ($UseFiles) {
         foreach ($f in $Files) {
             $path = $f -replace '\\', '/'
-            if (Test-GlobSet $M.IgnoreSet $path) { $ignored++; continue }
-            $mapped = $false
-            if (Test-GlobSet $M.CoreSet $path) { if (-not $core) { $core = $path }; $mapped = $true }
-            foreach ($t in $M.TagGlobs.Keys) {
-                if (Test-GlobSet $M.TagGlobs[$t] $path) { if (-not $tagHit.Contains($t)) { $tagHit[$t] = $path }; $mapped = $true }
-            }
-            if ($path -match '^tools/([^/]+)\.gd$' -and $M.Tests.Contains($Matches[1])) {
-                if (-not $direct.ContainsKey($Matches[1])) { $direct[$Matches[1]] = "direct <- $path" }; $mapped = $true
-            }
-            elseif ($path -match '^tools/([^/]+)\.cs$') {
-                foreach ($w in (Get-WrapperDependants "$($Matches[1]).cs")) {
-                    if ($M.Tests.Contains($w) -and -not $direct.ContainsKey($w)) { $direct[$w] = "helper $path <- wrapper $w.gd" }
-                    $mapped = $true
-                }
-            }
-            elseif ($path -match '^tools/[^/]+\.ps1$') {
-                foreach ($n in $M.Tests.Keys) {
-                    if ((Get-Val $M.Tests[$n] 'runner') -eq $path -and -not $direct.ContainsKey($n)) { $direct[$n] = "direct <- runner $path"; $mapped = $true }
-                }
-            }
-            if (Test-GlobSet $script:MetaSet $path) { $meta = $true; $mapped = $true }
-            if (-not $mapped) { $unmapped.Add($path) }
+            $r = Resolve-FileMapping $M $path
+            if ($r.Ignored) { $ignored++; continue }
+            if ($r.Core -and -not $core) { $core = $path }
+            foreach ($t in $r.Tags.Keys) { if (-not $tagHit.Contains($t)) { $tagHit[$t] = $r.Tags[$t] } }
+            foreach ($n in $r.Direct.Keys) { if (-not $direct.ContainsKey($n)) { $direct[$n] = $r.Direct[$n] } }
+            foreach ($n in $r.ParseOnly.Keys) { if (-not $parseOnly.Contains($n)) { $parseOnly[$n] = $r.ParseOnly[$n] } }
+            if ($r.Meta) { $meta = $true }
+            if (-not $r.Mapped) { $unmapped.Add($path) }
         }
     }
     foreach ($t in $Tags) {
@@ -399,7 +638,9 @@ function Get-Selection {
         $direct[$name] = '-Tests'
     }
 
-    $fullHeadless = [bool]($core -or $unmapped.Count -gt 0)
+    # -UnmappedPolicy smoke (the runner default): unmapped files select the smoke set only; full: every headless test (core always does).
+    $unmappedFull = ($UnmappedPolicy -eq 'full') -and $unmapped.Count -gt 0
+    $fullHeadless = [bool]($core -or $unmappedFull)
     $smokeWanted = $UseFiles -or [bool]$Suite
     $suiteGate = $Suite -in @('gate', 'full'); $suiteFull = $Suite -eq 'full'
 
@@ -423,7 +664,7 @@ function Get-Selection {
                     foreach ($h in $hits) { $take.Add("tag $h <- $($tagHit[[string]$h])") }
                     if ($core -and $mode -eq 'headless') { $take.Add("core <- $core (full headless)") }
                     if ($core -and $mode -eq 'gpu' -and $batch -match '^(integration|certified)@') { $take.Add("core <- $core (integration/certified gate)") }
-                    if ($unmapped.Count -gt 0 -and $mode -eq 'headless') { $take.Add("unmapped <- $($unmapped[0]) (full headless)") }
+                    if ($unmappedFull -and $mode -eq 'headless') { $take.Add("unmapped <- $($unmapped[0]) (full headless)") }
                 }
                 'slow' {
                     if ($suiteFull) { $take.Add('suite full') }
@@ -442,8 +683,9 @@ function Get-Selection {
         }
         if ($reasons.Count -gt 0) { $items[$name] = $reasons }
     }
+    foreach ($n in @($parseOnly.Keys)) { if ($items.Contains($n) -or $direct.ContainsKey($n)) { $parseOnly.Remove($n) } }
     return [pscustomobject]@{
-        Items = $items; Skipped = $skipped; Tags = @($tagHit.Keys); TagFiles = $tagHit; Core = $core; Unmapped = @($unmapped)
+        Items = $items; Skipped = $skipped; ParseOnly = $parseOnly; Tags = @($tagHit.Keys); TagFiles = $tagHit; Core = $core; Unmapped = @($unmapped); UnmappedPolicy = $UnmappedPolicy
         Ignored = $ignored; Meta = $meta; Files = $Files
     }
 }
@@ -739,7 +981,8 @@ function Save-Results($Ctx, [bool]$Final) {
         run_id = $Ctx.RunId; label = $Ctx.Label; suite = $Ctx.SuiteName; base = $Ctx.Base; head = $Ctx.Head; dirty = $Ctx.Dirty
         machine = $Ctx.Machine; manifest = $Ctx.Manifest; known_failures = $Ctx.KnownFailures
         selection = [ordered]@{
-            changed_files = @($sel.Files).Count; tags = @($sel.Tags); unmapped = @($sel.Unmapped); core = [bool]$sel.Core
+            changed_files = @($sel.Files).Count; tags = @($sel.Tags); unmapped = @($sel.Unmapped); unmapped_policy = [string]$sel.UnmappedPolicy; core = [bool]$sel.Core
+            parse_only = @(if ($sel.ParseOnly) { $sel.ParseOnly.Keys } else { @() })
             skipped = @($sel.Skipped.Keys | ForEach-Object { "$_ : $($sel.Skipped[$_])" })
         }
         complete = $Final; wall_s = [math]::Round($wall, 1); summary = $sum
@@ -772,7 +1015,8 @@ function Format-ResultsMarkdown($Ctx, $Sum, [double]$Wall, [bool]$Final) {
         [void]$sb.AppendLine('')
         [void]$sb.AppendLine("**Known failure now passes: update tools/test_known_failures.json** ($((($fixed | ForEach-Object { $_.name }) -join ', ')))")
     }
-    $attention = @($Ctx.Results.Values | Where-Object { $_.status -notin @('pass', 'skip', 'captured', 'not-run', 'flaky-pass') -or ($_.exit_anomaly) })
+    $knownFails = @($Ctx.Results.Values | Where-Object { $_.status -eq 'known-fail' })
+    $attention = @($Ctx.Results.Values | Where-Object { $_.status -notin @('pass', 'skip', 'captured', 'not-run', 'flaky-pass', 'known-fail') -or ($_.exit_anomaly) })
     $notRun = @($Ctx.Results.Values | Where-Object { $_.status -eq 'not-run' })
     $order = @('fail', 'timeout', 'crash', 'error', 'fail-batch-only', 'fixed', 'known-fail', 'quarantined')
     if ($attention.Count -gt 0 -or $notRun.Count -gt 0) {
@@ -790,6 +1034,10 @@ function Format-ResultsMarkdown($Ctx, $Sum, [double]$Wall, [bool]$Final) {
         }
         if ($notRun.Count -gt 0) { [void]$sb.AppendLine("| not-run | $($notRun.Count) tests | - | $((($notRun | Select-Object -First 8 | ForEach-Object { $_.name }) -join ', '))$(if ($notRun.Count -gt 8) { ', ...' }) | - |") }
     }
+    if ($knownFails.Count -gt 0) {
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine("Known failures: $($knownFails.Count) ($(($knownFails | Sort-Object name | ForEach-Object { $_.name }) -join ', ')); listed in tools/test_known_failures.json, do not re-triage.")
+    }
     $passes = @($Ctx.Results.Values | Where-Object { $_.status -in @('pass', 'flaky-pass') })
     if ($VerbosePreference -eq 'Continue' -and $passes.Count -gt 0) {
         [void]$sb.AppendLine('')
@@ -799,7 +1047,7 @@ function Format-ResultsMarkdown($Ctx, $Sum, [double]$Wall, [bool]$Final) {
         [void]$sb.AppendLine("Passes: $($passes.Count) (list with -Verbose; full data in results.json).")
     }
     $unm = @($Ctx.Selection.Unmapped)
-    [void]$sb.AppendLine("Unmapped files: $(if ($unm.Count -gt 0) { $unm -join ', ' } else { 'none' })")
+    [void]$sb.AppendLine("Unmapped files: $(if ($unm.Count -gt 0) { ($unm -join ', ') + $(if ($Ctx.Selection.UnmappedPolicy -eq 'smoke') { ' (smoke only)' } else { '' }) } else { 'none' })")
     return $sb.ToString()
 }
 
@@ -933,7 +1181,7 @@ function Invoke-Build($Ctx) {
 function New-ValidatorSpec {
     return [pscustomobject]@{
         Name = 'manifest_validator'; Kind = 'test'; Mode = 'headless'; Tier = 'smoke'; Tags = @('tooling-policy'); Marker = 'VALIDATE_MANIFEST'; MarkerFix = ''
-        Args = @(); UserArgs = @('-Quiet'); Runner = 'tools/testing/validate_manifest.ps1'; TimeoutS = 60; ExpectedS = 2; Profile = 'own-runner'
+        Args = @(); UserArgs = @('-Quiet'); Runner = 'tools/testing/validate_manifest.ps1'; TimeoutS = 60; ExpectedS = 12; Profile = 'own-runner'
         ParallelSafe = $true; Batch = ''; Synthetic = $true; KnownStatus = ''; KnownMatch = ''; KnownRetries = 0; KnownTimeout = $null; Reason = 'smoke (manifest validator)'
     }
 }
@@ -950,8 +1198,10 @@ function Invoke-TestRun {
         [ValidateSet('copy', 'reuse', 'none')][string]$Cache = 'reuse',
         [int]$Parallel = 0, [int]$LocalLanes = 0, [double]$YieldMinutes = 0,
         [string]$Resume = '', [switch]$RetryFailed,
-        [string]$ManifestPath = '', [string]$KnownFailuresPath = ''
+        [string]$ManifestPath = '', [string]$KnownFailuresPath = '',
+        [ValidateSet('smoke', 'full')][string]$UnmappedPolicy = 'smoke'
     )
+    Reset-SelectionCaches
     # powershell.exe -File passes 'a,b' as one string; split comma lists for all list parameters.
     $Tags = @($Tags | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
     $Tests = @($Tests | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
@@ -995,7 +1245,7 @@ function Invoke-TestRun {
     $sel = $null
     if ($resumeRun) {
         $suiteName = [string]$resumeRun.suite
-        $sel = [pscustomobject]@{ Items = [ordered]@{}; Skipped = [ordered]@{}; Tags = @($resumeRun.selection.tags); Core = $null; Unmapped = @($resumeRun.selection.unmapped); Files = @(); Meta = $false; Ignored = 0 }
+        $sel = [pscustomobject]@{ Items = [ordered]@{}; Skipped = [ordered]@{}; Tags = @($resumeRun.selection.tags); Core = $null; Unmapped = @($resumeRun.selection.unmapped); Files = @(); Meta = $false; Ignored = 0; UnmappedPolicy = $(if ($resumeRun.selection.unmapped_policy) { [string]$resumeRun.selection.unmapped_policy } else { 'full' }) }
         foreach ($t in $resumeRun.tests) { $sel.Items[[string]$t.name] = @([string]$t.reason) }
     } else {
         $explicit = ($Tags.Count -gt 0) -or ($Tests.Count -gt 0) -or [bool]$Suite -or ($Files.Count -gt 0)
@@ -1003,7 +1253,7 @@ function Invoke-TestRun {
         if ($Files.Count -gt 0) { $useFiles = $true; $filesList = @($Files | ForEach-Object { $_ -replace '\\', '/' }) }
         elseif ($useFiles) { $filesList = Get-ChangedFiles $Base $Since $Label }
         if (-not $suiteName) { $suiteName = if ($useFiles) { 'changed' } elseif ($Tests.Count -gt 0) { 'tests' } else { 'tags' } }
-        $sel = Get-Selection -M $M -Files $filesList -Tags $Tags -Tests $Tests -Suite $Suite -UseFiles $useFiles
+        $sel = Get-Selection -M $M -Files $filesList -Tags $Tags -Tests $Tests -Suite $Suite -UseFiles $useFiles -UnmappedPolicy $UnmappedPolicy
     }
 
     # ----- specs
@@ -1037,6 +1287,7 @@ function Invoke-TestRun {
     if ($useFiles -and -not $resumeRun) {
         Write-Host ("  changed files: {0}  (ignored {1})  tags: {2}  core: {3}  unmapped: {4}" -f @($filesList).Count, $sel.Ignored, $(if ($sel.Tags.Count) { $sel.Tags -join ', ' } else { '-' }), $(if ($sel.Core) { $sel.Core } else { 'no' }), $(if ($sel.Unmapped.Count) { $sel.Unmapped -join ', ' } else { 'none' }))
         if ($sel.Meta) { Write-Host '  test-tooling files changed: smoke set (includes the manifest validator)' }
+        if ($sel.Unmapped.Count -gt 0 -and $sel.UnmappedPolicy -eq 'smoke') { Write-Host ("WARNING: {0} unmapped file(s) select the smoke set only: {1}. Add a glob to tools/test_manifest.json, or pass -UnmappedPolicy full." -f $sel.Unmapped.Count, ($sel.Unmapped -join ', ')) }
     } elseif (-not $resumeRun -and $sel.Tags.Count) { Write-Host ("  tags: {0}" -f ($sel.Tags -join ', ')) }
     if ($DryRun) {
         foreach ($s in ($specs | Sort-Object @{e = { switch ($_.Mode) { 'headless' { 0 } 'gpu-local' { 1 } default { 2 } } } }, @{e = { -$_.ExpectedS } }, Name)) {
@@ -1045,6 +1296,7 @@ function Invoke-TestRun {
             Write-Host ("            reason: {0}" -f $s.Reason)
         }
         foreach ($k in $sel.Skipped.Keys) { Write-Host ("  skipped   {0}: {1}" -f $k, $sel.Skipped[$k]) }
+        if ($sel.ParseOnly) { foreach ($k in $sel.ParseOnly.Keys) { Write-Host ("  parse-only {0}" -f $k); Write-Host ("            reason: {0}" -f $sel.ParseOnly[$k]) } }
         Write-Host ("Estimate: headless ~{0} ({1} lanes), gpu-local ~{2} ({3} lanes), gpu ~{4}; total ~{5} + build" -f (Format-Duration $est.Headless), $Parallel, (Format-Duration $est.GpuLocal), $LocalLanes, (Format-Duration $est.Gpu), (Format-Duration $est.Total))
         return 0
     }
@@ -1128,4 +1380,4 @@ function Invoke-TestRun {
     return $exitCode
 }
 
-Export-ModuleMember -Function Invoke-TestRun, Get-Selection, Import-TestManifest, Get-ChangedFiles
+Export-ModuleMember -Function Invoke-TestRun, Get-Selection, Import-TestManifest, Get-ChangedFiles, Get-UnmappedFiles, Resolve-FileMapping
