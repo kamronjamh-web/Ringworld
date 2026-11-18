@@ -20,6 +20,15 @@
         "tools/fixtures/world_generation_*"
       ]
     },
+    "forest-lighting": {
+      "globs": [
+        "scripts/Vegetation/Canopy/**",
+        "scripts/Voxel/LOD/RingBiomeDecorationLayer.Canopy.cs",
+        "tools/ForestCanopy*",
+        "tools/forest_canopy_*",
+        "docs/forest-lighting-plan.md"
+      ]
+    },
     "vastness": {
       "globs": [
         "tools/Vastness*",
@@ -3029,6 +3038,31 @@
       "marker": "HEIGHT_SHADOW_REFERENCE",
       "expected_s": null,
       "timeout_s": 300
+    },
+    "forest_canopy_raster_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation",
+        "forest-lighting"
+      ],
+      "marker": "FOREST_CANOPY_RASTER",
+      "expected_s": 3,
+      "timeout_s": 120
+    },
+    "forest_lighting_tree_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation",
+        "atmosphere-haze",
+        "forest-lighting"
+      ],
+      "marker": "FOREST_LIGHTING_TREE_GPU_TEST",
+      "expected_s": 90,
+      "timeout_s": 600
     },
     "height_shadow_schedule_test": {
       "kind": "test",

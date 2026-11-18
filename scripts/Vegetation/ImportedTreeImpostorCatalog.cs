@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
 using Godot;
+using RingworldTechDemo.Vegetation.Canopy;
 
 namespace RingworldTechDemo.Vegetation;
 
@@ -21,7 +22,8 @@ public sealed class ImportedTreeImpostorCatalog
     public IReadOnlyList<FarQuadTop> FarQuadTops { get; }
     /// <summary>12 vertices per tree: the camera-facing quad (vertices 0 to 5) and the horizontal card (6 to 11).</summary>
     public const int FarQuadVertexCount = 12;
-    public const int ParameterRowCount = 8;
+    /// <summary>Rows 0 to 7 as before; row 8 = crown hull (centre y, horizontal semi-axis, vertical semi-axis, kappa), row 9 = (centre x, centre z, k_species, 1 = valid), see TreeCrownHullTable.Pack.</summary>
+    public const int ParameterRowCount = 10;
     /// <summary>The alpha cutoff each variant's material authored (used while there is no calibration).</summary>
     public IReadOnlyList<float> DefaultCutoffs { get; }
     /// <summary>Hash of everything the calibration depends on: the variant count and the base level of the card albedo atlas (the bake's, or the pack's pictures resized), never its mips or cutoffs; a calibration made for another value is stale.</summary>
@@ -504,8 +506,22 @@ public sealed class ImportedTreeImpostorCatalog
         return ImageTexture.CreateFromImage(image);
     }
 
+    private static IReadOnlyList<ImportedTreeVariant>? _hullSource;
+    private static TreeCrownHull[]? _hulls;
+
+    /// <summary>The crown hulls of these variants (read from the authored LOD0 meshes once per list).</summary>
+    private static TreeCrownHull[] CrownHulls(IReadOnlyList<ImportedTreeVariant> variants)
+    {
+        if (_hulls != null && ReferenceEquals(_hullSource, variants) && _hulls.Length == variants.Count) return _hulls;
+        var hulls = new TreeCrownHull[variants.Count];
+        for (int i = 0; i < hulls.Length; i++) hulls[i] = TreeCrownHullTable.FromVariant(i, variants[i]);
+        _hullSource = variants; _hulls = hulls;
+        return hulls;
+    }
+
     private static ImageTexture CreateParameterTexture(IReadOnlyList<ImportedTreeVariant> variants, IReadOnlyList<FarQuadPlane> planes, IReadOnlyList<FarQuadTop> tops, IReadOnlyList<float> defaultCutoffs, ImportedTreeImpostorCalibration? calibration, bool baked)
     {
+        TreeCrownHull[] hulls = CrownHulls(variants);
         var image = Image.CreateEmpty(variants.Count, ParameterRowCount, false, Image.Format.Rgbaf);
         for (int i = 0; i < variants.Count; i++)
         {
@@ -526,6 +542,9 @@ public sealed class ImportedTreeImpostorCatalog
             image.SetPixel(i, 5, new Color(top.ULow, top.VLow, top.UHigh, top.VHigh));
             image.SetPixel(i, 6, new Color(top.P00.X, top.P00.Y, top.P10.X, top.P10.Y));
             image.SetPixel(i, 7, new Color(top.P01.X, top.P01.Y, top.Y, top.FrameCode));
+            TreeCrownHullTable.Pack(hulls[i], out Vector4 hullRow, out Vector4 hullExtra);
+            image.SetPixel(i, 8, new Color(hullRow.X, hullRow.Y, hullRow.Z, hullRow.W));
+            image.SetPixel(i, 9, new Color(hullExtra.X, hullExtra.Y, hullExtra.Z, hullExtra.W));
         }
         return ImageTexture.CreateFromImage(image);
     }

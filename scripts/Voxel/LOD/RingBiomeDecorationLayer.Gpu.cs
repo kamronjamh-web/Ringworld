@@ -1355,6 +1355,12 @@ public partial class RingBiomeDecorationLayer
         _gpuTreeOutputs[key] = new GpuTreeOutput { Renderer = renderer, CameraRenderer = cameraRenderer, VerifyRenderer = verifyRenderer, BatchId = id, SourceGroup = group, TreeDitherData = UsesTreeDitherData(key.Lod), FarQuad = UsesFarQuadMesh(key.Lod), RenderLodMesh = UsesRenderLodMesh(key.Lod) };
         if (material is ShaderMaterial) renderer.SetInstanceShaderParameter("vegetation_haze_slot", _gpuTreeCompute.GetHazeSlot(id));
         if (material is ShaderMaterial) cameraRenderer.SetInstanceShaderParameter("vegetation_haze_slot", _gpuTreeCompute.GetCameraHazeSlot(id));
+        if (!group.SharedImpostor && UsingAuthoredTreeMeshes && _lod1AuthoredTemplates?.Length == ImportedTreeCatalog.VariantCount)
+        {
+            // One variant per renderer: its crown hull for the forest lighting terms of imported_tree (the shared impostor reads the same hull from variant_parameters).
+            ApplyTreeCrownHull(renderer, key.Group.Variant);
+            ApplyTreeCrownHull(cameraRenderer, key.Group.Variant);
+        }
 		MarkTreeSunShadowPolicyDirty();
         return true;
     }

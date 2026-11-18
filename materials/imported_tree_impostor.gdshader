@@ -39,6 +39,11 @@ const float FAR_QUAD_TOP_SIN_HIGH = 0.5;
 #include "res://materials/ring_vegetation_shadow.gdshaderinc"
 #include "res://materials/ring_local_wind.gdshaderinc"
 #include "res://materials/ring_wetness.gdshaderinc"
+#include "res://materials/ring_forest_lighting.gdshaderinc"
+varying vec3 tree_model_position; // forest lighting switches on: the card point in model (normalized tree) space
+varying flat vec3 tree_model_camera; // forest lighting switches on: the camera in model space
+varying float tree_leaf_crown_sun; // written in fragment() for light(): crown transmittance towards the primary sun at the expected first-leaf point
+varying float tree_leaf_k; // written in fragment() for light(): k_species (0 = no translucency)
 varying float tree_cloud_occlusion;
 varying float tree_day_factor;
 varying float tree_height_term;
@@ -182,6 +187,12 @@ void vertex() {
 		if (length(BINORMAL) > .0001) BINORMAL = normalize(jacobian * BINORMAL);
 	}
 	}
+	if (ring_forest_translucency_on() || ring_forest_crown_on()) {
+		float hull_scale = length(MODEL_MATRIX[1].xyz);
+		vec3 camera_offset = ring_atmosphere_camera_world_position - root_world;
+		tree_model_camera = vec3(dot(camera_offset, MODEL_MATRIX[0].xyz), dot(camera_offset, MODEL_MATRIX[1].xyz), dot(camera_offset, MODEL_MATRIX[2].xyz)) / max(hull_scale * hull_scale, 0.000001);
+		tree_model_position = VERTEX;
+	}
 	vec3 world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	RingVegetationShadowInstance shadow_instance = ring_vegetation_shadow_instance(RING_VEGETATION_SHADOW_TREES, INSTANCE_ID);
 	tree_cloud_occlusion = ring_vegetation_shadow_cloud_vertex(shadow_instance, world_position);
@@ -242,6 +253,31 @@ void fragment() {
 	ROUGHNESS = ring_wet_ssr_roughness(ROUGHNESS, dry_roughness); // distant canopy: no SSR on wet impostors
 	AO = min(1.0 - tree_cloud_occlusion * tree_day_factor * .72, ring_storm_ambient(ring_storm_level(tree_world_position))); // storm light
 	AO_LIGHT_AFFECT = 0.0;
+	if (ring_forest_translucency_on() || ring_forest_crown_on()) {
+		// Forest lighting: crown terms at the expected first-leaf point of the view ray (docs/forest-lighting-plan.md sections 3 and 4); the same helpers as the mesh.
+		vec4 hull = texelFetch(variant_parameters, ivec2(tree_variant, 8), 0);
+		vec4 hull_extra = texelFetch(variant_parameters, ivec2(tree_variant, 9), 0);
+		float crown_ao = 1.0;
+		tree_leaf_crown_sun = 1.0;
+		tree_leaf_k = 0.0;
+		if (ring_crown_valid(hull_extra)) {
+			vec3 ray_origin = tree_model_camera;
+			vec3 ray = normalize(tree_model_position - ray_origin);
+			vec3 leaf_point = tree_model_position;
+			float t_entry, t_exit;
+			if (ring_crown_ray(ray_origin, ray, hull, hull_extra, t_entry, t_exit) && t_exit > 0.0) {
+				float entry = max(t_entry, 0.0);
+				leaf_point = ray_origin + ray * (entry + min(1.0 / max(hull.w, 0.0001), 0.5 * (t_exit - entry)));
+			}
+			if (ring_forest_crown_on()) crown_ao = ring_crown_sky_visibility(leaf_point, hull, hull_extra);
+			if (ring_forest_translucency_on()) {
+				tree_leaf_k = hull_extra.z;
+				vec3 light_model = normalize(transpose(mat3(MODEL_MATRIX)) * sun_direction);
+				tree_leaf_crown_sun = ring_crown_sun_transmittance(leaf_point, light_model, hull, hull_extra);
+			}
+		}
+		if (ring_forest_crown_on()) AO *= crown_ao;
+	}
 	// Reflections R1-1a hold: the sky term stays black as before the sky source; crown interiors and trunks cannot see the sky and there is no crown-visibility term yet (docs/work-orders/reflections/R1-1-design.md). SSR on wet bark is unaffected.
 	RADIANCE = vec4(0.0, 0.0, 0.0, 1.0);
 	if (ring_shadow_debug_enabled()) {
@@ -276,6 +312,12 @@ void light() {
 	} else {
 		float visibility = sun_visibility * mix(1.0, direct, primary_sun);
 		DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * n_dot_l * visibility;
+		if (ring_forest_translucency_on() && tree_leaf_k > 0.0) {
+			// Leaf translucency, projected-area mean for spherical leaves (docs/forest-lighting-plan.md section 3). Godot multiplies by ALBEDO afterwards.
+			float analytic_weight = ring_forest_analytic_weight(distance(tree_world_position, ring_atmosphere_camera_world_position));
+			DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * (tree_leaf_k * RING_LEAF_TRANSMISSION_SHAPE) * ring_leaf_spherical_facing(-dot(LIGHT, VIEW)) * visibility
+				* mix(1.0, tree_leaf_crown_sun, analytic_weight * primary_sun);
+		}
 		if (!simplified_tree_shading) {
 			vec3 half_vector = normalize(LIGHT + VIEW);
 			float gloss = mix(8.0, 128.0, 1.0 - tree_highlight_roughness);

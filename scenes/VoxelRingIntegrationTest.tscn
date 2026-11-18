@@ -47,6 +47,7 @@
 [ext_resource type="Script" path="res://scripts/Shadows/RingTerrainHeightShadow.cs" id="terrain_height_shadow"]
 [ext_resource type="Script" path="res://scripts/Weather/RingPrecipitationOcclusion.cs" id="precip_occlusion"]
 [ext_resource type="Script" path="res://scripts/Weather/RingWetWorld.cs" id="wet_world"]
+[ext_resource type="Script" path="res://scripts/Vegetation/Canopy/RingForestLighting.cs" id="forest_lighting"]
 [ext_resource type="Script" path="res://scripts/Weather/RingLensDroplets.cs" id="lens_droplets"]
 [ext_resource type="Script" path="res://scripts/Shadows/RingContactShadows.cs" id="contact_shadows"]
 [ext_resource type="Script" path="res://scripts/Weather/RingRainbow.cs" id="storm_rainbow"]
@@ -716,6 +717,9 @@ script = ExtResource("precip_occlusion")
 
 [node name="WetWorld" type="Node" parent="."]
 script = ExtResource("wet_world")
+
+[node name="ForestLighting" type="Node" parent="."]
+script = ExtResource("forest_lighting")
 
 [node name="LensDroplets" type="CanvasLayer" parent="."]
 script = ExtResource("lens_droplets")

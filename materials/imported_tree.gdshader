@@ -44,6 +44,11 @@ uniform bool simplified_tree_shading = false;
 #include "res://materials/ring_vegetation_shadow.gdshaderinc"
 #include "res://materials/ring_local_wind.gdshaderinc"
 #include "res://materials/ring_wetness.gdshaderinc"
+#include "res://materials/ring_forest_lighting.gdshaderinc"
+
+// Forest lighting: the crown hull of this renderer's variant (one variant per renderer), see ring_forest_lighting.gdshaderinc. Unset = no crown terms, no translucency.
+instance uniform vec4 tree_crown_hull = vec4(0.0);
+instance uniform vec4 tree_crown_hull_extra = vec4(0.0);
 
 varying float tree_cloud_occlusion;
 varying float tree_day_factor;
@@ -55,6 +60,10 @@ varying vec2 tree_wet_state; // wet world, per vertex: (darkening amount, gloss)
 varying float tree_highlight_roughness; // wet world: the direct highlight keeps the full wet gloss (ROUGHNESS may be held at the SSR floor)
 varying flat float tree_dither_coverage;
 varying flat float tree_dither_seed;
+varying float tree_crown_ao; // foliage, crown occlusion on: exp(-kappa * exit distance to the sky), else 1
+varying float tree_crown_sun; // translucency on: crown transmittance towards the primary sun at the vertex, else 1
+varying flat float tree_crown_k; // translucency on, foliage, valid hull: k_species, else 0
+varying vec3 tree_geo_normal; // written in fragment() for light(): the geometric leaf normal facing the viewer (view space)
 
 float tree_dither_noise(vec2 pixel, float seed) {
 	return fract(sin(dot(pixel + vec2(seed * 17.0, seed * 43.0), vec2(12.9898, 78.233))) * 43758.5453);
@@ -82,6 +91,18 @@ void vertex() {
 		NORMAL = ring_tree_deformed_normal(jacobian, NORMAL);
 		if (length(TANGENT) > .0001) TANGENT = normalize(jacobian * TANGENT);
 		if (length(BINORMAL) > .0001) BINORMAL = normalize(jacobian * BINORMAL);
+	}
+	tree_crown_ao = 1.0;
+	tree_crown_sun = 1.0;
+	tree_crown_k = 0.0;
+	if (use_alpha_cutout && (ring_forest_translucency_on() || ring_forest_crown_on()) && ring_crown_valid(tree_crown_hull_extra)) {
+		// VERTEX: the wind-deformed vertex in model space (normalized tree space, uniform scale).
+		if (ring_forest_crown_on()) tree_crown_ao = ring_crown_sky_visibility(VERTEX, tree_crown_hull, tree_crown_hull_extra);
+		if (ring_forest_translucency_on()) {
+			tree_crown_k = tree_crown_hull_extra.z;
+			vec3 light_model = normalize(transpose(mat3(MODEL_MATRIX)) * sun_direction);
+			tree_crown_sun = ring_crown_sun_transmittance(VERTEX, light_model, tree_crown_hull, tree_crown_hull_extra);
+		}
 	}
 	vec3 world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	RingVegetationShadowInstance shadow_instance = ring_vegetation_shadow_instance(RING_VEGETATION_SHADOW_TREES, INSTANCE_ID);
@@ -144,6 +165,11 @@ void fragment() {
 	if (use_alpha_cutout) ROUGHNESS = ring_wet_ssr_roughness(ROUGHNESS, dry_roughness);
 	AO = min(1.0 - tree_cloud_occlusion * tree_day_factor * .72, ring_storm_ambient(ring_storm_level(tree_world_position))); // storm light
 	AO_LIGHT_AFFECT = 0.0;
+	if (ring_forest_crown_on() && use_alpha_cutout) AO *= tree_crown_ao;
+	if (ring_forest_translucency_on() && use_alpha_cutout && tree_crown_k > 0.0) {
+		vec3 geometric_normal = normalize(cross(dFdx(VERTEX), dFdy(VERTEX)));
+		tree_geo_normal = dot(geometric_normal, VIEW) >= 0.0 ? geometric_normal : -geometric_normal;
+	}
 	// Reflections R1-1a hold: the sky term stays black as before the sky source; crown interiors and trunks cannot see the sky and there is no crown-visibility term yet (docs/work-orders/reflections/R1-1-design.md). SSR on wet bark is unaffected.
 	RADIANCE = vec4(0.0, 0.0, 0.0, 1.0);
 	if (ring_shadow_debug_enabled()) {
@@ -178,6 +204,12 @@ void light() {
 	} else {
 		float visibility = sun_visibility * mix(1.0, direct, primary_sun);
 		DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * n_dot_l * visibility;
+		if (ring_forest_translucency_on() && use_alpha_cutout && tree_crown_k > 0.0) {
+			// Leaf translucency: sunlight transmitted to the viewer's side of the leaf (docs/forest-lighting-plan.md section 3). Godot multiplies by ALBEDO afterwards.
+			float analytic_weight = ring_forest_analytic_weight(distance(tree_world_position, ring_atmosphere_camera_world_position));
+			DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * (tree_crown_k * RING_LEAF_TRANSMISSION_SHAPE) * max(-dot(tree_geo_normal, LIGHT), 0.0) * visibility
+				* mix(1.0, tree_crown_sun, analytic_weight * primary_sun);
+		}
 		if (!simplified_tree_shading) {
 			vec3 half_vector = normalize(LIGHT + VIEW);
 			float gloss = mix(8.0, 128.0, 1.0 - tree_highlight_roughness);

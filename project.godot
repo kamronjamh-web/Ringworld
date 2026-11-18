@@ -159,6 +159,22 @@ ringworld_height_shadow_light={
 "type": "vec4",
 "value": Vector4(0, 0, 0, 0)
 }
+ringworld_canopy_cover={
+"type": "sampler2D",
+"value": ""
+}
+ringworld_canopy_frame={
+"type": "mat4",
+"value": Projection(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
+}
+ringworld_canopy_params={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+ringworld_forest_lighting={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
 ring_precip_occlusion={
 "type": "sampler2D",
 "value": ""

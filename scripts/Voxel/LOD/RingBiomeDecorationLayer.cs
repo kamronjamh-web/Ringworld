@@ -1150,6 +1150,7 @@ public partial class RingBiomeDecorationLayer : Node3D
 				instance = CreateInstances($"{template.Name}_Tile_{key.TileKey}_{key.Variant}", template.Multimesh.Mesh, template.MaterialOverride,
 					shadowLod >= 0, shadowLod);
 				instance.ExtraCullMargin = CellSizeMeters + 32.0f;
+				if (template.MaterialOverride == null && templates.Length == ImportedTreeCatalog.VariantCount) ApplyTreeCrownHull(instance, key.Variant); // imported trees: one variant per renderer
 				pool.Add(key, instance);
 			}
 			instance.Visible = true;
