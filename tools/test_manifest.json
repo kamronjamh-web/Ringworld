@@ -306,6 +306,7 @@
     "vegetation": {
       "globs": [
         "scripts/Vegetation/**",
+        "resources/rocks/**",
         "scripts/**/*Grass*",
         "scripts/**/*Tree*",
         "scripts/**/*Vegetation*",
