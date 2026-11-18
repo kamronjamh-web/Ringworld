@@ -64,6 +64,8 @@ description: Measure Ringworld CPU/GPU cost reliably - choose the right harness 
 #   read report.json -> poses.<pose>.summary.<label>.delta_ms
 ```
 
+**Run-time toggles: one launch, not two.** For a feature that can be switched at run time (a property or method on a node, an `Environment` or sky property, SSR half size), use `tools/perf_bench.ps1 -Scenarios <standing poses> -Variants <json>` (or an `ab_matrix` scenario in a scenario file) instead of separate before/after launches. It places once and measures A-X-A windows in one boot; the A-A spread printed in the report's "A/B matrices" section is the noise floor of that session, and a delta marked `beyond floor: no` is not a change. Two launches (`-Baseline`) are only for source changes (code, shaders) that cannot be toggled in a session. Details: `docs/perf-bench.md`, "In-session A/B".
+
 For a custom per-pass measurement:
 1. Enable `RingPerformanceMonitor.DetailedGpuEnabled`, or call `ShadowTimingBridge.Begin(engineTimestamps)`.
 2. Call `Sample()` once per frame.

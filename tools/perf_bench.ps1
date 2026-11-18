@@ -8,6 +8,7 @@
   .\tools\perf_bench.ps1 -Label full_x                                        # the full list, about 20 min
   .\tools\perf_bench.ps1 -Label t -Scenarios save_spot,fly_240                # picked scenarios (names in tools/fixtures/perf_bench_scenarios.json)
   .\tools\perf_bench.ps1 -Label t -Quick -VsyncOn -Stills -Baseline x         # also the VSync-on pass, one quiet still per standing pose (SSIM vs the baseline's)
+  .\tools\perf_bench.ps1 -Label t -Scenarios plains -Variants .\my_variants.json  # in-session A/B (A-X-A) of run-time toggles at the standing scenarios; see docs/perf-bench.md
   .\tools\perf_bench.ps1 -Snapshot -SnapshotOnly                              # freeze the player's current slot 3 as a new benchmark world and stop
   .\tools\perf_bench.ps1 -Label x -ReportFrom .godot\perf_bench\x\<run id>    # rebuild report.json / report.md of a finished run (no game)
 .NOTES
@@ -52,6 +53,7 @@ param(
   [double]$StallMinutes = 10,
   [string]$RunId = "",
   [string]$ReportFrom = "",
+  [string]$Variants = "",
   [switch]$InQueue
 )
 $ErrorActionPreference = "Stop"
@@ -78,6 +80,16 @@ function ConvertTo-Hash($o) {
 }
 function Read-JsonHash([string]$path) { return ConvertTo-Hash (Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json) }
 function Quote([string]$s) { return "'" + $s.Replace("'", "''") + "'" }
+# The scenarios perf_bench.gd _select returns for a --select value, in its order (all / quick / the listed names, in the listed order, a repeated name repeats).
+function Select-BenchScenarios($spec, [string]$select) {
+  $all = @($spec.scenarios)
+  if ($select -eq "all") { return $all }
+  if ($select -eq "quick") { return @($all | Where-Object { $_.ContainsKey("quick") -and [bool]$_.quick }) }
+  $res = @()
+  foreach ($n in ($select -split "," | Where-Object { $_ })) { foreach ($s in $all) { if ([string]$s.name -eq $n) { $res += $s } } }
+  return $res
+}
+function Get-BenchPlanNames($spec, [string]$select) { return @(Select-BenchScenarios $spec $select | ForEach-Object { [string]$_.name }) }
 function Get-UserPlaying {
   $playing = @(Get-CimInstance Win32_Process -Filter "Name LIKE 'Godot%'" | Where-Object { $_.CommandLine -match '--remote-debug' })
   return ($playing.Count -gt 0 -or (Test-Path (Join-Path $project ".godot\mono\temp\bin\DebugPlaySaved\$name.dll")))
@@ -235,7 +247,7 @@ function Build-Report([string]$out, [hashtable]$ctx) {
     machine = (Get-Machine $drv); power = (Get-PowerSummary (Join-Path $out "power_log.csv"))
     scenarios = [ordered]@{}; stills = $drv.stills; skipped = $drv.skipped; errors = $drv.errors; godot_exit = $ctx.godot_exit
   }
-  # Driver kinds whose results are not in "scenarios": carried through unchanged (no report.md section yet).
+  # Driver kinds whose results are not in "scenarios": carried through unchanged (ab_matrices get a report.md section, reflection_probes none).
   $probes = @($drv["reflection_probes"] | Where-Object { $null -ne $_ }); $matrices = @($drv["ab_matrices"] | Where-Object { $null -ne $_ })
   if ($drv.ContainsKey("reflection_probes")) { $rep["reflection_probes"] = $drv["reflection_probes"] }
   if ($drv.ContainsKey("ab_matrices")) { $rep["ab_matrices"] = $drv["ab_matrices"] }
@@ -252,7 +264,7 @@ function Build-Report([string]$out, [hashtable]$ctx) {
     $rep.scenarios[$s.name] = $entry
   }
   $verdict = "PASS"; $why = @()
-  $expected = @($drv.selected)
+  $expected = @($drv.selected | Where-Object { $null -ne $_ })   # absent when the driver stopped before selecting (plan mismatch)
   foreach ($n in $expected) { if (-not $rep.scenarios.Contains($n) -and @($probes + $matrices | Where-Object { $_.name -eq $n }).Count -eq 0) { $verdict = "FAIL"; $why += "scenario $n did not run" } }
   foreach ($n in $rep.scenarios.Keys) { if ($rep.scenarios[$n].Contains("error")) { $verdict = "FAIL"; $why += "$n : $($rep.scenarios[$n].error)" } }
   foreach ($e in @($probes + $matrices)) { if ($e.ContainsKey("error")) { $verdict = "FAIL"; $why += "$($e.name) : $($e.error)" } }
@@ -400,6 +412,52 @@ function Write-ReportMd($rep, [string]$path) {
       $L.Add("")
     }
   }
+  $abm = @($rep["ab_matrices"] | Where-Object { $null -ne $_ })
+  if ($abm.Count -gt 0) {
+    $inv = [System.Globalization.CultureInfo]::InvariantCulture
+    $f2 = { param($x) [string]::Format($inv, "{0:0.00}", [double]$x) }
+    $sg = { param($x) [string]::Format($inv, "{0:+0.00;-0.00;0.00}", [double]$x) }
+    $L.Add("## A/B matrices (in-session, A-X-A)"); $L.Add("")
+    $L.Add("One game boot, one placement: per round A0 X1 A1 X2 A2 ... (A = baseline, X = a variant, each switch settled and undone). The delta of a variant is X minus the mean of the two A windows around it, so drift cancels. A-A spread = noise floor of this session: a delta is only a change when it is beyond it (tools/perf_bench_ab_matrix.gd).")
+    $L.Add("")
+    foreach ($e in $abm) {
+      $L.Add("### $($e.name) at $($e.pose_name)"); $L.Add("")
+      if ($e.Contains("error")) { $L.Add("FAILED: $($e.error)"); $L.Add(""); continue }
+      $L.Add("Window $([math]::Round([double]$e.window_s, 1)) s, $($e.rounds) round(s).")
+      $ml = @($e.metrics_list); $bl = $e.baseline
+      $has = { param($m) ($ml -contains $m) -and $bl -is [System.Collections.IDictionary] -and $bl.Contains($m) }
+      $gpuSpread = $null; $wallSpread = $null
+      if (& $has "gpu_total_p50") { $gpuSpread = [double]$bl["gpu_total_p50"].spread }
+      if (& $has "wall_p50") { $wallSpread = [double]$bl["wall_p50"].spread }
+      $bg = if ($null -ne $gpuSpread) { "GPU p50 $(& $f2 $bl['gpu_total_p50'].median) ms, spread $(& $f2 $gpuSpread) ms" } else { "GPU p50 -" }
+      $bw = if ($null -ne $wallSpread) { "wall p50 $(& $f2 $bl['wall_p50'].median) ms, spread $(& $f2 $wallSpread) ms" } else { "wall p50 -" }
+      $nA = if (& $has "gpu_total_p50") { @($bl["gpu_total_p50"].values).Count } else { 0 }
+      $L.Add(""); $L.Add("Baseline (A, $nA windows): median $bg; $bw (A-A spread = noise floor of this session).")
+      $L.Add("")
+      $L.Add("| Variant | dGPU p50 ms (median, min..max) | dwall p50 ms | dwall p95 ms | drender CPU p50 ms | ddraws | beyond floor |"); $L.Add("|---|---|---|---|---|---|---|")
+      foreach ($v in @($e.variants)) {
+        if ($v.Contains("error")) { $L.Add("| $($v.name) | error: $($v.error) |||||| "); continue }
+        $dm = { param($m) if (($ml -contains $m) -and $v.delta -is [System.Collections.IDictionary] -and $v.delta.Contains($m)) { $v.delta[$m] } else { $null } }
+        $g = & $dm "gpu_total_p50"; $w50 = & $dm "wall_p50"; $w95 = & $dm "wall_p95"; $rc = & $dm "render_cpu_p50"; $dr = & $dm "draws_p50"
+        $cG = if ($g) { "$(& $sg $g.median) ($(& $sg $g.min)..$(& $sg $g.max))" } else { "-" }
+        $cm = { param($d) if ($d) { & $sg $d.median } else { "-" } }
+        $beyond = "-"
+        if (($g -and $null -ne $gpuSpread) -or ($w50 -and $null -ne $wallSpread)) {
+          $by = ($g -and $null -ne $gpuSpread -and [math]::Abs([double]$g.median) -gt $gpuSpread) -or ($w50 -and $null -ne $wallSpread -and [math]::Abs([double]$w50.median) -gt $wallSpread)
+          $beyond = if ($by) { "yes" } else { "no" }
+        }
+        $L.Add("| $($v.name) | $cG | $(& $cm $w50) | $(& $cm $w95) | $(& $cm $rc) | $(& $cm $dr) | $beyond |")
+      }
+      $L.Add("")
+      if ($e.Contains("stills") -and $e.stills -is [System.Collections.IDictionary] -and $e.stills.Count -gt 0) {
+        $L.Add("Stills:"); $L.Add("")
+        foreach ($k in $e.stills.Keys) { $L.Add("- ${k}: $($e.stills[$k])") }
+        $L.Add("")
+      }
+      if ($e.Contains("stills_error")) { $L.Add("Stills FAILED: $($e.stills_error)"); $L.Add("") }
+      if ($e.Contains("stills_failed_variants")) { $L.Add("Stills not taken for: $(@($e.stills_failed_variants) -join '; ')"); $L.Add("") }
+    }
+  }
   if ($rep.stills -and @($rep.stills).Count -gt 0) {
     $L.Add("## Stills"); $L.Add("")
     $L.Add("One quiet still per standing pose (clouds, grass, gust debris hidden; clocks, wind, TAA and cloud interleave held; HUD hidden) in ``$(Split-Path (Split-Path $rep.stills[0].path -Parent) -Parent)\stills``.")
@@ -454,6 +512,82 @@ foreach ($n in $Scenarios) { foreach ($x in ($n -split ",")) { if ($x -and $x -n
 $Scenarios = @($Scenarios | ForEach-Object { $_ -split "," } | Where-Object { $_ })
 if ($Quick -and $Scenarios.Count -gt 0) { Write-Host "$marker=FAIL use -Quick or -Scenarios, not both"; exit 2 }
 
+# ---- -Variants (outer part only): validate, keep the standing scenarios, derive one ab_matrix scenario per kept one (written once the run folder exists)
+$variantsSource = ""; $derivedSpec = $null; $argQuick = [bool]$Quick; $argScenarios = $Scenarios; $argScenarioFile = $ScenarioFile
+if ($Variants -and -not $InQueue) {
+  function Fail-Variants([string]$why) { Write-Host "$marker=FAIL -Variants: $why"; exit 2 }
+  $vText = $Variants.Trim()
+  if ($vText.StartsWith("{") -or $vText.StartsWith("[")) { $variantsSource = "inline" }
+  else {
+    $vPath = if ([System.IO.Path]::IsPathRooted($vText)) { $vText } else { Join-Path $project $vText }
+    if (-not (Test-Path -LiteralPath $vPath)) { Fail-Variants "file not found: $vPath" }
+    $variantsSource = $vPath; $vText = Get-Content -LiteralPath $vPath -Raw -Encoding UTF8
+  }
+  try { $vRaw = ConvertTo-Hash (ConvertFrom-Json -InputObject $vText) } catch { Fail-Variants "invalid JSON: $($_.Exception.Message)" }
+  # A one-element array can arrive unrolled (Windows PowerShell 5.1): a lone {name, ops} object is that variant.
+  if ($vRaw -is [System.Collections.IDictionary] -and -not $vRaw.ContainsKey("variants") -and $vRaw.ContainsKey("name")) { $vRaw = @($vRaw) }
+  $vOpts = @{}
+  if ($vRaw -is [System.Collections.IDictionary]) { $vOpts = $vRaw; $vList = @($vRaw["variants"] | Where-Object { $null -ne $_ }) } else { $vList = @($vRaw | Where-Object { $null -ne $_ }) }
+  if ($vList.Count -eq 0) { Fail-Variants "no variants" }
+  $seen = @{}
+  foreach ($v in $vList) {
+    if ($v -isnot [System.Collections.IDictionary]) { Fail-Variants "a variant is not an object" }
+    $vn = if ($v.ContainsKey("name")) { [string]$v["name"] } else { "" }
+    if (-not $vn) { Fail-Variants "a variant has no name" }
+    if ($vn -notmatch '^[A-Za-z0-9_.-]+$') { Fail-Variants "variant name '$vn' must match ^[A-Za-z0-9_.-]+$" }
+    if ($seen.ContainsKey($vn)) { Fail-Variants "duplicate variant name '$vn'" }
+    $seen[$vn] = 1
+    if (-not $v.ContainsKey("ops") -or $v["ops"] -isnot [System.Array]) { Fail-Variants "variant '$vn': ops must be an array" }
+    $oi = 0
+    foreach ($op in $v["ops"]) {
+      if ($op -isnot [System.Collections.IDictionary]) { Fail-Variants "variant '$vn': op $oi is not an object" }
+      $known = @("env", "sky", "node", "ssr_half_size") | Where-Object { $op.ContainsKey($_) }
+      if (@($known).Count -eq 0) { Fail-Variants "variant '$vn': op $oi has none of env, sky, node, ssr_half_size (keys: $(@($op.Keys) -join ', '))" }
+      if ($op.ContainsKey("node") -and -not ($op.ContainsKey("set") -or $op.ContainsKey("call"))) { Fail-Variants "variant '$vn': op $oi has node but neither set nor call" }
+      $oi++
+    }
+  }
+  if ($vOpts.ContainsKey("baseline")) {
+    if ($vOpts["baseline"] -isnot [System.Array]) { Fail-Variants "baseline must be an array of ops" }
+    $oi = 0
+    foreach ($op in $vOpts["baseline"]) {
+      if ($op -isnot [System.Collections.IDictionary]) { Fail-Variants "baseline op $oi is not an object" }
+      if (@("env", "sky", "node", "ssr_half_size" | Where-Object { $op.ContainsKey($_) }).Count -eq 0) { Fail-Variants "baseline op $oi has none of env, sky, node, ssr_half_size" }
+      if ($op.ContainsKey("node") -and -not ($op.ContainsKey("set") -or $op.ContainsKey("call"))) { Fail-Variants "baseline op $oi has node but neither set nor call" }
+      $oi++
+    }
+  }
+  $vSel = if ($Quick) { "quick" } elseif ($Scenarios.Count -gt 0) { $Scenarios -join "," } else { "all" }
+  $vSelected = @(Select-BenchScenarios $spec $vSel)
+  $vStand = @(); $vDropped = @()
+  foreach ($s in $vSelected) {
+    if (-not $s.ContainsKey("kind")) { Fail-Variants "scenario '$($s.name)' has no kind" }
+    if ([string]$s.kind -eq "stand") { $vStand += $s } else { $vDropped += "$($s.name) ($($s.kind))" }
+  }
+  if ($vDropped.Count -gt 0) { Write-Host "-Variants: dropped (not standing): $($vDropped -join ', ')" }
+  if ($vStand.Count -eq 0) { Fail-Variants "none of the selected scenarios is a standing one (kind stand); selected: $(@($vSelected | ForEach-Object { $_.name }) -join ', ')" }
+  $derivedScenarios = @()
+  foreach ($s in $vStand) {
+    $d = [ordered]@{ name = "$($s.name)__ab"; kind = "ab_matrix" }
+    foreach ($k in $s.Keys) { if ($k -notin @("name", "kind", "quick", "still", "vsync_pass")) { $d[$k] = $s[$k] } }
+    $d["window_s"] = if ($vOpts.ContainsKey("window_s")) { $vOpts["window_s"] } elseif ($s.ContainsKey("window_s")) { $s["window_s"] } else { $spec.defaults.window_s }
+    $d["rounds"] = if ($vOpts.ContainsKey("rounds")) { $vOpts["rounds"] } elseif ($Rounds -gt 0) { $Rounds } else { 2 }
+    $d["hold_clocks"] = if ($vOpts.ContainsKey("hold_clocks")) { [bool]$vOpts["hold_clocks"] } else { $true }
+    $vs = if ($vOpts.ContainsKey("variant_settle_s")) { $vOpts["variant_settle_s"] } elseif ($vOpts.ContainsKey("settle_s")) { $vOpts["settle_s"] } else { $null }
+    if ($null -ne $vs) { $d["variant_settle_s"] = $vs }
+    $d["stills"] = if ($vOpts.ContainsKey("stills")) { [bool]$vOpts["stills"] } else { [bool]$Stills }
+    $d["baseline"] = @(); if ($vOpts.ContainsKey("baseline")) { $d["baseline"] = @($vOpts["baseline"]) }   # not an if-expression: a one-op array would unroll
+    $d["variants"] = @($vList)
+    $derivedScenarios += $d
+  }
+  $derivedSpec = [ordered]@{}
+  foreach ($k in $spec.Keys) { if ($k -ne "scenarios") { $derivedSpec[$k] = $spec[$k] } }
+  $derivedSpec["scenarios"] = $derivedScenarios
+  if ($Baseline) { Write-Host "WARNING: -Variants with -Baseline: ab_matrix results are not compared with a baseline." }
+  # From here on the run is a plain run of the derived file with everything selected (the ab_matrix scenarios take their own stills).
+  $Quick = $false; $Scenarios = @()
+}
+
 $monoTemp = Join-Path $project ".godot\mono\temp"
 $optDir = Join-Path $monoTemp "bin\OptRelease"
 $optDll = Join-Path $optDir "$name.dll"; $optPdb = Join-Path $optDir "$name.pdb"
@@ -464,9 +598,30 @@ if (-not $InQueue) {
   if (-not $RunId) { $RunId = Get-Date -Format "yyyyMMdd_HHmmss" }
   $baseRun = $null
   if ($Baseline) { $baseRun = Find-BaselineRun $Baseline; if (-not $baseRun) { Write-Host "$marker=FAIL no baseline run with a report.json under $benchRoot\$Baseline"; exit 2 } }
+  if ($derivedSpec) {
+    $baseRun = $null
+    $vOut = Join-Path $benchRoot "$Label\$RunId"
+    New-Item -ItemType Directory -Force $vOut | Out-Null
+    $scenarioPath = Join-Path $vOut "variants_scenarios.json"
+    $ScenarioFile = $scenarioPath
+    [System.IO.File]::WriteAllText($scenarioPath, ($derivedSpec | ConvertTo-Json -Depth 30), (New-Object System.Text.UTF8Encoding($false)))
+    $spec = Read-JsonHash $scenarioPath
+    Write-Host "-Variants: derived scenario file $scenarioPath"
+  }
   if ($SettingsOverlay) {
     $overlayDir = if ([System.IO.Path]::IsPathRooted($SettingsOverlay)) { $SettingsOverlay } else { Join-Path $project $SettingsOverlay }
     if (-not (Test-Path -LiteralPath $overlayDir)) { Write-Host "$marker=FAIL settings overlay directory not found: $overlayDir"; exit 2 }
+  }
+  # The plan the driver will run (perf_bench.gd _select order); the driver gets the names as --expect and fails on a mismatch.
+  $planSelect = if ($Quick) { "quick" } elseif ($Scenarios.Count -gt 0) { $Scenarios -join "," } else { "all" }
+  $planList = @(Select-BenchScenarios $spec $planSelect)
+  if ($planList.Count -eq 0) { Write-Host "$marker=FAIL no scenario selected by --select=$planSelect in $scenarioPath"; exit 2 }
+  Write-Host "PLAN scenario_file=$scenarioPath"
+  foreach ($s in $planList) {
+    if (-not $s.ContainsKey("kind")) { Write-Host "$marker=FAIL scenario '$($s.name)' has no kind (the driver requires one)"; exit 2 }
+    $pw = if ($s.ContainsKey("window_s")) { $s.window_s } else { $spec.defaults.window_s }
+    $pv = if ([string]$s.kind -eq "ab_matrix") { " variants=" + (@($s.variants | ForEach-Object { $_.name }) -join ",") } else { "" }
+    Write-Host "PLAN $($s.name) kind=$($s.kind) window_s=$pw$pv"
   }
   # Pre-launch check (no GPU, no ticket): the driver and its preloads must parse. The engine exits 0 on a parse error and would idle with the ticket held.
   Import-Module (Join-Path $PSScriptRoot "testing\GpuJob.psm1") -Force -DisableNameChecking
@@ -482,7 +637,7 @@ if (-not $InQueue) {
   $buildRc = Invoke-OptimizedBuild -Build:$Build -SkipBuild:$SkipBuild -Marker $marker
   if ($buildRc -ne 0) { exit $buildRc }
   & (Join-Path $PSScriptRoot "prune_test_output.ps1") -Apply -Quiet -Exclude "appdata_perf_bench", "perf_bench"
-  $mode = if ($Quick) { "quick" } elseif ($Scenarios.Count -gt 0) { "scenarios: " + ($Scenarios -join ",") } else { "full" }
+  $mode = if ($derivedSpec) { "variants: " + (@($planList | ForEach-Object { $_.name }) -join ",") } elseif ($Quick) { "quick" } elseif ($Scenarios.Count -gt 0) { "scenarios: " + ($Scenarios -join ",") } else { "full" }
   $out = Join-Path $benchRoot "$Label\$RunId"
   New-Item -ItemType Directory -Force $out | Out-Null
   $ctxPath = Join-Path $out "run_context.json"
@@ -491,14 +646,18 @@ if (-not $InQueue) {
   $inner = "& $(Quote $PSCommandPath) -InQueue -Label $(Quote $Label) -RunId $RunId -Resolution $Resolution -TimeoutMin $TimeoutMin -StallMinutes $StallMinutes -World $(Quote $worldInfo.dir) -WindowScale $WindowScale -Rounds $Rounds"
   if ($Quick) { $inner += " -Quick" }
   if ($Scenarios.Count -gt 0) { $inner += " -Scenarios " + (($Scenarios | ForEach-Object { Quote $_ }) -join ",") }
-  foreach ($sw in @("VsyncOn", "Stills", "LiveSettings")) { if ((Get-Variable $sw).Value) { $inner += " -$sw" } }
+  foreach ($sw in @("VsyncOn", "Stills", "LiveSettings")) { if ($derivedSpec -and $sw -eq "Stills") { continue }; if ((Get-Variable $sw).Value) { $inner += " -$sw" } }
   if ($EngineArgs) { $inner += " -EngineArgs $(Quote $EngineArgs)" }
   if ($ScenarioFile) { $inner += " -ScenarioFile $(Quote $scenarioPath)" }
   if ($SettingsOverlay) { $inner += " -SettingsOverlay $(Quote $SettingsOverlay)" }
+  # The outer part's plan goes to the inner part through the environment, not a parameter: an inner part from an older or newer copy of this
+  # script ignores it or falls back to its own resolution, so a file edited between enqueue and launch cannot break the run on a version skew.
+  $env:RINGWORLD_PERF_BENCH_EXPECT = (@($planList | ForEach-Object { [string]$_.name })) -join ','
   # One queue ticket per run: gpu_queue finds tickets by label, so a shared label let a second bench match the first one's ticket,
   # run at once on the shared appdata_perf_bench profile and release the other run's ticket (2026-11-17).
   & (Join-Path $PSScriptRoot "gpu_queue.ps1") -Label "perf_bench_$($Label)_$RunId" -Wrap $inner
   $wrapExit = $LASTEXITCODE
+  Remove-Item Env:RINGWORLD_PERF_BENCH_EXPECT -ErrorAction SilentlyContinue   # never leaks into a later run in the same session
   # ---- the ticket is released: report, baseline deltas, stills comparison, prune
   if (-not (Test-Path $ctxPath)) {
     if ($wrapExit -eq 0) { Write-Host "$marker=FAIL the run left no run_context.json in $out"; exit 1 }
@@ -514,7 +673,7 @@ if (-not $InQueue) {
     Write-Host "$marker=FAIL no driver_report.json (godot exit $code); see $out\console.log"
     exit 1
   }
-  $ctx = @{ label = $Label; run_id = $RunId; started = $rc.started; mode = $mode; args = @{ quick = [bool]$Quick; scenarios = $Scenarios; scenario_file = $ScenarioFile; settings_overlay = $SettingsOverlay; vsync_on = [bool]$VsyncOn; stills = [bool]$Stills; rounds = $Rounds; window_scale = $WindowScale; baseline = $Baseline; live_settings = [bool]$LiveSettings }
+  $ctx = @{ label = $Label; run_id = $RunId; started = $rc.started; mode = $mode; args = @{ quick = $argQuick; scenarios = $argScenarios; scenario_file = $argScenarioFile; variants = $variantsSource; settings_overlay = $SettingsOverlay; vsync_on = [bool]$VsyncOn; stills = [bool]$Stills; rounds = $Rounds; window_scale = $WindowScale; baseline = $Baseline; live_settings = [bool]$LiveSettings }
     git = (Get-GitInfo); world_meta = $worldInfo.meta; settings_source = $rc.settings_source; settings = $rc.settings; resolution = $Resolution; godot_exit = $code }
   $rep = Build-Report $out $ctx
   if ($baseRun) {
@@ -587,7 +746,9 @@ $slotDll = Join-Path $monoTemp "bin\Debug\$name.dll"; $slotPdb = Join-Path $mono
 if (-not (Test-Path $optDll)) { Write-Host "$marker=FAIL no OptRelease build (run with -Build)"; exit 1 }
 
 $select = if ($Quick) { "quick" } elseif ($Scenarios.Count -gt 0) { $Scenarios -join "," } else { "all" }
+$expectNames = if ($env:RINGWORLD_PERF_BENCH_EXPECT) { $env:RINGWORLD_PERF_BENCH_EXPECT } else { (@(Get-BenchPlanNames $spec $select)) -join "," }
 $drvArgs = @("--out=$out", "--scenarios=$scenarioPath", "--select=$select")
+if ($expectNames) { $drvArgs += "--expect=$expectNames" }   # no names: no check (the driver also skips an empty list)
 if ($VsyncOn) { $drvArgs += "--vsync-pass" }
 if ($Stills) { $drvArgs += "--stills" }
 if ($Rounds -gt 0) { $drvArgs += "--rounds=$Rounds" }

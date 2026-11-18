@@ -4,7 +4,8 @@ extends SceneTree
 ## snapshot and presses Continue, as the player does (tools/tree_visibility_world.gd), then runs the scenarios of tools/fixtures/perf_bench_scenarios.json:
 ## per scenario, A-A rounds of one window each (stand / yaw_sweep / fly), with per-frame wall, frame setup, main-thread process, render CPU and GPU,
 ## draw calls, primitives, VRAM, GC, per-viewport GPU, every RingPerformanceGpu detailed interval and the key CPU scopes.
-## Args (after --): --out=<abs dir> --scenarios=<abs json> [--select=all|quick|a,b] [--vsync-pass] [--stills] [--rounds=N] [--window-scale=F]
+## Args (after --): --out=<abs dir> --scenarios=<abs json> [--select=all|quick|a,b] [--expect=a,b] [--vsync-pass] [--stills] [--rounds=N] [--window-scale=F]
+## --expect is the plan the runner resolved (tools/perf_bench.ps1: the names _select returns, in its order, which is the file order for all / quick and the --select order for a name list; the run order by kind comes later); a different list from _select is PERF_BENCH=FAIL "plan mismatch" before any boot work, and the list is recorded as report["expected"].
 ## Poses may be {"poi": "weather_lung"|"emitter", "viewpoint": N}, reached through the live tuning drawer's teleports. Scenarios of kind "ssr_fade" run last, after the stills, then those of kind "reflection_probe" (tools/perf_bench_reflection_probe.gd; results in report["reflection_probes"]).
 ## Scenarios of kind "ab_matrix" (tools/perf_bench_ab_matrix.gd; baseline plus named variants, interleaved A-X-A windows, optional stills) run right after the generic measured loop; results in report["ab_matrices"].
 ## Verdict line: PERF_BENCH=PASS when every selected scenario completed (stills and the VSync pass included), PERF_BENCH=FAIL <reason> otherwise.
@@ -96,6 +97,13 @@ func _run() -> void:
 	if chosen.is_empty():
 		_finish(2, "no scenario selected by --select=%s" % String(args.get("select", "all")))
 		return
+	var expected: Array = Array(String(args.get("expect", "")).split(",", false))
+	if not expected.is_empty():  # an absent or empty --expect is no check (an older runner, or one that resolved nothing)
+		report["expected"] = expected
+		var picked: Array = chosen.map(func(s): return String(s["name"]))
+		if expected != picked:
+			_finish(2, "plan mismatch: runner expected [%s], driver selected [%s]" % [",".join(expected), ",".join(picked)])
+			return
 	probe = PROBE.new()
 	var display_on := _display_on()
 	report["machine"] = {"adapter": RenderingServer.get_video_adapter_name(), "api": RenderingServer.get_video_adapter_api_version(),
