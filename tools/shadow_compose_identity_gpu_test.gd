@@ -15,7 +15,9 @@ extends SceneTree
 
 const SIZE := Vector2i(480, 270)
 const WALL_X := 60.0
-const SETTLE_FRAMES := 8
+# A cold pipeline cache (fresh or wiped user profile, or an edited shader) renders the first frames with a not-yet-specialised
+# pipeline, which differs from the specialised one by 1 LSB on one ocean_global pixel; 8 frames were not enough, 60 match the warm golden.
+const SETTLE_FRAMES := 60
 const SUN_DIR := Vector3(-0.6, 0.7, 0.2)
 const PLANET_DIR := Vector3(-0.5, 0.6, -0.6)
 const OVERLAPS := [0.0, 0.5]

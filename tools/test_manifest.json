@@ -5475,8 +5475,8 @@
       ],
       "marker": "SHADOW_COMPOSE_IDENTITY",
       "user_args": "--compare --golden=res://.godot/shadow_compose_identity_storm_revamp_4070 --max-diff=0 --out=res://.godot/batch_close/shadow_compose_out",
-      "expected_s": 6,
-      "timeout_s": 60
+      "expected_s": 49,
+      "timeout_s": 150
     },
     "shadow_quality_capture": {
       "kind": "tool",
