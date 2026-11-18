@@ -167,6 +167,16 @@ float ring_water_profile_height_scale(float water_kind) {
 	return water_kind < 1.5 ? 1.0 : (water_kind < 2.5 ? 0.24 : 0.11);
 }
 
+// Far-water roughness at reflection model 1 (docs/reflections-plan.md 10.7, user 2026-11-18): far away every wave is below a pixel, so the roughness is
+// that of the whole slope variance (Cox and Munk), matched to the sky reflection of Gaussian slopes at grazing view. Ocean: a constant for about 8 m/s
+// (first step; the wind-driven curve comes later). Lakes and rivers: their own calmer wave profile plus the capillary floor. The interpolated kind ramps
+// between them at river mouths as the inland optics do (1.05 to 2.0). Model 0 keeps the far_water_roughness uniform.
+const float RING_WATER_FAR_ROUGHNESS_OCEAN = 0.30;
+const float RING_WATER_FAR_ROUGHNESS_INLAND = 0.155;
+float ring_water_far_roughness_model1(float water_kind) {
+	return mix(RING_WATER_FAR_ROUGHNESS_OCEAN, RING_WATER_FAR_ROUGHNESS_INLAND, clamp((water_kind - 1.05) / 0.95, 0.0, 1.0));
+}
+
 float ring_water_profile_shore_foam_scale(float water_kind) {
 	// T2R-11b: calm inland water (lakes, rivers) has no surf line. Their former 0.30 / 0.46 of the ocean's shore foam, within the 0.5 m foam depth, lay as a
 	// white band 2 to 3 m wide along gently sloped river banks (and a rim on lake shores) under the ring sun. The ocean keeps its shore foam.

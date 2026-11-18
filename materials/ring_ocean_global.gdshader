@@ -123,7 +123,9 @@ void fragment() {
 		RingWet rain_state = ring_wet_sample(world_position, normalize(surface_up_world), normalize(surface_up_world));
 		rain_matte = 0.08 * rain_state.rain + 0.15 * ring_wet_events.y;
 	}
-	ROUGHNESS = clamp(max(ocean_roughness, far_water_roughness)
+	// Model 1: the far roughness of the water kind alone (plan 10.7); this mesh is never within the detail distance, so the near ocean_roughness floor does not apply.
+	float far_roughness = ringworld_reflection_model >= 0.5 ? ring_water_far_roughness_model1(water_kind_profile) : max(ocean_roughness, far_water_roughness);
+	ROUGHNESS = clamp(far_roughness
 		+ sqrt(max(filtered_far_wave.z * wave_normal_strength * wave_normal_strength, 0.0)) * 0.10 + rain_matte, 0.02, 1.0);
 	// Physical haze also attenuates the environment reflection; exactly 1 in Legacy.
 	float storm_water_level = ring_storm_level_far(world_position, camera_world_position, ring_center, ring_atmosphere_coordinate_scale);

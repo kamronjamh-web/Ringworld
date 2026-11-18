@@ -716,8 +716,9 @@ void fragment() {
 	// must not also force the distant-water roughness.  Keep its independently
 	// filtered surface detail eligible for the near-ocean SSR roughness cutoff.
 	float surface_detail_fade = use_fft_surface ? ring_fft_shading_fade(distance_to_camera) : wave_normal_detail;
+	float far_roughness = ringworld_reflection_model >= 0.5 ? ring_water_far_roughness_model1(water_kind_profile) : far_water_roughness;
 	float base_roughness = clamp(
-		mix(mix(far_water_roughness, ocean_roughness, surface_detail_fade), 0.48, foam)
+		mix(mix(far_roughness, ocean_roughness, surface_detail_fade), 0.48, foam)
 			+ wave_slope * 0.10 + sqrt(max(fft_detail.w, 0.0)) * 0.07,
 		0.02,
 		1.0);
