@@ -153,3 +153,8 @@ Notes for the planner:
 1. Leaf translucency and canopy sky occlusion change how every forest looks (darker floor, glowing backlit leaves). Should they apply to all worlds, as the tree LOD work did (TR D1), or only to new worlds?
 2. Is 30 to 60 m of eye-level visibility in dense forest the right target? That is a mature forest with a shrub layer. The demo's 4 m is a young plantation; T6-3's stand age would give both kinds in places.
 3. The understory costs an estimated 0.15 to 0.4 ms in a frame already over budget. Should it be funded by OC phase 1 (per-instance tree frustum culling) before T6-4 and T6-7 land, or ship with presets scaling its reach?
+
+## User answers (2026-11-18)
+1. Target for dense forest: 30-60 m of eye-level visibility, as real dense temperate forest. It is reached mainly with the understory and young dense stands.
+2. Leaf translucency and the under-canopy shade (canopy sky occlusion plus a green tint): do both, in all worlds. Build them behind a switch and show before/after stills before turning them on.
+3. Understory keeps the T6 order. It is not pulled ahead of occlusion culling.

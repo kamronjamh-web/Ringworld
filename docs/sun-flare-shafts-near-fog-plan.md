@@ -378,3 +378,10 @@ Register every new test in `tools/test_manifest.json`. Run with `tools/run_tests
 5. **V4** stays in the vastness plan, after V1; B.2 records the hand-off distance.
 
 Total new GPU while active: est. 0.5 to 0.9 ms (fog plus flare); 0 to 0.1 ms in clear weather. Every phase gates on its own A-B-A at R, reports before raising any preset, and asks before any visual floor or boost.
+
+## User answers (2026-11-18)
+- (a) Lens flare: physical sun glare on by default. Ghosts and starburst are a menu option, default off.
+- (b) Shafts: air stays clean (pure Rayleigh). Shafts appear only with near fog and humid conditions; no clear-weather aerosol.
+- (c) Character fog: driven by weather AND location, and terrain-aware: it pools in valleys and hollows and follows the ground, near water, and so on. Cost of 0.4-0.8 ms while active is accepted on High and above. Medium and Low get a reduced version or none.
+- Start NF-0 and LF-0 now.
+- Open questions not asked yet (defaults: the recommendations in each section): flare calibration, whether the hub false sun and lightning flare, ordering of V4 against near shafts, and near-only against visible from ridges.
