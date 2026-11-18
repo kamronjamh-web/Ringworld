@@ -42,6 +42,10 @@ public partial class PerfBenchProbe : RefCounted
         result["gpu_available"] = snapshot.GpuAvailable;
         result["working_set_mb"] = snapshot.WorkingSetBytes / 1048576.0;
         result["managed_heap_mb"] = snapshot.ManagedHeapBytes / 1048576.0;
+        var coverage = monitor.RetainedEventCoverage();
+        int SpanFrames(double? oldest) { if (!oldest.HasValue) return -1; int n = 0; foreach (RingPerformanceFrame f in snapshot.History) if (f.Seconds >= oldest.Value) n++; return n; }
+        result["cpu_dropped"] = coverage.CpuDropped; result["gpu_dropped"] = coverage.GpuDropped; result["history_frames"] = snapshot.History.Count;
+        result["cpu_span_frames"] = SpanFrames(coverage.CpuOldestSeconds); result["gpu_span_frames"] = SpanFrames(coverage.GpuOldestSeconds);
         return result;
     }
 

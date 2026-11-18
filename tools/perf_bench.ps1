@@ -267,6 +267,7 @@ function Build-Report([string]$out, [hashtable]$ctx) {
       $entry["metrics"] = Get-Metrics $s
       $entry["busy_fraction"] = @($s.rounds | ForEach-Object { $_.busy_fraction })
       $entry["monitor_dropped"] = @($s.rounds | ForEach-Object { $_.monitor_dropped })
+      $entry["monitor_span"] = @($s.rounds | ForEach-Object { $_.monitor_span })
       $entry["sun_elevation_deg"] = @($s.rounds | ForEach-Object { $_.sun_elevation_deg })
       # Adaptive windows (absent in reports of older drivers: fixed, no tails_info).
       $entry["window_actual_s"] = @($s.rounds | ForEach-Object { [math]::Round([double]$_.seconds, 1) })
@@ -389,6 +390,24 @@ function Write-ReportMd($rep, [string]$path) {
   }
   $L.Add("")
   if ($anyAdaptive) { $L.Add("Adaptive windows: a standing window stops once the median is stable (never longer than the cap, the number after of); (info) tails of such scenarios are informational and not compared against a baseline. ``-Tails`` runs full windows."); $L.Add("") }
+  $ovWithSpan = New-Object System.Collections.Generic.List[string]; $ovNoSpan = New-Object System.Collections.Generic.List[string]; $ovWindows = 0
+  foreach ($n in $rep.scenarios.Keys) {
+    $sc = $rep.scenarios[$n]
+    if ($sc.Contains("error") -or -not $sc.Contains("monitor_dropped")) { continue }
+    $drops = @($sc.monitor_dropped); $spans = if ($sc.Contains("monitor_span")) { @($sc.monitor_span) } else { @() }
+    $parts = New-Object System.Collections.Generic.List[string]; $noSpan = $false
+    for ($i = 0; $i -lt $drops.Count; $i++) {
+      if ($null -eq $drops[$i] -or [double]$drops[$i] -le 0) { continue }
+      $ovWindows++
+      $sp = if ($i -lt $spans.Count) { $spans[$i] } else { $null }
+      if ($null -eq $sp) { $noSpan = $true } else { $parts.Add("gpu $($sp.gpu_span_frames), cpu $($sp.cpu_span_frames) of $($sp.history_frames) frames") }
+    }
+    if ($noSpan) { $ovNoSpan.Add($n) } elseif ($parts.Count -gt 0) { $ovWithSpan.Add("${n}: " + ($parts -join ", ")) }
+  }
+  if ($ovWindows -gt 0) {
+    if ($ovWithSpan.Count -gt 0) { $L.Add("Monitor ring overflow in $ovWindows window(s) ($($ovWithSpan -join '; ')): per-pass values are per frame over the frames the retained events span (the last part of the window only)."); $L.Add("") }
+    if ($ovNoSpan.Count -gt 0) { $L.Add("Monitor ring overflow in scenarios $($ovNoSpan -join ', ') (driver without monitor_span): their per-pass values (gpu.*, cpu.*, worker.*) are understated, divided by all frames of the window instead of the frames the retained events span."); $L.Add("") }
+  }
   $flights = @($rep.scenarios.Keys | Where-Object { $rep.scenarios[$_].kind -eq "fly" -and -not $rep.scenarios[$_].Contains("error") })
   if ($flights.Count -gt 0) {
     $L.Add("Flights: " + (($flights | ForEach-Object { "$_ mean speed $([math]::Round($rep.scenarios[$_].metrics.speed_mps.value)) m/s, $([math]::Round($rep.scenarios[$_].metrics.distance_m.value / 1000.0, 1)) km flown; GC gen2 $([math]::Round($rep.scenarios[$_].metrics.gc_gen2.value)), allocated $([math]::Round($rep.scenarios[$_].metrics.alloc_mb_s.value)) MB/s" }) -join " | ")); $L.Add("")

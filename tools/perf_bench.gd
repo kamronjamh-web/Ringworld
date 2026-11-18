@@ -749,9 +749,16 @@ func _window(tag: String, seconds: float, opts: Dictionary) -> Dictionary:
 	var mon: Dictionary = probe.MonitorRows(monitor)
 	var mon_rows: Array = mon.get("rows", [])
 	var row_count := 0
+	# Rows are sums over the events the monitor still retains; when a ring overflowed, divide by the frames those events span.
+	var cpu_dropped := int(mon.get("cpu_dropped", 0))
+	var gpu_dropped := int(mon.get("gpu_dropped", 0))
+	var cpu_span := int(mon.get("cpu_span_frames", -1))
+	var gpu_span := int(mon.get("gpu_span_frames", -1))
+	var cpu_denom := float(frames) if (cpu_dropped <= 0 or cpu_span <= 0) else float(cpu_span)
+	var gpu_denom := float(frames) if (gpu_dropped <= 0 or gpu_span <= 0) else float(gpu_span)
 	for r in mon_rows:
 		var name := String(r["name"])
-		var per_frame := float(r["mean_ms"]) * float(r["count"]) / maxf(1.0, float(frames))
+		var per_frame := float(r["mean_ms"]) * float(r["count"]) / maxf(1.0, gpu_denom if bool(r["gpu"]) else cpu_denom)
 		var is_key := key_scopes.has(name)
 		if bool(r["gpu"]):
 			m["gpu.%s" % name] = per_frame
@@ -766,7 +773,9 @@ func _window(tag: String, seconds: float, opts: Dictionary) -> Dictionary:
 		if not m.has("cpu.%s" % k) and not m.has("worker.%s" % k):
 			m["cpu.%s" % k] = 0.0
 	var result := {"tag": tag, "seconds": elapsed, "vsync": DisplayServer.window_get_vsync_mode(), "window": DisplayServer.window_get_size(), "busy_fraction": float(busy) / maxf(1.0, float(checks)),
-		"m": m, "viewports": viewports, "monitor_dropped": mon.get("dropped", -1), "monitor_gpu_available": mon.get("gpu_available", false),
+		"m": m, "viewports": viewports, "monitor_dropped": mon.get("dropped", -1),
+		"monitor_span": {"cpu_dropped": cpu_dropped, "gpu_dropped": gpu_dropped, "cpu_span_frames": cpu_span, "gpu_span_frames": gpu_span, "history_frames": int(mon.get("history_frames", -1))},
+		"monitor_gpu_available": mon.get("gpu_available", false),
 		"working_set_mb": mon.get("working_set_mb", -1), "managed_heap_mb": mon.get("managed_heap_mb", -1), "pose": COMMON.pose_now(game)}
 	if adaptive:
 		result["adaptive"] = {"cap_s": seconds, "stop": stop, "blocks": maxi(0, block_starts.size() - 1), "check": check}
@@ -779,6 +788,8 @@ func _window(tag: String, seconds: float, opts: Dictionary) -> Dictionary:
 	_log("WIN %-34s vs=%d fps=%6.1f wall p50=%6.2f p95=%6.2f p99=%6.2f max=%7.2f >33=%d gpu p50=%5.2f setup p50=%5.2f proc p50=%5.2f draws=%d busy=%.2f" % [
 		tag, int(result["vsync"]), fps, float(m["wall_p50"]), float(m["wall_p95"]), float(m["wall_p99"]), float(m["wall_max"]), int(m["hitch33_count"]),
 		float(m["gpu_total_p50"]), float(m["setup_p50"]), float(m["process_p50"]), int(m["draws_p50"]), float(result["busy_fraction"])])
+	if gpu_dropped > 0 or cpu_dropped > 0:
+		_log("  span gpu=%d/%d cpu=%d/%d (dropped gpu=%d cpu=%d)" % [gpu_span, frames, cpu_span, frames, gpu_dropped, cpu_dropped])
 	return result
 
 
