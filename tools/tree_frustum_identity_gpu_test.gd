@@ -9,6 +9,9 @@ extends SceneTree
 ## have a tile with more than 32 pixels differing by more than 2 LSB that also exceeds twice the densest tile of A vs A2 (a culled visible tree makes a dense blob; noise does not),
 ## and the verdict says "noise-limited". With a stable baseline the compare is the exact byte compare.
 ## --quiet-scene hides RingVolumetricClouds, SunshineCloudBridge, SunshineCloudsDriver, StandingGrass and the gust-front leaf debris (ForcedLevel 0); combine with --strict.
+## Default (B7c): still-capture mode (tools/tree_visibility_world.gd capture_begin/capture_end, docs/test-speed-plan.md 3.8). freeze_noise and quiet_scene are not applied; per case the world change happens
+## first, then capture_begin (time scale 0, cloud march held, byte-identical pair self-check), A and B are compared strictly and there is no A2. A case that is not deterministic falls back to the
+## A-B-A2 logic and is marked capture_fallback. --no-capture restores the old path (--freeze, --quiet-scene and the noise logic above apply only there).
 ## SKIPs cleanly (TREE_FRUSTUM_IDENTITY=SKIP ...) while the TreeFrustumCulling property does not exist on the BiomeDecorations layer (lane T adds it in OC-2).
 ## Run (windowed Vulkan, not --headless; never on the player's save; takes the GPU queue):
 ##   tools/tree_visibility_run.ps1 -Test frustum_identity -Build      (or via tools/run_tests.ps1 -Tests tree_frustum_identity_gpu_test)
@@ -32,6 +35,8 @@ var compared := 0
 var noise_limited := 0
 var report := {"cases": [], "events": []}
 var settle_frames := 60
+var capture_mode := true   # still-capture mode (docs/test-speed-plan.md 3.8); --no-capture restores the freeze_noise / A-B-A2 path
+var capture_fallbacks := 0
 
 
 func _initialize() -> void:
@@ -52,6 +57,7 @@ func _log(text: String) -> void:
 
 
 func _finish(verdict: String) -> void:
+	WORLD.capture_end(game)   # never leave time scale 0 behind (no-op when not in capture mode)
 	if out_dir != "":
 		var f := FileAccess.open(out_dir.path_join("report.json"), FileAccess.WRITE)
 		if f != null:
@@ -88,10 +94,16 @@ func _run() -> void:
 		return
 	report["machine"] = {"adapter": RenderingServer.get_video_adapter_name(), "args": args}
 	WORLD.freeze_world(game)
-	report["viewport"] = WORLD.freeze_noise(self, game, String(args.get("freeze", "")).split(",", false))
-	_log("viewport %s" % str(report["viewport"]))
+	capture_mode = not args.has("no-capture")
+	report["capture_mode"] = capture_mode
+	if capture_mode:
+		report["viewport"] = {"skipped": "capture mode (freeze_noise not called)"}
+		_log("capture mode: freeze_noise and quiet_scene skipped; each case is captured with time scale 0 and the cloud march held")
+	else:
+		report["viewport"] = WORLD.freeze_noise(self, game, String(args.get("freeze", "")).split(",", false))
+		_log("viewport %s" % str(report["viewport"]))
 	WORLD.hide_overlays(game)
-	if args.has("quiet-scene"):
+	if args.has("quiet-scene") and not capture_mode:
 		report["quiet_scene"] = WORLD.quiet_scene(game)
 		_log("quiet scene: hidden %s" % str(report["quiet_scene"]))
 	var poses: Dictionary = WORLD.load_poses()
@@ -138,7 +150,8 @@ func _run() -> void:
 			await _triple(tag + "_step8m", false)
 	_log("compared %d cases, %d failures" % [compared, failures.size()])
 	if failures.is_empty() and compared > 0:
-		_finish("PASS %d comparisons, %d byte-identical%s" % [compared, compared - noise_limited, (", %d noise-limited (baseline captures differ by temporal noise)" % noise_limited) if noise_limited > 0 else ""])
+		_finish("PASS %d comparisons, %d byte-identical%s%s" % [compared, compared - noise_limited, (", %d noise-limited (baseline captures differ by temporal noise)" % noise_limited) if noise_limited > 0 else "",
+			(", %d capture fallbacks" % capture_fallbacks) if capture_mode else ""])
 	else:
 		_finish("FAIL " + " | ".join(failures.slice(0, 12)) if not failures.is_empty() else "FAIL nothing was compared")
 
@@ -159,7 +172,34 @@ func _capture(enabled: bool, baseline_only: bool) -> Image:
 	return WORLD.grab(self)
 
 
+## One case. Capture mode: the world change has already happened; capture_begin, A and B (strict byte compare, no A2), capture_end. A case whose capture_begin is
+## not deterministic falls back to the A-B-A2 noise logic below (time running again, as in --no-capture) and is marked capture_fallback.
 func _triple(tag: String, baseline_only: bool) -> void:
+	var cap := {}
+	if capture_mode and not baseline_only:
+		cap = await WORLD.capture_begin(self, game)
+		if bool(cap["deterministic"]):
+			var ca: Image = await _capture(false, false)
+			var cb: Image = await _capture(true, false)
+			# Positive control: the filter must actually be on for B (it reads real ticks, but a skipped compute at time scale 0 would leave it off and make A == B vacuous).
+			var engaged := bool(trees.get("TreeCullActive"))
+			WORLD.capture_end(game)
+			compared += 1
+			var same := ca.get_data() == cb.get_data()
+			var centry := {"case": tag, "baseline_stable": true, "identical": same, "capture": cap, "cull_active": engaged}
+			if not engaged:
+				failures.append("%s: culling did not engage in capture mode (TreeCullActive false); the compare would be vacuous" % tag)
+			if not same:
+				centry["diff"] = _diff(ca, cb)
+				failures.append("%s: culling on differs from off (%s)" % [tag, str(centry["diff"])])
+				ca.save_png(out_dir.path_join(tag + "_A.png"))
+				cb.save_png(out_dir.path_join(tag + "_B.png"))
+			_log("%s capture deterministic frames=%d identical=%s" % [tag, int(cap["frames_waited"]), str(same)])
+			report["cases"].append(centry)
+			return
+		WORLD.capture_end(game)
+		capture_fallbacks += 1
+		_log("%s capture NOT deterministic (last pair differing px %d); falling back to A-B-A2" % [tag, int(cap["last_pair_differing_px"])])
 	var a: Image = await _capture(false, baseline_only)
 	var b: Image = a if baseline_only else await _capture(true, false)
 	var a2: Image = await _capture(false, baseline_only)
@@ -167,6 +207,10 @@ func _triple(tag: String, baseline_only: bool) -> void:
 	var base_same := a.get_data() == a2.get_data()
 	var b_same := baseline_only or a.get_data() == b.get_data()
 	var entry := {"case": tag, "baseline_stable": base_same, "identical": b_same}
+	if not cap.is_empty():
+		entry["capture_fallback"] = true
+		entry["capture"] = cap
+		entry["last_pair_differing_px"] = cap["last_pair_differing_px"]
 	if not base_same:
 		entry["baseline_diff"] = _diff(a, a2)
 		a.save_png(out_dir.path_join(tag + "_A.png"))
