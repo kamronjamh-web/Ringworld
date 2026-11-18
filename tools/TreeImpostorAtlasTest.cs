@@ -35,6 +35,8 @@ public partial class TreeImpostorAtlasTest : RefCounted
 
     public int Run()
     {
+        // Per-process scratch folder: two runs of this test may overlap. Deleted when the test ends, pass or fail.
+        string scratchRes = $"res://.godot/tr7a_{System.Environment.ProcessId}";
         try
         {
             IReadOnlyList<ImportedTreeVariant> variants = ImportedTreeCatalog.Load();
@@ -79,10 +81,10 @@ public partial class TreeImpostorAtlasTest : RefCounted
 
             // mips 0 to 3: sun-only response within 3 % of full resolution
             string table = PrepareTreeImpostorAtlas.MipTable(variants, bakes, out float worstMip);
-            string scratch = ProjectSettings.GlobalizePath("res://.godot/tr7a");
+            string scratch = ProjectSettings.GlobalizePath(scratchRes);
             Directory.CreateDirectory(scratch);
             File.WriteAllText(scratch + "/mip_table_test.md", table);
-            Require(worstMip <= MipTolerance, $"normal mip response differs from full resolution by {worstMip:P2} (limit {MipTolerance:P0}); see .godot/tr7a/mip_table_test.md");
+            Require(worstMip <= MipTolerance, $"normal mip response differs from full resolution by {worstMip:P2} (limit {MipTolerance:P0}); table: " + table);
             // averaging the same normals (a plain box filter) must not be what we ship: selected texels are surface normals, checked above as unit length at every level
             for (int i = 0; i < variants.Count; i++)
                 for (int level = 1; level <= 3; level++)
@@ -101,7 +103,7 @@ public partial class TreeImpostorAtlasTest : RefCounted
             for (int i = 0; i < variants.Count; i++)
                 Require(bakes[i].Albedo.AsSpan().SequenceEqual(again[i].Albedo) && bakes[i].NormalMips.AsSpan().SequenceEqual(again[i].NormalMips), $"v{i} bake is not deterministic");
             PreparedTreeImpostorAtlas first = PrepareTreeImpostorAtlas.Pack(variants, bakes), second = PrepareTreeImpostorAtlas.Pack(variants, again);
-            string pa = "res://.godot/tr7a/det_a.res", pb = "res://.godot/tr7a/det_b.res";
+            string pa = scratchRes + "/det_a.res", pb = scratchRes + "/det_b.res";
             Require(ResourceSaver.Save(first, pa, PrepareTreeImpostorAtlas.SaveFlags) == Error.Ok && ResourceSaver.Save(second, pb, PrepareTreeImpostorAtlas.SaveFlags) == Error.Ok, "save determinism files");
             byte[] ba = File.ReadAllBytes(ProjectSettings.GlobalizePath(pa)), bb = File.ReadAllBytes(ProjectSettings.GlobalizePath(pb));
             Require(ba.AsSpan().SequenceEqual(bb), $"saved resources differ byte for byte (sizes {ba.Length}/{bb.Length})");
@@ -132,7 +134,6 @@ public partial class TreeImpostorAtlasTest : RefCounted
             Require(!ImportedTreeImpostorAtlasBake.IsFresh(null, variants, out _, out _), "a missing resource counted as fresh");
             Require(!ImportedTreeImpostorAtlasBake.IsFresh(loaded, variants.Take(variants.Count - 1).ToList(), out _, out _), "a different variant list counted as fresh");
 
-            foreach (string p in new[] { pa, pb }) File.Delete(ProjectSettings.GlobalizePath(p));
             GD.Print($"TREE_IMPOSTOR_ATLAS_TEST=PASS variants={variants.Count} cards={cards} worst_mip_difference={worstMip:P2} bytes={stored.Length}");
             return 0;
         }
@@ -140,6 +141,10 @@ public partial class TreeImpostorAtlasTest : RefCounted
         {
             GD.PushError("TREE_IMPOSTOR_ATLAS_TEST=FAIL " + exception.Message);
             return 1;
+        }
+        finally
+        {
+            try { Directory.Delete(ProjectSettings.GlobalizePath(scratchRes), true); } catch { }
         }
     }
 }

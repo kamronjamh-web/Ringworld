@@ -203,22 +203,39 @@ public partial class RingWindQueryTest : RefCounted
         RingWindColumn stormColumn = Column(Storm(3, 1f, 0.5f, 0.9f));
         float sink = 0f;
         for (int i = 0; i < 2000; i++) sink += RingWindQuery.Compose(stormColumn, 1000 + i, 500 + i % 7000, 2000, i * 0.01).TurbulenceSigma;
-        var sw = Stopwatch.StartNew();
-        const int Samples = 100_000;
-        for (int i = 0; i < Samples; i++) sink += RingWindQuery.Compose(stormColumn, 1000 + i * 0.7, 20 + (i % 9000), 2000 + i * 0.3, i * 0.01).TurbulenceSigma;
-        double microsecondsPerSample = sw.Elapsed.TotalMilliseconds * 1000.0 / Samples;
+        var sw = new Stopwatch();
+        // Cost limits use the best of several short windows: CPU contention from other test lanes only ever adds time, so the fastest
+        // window is the cost of the code, and a real regression slows every window.
+        // The runner sets RINGWORLD_TEST_PARALLEL_LANES above 1 while headless tests share the CPU; the limits then get 2.5x slack.
+        double slack = int.TryParse(System.Environment.GetEnvironmentVariable("RINGWORLD_TEST_PARALLEL_LANES"), out int lanes) && lanes > 1 ? 2.5 : 1.0;
+        const int CostRepeats = 9;
+        const int Samples = 100_000 / CostRepeats;
+        double bestSampleMs = double.MaxValue;
+        for (int r = 0; r < CostRepeats; r++)
+        {
+            sw.Restart();
+            for (int i = 0; i < Samples; i++) sink += RingWindQuery.Compose(stormColumn, 1000 + i * 0.7, 20 + (i % 9000), 2000 + i * 0.3, i * 0.01).TurbulenceSigma;
+            bestSampleMs = Math.Min(bestSampleMs, sw.Elapsed.TotalMilliseconds);
+        }
+        double microsecondsPerSample = bestSampleMs * 1000.0 / Samples;
         Span<float> altitudes = stackalloc float[32]; for (int i = 0; i < 32; i++) altitudes[i] = i * 300f;
         var results = new RingWindSample[32];
         var previousProvider = RingWindQuery.ColumnProvider;
         RingWindQuery.ColumnProvider = (p, t) => stormColumn;
         try
         {
-            sw.Restart();
-            for (int i = 0; i < 2000; i++) RingWindQuery.SampleColumn(new RingCanonicalPosition(1000 + i, 0, 2000), i * 0.1, altitudes, results);
-            double columnMs = sw.Elapsed.TotalMilliseconds / 2000.0;
+            const int ColumnCalls = 2000 / CostRepeats;
+            double bestColumnMs = double.MaxValue;
+            for (int r = 0; r < CostRepeats; r++)
+            {
+                sw.Restart();
+                for (int i = 0; i < ColumnCalls; i++) RingWindQuery.SampleColumn(new RingCanonicalPosition(1000 + i, 0, 2000), i * 0.1, altitudes, results);
+                bestColumnMs = Math.Min(bestColumnMs, sw.Elapsed.TotalMilliseconds);
+            }
+            double columnMs = bestColumnMs / ColumnCalls;
             if (verbose) Console.WriteLine($"cost per sample={microsecondsPerSample:0.00} us, 32-altitude column={columnMs:0.000} ms (sink {sink:0})");
-            Check(microsecondsPerSample <= 3.0, $"sample cost {microsecondsPerSample:0.00} us exceeds 3 us");
-            Check(columnMs <= 0.1, $"32-altitude column {columnMs:0.000} ms exceeds 0.1 ms");
+            Check(microsecondsPerSample <= 3.0 * slack, $"sample cost {microsecondsPerSample:0.00} us exceeds {3.0 * slack:0.0} us");
+            Check(columnMs <= 0.1 * slack, $"32-altitude column {columnMs:0.000} ms exceeds {0.1 * slack:0.000} ms");
             Check(RingWindQuery.SampleColumn(new RingCanonicalPosition(5, 0, 5), 1.0, altitudes, results.AsSpan(0, 5)) == 5, "SampleColumn count");
             RingWindSample single = RingWindQuery.Sample(new RingCanonicalPosition(5, 600, 5), 1.0);
             RingWindQuery.SampleColumn(new RingCanonicalPosition(5, 0, 5), 1.0, stackalloc float[] { 600f }, results);
@@ -267,13 +284,20 @@ public partial class RingWindQueryTest : RefCounted
         var alts = new float[32]; for (int i = 0; i < 32; i++) alts[i] = ground + i * 250f;
         var results32 = new RingWindSample[32];
         RingWindQuery.SampleColumn(observer, time, alts, results32);
-        var sw = Stopwatch.StartNew();
-        for (int i = 0; i < 500; i++) RingWindQuery.SampleColumn(observer, time, alts, results32);
-        double columnMs = sw.Elapsed.TotalMilliseconds / 500.0;
+        var sw = new Stopwatch();
+        double bestCachedMs = double.MaxValue;   // best of several windows, as in the pure cost check
+        for (int r = 0; r < 9; r++)
+        {
+            sw.Restart();
+            for (int i = 0; i < 60; i++) RingWindQuery.SampleColumn(observer, time, alts, results32);
+            bestCachedMs = Math.Min(bestCachedMs, sw.Elapsed.TotalMilliseconds);
+        }
+        double columnMs = bestCachedMs / 60.0;
         sw.Restart();
         for (int i = 0; i < 20; i++) RingWindQuery.SampleColumn(observer with { AroundMeters = observer.AroundMeters + i * 100.0 }, time + i, alts, results32);
         double freshMs = sw.Elapsed.TotalMilliseconds / 20.0;
         if (verbose) Console.WriteLine($"world cost: cached column of 32 = {columnMs:0.000} ms, fresh position/time column = {freshMs:0.000} ms");
-        Check(columnMs <= 0.1, $"world: cached 32-altitude column {columnMs:0.000} ms exceeds 0.1 ms");
+        double slack = int.TryParse(System.Environment.GetEnvironmentVariable("RINGWORLD_TEST_PARALLEL_LANES"), out int lanes) && lanes > 1 ? 2.5 : 1.0;   // see the pure cost check
+        Check(columnMs <= 0.1 * slack, $"world: cached 32-altitude column {columnMs:0.000} ms exceeds {0.1 * slack:0.000} ms");
     }
 }

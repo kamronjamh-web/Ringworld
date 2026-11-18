@@ -1,11 +1,12 @@
 extends SceneTree
 
-const PREFS := "res://.godot/vegetation_live_tuning_smoke.tres"
+# Per-process paths: two runs of this test may overlap. Removed when the test ends, pass or fail.
+var PREFS := "res://.godot/vegetation_live_tuning_smoke_%d.tres" % OS.get_process_id()
 const TREE_LAYER := preload("res://scripts/Voxel/LOD/RingBiomeDecorationLayer.cs")
 const DRAWER := preload("res://scripts/ui/RingLiveTuningDrawer.cs")
 const GRASS_LAYER := preload("res://scripts/Voxel/LOD/RingStandingGrassLayer.cs")
 const GRAPHICS := preload("res://scripts/Voxel/LOD/RingGraphicsQualityController.cs")
-const GRASS_PREFS := "res://.godot/vegetation_menu_grass_smoke.tres"
+var GRASS_PREFS := "res://.godot/vegetation_menu_grass_smoke_%d.tres" % OS.get_process_id()
 var game: Node
 var drawer: Node
 var started_at_msec := 0
@@ -124,6 +125,7 @@ func run() -> void:
 func fail(reason: String) -> void:
 	finished = true
 	push_error("VEGETATION_LIVE_TUNING=FAIL " + reason)
+	remove_pref()
 	if game != null: game.queue_free()
 	quit(1)
 

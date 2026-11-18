@@ -5,6 +5,7 @@
   "defaults": {
     "headless_parallel": 6,
     "gpu_local_parallel": 3,
+    "gpu_class": "shared",
     "unmapped_max": 0,
     "timeout_rule": "max(60, 3 x expected_s) rounded up to 10 s, capped at 900; unknown 300 gpu / 120 headless"
   },
@@ -1221,6 +1222,7 @@
     },
     "cloud_haze_gameplay_test": {
       "kind": "test",
+      "gpu_class": "exclusive",
       "mode": "gpu",
       "tier": "gate",
       "tags": [

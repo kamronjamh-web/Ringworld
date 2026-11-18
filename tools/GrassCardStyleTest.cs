@@ -258,7 +258,10 @@ public partial class GrassCardStyleTest : Node
     /// <summary>Old saves carry none of the S8 keys: they load, leave the Cards values to the profile defaults, and out-of-range new values clamp.</summary>
     private void TestOldSaveLoads()
     {
-        const string path = "res://.godot/grass_card_style_old_save.tres";
+        // Per-process path: two runs of this test may overlap. Deleted when the case ends, pass or fail.
+        string path = $"res://.godot/grass_card_style_old_save_{System.Environment.ProcessId}.tres";
+        try
+        {
         var legacy = new GameplayGrassSettings();
         legacy.Overrides["BladesPerSquareMeter"] = 21f; legacy.Overrides["Enabled"] = true; legacy.Overrides["GrassWindStrengthMultiplier"] = 1.2f;
         legacy.Overrides["GrassRenderStyle"] = 1; legacy.Overrides["GrassCardReachMeters"] = 350f; legacy.Overrides["GrassCardGreenPull"] = .3f;
@@ -276,7 +279,8 @@ public partial class GrassCardStyleTest : Node
         Check(clamped.GetValue("GrassCardLean", 0f).AsSingle() == .5f && clamped.GetValue("GrassCardAtlasBlades", 0).AsInt32() == 96, "out-of-range S8 values were not clamped on load");
         Check(!clamped.Settings.Overrides.ContainsKey("GrassCardTallHeight") && !clamped.Settings.Overrides.ContainsKey("GrassCardLeanX"), "invalid or unknown S8 keys were kept");
         foreach (string key in GameplayGrassDefaults.Keys.Where(k => k.StartsWith("GrassCard"))) Check(GameplayGrassDefaults.Keys.Count(k => k == key) == 1, $"duplicate key {key}");
-        try { System.IO.File.Delete(ProjectSettings.GlobalizePath(path)); } catch { }
+        }
+        finally { try { System.IO.File.Delete(ProjectSettings.GlobalizePath(path)); } catch { } }
     }
 
     /// <summary>Live classes on a running Cards layer: material keys write uniforms only, coverage keys refilter without a reset,

@@ -12,9 +12,10 @@ public partial class BiomeAuthoringRegressionTest : RefCounted
 {
     public bool Run()
     {
+        // Per-process scratch folder: two runs of this test may overlap. Deleted when the test ends, pass or fail.
+        string folder = $"res://.godot/biome_workshop_tests_{System.Environment.ProcessId}";
         try
         {
-            string folder = "res://.godot/biome_workshop_tests";
             Directory.CreateDirectory(ProjectSettings.GlobalizePath(folder));
             string path = folder + "/roundtrip.tres", futurePath = folder + "/future.tres";
             var preset = BiomeAuthoringPreset.CreateNew("Regression biome");
@@ -71,6 +72,7 @@ public partial class BiomeAuthoringRegressionTest : RefCounted
             GD.Print("BIOME_AUTHORING_REGRESSION=PASS"); return true;
         }
         catch (Exception e) { GD.PushError("BIOME_AUTHORING_REGRESSION=FAIL " + e.Message); return false; }
+        finally { try { Directory.Delete(ProjectSettings.GlobalizePath(folder), true); } catch { } }
     }
     static bool Equal(BiomeAuthoringPreset a, BiomeAuthoringPreset b) => a.Identity == b.Identity && a.DisplayName == b.DisplayName && a.Seed == b.Seed && a.BaseBiome == b.BaseBiome && a.MeanElevationMeters == b.MeanElevationMeters && a.ElevationVariationMeters == b.ElevationVariationMeters && a.BroadFeatureScaleMeters == b.BroadFeatureScaleMeters && a.DetailAmplitudeMeters == b.DetailAmplitudeMeters && a.DetailFeatureScaleMeters == b.DetailFeatureScaleMeters && a.Humidity == b.Humidity && a.Temperature == b.Temperature && a.TreeDensity == b.TreeDensity && a.MinimumTreeSpacingMeters == b.MinimumTreeSpacingMeters && a.TreeClustering == b.TreeClustering && a.ClearingStrength == b.ClearingStrength && a.MapleWeight == b.MapleWeight && a.FirWeight == b.FirWeight && a.PineWeight == b.PineWeight && a.MinimumTreeHeightMeters == b.MinimumTreeHeightMeters && a.MaximumTreeHeightMeters == b.MaximumTreeHeightMeters && a.GrassDensity == b.GrassDensity && a.GrassHeightMeters == b.GrassHeightMeters && a.GroundMaterial == b.GroundMaterial && a.GroundTextureScale == b.GroundTextureScale;
     static bool EqualTrees(IReadOnlyList<BiomeAuthoringTree> a, IReadOnlyList<BiomeAuthoringTree> b) { if (a.Count != b.Count) return false; for (int i = 0; i < a.Count; i++) if (!a[i].Equals(b[i])) return false; return true; }

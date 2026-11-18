@@ -4,10 +4,11 @@ extends SceneTree
 const DRAWER := preload("res://scripts/ui/RingLiveTuningDrawer.cs")
 const GRAPHICS := preload("res://scripts/Voxel/LOD/RingGraphicsQualityController.cs")
 const DAY_NIGHT := preload("res://scripts/RingDayNightCycle.cs")
-const AA_PREFS := "res://.godot/visual_settings_ui_aa.tres"
-const SHADOW_PREFS := "res://.godot/visual_settings_ui_shadow.tres"
-const GRASS_PREFS := "res://.godot/visual_settings_ui_grass.tres"
-const WATER_PREFS := "res://.godot/visual_settings_ui_water.tres"
+# Per-process paths: two runs of this test may overlap. Removed in _finish, pass or fail.
+var AA_PREFS := "res://.godot/visual_settings_ui_aa_%d.tres" % OS.get_process_id()
+var SHADOW_PREFS := "res://.godot/visual_settings_ui_shadow_%d.tres" % OS.get_process_id()
+var GRASS_PREFS := "res://.godot/visual_settings_ui_grass_%d.tres" % OS.get_process_id()
+var WATER_PREFS := "res://.godot/visual_settings_ui_water_%d.tres" % OS.get_process_id()
 
 var fixture: Node3D
 var drawer: CanvasLayer

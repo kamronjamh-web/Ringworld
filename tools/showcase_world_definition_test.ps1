@@ -9,13 +9,16 @@ param(
 $ErrorActionPreference = "Stop"
 $project = Split-Path -Parent $PSScriptRoot
 # A fresh, isolated profile: no previewed terrain recipe and no real saves can leak into the result.
-$isoRoot = Join-Path $project ".godot\showcase_tools\appdata_showcase_world_definition_test"
+# Per-process names (this runner's PID): two runs may overlap. Profile and logs are deleted at the end; the verdict lines are printed first.
+$isoRoot = Join-Path $project ".godot\showcase_tools\appdata_showcase_world_definition_test_$PID"
 if (Test-Path $isoRoot) { Remove-Item -Recurse -Force $isoRoot }
 New-Item -ItemType Directory -Force $isoRoot | Out-Null
 $env:APPDATA = $isoRoot
-$log = Join-Path $project ".godot\showcase_tools\showcase_world_definition_test.log"
+$log = Join-Path $project ".godot\showcase_tools\showcase_world_definition_test_$PID.log"
 $arguments = @("--path", $project, "--headless", "--script", "res://tools/showcase_world_definition_test.gd")
 $process = Start-Process $GodotExe -ArgumentList $arguments -RedirectStandardOutput $log -RedirectStandardError "$log.err" -PassThru -NoNewWindow
 if (-not $process.WaitForExit($TimeoutSeconds * 1000)) { Stop-Process -Id $process.Id -Force; "timed out after $TimeoutSeconds s" | Add-Content $log }
 Select-String -Path $log -Pattern "SHOWCASE_|^FAIL|^ERROR:" | ForEach-Object { $_.Line }
-exit $process.ExitCode
+$exitCode = $process.ExitCode
+Remove-Item -Recurse -Force $isoRoot, $log, "$log.err" -ErrorAction SilentlyContinue
+exit $exitCode

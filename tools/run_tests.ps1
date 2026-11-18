@@ -13,7 +13,7 @@
 .NOTES
   Smoke is always part of -Changed and -Suite runs. -Since <rev|green> diffs against a revision (green = last green run of the label).
   -UnmappedPolicy smoke|full: what a changed file that no glob maps selects (default smoke = smoke set only, with a warning; full = every headless test).
-  -GpuClass: '' (default) = each entry's gpu_class from the manifest (exclusive unless the entry or defaults.gpu_class says shared); shared = every GPU entry runs in the shared
+  -GpuClass: '' (default) = each entry's gpu_class from the manifest (defaults.gpu_class is shared since 2026-11-18, so exclusive only where the entry pins it or carries the perf-telemetry tag); shared = every GPU entry runs in the shared
   GPU group except those pinned exclusive (gpu_class exclusive or tag perf-telemetry); exclusive = all in one exclusive ticket. The shared group runs first, then the exclusive one.
   .ps1 runner entries run inside the run's ticket (RINGWORLD_GPU_QUEUE_HELD, see gpu_queue.ps1 nested mode).
   Profile: .godot\test_runs\appdata_<Label> (reused; first run copies the warm caches). -ManifestPath is for scratch manifests.

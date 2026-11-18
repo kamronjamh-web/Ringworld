@@ -15,7 +15,7 @@ public partial class PdaConversationStoreTest : RefCounted
 {
     public int Run()
     {
-        string fixture = ProjectSettings.GlobalizePath("res://.godot/pda_memory/store-fixtures");
+        string fixture = ProjectSettings.GlobalizePath($"res://.godot/pda_memory/store-fixtures-{System.Environment.ProcessId}"); // per-process: two runs may overlap
         try
         {
             string allowedRoot = Path.GetFullPath(ProjectSettings.GlobalizePath("res://.godot/pda_memory")) + Path.DirectorySeparatorChar;

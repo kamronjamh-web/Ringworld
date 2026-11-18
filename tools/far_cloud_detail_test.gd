@@ -6,7 +6,8 @@ const SCENE := preload("res://scenes/VoxelRingIntegrationTest.tscn")
 const LAUNCHER := preload("res://scenes/WorldSizeLauncher.tscn")
 const PROBE_SCRIPT := preload("res://tools/FarCloudDetailProbe.cs")
 const DEFAULTS_SCRIPT := preload("res://tools/GameplayCloudTuningProbe.cs")
-const ISOLATED_PATH := "res://.godot/far_cloud_detail_defaults.tres"
+# Per-process path: two runs of this test may overlap.
+var ISOLATED_PATH := "res://.godot/far_cloud_detail_defaults_%d.tres" % OS.get_process_id()
 
 var _world: Node3D
 var _far: Node
@@ -51,10 +52,10 @@ func _run() -> void:
 	if not _verify_persistence(): return
 	if not await _verify_live_wiring(): return
 	print("FAR_CLOUD_DETAIL_TEST=PASS")
-	DirAccess.remove_absolute(ProjectSettings.globalize_path(ISOLATED_PATH))
 	_world.queue_free()
 	await process_frame
 	await process_frame
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(ISOLATED_PATH))   # after the world is freed: freeing it can write the defaults again
 	quit(0)
 
 func _verify_persistence() -> bool:

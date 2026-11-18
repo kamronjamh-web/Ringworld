@@ -5,8 +5,9 @@ extends SceneTree
 const RECIPE := preload("res://scripts/Terrain/Generation/terrain_generation_recipe.gd")
 const BRIDGE := preload("res://scripts/Terrain/Generation/TerrainGenerationSampler.cs")
 const PREVIEW_SCENE := preload("res://scenes/TerrainGenerationPreview.tscn")
-const REPORT_PATH := "res://.godot/terrain-generation-tests/erosion-v4-report.json"
-const PREVIEW_FIXTURE := "res://.godot/terrain-generation-tests/erosion-v4-preview-recipe.tres"
+# Per-process scratch folder: two runs of this test may overlap. Deleted in _finish, pass or fail.
+var SCRATCH_DIR := "res://.godot/terrain-generation-tests/erosion-v4-%d" % OS.get_process_id()
+var PREVIEW_FIXTURE := SCRATCH_DIR + "/preview-recipe.tres"
 
 const LOCATIONS := [
 	Vector2(-0.125, 159000.125),
@@ -225,8 +226,9 @@ func _expect(condition: bool, label: String) -> void:
 func _finish() -> void:
 	if _report.get("finished", false): return
 	_report["finished"] = true; _report["checks"] = _checks; _report["failures"] = _failures; _report["status"] = "PASS" if _failures.is_empty() else "FAIL"
-	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(REPORT_PATH.get_base_dir()))
-	var file := FileAccess.open(REPORT_PATH, FileAccess.WRITE)
-	if file: file.store_string(JSON.stringify(_report, "\t") + "\n"); file.close()
+	var scratch := ProjectSettings.globalize_path(SCRATCH_DIR)
+	if DirAccess.dir_exists_absolute(scratch):
+		for f in DirAccess.get_files_at(scratch): DirAccess.remove_absolute(scratch + "/" + f)
+		DirAccess.remove_absolute(scratch)
 	if _failures.is_empty(): print("TERRAIN_GENERATION_EROSION_V4=PASS checks=", _checks); quit(0)
 	else: push_error("TERRAIN_GENERATION_EROSION_V4=FAIL ", "; ".join(_failures)); quit(1)

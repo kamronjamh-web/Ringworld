@@ -1,7 +1,8 @@
 extends SceneTree
 
 const PROBE_SCRIPT := preload("res://scripts/Tools/AntiAliasingSettingsSmoke.cs")
-const ISOLATED_PATH := "res://.godot/anti_aliasing_settings_smoke.tres"
+# Per-process path: two runs of this test may overlap.
+var ISOLATED_PATH := "res://.godot/anti_aliasing_settings_smoke_%d.tres" % OS.get_process_id()
 
 
 func _initialize() -> void:

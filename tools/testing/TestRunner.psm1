@@ -845,7 +845,7 @@ function Get-PsHost { if ($PSVersionTable.PSEdition -eq 'Core') { return (Get-Pr
 
 # Builds the command line for a spec. Returns exe/args/env.
 function Get-LaunchPlan($Ctx, $Spec) {
-    $env_ = @('RINGWORLD_TEST_NO_GRAB=1')   # TestRunMouseRelease autoload: test windows never clip/capture the cursor or take focus
+    $env_ = @('RINGWORLD_TEST_NO_GRAB=1', "RINGWORLD_TEST_PARALLEL_LANES=$([int]$Ctx.LaneConcurrency)")   # tests that compare a wall-clock cost with a limit loosen it when this is above 1   # TestRunMouseRelease autoload: test windows never clip/capture the cursor or take focus
     if ($Spec.Synthetic -or $Spec.Runner) {
         $runnerPath = Join-Path $script:Root $Spec.Runner
         $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runnerPath)
@@ -1454,7 +1454,7 @@ function Invoke-TestRun {
         Manifest = $(if ($customManifest) { $ManifestPath } else { $null }); KnownFailures = $(if ($customManifest) { $KnownFailuresPath } else { $null }); Head = $head; Dirty = $dirty; Machine = $machineInfo; Selection = $sel; Engine = $engine; ProfileRoot = $null
         Results = [ordered]@{}; Started = (Get-Date); PriorWall = $(if ($resumeRun) { [double]$resumeRun.wall_s } else { 0.0 }); Active = $null
         YieldMinutes = $YieldMinutes; GpuHeld = $false; GpuSince = $null; GpuHeartbeat = $null; GpuClassOpt = $GpuClass
-        GpuGroupClass = 'exclusive'; GpuGroupWeight = 'world'; GpuGroups = $null
+        GpuGroupClass = 'exclusive'; GpuGroupWeight = 'world'; GpuGroups = $null; LaneConcurrency = 1
     }
     if ($resumeRun) {
         foreach ($t in $resumeRun.tests) {
@@ -1487,8 +1487,8 @@ function Invoke-TestRun {
         $safe = @($hl | Where-Object { $_.ParallelSafe } | Sort-Object @{e = { -$_.ExpectedS } }, Name)
         $unsafe = @($hl | Where-Object { -not $_.ParallelSafe } | Sort-Object @{e = { -$_.ExpectedS } }, Name)
         if ($hl.Count) { Write-Host ("Headless lane: {0} tests, {1} parallel ({2} run alone)" -f $hl.Count, $Parallel, $unsafe.Count) }
-        Invoke-Lane $ctx $safe $Parallel
-        Invoke-Lane $ctx $unsafe 1
+        $ctx.LaneConcurrency = [math]::Max(1, [math]::Min($Parallel, $safe.Count)); Invoke-Lane $ctx $safe $Parallel
+        $ctx.LaneConcurrency = 1; Invoke-Lane $ctx $unsafe 1
         $parseFailed = @(Invoke-ScriptParseCheck $ctx $toLaunch)   # GPU specs whose entry script does not parse are recorded as error and not launched
         $gl = @($toLaunch | Where-Object { $_.Mode -eq 'gpu-local' -and $parseFailed -notcontains $_.Name } | Sort-Object @{e = { -$_.ExpectedS } }, Name)
         $gp = @($toLaunch | Where-Object { $_.Mode -eq 'gpu' -and $parseFailed -notcontains $_.Name } | Sort-Object Name)
