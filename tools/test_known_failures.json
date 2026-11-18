@@ -2,6 +2,16 @@
   "schema": 1,
   "note": "Known failures, quarantined and flaky tests (design section 6.1). A failure counts as known only if it matches `match`; optional \"machines\" scopes an entry. Reference machine: RTX 4070 desktop (desktop_mid_high). sunshine_shadow_slice_equivalence_test was unverified and passed 3 of 3 WO4 runs (SLICE_EQUIVALENCE identical=true), so it was removed from this list; it is back as flaky (crash after PASS on main, 2026-10-30). flaky with retries 0 = tolerate a matching intermittent failure without a retry.",
   "failures": {
+    "celestial_visual_smoke_test": {
+      "status": "flaky",
+      "match": "CELESTIAL_VISUAL_SMOKE_TEST=PASS",
+      "retries": 0,
+      "evidence": "2026-11-18 reflections R1-6e (RTX 4070): prints PASS then crashes 0xC0000005 at exit with LOD workers running, 3 of 3 on e0071fb and 3 of 3 on af7e0c1 (before R1-6b, scratch worktree); same Sunshine teardown family as sunshine_night_shell_exit_smoke_test; the match only covers a crash after the PASS marker",
+      "since": "2026-11-18",
+      "machines": [
+        "desktop_mid_high"
+      ]
+    },
     "generated_output_policy_test": {
       "status": "known-fail",
       "match": "GENERATED_OUTPUT_POLICY_TEST=FAIL \\(30 violations\\)",

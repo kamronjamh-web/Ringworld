@@ -99,8 +99,8 @@ extends Node
 @export var stars_enabled: bool = true
 # Write radiance_epoch every frame, which keeps the sky radiance map rebuilding every frame (not a menu row).
 @export var sky_radiance_epoch_every_frame: bool = true
-# R1-6c debug switch (not a menu row): refresh the radiance map by rule (RingSkyRadianceCadence) instead of every frame. Off = today's per-frame epoch write.
-@export var sky_radiance_cadence_enabled: bool = false
+# R1-6c debug switch (not a menu row): refresh the radiance map by rule (RingSkyRadianceCadence) instead of every frame. On by default since R1-6e (2026-11-18: identical stills and movies, -0.16..-0.31 ms GPU); off = the old per-frame epoch write.
+@export var sky_radiance_cadence_enabled: bool = true
 # Read-only counters for the bench and tests: epoch writes (every one, cadence on or off), and individual sky material writes.
 var sky_radiance_refresh_count: int = 0
 var sky_material_write_count: int = 0
