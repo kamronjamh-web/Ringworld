@@ -133,6 +133,31 @@
         "scripts/Voxel/LOD/RingMinimapTrackable.cs"
       ]
     },
+    "terrain-proxy": {
+      "parent": "terrain",
+      "globs": [
+        "scripts/Voxel/LOD/*Proxy*",
+        "materials/ring_terrain_proxy*.gdshader",
+        "materials/terrain_gpu/ring_proxy*",
+        "scripts/Terrain/Generation/Gpu/**"
+      ]
+    },
+    "terrain-near": {
+      "parent": "terrain",
+      "globs": [
+        "scripts/Terrain/Surface/RingTerrain3D*",
+        "scripts/Terrain/Surface/RingSurface*",
+        "materials/terrain3d*",
+        "addons/terrain_3d/**",
+        "third_party/Terrain3D/**"
+      ]
+    },
+    "terrain-generation": {
+      "parent": "terrain",
+      "globs": [
+        "scripts/Terrain/Generation/**"
+      ]
+    },
     "voxel-caves": {
       "globs": [
         "scripts/Voxel/Core/**",
@@ -1039,7 +1064,8 @@
       "tier": "manual",
       "tags": [
         "terrain",
-        "water"
+        "water",
+        "terrain-proxy"
       ],
       "world": "certified",
       "marker": "CERTIFIED_TERRAIN_WATER_SHARED_EDGES",
@@ -1075,7 +1101,8 @@
       "tier": "gate",
       "tags": [
         "terrain",
-        "weather"
+        "weather",
+        "terrain-generation"
       ],
       "marker": "CLIMATE_V6",
       "expected_s": 12,
@@ -1837,7 +1864,8 @@
       "tier": "gate",
       "tags": [
         "terrain",
-        "poi"
+        "poi",
+        "terrain-generation"
       ],
       "marker": "EMITTER_V5",
       "expected_s": 9,
@@ -1944,7 +1972,9 @@
       "mode": "gpu-local",
       "tier": "extended",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-proxy",
+        "terrain-generation"
       ],
       "marker": "PROXY_GPU_HEIGHT_PARITY",
       "expected_s": 35,
@@ -2956,7 +2986,8 @@
       "tags": [
         "shadows",
         "terrain",
-        "vegetation"
+        "vegetation",
+        "terrain-proxy"
       ],
       "marker": "HEIGHT_SHADOW_RECEIVER",
       "expected_s": null,
@@ -3091,7 +3122,8 @@
       "mode": "headless",
       "tier": "slow",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-generation"
       ],
       "marker": "LANDFORM_V7_RECIPE",
       "expected_s": 224,
@@ -3245,7 +3277,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-proxy"
       ],
       "world": "integration",
       "marker": "LOD_PROJECTED_ERROR_CONTRACT",
@@ -3257,7 +3290,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-proxy"
       ],
       "marker": "LOD_RADIAL_MORPH_CONTRACT",
       "expected_s": 1,
@@ -4462,7 +4496,9 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-proxy",
+        "terrain-generation"
       ],
       "marker": "PROXY_GPU_BACKEND_ROUTING",
       "expected_s": 10,
@@ -4473,7 +4509,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-proxy"
       ],
       "marker": "PROXY_SAMPLE_CACHE_DEDUPE",
       "expected_s": 15,
@@ -4486,7 +4523,8 @@
       "tags": [
         "water",
         "terrain",
-        "landscape"
+        "landscape",
+        "terrain-proxy"
       ],
       "marker": "LANDSCAPE_INLAND_WATER",
       "expected_s": 15,
@@ -4497,7 +4535,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-proxy"
       ],
       "marker": "PROXY_BUILD_ALLOCATION_BASELINE",
       "expected_s": 9,
@@ -4509,7 +4548,8 @@
       "tier": "gate",
       "tags": [
         "terrain",
-        "settings"
+        "settings",
+        "terrain-proxy"
       ],
       "marker": "PROXY_COVERAGE_CULLING_SETTINGS_SMOKE",
       "expected_s": 1,
@@ -4520,7 +4560,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-proxy"
       ],
       "marker": "PROXY_PARTIAL_COVERAGE_TEST",
       "expected_s": 1,
@@ -4531,7 +4572,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-proxy"
       ],
       "marker": "PROXY_SEAM_GEOMETRY_CONTRACT",
       "expected_s": 1,
@@ -4542,7 +4584,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-proxy"
       ],
       "marker": "PROXY_SURFACE_NORMAL_CONTRACT",
       "expected_s": 1,
@@ -4553,7 +4596,9 @@
       "mode": "gpu",
       "tier": "extended",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-proxy",
+        "terrain-generation"
       ],
       "marker": "PROXY_GPU_SECTOR_PARITY",
       "expected_s": null,
@@ -4565,7 +4610,8 @@
       "tier": "extended",
       "tags": [
         "terrain",
-        "water"
+        "water",
+        "terrain-proxy"
       ],
       "marker": "PROXY_VERTEX_TABLE_CONTRACT",
       "expected_s": null,
@@ -4576,7 +4622,8 @@
       "mode": "gpu",
       "tier": "extended",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-proxy"
       ],
       "world": "certified",
       "marker": "PROXY_TERRAIN_NORMALS_GPU_TEST",
@@ -4589,7 +4636,8 @@
       "tier": "manual",
       "tags": [
         "terrain",
-        "water"
+        "water",
+        "terrain-proxy"
       ],
       "world": "certified",
       "marker": "PROXY_VERTEX_TABLE_FLAG_OFF_COMPARE",
@@ -4917,7 +4965,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-near"
       ],
       "marker": "RING_SURFACE_FRAME",
       "expected_s": 1,
@@ -4928,7 +4977,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-near"
       ],
       "marker": "RING_SURFACE_HEIGHT_FIELD",
       "expected_s": 1,
@@ -4939,7 +4989,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-near"
       ],
       "marker": "RING_SURFACE_LOD_BRIDGE",
       "expected_s": 1,
@@ -4975,7 +5026,8 @@
       "mode": "headless",
       "tier": "manual",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-near"
       ],
       "marker": "RUNTIME_SURFACE_CACHE",
       "expected_s": null,
@@ -4986,7 +5038,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-near"
       ],
       "marker": "RUNTIME_SURFACE_DEFINITION",
       "expected_s": 2,
@@ -4997,7 +5050,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-generation"
       ],
       "marker": "RUNTIME_TERRAIN_CPU_PASS2",
       "expected_s": 7,
@@ -5096,7 +5150,8 @@
       "tier": "gate",
       "tags": [
         "terrain",
-        "hydrology"
+        "hydrology",
+        "terrain-generation"
       ],
       "marker": "RIVER_CARVE_INVARIANTS",
       "expected_s": 60,
@@ -5175,7 +5230,8 @@
       "tags": [
         "water",
         "terrain",
-        "hydrology"
+        "hydrology",
+        "terrain-proxy"
       ],
       "marker": "INLAND_WATER_SAMPLER",
       "expected_s": 60,
@@ -5216,7 +5272,8 @@
       "tags": [
         "terrain",
         "water",
-        "hydrology"
+        "hydrology",
+        "terrain-proxy"
       ],
       "marker": "PROXY_INLAND_WATER_MORPH",
       "expected_s": 30,
@@ -5229,7 +5286,8 @@
       "tags": [
         "terrain",
         "water",
-        "hydrology"
+        "hydrology",
+        "terrain-proxy"
       ],
       "marker": "PROXY_RIVER_TRUE_WIDTH",
       "expected_s": 40,
@@ -5297,7 +5355,8 @@
       "tier": "gate",
       "tags": [
         "terrain",
-        "hydrology"
+        "hydrology",
+        "terrain-generation"
       ],
       "marker": "RIVER_RECIPE_FIELDS",
       "expected_s": 8,
@@ -5309,7 +5368,8 @@
       "tier": "gate",
       "tags": [
         "world-generation",
-        "terrain"
+        "terrain",
+        "terrain-generation"
       ],
       "marker": "WORLD_GENERATION_RECIPE",
       "expected_s": 20,
@@ -5321,7 +5381,8 @@
       "tier": "gate",
       "tags": [
         "world-generation",
-        "terrain"
+        "terrain",
+        "terrain-generation"
       ],
       "marker": "WORLD_GENERATION_CLIMATE",
       "expected_s": 20,
@@ -5394,7 +5455,8 @@
       "tags": [
         "landscape",
         "terrain",
-        "vegetation"
+        "vegetation",
+        "terrain-generation"
       ],
       "marker": "WORLD_GENERATION_FINGERPRINT",
       "expected_s": 30,
@@ -6102,7 +6164,8 @@
       "tier": "gate",
       "tags": [
         "terrain",
-        "settings"
+        "settings",
+        "terrain-near"
       ],
       "marker": "SURFACE_TERRAIN_SETTINGS",
       "expected_s": 1,
@@ -6113,7 +6176,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-near"
       ],
       "marker": "TERRAIN3D_ADDON_SMOKE",
       "expected_s": 1,
@@ -6124,7 +6188,8 @@
       "mode": "headless",
       "tier": "extended",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-near"
       ],
       "marker": "TERRAIN3D_DIAGONAL_GPU_TEST",
       "expected_s": null,
@@ -6136,7 +6201,8 @@
       "mode": "gpu",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-near"
       ],
       "world": "certified",
       "marker": "TERRAIN3D_MOVEMENT",
@@ -6150,7 +6216,8 @@
       "mode": "gpu",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-near"
       ],
       "marker": "TERRAIN3D_GAMEPLAY_NATIVE",
       "expected_s": 4,
@@ -6161,7 +6228,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-near"
       ],
       "world": "certified",
       "marker": "TERRAIN3D_GAMEPLAY_SMOKE",
@@ -6173,7 +6241,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-near"
       ],
       "marker": "TERRAIN3D_GAMEPLAY_STREAM",
       "expected_s": 6,
@@ -6184,7 +6253,8 @@
       "mode": "gpu",
       "tier": "manual",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-near"
       ],
       "world": "certified",
       "marker": "TERRAIN3D_TRAVEL",
@@ -6197,7 +6267,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-near"
       ],
       "marker": "TERRAIN3D_GODOT48_COMPATIBILITY",
       "expected_s": 1,
@@ -6208,7 +6279,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-near"
       ],
       "world": "integration",
       "marker": "TERRAIN3D_LAUNCHER",
@@ -6220,7 +6292,8 @@
       "mode": "headless",
       "tier": "extended",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-near"
       ],
       "marker": null,
       "marker_fix": "none",
@@ -6232,7 +6305,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-near"
       ],
       "world": "scene",
       "marker": "TERRAIN3D_SURFACE_PILOT_SMOKE",
@@ -6244,7 +6318,8 @@
       "mode": "gpu",
       "tags": [
         "terrain",
-        "far-viewport"
+        "far-viewport",
+        "terrain-proxy"
       ],
       "runner": "tools/terrain_altitude_lod_flight_test.ps1",
       "marker": "FLIGHT_RESULT",
@@ -6299,7 +6374,9 @@
       "tier": "extended",
       "tags": [
         "terrain",
-        "perf-telemetry"
+        "perf-telemetry",
+        "terrain-near",
+        "terrain-generation"
       ],
       "marker": "TERRAIN_GENERATION_BUDGETED",
       "expected_s": null,
@@ -6310,7 +6387,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-generation"
       ],
       "marker": "TERRAIN_GENERATION_COASTAL",
       "expected_s": 1,
@@ -6321,7 +6399,8 @@
       "mode": "headless",
       "tier": "manual",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-generation"
       ],
       "marker": "TERRAIN_DETAIL_CPU_BENCHMARK",
       "expected_s": null,
@@ -6332,7 +6411,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-generation"
       ],
       "marker": "TERRAIN_GENERATION_CPU_PARITY",
       "expected_s": 2,
@@ -6343,7 +6423,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-generation"
       ],
       "world": "scene",
       "marker": "TERRAIN_GENERATION_DETAIL_PLAYABLE",
@@ -6355,7 +6436,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-generation"
       ],
       "marker": "TERRAIN_GENERATION_DETAIL",
       "expected_s": 1,
@@ -6367,7 +6449,8 @@
       "tier": "gate",
       "tags": [
         "terrain",
-        "ui-menu"
+        "ui-menu",
+        "terrain-generation"
       ],
       "world": "scene",
       "marker": "TERRAIN_ENHANCED_EROSION_UI",
@@ -6379,7 +6462,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-generation"
       ],
       "world": "scene",
       "marker": "TERRAIN_GENERATION_EROSION_V4",
@@ -6392,7 +6476,8 @@
       "tier": "gate",
       "tags": [
         "terrain",
-        "ui-menu"
+        "ui-menu",
+        "terrain-generation"
       ],
       "world": "scene",
       "marker": "TERRAIN_LANDFORM_UI",
@@ -6404,7 +6489,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-near"
       ],
       "marker": "TERRAIN_GENERATION_NATIVE_ADAPTER",
       "expected_s": null,
@@ -6415,7 +6501,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-generation"
       ],
       "marker": "TERRAIN_GENERATION_PACKING",
       "expected_s": 1,
@@ -6427,7 +6514,8 @@
       "tier": "manual",
       "tags": [
         "terrain",
-        "perf-telemetry"
+        "perf-telemetry",
+        "terrain-generation"
       ],
       "marker": "TERRAIN_GENERATION_PERFORMANCE",
       "expected_s": 1,
@@ -6438,7 +6526,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-generation"
       ],
       "world": "scene",
       "marker": "TERRAIN_GENERATION_PLAYABLE",
@@ -6450,7 +6539,9 @@
       "mode": "gpu",
       "tier": "extended",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-near",
+        "terrain-generation"
       ],
       "marker": "TERRAIN_GENERATION_PREPARED_VISIBILITY",
       "expected_s": null,
@@ -6461,7 +6552,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-generation"
       ],
       "world": "scene",
       "marker": "TERRAIN_GENERATION_PREVIEW_SMOKE",
@@ -6473,7 +6565,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-generation"
       ],
       "marker": "TERRAIN_GENERATION_REFERENCE",
       "expected_s": 1,
@@ -6484,7 +6577,8 @@
       "mode": "headless",
       "tier": "smoke",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-generation"
       ],
       "marker": "TERRAIN_GENERATION_SHARED_MATH",
       "expected_s": 1,
@@ -6495,7 +6589,9 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-near",
+        "terrain-generation"
       ],
       "marker": "TERRAIN_GENERATION_STAGING",
       "expected_s": 2,
@@ -6506,7 +6602,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-generation"
       ],
       "marker": "TERRAIN_GENERATION_STREAM",
       "expected_s": 5,
@@ -6517,7 +6614,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-generation"
       ],
       "world": "scene",
       "marker": "TERRAIN_GENERATION_STREAMING_PLAYABLE",
@@ -6529,7 +6627,8 @@
       "mode": "headless",
       "tier": "manual",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-generation"
       ],
       "world": "scene",
       "marker": "TERRAIN_GENERATION_TRAVEL",
@@ -6541,7 +6640,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-generation"
       ],
       "marker": "TERRAIN_GENERATION_WINDOW",
       "expected_s": 4,
@@ -6600,7 +6700,8 @@
       "mode": "gpu",
       "tier": "extended",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-near"
       ],
       "world": "certified",
       "marker": "TERRAIN_NEAR_COLOR_DIAGNOSTIC",
@@ -6612,7 +6713,9 @@
       "mode": "gpu",
       "tier": "extended",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-proxy",
+        "terrain-near"
       ],
       "marker": "TERRAIN_NEAR_LOD_PARITY_GPU_TEST",
       "expected_s": 11,
@@ -6624,7 +6727,9 @@
       "tier": "gate",
       "tags": [
         "terrain",
-        "render-core"
+        "render-core",
+        "terrain-proxy",
+        "terrain-near"
       ],
       "marker": "TERRAIN_ROCK_MATERIAL",
       "expected_s": 45,
@@ -6646,7 +6751,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-near"
       ],
       "marker": "GROUND_SURFACE_MODEL",
       "expected_s": 5,
@@ -6657,7 +6763,9 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-proxy",
+        "terrain-near"
       ],
       "marker": "GROUND_RELIEF_FIELD",
       "expected_s": 20,
@@ -6669,7 +6777,8 @@
       "tier": "extended",
       "tags": [
         "terrain",
-        "shadows"
+        "shadows",
+        "terrain-proxy"
       ],
       "marker": "TERRAIN_NEAR_SHADOW_GPU",
       "expected_s": null,
@@ -6680,7 +6789,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-generation"
       ],
       "marker": "TERRAIN_RECIPE_FREEZE",
       "expected_s": 9,
@@ -6732,7 +6842,8 @@
       "mode": "gpu",
       "tier": "extended",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-proxy"
       ],
       "marker": "TERRAIN_SKIRT_COVERAGE_GPU_TEST",
       "expected_s": null,
@@ -6746,7 +6857,8 @@
         "terrain",
         "weather",
         "shadows",
-        "clouds"
+        "clouds",
+        "terrain-proxy"
       ],
       "marker": "TERRAIN_STORM_SHADOW_PARITY",
       "expected_s": 3,
@@ -6769,7 +6881,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-near"
       ],
       "marker": "TERRAIN_SURFACE_FOLLOWER_TEST",
       "expected_s": 2,
@@ -6783,7 +6896,8 @@
         "terrain",
         "vegetation",
         "atmosphere-haze",
-        "shadows"
+        "shadows",
+        "terrain-near"
       ],
       "marker": "TERRAIN_SURFACE_INCLUDE_REGRESSION",
       "expected_s": 4,
@@ -6794,7 +6908,8 @@
       "mode": "gpu",
       "tier": "extended",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-near"
       ],
       "world": "scene",
       "marker": "TERRAIN_SURFACE_SHADING",
@@ -6817,7 +6932,8 @@
       "mode": "headless",
       "tier": "gate",
       "tags": [
-        "terrain"
+        "terrain",
+        "terrain-proxy"
       ],
       "marker": "TERRAIN_VERTICAL_LOD_COVERAGE",
       "expected_s": 1,
@@ -6829,7 +6945,8 @@
       "tier": "extended",
       "tags": [
         "terrain",
-        "water"
+        "water",
+        "terrain-proxy"
       ],
       "marker": "TERRAIN_WATER_SEAM_DIAGNOSTIC",
       "expected_s": null,
@@ -7672,7 +7789,8 @@
       "tier": "gate",
       "tags": [
         "terrain",
-        "weather"
+        "weather",
+        "terrain-generation"
       ],
       "marker": "WEATHER_LUNG_V8",
       "expected_s": 8,

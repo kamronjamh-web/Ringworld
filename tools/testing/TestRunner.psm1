@@ -666,7 +666,13 @@ function Get-Selection {
         $isDirect = $reasons.Count -gt 0
         if ($kind -eq 'test' -and -not $isDirect) {
             $hits = @($tags | Where-Object { $tagHit.Contains([string]$_) })
-            $firstHit = ($tags.Count -gt 0) -and $tagHit.Contains([string]$tags[0])
+            # First-tag rule (tier slow, known failures): a hit on a child tag the test carries counts as a hit on its first tag when that is the child's parent (B4b split of terrain).
+            $firstVia = $null
+            if ($tags.Count -gt 0) {
+                if ($tagHit.Contains([string]$tags[0])) { $firstVia = [string]$tags[0] }
+                else { foreach ($ct in $tags) { if ($tagHit.Contains([string]$ct) -and [string]$M.TagParent[[string]$ct] -eq [string]$tags[0]) { $firstVia = [string]$ct; break } } }
+            }
+            $firstHit = [bool]$firstVia
             $knownBlock = $kst -in @('known-fail', 'quarantined')
             $take = New-Object System.Collections.Generic.List[string]
             switch ($tier) {
@@ -681,7 +687,7 @@ function Get-Selection {
                 }
                 'slow' {
                     if ($suiteFull) { $take.Add('suite full') }
-                    if ($firstHit) { $take.Add("tag $($tags[0]) <- $($tagHit[[string]$tags[0]]) (first tag)") }
+                    if ($firstHit) { $take.Add("tag $firstVia <- $($tagHit[$firstVia]) (first tag$(if ($firstVia -ne [string]$tags[0]) { ' via child' }))") }
                     if ($fullHeadless -and $mode -eq 'headless') { $take.Add('full headless (core/unmapped)') }
                 }
                 'extended' { if ($Suite -eq 'extended') { $take.Add('suite extended') } }
@@ -689,7 +695,7 @@ function Get-Selection {
             }
             if ($take.Count -gt 0 -and $knownBlock -and $tier -ne 'smoke') {
                 # known-fail and quarantined tests only with -Suite full, or when their first tag is in the set (a fix gets noticed)
-                if ($suiteFull) { } elseif ($firstHit) { $take = New-Object System.Collections.Generic.List[string]; $take.Add("tag $($tags[0]) <- $($tagHit[[string]$tags[0]]) (first tag, $kst)") }
+                if ($suiteFull) { } elseif ($firstHit) { $take = New-Object System.Collections.Generic.List[string]; $take.Add("tag $firstVia <- $($tagHit[$firstVia]) (first tag$(if ($firstVia -ne [string]$tags[0]) { ' via child' }), $kst)") }
                 else { $skipped[$name] = "$kst (not full, not first tag): $($take[0])"; $take.Clear() }
             }
             foreach ($t in $take) { $reasons.Add($t) }
