@@ -176,11 +176,11 @@ public partial class RiverBedMaterialTest : RefCounted
         // Full cover lands on the targets; the playa goes first, the river on top.
         RingTerrainSampler.BiomeTextureWeights grass = default;
         RingTerrainSampler.BiomeTextureWeights playa = RiverBedSurfaceModel.Apply(new RingTerrainSampler.BiomeTextureWeights(0.1f, 0.5f, 0f, 0f), new RiverBedMask(0, 0, 0, 255));
-        Check(Near(playa.Desert, 0.45, 1e-6) && Near(playa.Forest, 0, 1e-6) && Near(playa.Tundra, 0, 1e-6) && Near(playa.Alpine, 0.55, 1e-6), $"full playa is not 0.45 D + 0.55 A: {playa}");
+        Check(Near(playa.Desert, RiverBedSurfaceModel.PlayaDesert, 1e-6) && Near(playa.Forest, 0, 1e-6) && Near(playa.Tundra, 0, 1e-6) && Near(playa.Alpine, RiverBedSurfaceModel.PlayaAlpine, 1e-6), $"full playa is not the playa target: {playa}");
         RingTerrainSampler.BiomeTextureWeights sand = RiverBedSurfaceModel.Apply(new RingTerrainSampler.BiomeTextureWeights(0.1f, 0.5f, 0f, 0f), new RiverBedMask(255, 140, 0, 255));
         Check(Near(sand.Desert, 140 / 255.0, 1e-6) && Near(sand.Forest, 0, 1e-6) && Near(sand.Tundra, 1 - 140 / 255.0, 1e-6) && Near(sand.Alpine, 0, 1e-6), $"full river cover over a full playa is not the river target: {sand}");
         RingTerrainSampler.BiomeTextureWeights half = RiverBedSurfaceModel.Apply(grass, new RiverBedMask(0, 0, 0, 128));
-        Check(Near(half.Desert, 0.45 * 128 / 255.0, 1e-6) && Near(half.Alpine, 0.55 * 128 / 255.0, 1e-6), "half playa over grass is not the half mix");
+        Check(Near(half.Desert, RiverBedSurfaceModel.PlayaDesert * 128 / 255.0, 1e-6) && Near(half.Alpine, RiverBedSurfaceModel.PlayaAlpine * 128 / 255.0, 1e-6), "half playa over grass is not the half mix");
     }
 
     private void CacheDefinitions()

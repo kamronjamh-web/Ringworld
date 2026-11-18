@@ -307,6 +307,7 @@
       "globs": [
         "scripts/Vegetation/**",
         "resources/rocks/**",
+        "materials/ring_scatter*",
         "scripts/**/*Grass*",
         "scripts/**/*Tree*",
         "scripts/**/*Vegetation*",
@@ -5303,6 +5304,18 @@
       "marker": "PROXY_INLAND_WATER_MORPH",
       "expected_s": 30,
       "timeout_s": 240
+    },
+    "river_bed_pose_query": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "terrain",
+        "water"
+      ],
+      "marker": "RIVER_BED_POSE_QUERY",
+      "expected_s": 150,
+      "timeout_s": 900
     },
     "river_bed_material_test": {
       "kind": "test",

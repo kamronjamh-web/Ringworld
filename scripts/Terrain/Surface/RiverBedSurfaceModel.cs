@@ -31,14 +31,14 @@ public readonly record struct RiverBedPart(double Cover, double Sand, double Gra
 public static class RiverBedSurfaceModel
 {
     /// <summary>Mixed into the proxy cache definition of river-beds worlds: change any constant below and bump it.</summary>
-    public const int Version = 1;
+    public const int Version = 2;
     public const int Bit = 3;
 
     // Materials as (Desert, Alpine) shares of the target; Tundra is the remainder (design D11, Materials).
     public const double WetSandSand = 0.55, WetGravelGravel = 0.60;
     public const double MudSand = 0.0, MudGravel = 0.0, GravelSand = 0.0, GravelGravel = 1.0;
-    /// <summary>The playa target (dry lakebed): 0.45 Desert + 0.55 Alpine.</summary>
-    public const double PlayaDesert = 0.45, PlayaAlpine = 0.55;
+    /// <summary>The playa target (dry lakebed): 0.30 Desert + 0.70 Alpine (Version 2: 0.45/0.55 rendered too warm in the T4-7 stills; real playa clay is pale grey-beige).</summary>
+    public const double PlayaDesert = 0.30, PlayaAlpine = 0.70;
 
     // Coarseness g = smoothstep(0.6, 1.4, U), U the reach's mean speed in m/s.
     public const double CoarseStart = 0.6, CoarseEnd = 1.4;
