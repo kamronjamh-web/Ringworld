@@ -18,6 +18,7 @@ const WALL_X := 60.0
 # A cold pipeline cache (fresh or wiped user profile, or an edited shader) renders the first frames with a not-yet-specialised
 # pipeline, which differs from the specialised one by 1 LSB on one ocean_global pixel; 8 frames were not enough, 60 match the warm golden.
 const SETTLE_FRAMES := 60
+const SETTLE_MIN_MS := 1000
 const SUN_DIR := Vector3(-0.6, 0.7, 0.2)
 const PLANET_DIR := Vector3(-0.5, 0.6, -0.6)
 const OVERLAPS := [0.0, 0.5]
@@ -394,8 +395,13 @@ func _apply_variant(material: ShaderMaterial, overlap: float, hub: float) -> voi
 
 
 func _grab() -> Image:
-	for frame in SETTLE_FRAMES:
+	# The background pipeline specialisation finishes in wall time, not frames: with VSync off 60 frames can pass in ~0.1 s,
+	# so also wait at least SETTLE_MIN_MS (60 frames at 60 Hz, what the frame count assumed).
+	var settle_start := Time.get_ticks_msec()
+	var settled_frames := 0
+	while settled_frames < SETTLE_FRAMES or Time.get_ticks_msec() - settle_start < SETTLE_MIN_MS:
 		await RenderingServer.frame_post_draw
+		settled_frames += 1
 	var image := _viewport.get_texture().get_image()
 	if image == null or image.is_empty():
 		_fail("viewport readback failed")
