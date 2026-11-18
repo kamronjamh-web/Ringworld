@@ -83,11 +83,63 @@ public sealed record RingScatterClass
 
 /// <summary>
 /// T5 design A5: the append-only class table. Rows are built in order of ReachM descending, ties by Id; a row may avoid only rows built before it.
-/// <see cref="Production"/> holds no rows in T5-4 (T5-5 adds the rock rows); tests build their own tables with <see cref="CreateForTests"/>.
+/// <see cref="Production"/> holds the three rock rows of A5 (T5-5); tests build their own tables with <see cref="CreateForTests"/>.
 /// </summary>
 public sealed class RingScatterClassTable
 {
-    public static RingScatterClassTable Production { get; } = new(Array.Empty<RingScatterClass>());
+    public static RingScatterClassTable Production { get; } = new(ProductionRows());
+
+    private static RingScatterResponse R(RingHabitatField f, float in0, float in1, float out0 = 0f, float out1 = 1f) => new(f, in0, in1, out0, out1);
+
+    /// <summary>
+    /// A5 rock rows. Size factors use the schema's "factor x (size a + size b) / 2": the table's "0.45 x (a + b)" is 0.9 and "0.5 x (a + b)" is 1.0.
+    /// Mesh indices are group-local (RenderGroup selects the group). BaseDensityPerHa values are the table's starting values (T5-5 calibration, see scatter_rock_placement_test).
+    /// </summary>
+    private static RingScatterClass[] ProductionRows() => new[]
+    {
+        new RingScatterClass
+        {
+            Id = 1, Key = "rock.outcrop", RenderGroup = RingScatterRenderGroup.Outcrops, ReachM = 2500f, CellM = 64f, CandidatesPerCell = 1, BaseDensityPerHa = 0.3f,
+            Terms = new[]
+            {
+                new RingScatterTerm(1.0f, new[] { R(RingHabitatField.RockExposure, 0f, 1f), R(RingHabitatField.Relief64, -0.2f, 0.5f) }),
+                new RingScatterTerm(1.0f, new[] { R(RingHabitatField.Relief64, 0.35f, 0.8f), R(RingHabitatField.Slope, 18f, 30f) }),
+            },
+            SpacingM = 30f, SpacingSizeFactor = 0.6f, TreeClearanceM = 2f, TreeClearanceSizeFactor = 0.5f, SizeMinM = 5f, SizeMaxM = 40f, SizeExponent = 2.2f,
+            MeshFirst = 0, MeshCount = 8, Alignment = RingScatterAlignment.BeddingHorizontal, Collision = RingScatterCollision.TriMesh, ShadowMinSizeM = 0f,
+            Far = RingScatterFar.None, ResidentCap = 150, BlockM = 0
+        },
+        new RingScatterClass
+        {
+            Id = 2, Key = "rock.boulder", RenderGroup = RingScatterRenderGroup.Boulders, ReachM = 600f, CellM = 8f, CandidatesPerCell = 2, BaseDensityPerHa = 100f,
+            Terms = new[]
+            {
+                new RingScatterTerm(0.4f, new[] { R(RingHabitatField.Scree, 0f, 1f) }),
+                new RingScatterTerm(0.24f, new[] { R(RingHabitatField.Relief64, -0.15f, -0.6f), R(RingHabitatField.Slope, 4f, 15f) }),
+                new RingScatterTerm(0.16f, new[] { R(RingHabitatField.RockExposure, 0f, 1f), R(RingHabitatField.Relief64, 0.2f, 0.7f, 1f, 0f) }),
+                new RingScatterTerm(0.01f, Array.Empty<RingScatterResponse>()),
+            },
+            Multipliers = new[] { R(RingHabitatField.Canopy, 0f, 1f, 1f, 0.7f) },
+            SpacingM = 0f, SpacingSizeFactor = 0.9f, Avoid = new[] { new RingScatterAvoid(1, 0f, 1.0f) }, TreeClearanceM = 1f, TreeClearanceSizeFactor = 0.5f,
+            SizeMinM = 1f, SizeMaxM = 4f, SizeExponent = 1.6f, MeshFirst = 0, MeshCount = 16, Alignment = RingScatterAlignment.SlopeAligned, AlignFactor = 0.6f, RandomTiltDeg = 8f,
+            EmbedMin = 0.20f, EmbedMax = 0.35f, Collision = RingScatterCollision.ConvexHull, CollisionMinSizeM = 0.8f, ShadowMinSizeM = 2f, Far = RingScatterFar.RockSpeckle,
+            ResidentCap = 1500, BlockM = 0
+        },
+        new RingScatterClass
+        {
+            Id = 3, Key = "rock.cobble", RenderGroup = RingScatterRenderGroup.Cobbles, ReachM = 50f, CellM = 8f, CandidatesPerCell = 4, BaseDensityPerHa = 500f,
+            Terms = new[]
+            {
+                new RingScatterTerm(1.0f, new[] { R(RingHabitatField.Scree, 0f, 1f) }),
+                new RingScatterTerm(0.3f, new[] { R(RingHabitatField.RockExposure, 0f, 1f), R(RingHabitatField.Slope, 40f, 46f, 1f, 0f) }),
+            },
+            Multipliers = new[] { R(RingHabitatField.Canopy, 0f, 1f, 1f, 0.5f) },
+            SpacingM = 0f, SpacingSizeFactor = 1.0f, Avoid = new[] { new RingScatterAvoid(1, 0f, 1.0f), new RingScatterAvoid(2, 0f, 1.0f) },
+            TreeClearanceM = 0.6f, TreeClearanceSizeFactor = 0.5f, SizeMinM = 0.8f, SizeMaxM = 1.6f, SizeExponent = 1f, MeshFirst = 0, MeshCount = 6,
+            Alignment = RingScatterAlignment.SlopeAligned, AlignFactor = 1f, RandomTiltDeg = 4f, EmbedMin = 0.30f, EmbedMax = 0.30f, Collision = RingScatterCollision.None,
+            Far = RingScatterFar.RockSpeckle, ResidentCap = 1000, BlockM = 60
+        },
+    };
 
     public static RingScatterClassTable CreateForTests(IEnumerable<RingScatterClass> rows) => new(rows);
 

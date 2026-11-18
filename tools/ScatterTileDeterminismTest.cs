@@ -178,7 +178,7 @@ public partial class ScatterTileDeterminismTest : RefCounted
         Check(RingScatterClassTable.CreateForTests(new[] { new RingScatterClass { Id = 1, CellM = 24f } }).Validate().Count > 0, "a. CellM 24 passed Validate");
         Check(RingScatterClassTable.CreateForTests(new[] { new RingScatterClass { Id = 1, BlockM = 30 } }).Validate().Count > 0, "a. BlockM 30 passed Validate");
         Check(RingScatterClassTable.CreateForTests(new[] { new RingScatterClass { Id = 1, Alignment = (RingScatterAlignment)9 } }).Validate().Count > 0, "a. an unknown alignment passed Validate");
-        Check(RingScatterClassTable.Production.Validate().Count == 0 && RingScatterClassTable.Production.Rows.Count == 0, "a. Production is not an empty valid table");
+        Check(RingScatterClassTable.Production.Validate().Count == 0 && string.Join(",", RingScatterClassTable.Production.BuildOrder.Select(r => r.Key)) == "rock.outcrop,rock.boulder,rock.cobble", "a. Production is not the valid three-row rock table in build order");
 
         // Hash changes when any single column changes (spot-check 5 columns, plus a term and the table size).
         RingScatterClass baseRow = _table.Rows[1];
@@ -477,15 +477,15 @@ public partial class ScatterTileDeterminismTest : RefCounted
         Check(row["scatter"] is Dictionary<string, object?> slot && (int)slot["count"]! == 0 && (string)slot["hash"]! == "none", "f. the generation 1 scatter slot is not {count 0, hash none}");
         Check(!row.ContainsKey("scatter_params"), "f. the generation 1 row has scatter_params");
 
-        // The review world's slot: the production table has no rows, so every tile is empty and the build is never entered.
+        // The review world's slot: the production rock table.
         var review = new Dictionary<string, object?>();
         LandscapeWorld.Worker worker = _spec.CreateWorkers(1)[0];
         WorldGenerationFingerprint.ComputeScatterSlot(_spec, worker, review);
         Check(review["scatter"] is List<object?> tiles && tiles.Count == 10, "f. the review slot does not hold 10 tiles");
         Check(review.ContainsKey("scatter_params"), "f. the review slot lacks scatter_params");
-        Check(RingBiomeDecorationLayer.BuildScatterReviewTile(_root, 0, 0, LandscapeWorld.Seed, Circ, Width, RingScatterClassTable.Production).Count == 0, "f. the empty production table produced records");
+        Check(RingBiomeDecorationLayer.BuildScatterReviewTile(_root, 0, 0, LandscapeWorld.Seed, Circ, Width, RingScatterClassTable.CreateForTests(Array.Empty<RingScatterClass>())).Count == 0, "f. an empty table produced records");
         worker.Dispose();
-        Detail("f. feature off: no bit 4, grid disabled, fingerprint slot none, BuildScatterRows never reached; the review slot has 10 tiles (production table: no rows yet)");
+        Detail("f. feature off: no bit 4, grid disabled, fingerprint slot none, BuildScatterRows never reached; the review slot has 10 tiles (production rock table)");
     }
 
     // ------------------------------------------------------------------ g. trees untouched

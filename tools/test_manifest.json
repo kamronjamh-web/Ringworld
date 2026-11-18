@@ -6808,6 +6808,18 @@
       "expected_s": 30,
       "timeout_s": 90
     },
+    "scatter_rock_placement_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation",
+        "landscape"
+      ],
+      "marker": "SCATTER_ROCK_PLACEMENT",
+      "expected_s": 30,
+      "timeout_s": 90
+    },
     "ground_relief_field_test": {
       "kind": "test",
       "mode": "headless",
