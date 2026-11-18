@@ -1,6 +1,66 @@
 # Test and measurement speed plan (2026-11-17)
 
-Status: **Phase A, analysis and design only.** No runner, queue, harness or manifest file was changed. Phase B (section 5) starts when the other lanes have stopped using the runners.
+Status: **Phase B in progress.** Read the handoff first. Sections 1 to 6 are the Phase A analysis and design; where the handoff differs, the handoff wins.
+
+## Handoff (2026-11-17, 20:00)
+
+### Committed
+
+| Commit | Order | What |
+|---|---|---|
+| `50864f0` | B0 | `perf_bench.ps1`: staleness check with `git ls-files` (143 s to 0.25 s), build under `.godot/mono/temp/opt_build.lock`, prune and report outside the ticket, `robocopy /MIR` world restore with a count and byte check. Ticket to Godot start 2.5 s (was about 3 min). `gpu_queue.ps1`: `history.jsonl` and the test override `RINGWORLD_GPU_QUEUE_DIR`. Probe and ab-matrix scenario kinds count as run. |
+| `e1591b7` | B5 (parts), B7a | Near LOD parity test without the retired wet/dry section (300 s timeout to 11 s pass); known-failure entries for `proxy_river_true_width_test` and `grass_live_tuning_smoke_test`; `tools/capture_determinism_probe.gd`. |
+| `78b8425` | B7b | Deterministic stills: debug-only `capture_hold` in `addons/SunshineClouds2/SunshineClouds.gd` (skip the march, keep the post pass, while target, size, camera and projection are unchanged), `capture_begin` / `capture_end` in `tools/tree_visibility_world.gd` (time scale 0, cloud hold, 60-frame settle, two identical frame pairs). Probe `--plan=hold`: 0 differing pixels at four poses with clouds visible. |
+| `bd2eabe` | B1a (part 1 and 2a) | `tools/testing/GpuJob.psm1` (`Test-GodotScriptParse`, `Invoke-GodotPreflight`, `Invoke-GodotJob`, class `RingGpuJobProc`), `tools/run_godot.ps1`, and `perf_bench.ps1` using them: parse check before the build and the ticket, kill on entry-script load failure, on 10 min without output, and on timeout. |
+
+Evidence: `.godot/audit_baseline/common/test-speed/b7a/` and `b7b/`; runs `.godot/perf_bench/b0_check/20261117_142803` and `b1a_check/20261117_185751`; `.godot/test_runs/b5/20261117-142533`, `b7b/20261117-185925`.
+
+### Uncommitted, reviewed, ready to commit
+
+- **B4a, `-Files` mapping:** `tools/testing/TestRunner.psm1`, `tools/run_tests.ps1`, `tools/testing/validate_manifest.ps1`, the "Unmapped files" line in `.claude/skills/godot-test-run/SKILL.md`, and in `tools/test_manifest.json` the hunks in `defaults` (`unmapped_max`), the tag globs, `core_globs` and `ignore_globs` (other lanes have test-entry hunks in that file: stage by hunk).
+  - Unmapped files select the smoke set with a warning (`-UnmappedPolicy full` restores the old behaviour). 0 tracked files are unmapped and the validator fails above `defaults.unmapped_max`.
+  - Files that were mapped at HEAD select exactly what they did. An unmapped shader include or compute shader takes the tags of the shaders and scripts that reference it.
+  - Tool helpers, fixtures and helper classes select the tests that load them, transitively (`Get-ToolDependants`). Only `kind: test` dependants of tier smoke, gate or slow are launched; the rest are returned as `ParseOnly` (shown by `-DryRun`, stored as `selection.parse_only`) for the parse check of B1b. The changed entry itself and first-hop wrappers of a changed helper class are launched whatever their tier, as before.
+  - Tags may declare `"parent"`; a file that hits a child tag does not hit the parent. No child tag exists yet (B4b).
+  - `results.md` prints known failures as one line.
+  - Not re-run after the last change: a real `-Suite smoke`. Dry runs and the validator pass. Run smoke before committing.
+- **B3a, queue classes:** `tools/gpu_queue.ps1`. `-Class exclusive|shared` (default exclusive) and `-Weight world|light`. The class is the ticket file's content, the name format is unchanged, so old and new script instances mix safely (an empty ticket is exclusive). Rule as in section 3.4 with at most 2 world jobs and 3 holders; VRAM guard of 4500 MiB for a shared world job that would run beside another (`RINGWORLD_GPU_SHARED_MIN_FREE_MB`). Proven on scratch queue directories under PowerShell 5.1 and 7 (11 scenarios, including mixed versions). No caller passes `shared` yet, so behaviour is unchanged.
+- **B5, flaky entries:** `tools/test_known_failures.json`: `sunshine_night_shell_exit_smoke_test`, `sunshine_shadow_toggle_smoke_test` and `far_weather_atlas_gpu_parity_gpu_test` changed to `flaky`, matched on their PASS marker (the intermittent teardown crash after PASS). The diff is as ordered; the implementer's report on it had not arrived when this was written, so check it reads as described and that the validator passes.
+
+- **`tools/testing/GpuJob.psm1`** has one uncommitted addition, an exported `Test-GodotScriptParseBatch` that nothing uses yet (written for B1b's parse check, not reviewed). Keep it for B1b or revert the file to `bd2eabe`.
+
+### In flight when this was written
+
+- **shadow_compose check** (implementer `ae2e34298738b9e0f`, queue label `b5_shadow3b`). The failure is one pixel, 1 LSB, in `ocean_global_od0.5_hub0.6`, and it is intermittent: 21 captures on a warm cache, 16 of them under 4-way GPU load, were byte-identical to the existing golden, and the ocean shader path has no clock. The theory being tested: on a cold shader or pipeline cache the capture is taken while a pipeline is still compiling. If it reproduces, the fix is for `tools/shadow_compose_identity_gpu_test.gd` to wait until the `RenderingServer` pipeline compilation counters are quiet before grabbing each case. No tolerance and no new golden (user and main agreed). If that script shows as modified, it is this agent's unreviewed change: review it or revert it.
+- **B1b (runner part of B1)** was stopped before it edited anything. See the next list.
+
+### Next orders
+
+1. **B1b, the test runner** (`tools/testing/TestRunner.psm1`):
+   - start tests with `RingGpuJobProc`;
+   - in `Invoke-Lane`, kill on entry-script load failure (`Failed to load script "res://tools/<name>.gd"`: status `error`) and on no output for `stall_s` (manifest field, default 600 s: status `timeout`, detail "stalled");
+   - apply `Resolve-KnownFailure` to timeouts;
+   - before `Enter-GpuPhase`, parse-check the selection's `ParseOnly` entries and, when a `tools/*.gd` file is among the changed files, the selected GPU entries; report one synthetic row `script_parse_check`, and mark a GPU entry whose script fails as `error` without launching it.
+   - Verify with a scratch manifest and temporary `tools/zz_*` scripts (hang, broken preload), then `-Suite smoke`.
+2. **`tools/tree_visibility_run.ps1`** (when the tree-perf lane frees it): the same three changes as B0 (git staleness check in place of the 143 s walk, preparation before the ticket, per-run queue label) and launch through `Invoke-GodotJob`.
+3. **B2a, in-session A/B:** do not build a second mechanism. `tools/perf_bench_ab_matrix.gd` (committed in `b00b501`, kind `ab_matrix`: baseline plus named variants, interleaved A-X-A windows, stills) is the mechanism. Remaining: a `report.md` section for `ab_matrices` (they already pass through to `report.json`), a `-Variants` convenience on `perf_bench.ps1`, the plan echo check of section 3.2 item 3, `docs/perf-bench.md` and the `perf-capture` skill. B2b (look run `--feature-ab`) is unchanged.
+4. **B3b, callers of the shared class:** manifest `gpu_class` (default shared; exclusive for `perf-telemetry` and wall-clock asserts), `run_tests` taking a shared ticket for the shared group and an exclusive one for the rest, `gpu-local`-only runs as `shared light`, stills-only `perf_bench` runs as shared, `run_godot.ps1 -Class`. Gate before the default flips: the GPU gate alone against two concurrent runs gives the same verdicts; record the slowdown here.
+5. **B4b, terrain split:** child tags `terrain-proxy`, `terrain-near`, `terrain-generation` with `"parent": "terrain"`; tests gain the child tags they exercise (append only, the first tag stays). Target: a proxy-only change selects about 15 tests in place of 101.
+6. **B6, adaptive windows** in `tools/perf_bench.gd` (section 3.7), standing scenarios only.
+7. **B7c, use the capture mode:** `perf_bench.gd` stills, `tree_frustum_identity_gpu_test.gd` and the landscape look run call `capture_begin` / `capture_end` in place of `quiet_scene`, `freeze_noise` and `hold_wind`, and drop their noise pairs when the self-check passes. Inside capture mode wait by frames, never by timers.
+
+### Open decisions
+
+- **shadow_compose:** if the cold-pipeline theory does not reproduce, choose between a one-case allowance (1 LSB, a few pixels) and leaving the test as it is. A new golden is off the table: the golden still matches.
+- **Stall limit:** 600 s without output kills a job. Section 4 proposed a week of warn-only first; the launcher kills from the start because the looping run was the approved target. Raise `-StallMinutes` or `stall_s` for any harness that is legitimately silent for longer.
+- **`proxy_river_true_width_test` and `grass_live_tuning_smoke_test`** are listed as known failures, not fixed. The terrain and vegetation lanes own the fixes.
+- **Heartbeat tied to log progress** (section 3.2) was not built: the launcher's watchdog plus release in `finally` covers the observed failure. Decide whether it is still wanted.
+
+### Deviations from sections 2 to 5
+
+- Hardlink or junction was replaced by `robocopy /MIR`; the shared cap is 2 world jobs (3 holders with light jobs); the ticket class is stored in the file content, not the name.
+- B7b needed no change in `RingSunshineCloudBridge` and no per-system held time: `Engine.time_scale = 0` during the still plus the cloud hold gave byte-identical frames.
+- `gpu_queue.ps1 -Wrap` did not get its own watchdog; single launches should use `tools/run_godot.ps1`.
 
 Goal: make testing and measurement faster without lowering quality. The user approved the item list; the numbering (1) to (5) below is the user's.
 
