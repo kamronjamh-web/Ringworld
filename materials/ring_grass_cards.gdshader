@@ -189,6 +189,8 @@ void fragment() {
 	ALBEDO = grass_card_finish_albedo(col, v_light.x, v_haze_T, v_haze_S, emission);
 	EMISSION = emission;
 	ROUGHNESS = 1.0;
+	// Cards have no specular: the engine's environment term ignores render_mode specular_disabled, so it is zeroed here (R1-1a).
+	SPECULAR = 0.0;
 	// Ground normal at the root, bending toward the card's outward / face normal at the tip.
 	vec3 f = v_face_view * (dot(v_face_view, VIEW) >= 0.0 ? 1.0 : -1.0);
 	vec3 bent = v_up_view + v_u_view * (v_shape.x * grass_card_normal_out) + f * grass_card_normal_face;

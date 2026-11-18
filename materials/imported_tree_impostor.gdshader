@@ -242,6 +242,8 @@ void fragment() {
 	ROUGHNESS = ring_wet_ssr_roughness(ROUGHNESS, dry_roughness); // distant canopy: no SSR on wet impostors
 	AO = min(1.0 - tree_cloud_occlusion * tree_day_factor * .72, ring_storm_ambient(ring_storm_level(tree_world_position))); // storm light
 	AO_LIGHT_AFFECT = 0.0;
+	// Reflections R1-1a hold: the sky term stays black as before the sky source; crown interiors and trunks cannot see the sky and there is no crown-visibility term yet (docs/work-orders/reflections/R1-1-design.md). SSR on wet bark is unaffected.
+	RADIANCE = vec4(0.0, 0.0, 0.0, 1.0);
 	if (ring_shadow_debug_enabled()) {
 		// Shadow debug view: only the selected shadow term reaches the screen (see ring_shadow_compose.gdshaderinc).
 		ALBEDO = vec3(1.0);
