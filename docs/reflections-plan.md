@@ -4,12 +4,103 @@ Lead: Fable 5.2. Approved by the user on 2026-11-17 ("make reflections both fast
 
 ## 0. Handoff
 
-- **Phase A (this document) is done: reading, research and plan. No GPU was used, no game code was changed, nothing is committed.**
-- **Nothing here is measured.** Every cost and every look claim about the running game is from code reading and is marked as such. Phase B (section 5) measures before any work order starts.
-- Phase B starts only when the primary agent says the GPU queue is free.
-- Three questions for the user are in section 8. Work orders R1-1, R1-2 and R3 change the look of water and wet surfaces and need the user's sign-off from before/after stills.
-- Files other leads have open and uncommitted that this plan touches later: `scripts/Weather/RingWetWorld.Ssr.cs` (the dry-weather SSR gate), the terrain and proxy shaders (terrain lead). No work order here starts on those files until they land.
-- Engine source read: `godotengine/godot` `master` (its `version.py` says 4.8 beta). The main repository has no tag for 4.8-dev7, so the exact dev7 commit was not read. The pass structure matches what the game's own comments say about 4.8 (HiZ trace, roughness cut at 0.7).
+State on 2026-11-17, evening. The Lead role for this work returns to `claude-lead`; the author of this plan (Fable 5.2) hands over here. A fresh lead can continue from this section, section 10 (the current work list) and the four design files under `docs/work-orders/reflections/`. Sections 1 to 8 are the Phase A reasoning; where they differ from section 10, section 10 holds.
+
+### 0.1 What is established
+
+- **The reflected environment of the main view is black** (measured, 9.1). The main Environment has a black colour background and its reflected source at the default, Background, so every engine SSR miss and the water's `SPECULAR` sky term return nothing. The sky radiance map is rendered every frame anyway, for ambient light.
+- **Measured costs** (RTX 4070, 1600 x 900, High with the user's frozen settings, clocks held, A-X-A; 9.2 and 9.3):
+
+| Item | Cost |
+|---|---|
+| Sky radiance map update | 0.18 ms every frame, dry or wet |
+| Engine SSR at half size (what High runs) | 0.12 ms dry plains, 0.18 to 0.24 ms wet plains and forest, 0.21 ms Weather Lung, 0.28 ms save spot |
+| Engine SSR at full size | a further 0.17 to 0.32 ms where pixels trace |
+| Engine SSR steps 64 instead of 128 | -0.06 ms at the Weather Lung and the save spot, about -0.02 ms elsewhere; tolerance and fades: nothing |
+| Sky as the reflection source | +0.01 to +0.08 ms |
+| Water SSR, lifted coast pose, user's values | 0.09 ms |
+
+- **Look, from the same runs:** switching the engine SSR off changes the wet forest less than cloud noise does (SSIM 0.9984); the sky source changes every glossy frame strongly (0.85 to 0.98). The arch and the clouds are in no reflection today.
+
+### 0.2 User decisions
+
+- Realistic water is approved. **Before/after stills for sign-off; nothing ships before that.**
+- **Budget:** on High, reflections may cost at most +0.2 ms over today at any measured pose, and only where stills show a clear look gain. More goes to Very High and above. Cheaper is welcome. Budget table: 10.3.
+- Wet ground: trial SSR on puddles and near ground only, corrected fallback for the rest, and show the comparison (R1-4).
+- **Cloud data is published for reflections (R3a). Clouds are not written into the main depth buffer. The cloud image must not change, proven by a byte compare.**
+- **The Water tab rows Fresnel F0, Fresnel strength and SSR strength are removed at cleanup (R1-8)** and fixed at their physical values, with the settings smoke test and with persistence handled: old saved values are ignored or migrated without errors.
+- All look changes are built behind the transitional switch `ringworld_reflection_model` (default 0, not a menu row; 10.2), approved by the primary agent.
+- Realism by default: nothing here boosts or floors a reflection; anything that would is a question for the user first.
+
+### 0.3 Orders: done, in progress, parked
+
+| Order | State | Files |
+|---|---|---|
+| R0 tooling: scenario kinds `reflection_probe` and `ab_matrix`, two scenario files | **Done, tested on the GPU, uncommitted** | `tools/perf_bench.gd` (+22/-3), `tools/perf_bench_reflection_probe.gd`, `tools/perf_bench_ab_matrix.gd`, `tools/fixtures/perf_bench_reflections.json`, `tools/fixtures/perf_bench_reflection_costs.json` |
+| B1, B3 (two runs) | **Done.** Results in 9.1 to 9.3 | evidence in 0.5 |
+| B2 (trace-mask overlay), B5 at a waterline and a lake, B6 "before" movies, B7 | Not done | — |
+| R1-0 switch, main reflected source, far pins | **Implemented and reviewed, uncommitted. Open: probe stills at model 0 identical to before, and the far-environment values in the probe report** | new `scripts/Voxel/LOD/RingReflectionModel.cs`, new `materials/ring_reflection_model.gdshaderinc`, `scripts/Voxel/LOD/RingFarViewportColorPipeline.cs` (+2), `scripts/Voxel/LOD/RingScaledFarViewport.cs` (+9/-2), `project.godot` (one global, own hunk), new `tools/ReflectionEnvironmentContractTest.cs`, new `tools/reflection_environment_contract_test.gd`, `tools/test_manifest.json` (one entry) |
+| R1-1-0 probe tooling (exposure held, model 0/1 variants, more poses, "before" set) | Designed, not started | `docs/work-orders/reflections/R1-1-design.md` |
+| R1-1a holds (trees, grass cards) | Designed, not started | same file |
+| R1-1b sky visibility global, POI, construction, stand-ins, anchors, voxel terrain | Designed, not started | same file |
+| R1-1d terrain | Designed. **Parked** until T4-4b and FR-1 release the terrain and proxy shaders | same file |
+| R1-2a water composition, R1-2c stills | Designed, not started. Depends on R1-0 | `docs/work-orders/reflections/R1-2-R1-5-design.md` |
+| R1-3 housekeeping | Not started | 10.4 |
+| R1-4 trace only where it shows (the wet-ground trial) | **Parked** with R1-1d (same files) | 10.4 |
+| R1-5a water march, R1-5c measurements | Designed, not started. After R1-2a | `docs/work-orders/reflections/R1-2-R1-5-design.md` |
+| R1-6 radiance cadence | Designed, not started. First order R1-6a is a measurement | `docs/work-orders/reflections/R1-6-design.md` |
+| R1-7 sign-off sheet, R1-8 cleanup | After the above | 10.4 |
+| R3a-0 cloud publication design | **Done**, including the capture hold and the main-view filter (its sections 2.5 and 2.6) | `docs/work-orders/reflections/R3a-design.md` |
+| R3a-1 to R3a-3 | Designed, not started. Unblocked: B7b (`capture_hold`) is committed as 78b8425 | same file |
+| R2 (ring radiance map), R3 (far mirror), R4 (beams), R5 (reserve) | Not designed beyond sections 4 and 6 | — |
+
+No helper agent is running. No order was left half-applied in the tree.
+
+Suggested next steps, one at a time: (1) commit the R0 tooling and R1-0; (2) R1-1-0, then the model-0 identity stills for R1-0; (3) R1-1a, R1-1b, R1-2a; (4) R1-6a measurement; (5) R3a-1.
+
+### 0.4 What is uncommitted, and where
+
+Nothing of this work is committed except the Phase A plan (97a1a74). By this lead, all in the working tree of branch `terrain-vegetation-revamp`:
+- **Docs:** `docs/reflections-plan.md` (modified), `docs/work-orders/reflections/R1-1-design.md`, `R1-2-R1-5-design.md`, `R1-6-design.md`, `R3a-design.md` (new).
+- **R0 tooling:** the five files of the first row of 0.3.
+- **R1-0:** the eight files of its row in 0.3.
+
+Shared files, to be staged hunk by hunk:
+- `project.godot` carries two uncommitted hunks. Only `ringworld_reflection_model` (after `ringworld_night_light_scale`) belongs here; `ringworld_ground_rock_detail_normal` is T4-4b's.
+- `tools/test_manifest.json` carries other leads' edits; only the entry `reflection_environment_contract_test` belongs here.
+
+Tests run for R1-0 (`tools/run_tests.ps1 -Label r1_0`, results under `.godot/test_runs/r1_0/`): build passed; `validate_manifest.ps1` passed; the 23-test selection gave 19 pass, 2 known-fail and two non-passes explained below; `haze_consistency_gpu_test` and `water_rendering_smoke_test` passed.
+- `reflection_environment_contract_test` (new) timed out in the first two runs with "Nonexistent function 'new' in base CSharpScript" and passed in the third (8.8 s). A perf bench was running at the time and swaps an optimized assembly into the Debug slot, which would explain a missing class; that cause is suspected, not confirmed. Re-run it once on a quiet machine before the commit.
+- `river_far_water_fraction_test` fails every time ("head window at 8 m holds 585 m2 against the channel area 528 m2"). It is headless river geometry; R1-0 touches nothing near it. Not checked against a clean tree.
+- `cloud_haze_gameplay_test` failed once ("same-haze repeat changed cloud alpha unexpectedly") and passed on the rerun. Unexplained; R1-0 changes nothing at model 0.
+- The runner lists the two new R1-0 files as "unmapped (smoke only)": the manifest's path map has no rule for them yet.
+
+### 0.5 Evidence
+
+- `.godot/audit_baseline/common/reflections/b1/` (kept by the prune): the B1 sheet and stills.
+- `.godot/perf_bench/reflections_b1/20261117_144547/`, `reflections_b3a/20261117_150117/`, `reflections_b3b/20261117_153047/`: reports, stills and heatmaps of the three runs. `.godot/perf_bench/refl_tooling_check/`: the quick run of 0.6.
+
+### 0.6 Handover of the bench tooling to the test-speed lane (B2a)
+
+The test-speed lane adopts the `ab_matrix` kind. Files and hunks for a separate commit:
+- `tools/perf_bench_ab_matrix.gd` (new, whole file).
+- `tools/perf_bench.gd`, three hunks: the header comment; the two preloads and the two new keys in the initial `report` dictionary; in `_run()` the two filters and the three loops (ab measure, ab stills, probe). The hunks serve both new kinds together, so `tools/perf_bench_reflection_probe.gd` must be in the same commit (the driver preloads it).
+- `tools/fixtures/perf_bench_reflection_costs.json` (ab_matrix scenarios) and `tools/fixtures/perf_bench_reflections.json` (probe scenarios).
+
+Stable: yes. The `ab_matrix` code has not changed since its last fix and produced the two cost runs. R1-1-0 will later extend the probe file and its scenario file only.
+
+Check that the old run kinds behave the same: `tools/perf_bench.ps1 -Label refl_tooling_check -Quick` with the edited driver gave `PERF_BENCH=PASS`, exit 0, with all five quick scenarios measured (save spot 9.62 ms, plains 9.00, forest interior 9.20, 9 km 6.20, 240 m/s flight 11.61 frame p50). The generic scenario loop, the VSync pass, the stills and `ssr_fade` are untouched by the diff; the new kinds are only filtered out of them. The `ssr_fade` kind itself was not re-run.
+
+Things to know when using it:
+- The runner's own verdict for the new kinds was fixed by the test-speed lane (50864f0). The three reflection runs above predate that and show `PERF_BENCH=FAIL ... did not run` in their runner logs although the driver passed.
+- `ab_matrix` restores the engine SSR half-size state to what was in effect before a variant (on High the wet world holds it at half size whenever it is valid), not to the project setting.
+- Property checks use `TVW.has_property`: C# properties that are public but not exported are missing from `get_property_list()`.
+- The lifted coast pose is a stand-in. Waterline, lake and river poses for the user's world are still to be found.
+
+### 0.7 Other notes
+
+- Engine source read: `godotengine/godot` `master` (4.8 beta). The main repository has no tag for 4.8-dev7, so the exact dev7 commit was not read.
+- Files other lanes hold: the terrain and proxy shaders (T4-4b, FR-1). `tools/perf_bench.ps1` belongs to the test-speed lane.
 
 ## 1. Summary
 
@@ -274,7 +365,7 @@ Machine: RTX 4070 desktop at P0, 1920 x 1080 and 1600 x 900, High preset with th
 
 **B7. Far-mirror prototype** (after B1 to B6, this is R3-0): the capture effect, the lookup in the water shader only, behind a debug switch. Measure the copy and mip cost and take the lake stills. Go or no-go for R3.
 
-Evidence goes under `.godot/perf_bench/reflections_*` and `.godot/captures/reflections/`, the numbers into a new section 9 of this document.
+Evidence goes under `.godot/perf_bench/reflections_*` and `.godot/audit_baseline/common/reflections/` (kept by the prune; `.godot/captures` is not), the numbers into a new section 9 of this document.
 
 ## 6. Work orders
 
@@ -287,6 +378,8 @@ Roles as in `AGENTS.md`: "Lead" is `claude-lead`, "Implementer" is `implementer`
 - **R0-3** Run B1 to B6; write section 9. This lead.
 
 ### R1. Fix and retune what exists
+
+**Superseded by section 10** (the orders as revised after Phase B and the two Lead designs). The text below is the Phase A version, kept for the reasoning.
 
 Depends on R0. Each is S.
 
@@ -356,9 +449,237 @@ R0, then R1-1, then (R1-2 and R1-3 in parallel), then R1-4 and R1-5. R2 and R3 c
 
 ## 9. Phase B results
 
-(Empty until Phase B.)
+### 9.1 B1: the fallback (2026-11-17)
 
-## 10. Sources
+Run: `tools/perf_bench.ps1 -Label reflections_b1 -ScenarioFile tools/fixtures/perf_bench_reflections.json`, run id `20261117_144547`. RTX 4070, 1600 x 900, the user's frozen settings (snapshot `slot3_2026-11-16`), noon, clocks held, quiet scene. New scenario kind `reflection_probe` (`tools/perf_bench_reflection_probe.gd`): 8 stills per pose, reflected source as shipped or Sky, engine SSR on or off, with and without two metallic test spheres (roughness 0 and 0.35).
+
+**D1 is confirmed.**
+- The live main Environment at all seven poses: `background_mode` 1 (Color), `reflected_light_source` 0 (Background), `ambient_light_source` 3 (Sky), sky realtime, radiance size 256, `ssr_max_steps` 128, tolerance 0.12.
+- As shipped the mirror sphere is black apart from the sun glint. With the source set to Sky it shows the haze sky.
+- Forced-wet plains: as shipped the wet ground is dark grey and SSR adds a few faint patches in the middle distance. With the sky source the wet plain reflects the sky everywhere.
+- In both cases the arch and the far clouds, which fill the upper half of the frame, are absent from the reflection (D2, D7).
+
+**Also seen.**
+- The sky source changes dry surfaces too: grass and trees gain a faint blue sheen, clearest inside tree shadows. R1-1 therefore needs a review of every receiver's `SPECULAR`, not only the glossy ones.
+- The lower half of the mirror sphere shows blue haze where the ground should be (R2a).
+- Maximum forced wetness under a clear noon sky reads as a flooded blue sheet. It is not a natural state. Sign-off stills must come from a real storm and its aftermath.
+- `WetWorld.SsrHalfSizeActive` was true at every pose, dry ones included: on High the engine SSR runs at half size whenever the wet world is valid, not only while the ground is wet.
+
+**Evidence** (kept): `.godot/audit_baseline/common/reflections/b1/b1_wet_plains_fallback_sheet.png` (tile 0 as shipped with SSR, 1 sky source with SSR, 2 as shipped with spheres, 3 sky source with spheres) and the single stills beside it. The run folder is `.godot/perf_bench/reflections_b1/20261117_144547/`.
+
+**Tooling notes.**
+- In the first two scenarios of this run the "ssr" stills are not valid SSR-on frames: the probe did not find the policy override property and wrote `ssr_enabled` against the dry-weather gate. Fixed after the run. The conclusion above rests on the SSR-off and sphere stills.
+- The runner prints `PERF_BENCH=FAIL ... did not run` for scenarios of the new kinds, because they report under their own keys (`reflection_probes`, `ab_matrices`). The driver's verdict in `console.log` is the one to read until `tools/perf_bench.ps1` skips those kinds in that check.
+- The `coast_eye` pose shows grass with the ocean as a thin strip. Water needs its own poses (a lifted coast pose for now; lake and river sites to be found).
+
+### 9.2 B3 to B5, first run: what reflections cost today (2026-11-17)
+
+Run: `tools/perf_bench.ps1 -Label reflections_b3a -ScenarioFile tools/fixtures/perf_bench_reflection_costs.json -Scenarios ssr_plains_wet,ssr_alt300_wet,water_coast_lift,sky_radiance_plains`, run id `20261117_150117`. RTX 4070, 1600 x 900, the user's frozen settings, noon, clocks held. New scenario kind `ab_matrix` (`tools/perf_bench_ab_matrix.gd`): baseline and variants interleaved A-X-A, 2 rounds of 5 s windows. The baseline spread of GPU p50 over 12 to 26 windows was 0.04 to 0.10 ms; the two rounds of a variant agreed within 0.03 ms.
+
+Engine SSR, ground forced wet, half size (what High runs whenever the wet world is valid). Delta of GPU p50 in ms against the baseline:
+
+| Variant | wet plains, eye height | wet plains, 300 m up |
+|---|---|---|
+| SSR off | -0.18 | -0.24 |
+| full size instead of half | +0.20 | +0.19 |
+| steps 32 / 64 / 128 (baseline 128) | -0.02 / -0.01 / 0.00 | -0.03 / -0.01 / 0.00 |
+| tolerance 0.12 / 0.5 / 2.0 | 0.00 / 0.00 / 0.00 | 0.00 / 0.00 / 0.00 |
+| fade-out 1.0 / 0.5 | 0.00 / +0.01 | 0.00 / 0.00 |
+| reflected source = Sky | +0.05 | +0.07 |
+
+Water at the lifted coast pose (25 m up, pitch -6, ocean over about half the frame), with the user's water SSR values (32 coarse steps, 8 refinements, 1,000 m ray, 695 m camera distance, strength 1.0; these override the High preset):
+
+| Variant | Delta GPU p50 (ms) |
+|---|---|
+| water SSR off | -0.09 |
+| Very High preset values (24 steps, 250 m) | -0.02 |
+| 12 steps, 60 m ray | -0.10 |
+| reflected source = Sky | +0.08 |
+| engine SSR off | -0.22 |
+
+Sky radiance map (dry plains; baseline realtime, size 256):
+
+| Variant | Delta GPU p50 (ms) |
+|---|---|
+| process mode Incremental (no update while nothing changes) | **-0.18** |
+| process mode Quality (full-quality filter every frame) | +0.98 |
+
+**What this says.**
+- **The engine SSR costs about 0.2 ms while wet at half size, 0.4 ms at full size.** Steps, tolerance and fades cost nothing measurable. The stills agree: against the baseline, every steps, tolerance and fade variant has SSIM 0.997 or higher, SSR off 0.975 (eye height) and 0.994 (300 m up), and the sky source 0.85 and 0.91. So the engine SSR's settings are not where the look or the time is. R1-3 is reduced to housekeeping.
+- **The radiance map update costs 0.18 ms every frame, in every scene, dry or wet.** It is the largest single reflection cost and today it buys only ambient light. Once it also carries the reflections it is well spent, and a lower update cadence becomes the main saving (new order R1-6).
+- **Using the radiance map for reflections costs 0.05 to 0.08 ms.**
+- **Water SSR is about 0.1 ms at this pose**, far below the 0.7 ms of the fixture-world pass. A waterline pose and a lake are still to be measured.
+- The engine SSR runs at the coast and costs 0.22 ms there although the ground is dry: the forced policy weight in this scenario pins it on. In play the dry-weather gate decides.
+
+Evidence: `.godot/perf_bench/reflections_b3a/20261117_150117/` (`driver_report.json` key `ab_matrices`; stills and heatmaps under `ab_matrix/`).
+
+### 9.3 B3, second run: dry plains, wet forest, Weather Lung, save spot (2026-11-17)
+
+Run: `-Label reflections_b3b`, scenarios `ssr_plains_dry,ssr_forest_wet,ssr_wl_dam,ssr_save_spot`, `-Rounds 1`, run id `20261117_153047`. Same machine and settings as 9.2. **One round only**, so each delta is a single A-X-A measurement; the baseline spread over 13 windows was 0.03 to 0.04 ms, except dry plains at 0.12 ms. Engine SSR pinned on in every baseline (in play the dry-weather gate switches it off at the dry plains).
+
+Delta of GPU p50 in ms, and in brackets the SSIM of the variant's quiet still against the baseline still:
+
+| Variant | dry plains | wet forest (forced) | Weather Lung dam | save spot (naturally wet) |
+|---|---|---|---|---|
+| SSR off | -0.12 (1.0000) | -0.21 (0.9984) | -0.21 (0.9963) | -0.28 |
+| full size instead of half | +0.02 (1.0000) | +0.17 (0.9985) | +0.21 (0.9975) | +0.32 |
+| steps 32 | -0.02 | -0.04 (0.9999) | -0.06 (0.9983) | -0.08 |
+| steps 64 | -0.02 | -0.03 (1.0000) | -0.06 (0.9987) | -0.06 |
+| tolerance 2.0 | +0.01 | -0.02 (0.9995) | 0.00 (0.9978) | -0.06 |
+| reflected source = Sky | +0.01 (0.9959) | +0.03 (0.9448) | +0.05 (0.9832) | +0.08 |
+
+No stills at the save spot. Tolerance 0.12 and 0.5 and both fade values were within 0.03 ms of zero at every pose.
+
+**What this adds to 9.2.**
+- Across seven poses the engine SSR at half size costs 0.12 ms (dry plains, where it shows nothing at all) to 0.28 ms (save spot).
+- **In the wet forest the engine SSR costs 0.21 ms and changes the picture less than cloud noise does** (SSIM 0.9984 on against off, quiet scene, forced wetness, black fallback). This is the case the storm work kept it for. It supports the trial of tracing only puddles and near ground, to be judged again once the sky fallback is on.
+- Steps are not free everywhere: 64 instead of 128 saves 0.06 ms at the Weather Lung and the save spot, about 0.02 ms elsewhere. At the Lung it also changes the picture a little (0.9987), a third as much as switching SSR off. Too small to chase alone; R1-3 may take it if the Lung stills are judged equal.
+- The sky source costs 0.01 to 0.08 ms, most where most of the frame is glossy or near.
+
+Evidence: `.godot/perf_bench/reflections_b3b/20261117_153047/`.
+
+## 10. Revised orders after Phase B (2026-11-17)
+
+This section supersedes R1 of section 6 and adds R1-6 and R3a. It rests on the measurements of section 9 and on two Lead designs made the same day (receiver audit for R1-1; water composition and march for R1-2 and R1-5). User decisions of 2026-11-17: the water may change to a realistic look, with before/after stills for sign-off and nothing shipped before that; on High, reflections may cost at most +0.2 ms over today at any measured pose, and only where stills show a clear gain (more goes to Very High and above; cheaper is welcome); wet ground may be trialled with SSR on puddles and near ground only.
+
+### 10.1 What changed in the plan
+
+- **D1 is confirmed** (9.1). Turning the sky on as the reflected environment is the largest look change available and costs 0.05 to 0.08 ms.
+- **The switch touches every surface**, so R1-1 is a receiver-by-receiver order, not one line. Engine facts behind the design (read in the engine source):
+  - `RADIANCE = vec4(0, 0, 0, 1 - v)` scales only the sky term by `v`; SSR hits and direct light are untouched; `v = 1` is identical to not writing it.
+  - The engine's specular occlusion without bent normals is `min(8 x luminance(ambient x AO), 1)`. It is the only thing that dims reflections at night, in storms and in caves.
+  - `ambient_light_sky_contribution` does not reach reflections. Underground and underwater therefore need their own fade.
+  - `f0 = 0.16 x SPECULAR^2` and `f90 = clamp(50 x f0, metallic, 1)`. The water's helper assumed a linear mapping: its F0 today is 0.0066 with f90 0.33, a third of water's 0.02.
+- **The engine SSR's settings matter little** for cost and, so far, for look (9.2, 9.3): steps 64 instead of 128 saves at most 0.06 ms, tolerance and fades nothing. R1-3 shrinks to housekeeping. Its values are looked at again once the sky fallback and the far mirror exist, because only then is there something for a hit to differ from.
+- **The radiance map update is the largest reflection cost**: 0.18 ms every frame. New order R1-6.
+- **Look changes are built behind one transitional switch** (10.2), as the Physical haze was, so that other leads' captures do not move while this work is in the tree and so that "before" and "after" stills come from one run.
+- **Cloud data is published for reflections** (R3a, 10.5), by a user-approved scope addition.
+
+### 10.2 The transitional switch
+
+`ringworld_reflection_model` (global shader parameter, 0 = today, 1 = new), owned by one small C# class. Default 0 until the user signs off. It is not a menu row; the capture tooling sets it. At 1:
+- the main Environment's reflected source is Sky (at 0 it stays Background);
+- the water uses the new composition and march (at 0 its present code runs unchanged);
+- the few receiver changes that are visible even with a black environment (stand-in and scale-anchor `SPECULAR` scaled by haze) apply.
+
+Every other receiver edit is a no-op while the environment is black and needs no branch. At sign-off the default becomes 1 and a cleanup order deletes the switch and the old code paths.
+
+### 10.3 Budget (High preset, RTX 4070, 1600 x 900, user's settings)
+
+Rule: the sum may rise by at most 0.2 ms over today at any measured pose.
+
+| Item | Today | After | Basis | Order |
+|---|---|---|---|---|
+| Sky radiance map update | 0.18 ms every frame | 0.05 to 0.09 ms at a half to quarter cadence | today measured; after estimated | R1-6 |
+| Radiance read for reflections | 0 | +0.05 to +0.08 ms | measured | R1-1 |
+| Engine SSR while wet (half size) | 0.18 to 0.24 ms | the same; an estimated 0.05 to 0.10 ms less if the near-only trial is accepted | today measured | R1-4 |
+| Water march | 0.09 ms at the lifted coast pose | not above today | today measured; after to be measured at a waterline and a lake | R1-5 |
+| Water composition | part of the water shader | no change expected | estimate | R1-2 |
+| Cloud data publication | 0 | at most 0.03 ms: no new march, the existing images are published; one small resolve only if the design needs it | estimate | R3a |
+| Far mirror: copy, distance channel, mips | 0 | about 0.10 ms | estimate | R3 |
+| Far mirror: lookups in receivers | 0 | 0.02 to 0.05 ms | estimate | R3 |
+| **Sum, wet plains** | **about 0.4 ms** | **0.45 to 0.6 ms** before the R1-4 trial | | |
+
+R1-6 is what keeps the sum inside the rule once R3 is added. If its saving does not materialise, the far mirror's mip chain and resolution are the first things to cut.
+
+### 10.4 R1, revised
+
+Each order states what must stay identical. "Probe" is `tools/perf_bench.ps1 -ScenarioFile tools/fixtures/perf_bench_reflections.json` (kind `reflection_probe`); "matrix" is `tools/fixtures/perf_bench_reflection_costs.json` (kind `ab_matrix`). Until `tools/perf_bench.ps1` learns the two kinds, the verdict to read is the driver's line in `console.log`.
+
+**R1-0 Switch, source and pins.** Implementer; C#. **Implemented 2026-11-17, uncommitted, model-0 identity stills still to be taken** (status and files in section 0). Full order: `docs/work-orders/reflections/R1-1-design.md`.
+- A class that owns `ringworld_reflection_model` and writes the main Environment's reflected source (Sky at 1, Background at 0) from `RingFarViewportColorPipeline.ConfigureMainEnvironment` and on a change. A small include, `materials/ring_reflection_model.gdshaderinc`, declares the global once for every shader that branches on it.
+- Pin the far and the regional far Environment to `ReflectionSource.Background` as constants (`RingScaledFarViewport.cs`, the two environment constructors). Today both copy the main value: the whole-ring far resolves to the radiance map either way, the regional far would otherwise pick up a sky it does not have.
+- New headless test `reflection_environment_contract_test` with a manifest entry.
+- Identical: everything at model 0; the far textures at both values.
+
+**R1-1 Receivers.** Full orders (R1-1-0 probe tooling, R1-1a, R1-1b, R1-1d), the receiver audit and the far-environment analysis: `docs/work-orders/reflections/R1-1-design.md`. Not started.
+- **R1-1a Holds** (identical to today at both values): `imported_tree.gdshader` and `imported_tree_impostor.gdshader` write `RADIANCE = vec4(0, 0, 0, 1)`; `ring_grass_cards.gdshader` writes `SPECULAR = 0.0`. Reason: B1 showed the visible change on trees is in crown interiors and on trunks, which cannot see the sky, and the shader has no crown-visibility term; grass cards are a diffuse model that states "no specular". Both holds are lifted only together with a visibility term.
+- **R1-1b Sky visibility and haze.** New global `ringworld_sky_reflection` (the share of the sky the camera's surroundings can see): published by `scripts/day_side_atmosphere.gd` as underground sky access times (1 - underwater factor). New include `materials/ring_sky_reflection.gdshaderinc` with `ring_sky_reflection_radiance(visibility)`. Used by `ring_poi_architecture.gdshaderinc`, `ring_construction_surface.gdshader`, `ring_emitter_standin.gdshader`, `ring_scale_anchor.gdshader` (visibility 1; the last two also scale `SPECULAR` by sqrt(mean T) at model 1) and `voxel_ring_terrain.gdshader` (visibility = mean haze T). Extend `underground_environment_lighting_smoke_test.gd`.
+- **R1-1d Terrain** (last: the files are in use by T4-4b and FR-1): `terrain3d_ring_surface*.gdshader`, `ring_terrain_proxy*.gdshader` write `RADIANCE` with visibility = mean haze T, so wet ground and river lines kilometres away do not mirror an unhazed sky. `ring_terrain_lighting.gdshaderinc` gains a variant that returns T.
+- No change: standing grass, `ring_tree`, gust debris, hull, and the shaders shared with the far viewport.
+- Identical at model 0: everything. At model 1: water (until R1-2), trees, grass cards, ambient light, the far textures, sealed caves (black).
+
+**R1-2 Water composition.** Full design and orders (R1-2a, R1-2c): `docs/work-orders/reflections/R1-2-R1-5-design.md`. Not started; R1-2a depends on R1-0. In short:
+- `SPECULAR` is built on 0.353553 (F0 0.02, f90 1). The reflection leaves `ALBEDO`. The body (optical water and foam) is weighted by `1 - reflectance`, with the reflectance from the same split-sum fit the engine uses, not Schlick.
+- **The march's hit is added through `EMISSION`**, weighted by that reflectance and the hit confidence `a`, and the sky term is scaled by setting `SPECULAR = 0.353553 x sqrt(k x (1 - a))` (k = haze). With F0 exactly 0.02 this scaling is linear on the whole environment term, so it is equivalent to mixing the hit over the environment. The design chose this over the `RADIANCE` built-in and `render_mode specular_occlusion_disabled`: a render mode cannot branch on the switch and would change the far ocean in the scaled far viewport at model 0, and the route avoids a compile risk on dev7. (The Phase A text of this plan names `RADIANCE` for the water; this replaces it.)
+- No haze is applied to a hit (the screen pixel already carries the haze of the mirrored path); the camera-path in-scatter is reduced by reflectance x confidence.
+- The storm factors leave `SPECULAR` (the radiance pass already darkens the sky and hides the sun under a storm); `storm_ssr_keep` stays until the source contains clouds (R3, R3a).
+- `ring_ocean_global.gdshader` gets the same model at model 1, so near and far water agree.
+- The water takes `ringworld_sky_reflection` once R1-1b exists (caves, underwater).
+- Between R1-0 and R1-2a, water at model 1 counts its reflection twice: no water stills for sign-off before R1-2a.
+- Menu rows and persisted settings do not change until R1-8.
+- Known consequence to show the user: far water at roughness 0.46 will reflect less sky toward the horizon than today's fixed blue. The physical lever is the far roughness.
+
+**R1-3 Housekeeping.** Remove the inert `roughness_quality` writes and the launcher's second write of `ssr_max_steps`. One candidate value change: 64 steps on High (0.06 ms at the Weather Lung and the save spot, 9.3), only if Lung stills at model 1 are judged equal.
+
+**R1-4 Trace only where it shows** (after R1-1d, same files): far river lines, far stand-ins and wet ground beyond a few hundred metres stay above the 0.7 roughness cut; the user-approved trial compares this against today at the wet poses, by stills and by the matrix.
+
+**R1-5 Water march.** Orders R1-5a and R1-5c in `docs/work-orders/reflections/R1-2-R1-5-design.md`. Not started. In short: a screen-uniform, perspective-correct march to the horizon with an adaptive step count; thickness relative to distance plus a same-surface test for grazing terrain; a ray that reaches its vanishing point on a backdrop pixel returns that pixel as a hit at infinity (guarded for downward rays and for a high camera), which puts the arch and the far ring into the water when they are on screen. High: 12 steps, camera distance to be set by the budget (600 m proposed, 400 m if it measures above +0.2 ms). At model 1 only until sign-off.
+
+**R1-6 Radiance cadence.** New. Design and orders: `docs/work-orders/reflections/R1-6-design.md`. Not started. The realtime radiance map costs 0.18 ms per frame and its content changes slowly. Recommended design: keep the one Sky that the main and the far view share, in Realtime mode; move every sky input that changes between frames into global shader parameters, so the far viewport's visible sky stays identical; the engine then rebuilds the map only when the sky material itself is written, and a small controller writes an epoch value on input-change thresholds, on discrete events, or every 0.5 s. Estimated saving 0.13 to 0.17 ms standing, none in fast twilight flight, in water and in caves. **Its first order (R1-6a) is a measurement**, because two things from reading the engine do not match 9.2: Incremental mode should still cost about 0.1 ms per frame, and the map may be rebuilt twice per frame today (a fog-setting mismatch between the main and the far Environment is the suspected cause). Must not change ambient light visibly and must not touch the far image.
+
+**R1-7 Sign-off.** One sheet, model 0 against model 1, same run: every probe pose; a real storm and its aftermath (`tools/wet_world_capture.gd` trailing-edge views), not forced wetness; night; a cave; a megastorm frame; the emitter bore; the Weather Lung; coast, lake and river. Exposure held during capture.
+
+**R1-8 Cleanup after sign-off.** Default 1; delete the switch and the old code paths. **User decision (2026-11-17): the Water tab rows Fresnel F0, Fresnel strength and SSR strength are removed here and fixed at their physical values** (F0 0.02, strength 1). With it: the matching properties in `RingGraphicsQualityController`, `RingWaterModel` and `GameplayWaterDefaults`; the settings smoke tests (`scripts/Tools/WaterSettingsSmoke.cs`, `tools/water_rendering_smoke_test.gd`, `tools/water_ssr_live_controls_gpu_test.gd`); and persistence: a saved file that still holds the retired keys must load without an error or a `LastError` text, and the keys must be gone after the next save (today an unknown key sets "Ignored invalid gameplay water override", and the user's file holds `WaterSsrStrength`). The smoke test gets a case for exactly that. The R1-5 rows (SSR ray length, far tolerance) follow the same route if R1-5 is accepted. Water part of the order: `docs/work-orders/reflections/R1-2-R1-5-design.md`.
+
+Order: R1-0 first (done, see section 0). Then R1-1a, R1-1b and R1-2a (disjoint files; all three include `ring_reflection_model.gdshaderinc` or the sky-visibility include). R1-5 after R1-2a. R1-1d and R1-4 when the terrain files are free. R1-6a (measurement) any time.
+
+### 10.5 R3a: publish the cloud data
+
+**Goal.** Other passes can read what the cloud pass already computes each frame: cloud colour, coverage, and the transmittance-weighted distance. Reflections then get clouds from the real cloud image, and a hit on a cloud can be placed at the cloud's distance. **Clouds are not written into the main depth buffer.** **The cloud image itself must not change**, proven by a byte compare.
+
+**What exists** (read in `addons/SunshineClouds2/`):
+- `SunshineCloudsCompute.glsl` writes `output_color_image` (RGBA16F: colour with haze applied at the cloud distance, alpha = density) and `output_data_image` (RGBA16F: `.b` = `ring_cloud_depth_resolve(...)`, the transmittance-weighted distance in metres from `SunshineCloudsDepth.glslinc`; `.a` = log2(1 + opaque depth), or -8 for sky).
+- Resolution is Native, Half, Quarter or Eighth. With interleave (2 x 2 or 4 x 4) one pixel per block is marched per frame and `SunshineCloudsInterleaveFill.glsl` fills the rest. History is accumulated in ping-pong images.
+- `SunshineClouds.gd` already publishes the accumulated colour and density as a `Texture2DRD` (`get_cloud_backdrop_texture`), with the wrapper lifetime and invalidation handled.
+- `tools/cloud_depth_weighting_gpu_test.gd` tests the distance helpers.
+- The cloud pass runs post-transparent, so a reader in the opaque or transparent pass sees the previous frame's clouds.
+
+**Design points the Lead must settle (R3a-0).**
+- *Publication point*: the images the cloud display pass itself reads, after the interleave fill and the temporal accumulation. Never the raw march output of an interleaved frame.
+- *Form*: two `Texture2DRD` globals (colour and data), the view-projection the clouds were marched with (unjittered), and a parameter vector: texel size, resolution divisor, a valid flag and a generation counter. Valid is 0 on the first dispatch, after a resize, after a teleport or history reset, and while the cloud pass is off.
+- *Reduced resolution*: readers sample with coverage-weighted bilinear filtering. Plain bilinear filtering of the distance across a cloud edge averages a near cloud with a far one or with "no cloud", and that is wrong; the distance of a tap counts in proportion to its coverage, and a tap below a coverage threshold has no distance.
+- *Temporal reconstruction*: the published image is the accumulated one, so it is already reconstructed. The reader reprojects by direction (clouds are far) with the published matrix.
+- *Half-float limits*: `.b` saturates at 65,504 m and has about 1 part in 1,024 of precision (2 m at 2 km, 32 m at 32 to 65 km). The cloud handoff distance on High is of the same order, so the reader treats non-finite values and values at or above 65,000 m as "far" (infinity). That is correct for placement: beyond that distance parallax is nil.
+- *Night*: the lighting march is skipped; colour is ambient only and may be near zero. Coverage and distance stay valid. Readers must not infer "no cloud" from a dark colour, and the night lake still must show cloud silhouettes against the planet-lit sky.
+- *Where it is consumed*:
+  1. The far-mirror capture (R3-1) uses the cloud distance for its distance channel on cloud-covered pixels, so a cloud reflection is placed by parallax like terrain (it matters for a high camera and for water far from the camera). Its colour needs nothing extra: the captured image already contains the clouds.
+  2. Any reflection that reads a colour source without clouds (the water march reading the screen texture, including the hit at infinity of R1-5) composites the cloud over it: `colour x (1 - coverage) + cloud colour`. This gives clouds in water before the far mirror exists, and lets `storm_ssr_keep` go.
+  3. A ray that ends on a cloud-covered sky pixel takes the cloud distance as its hit distance.
+  4. Off-screen directions have no screen-space cloud data. They stay with the radiance map (R2d). Optional later step: a direction-keyed panorama that accumulates the clouds the screen has seen.
+
+**Design done (R3a-0):** `docs/work-orders/reflections/R3a-design.md`. Its main results, which correct the points above where they differ:
+- Published are the accumulated colour image and the accumulated data image that the post pass reads. The colour is straight (not premultiplied), with haze and lightning glow already in.
+- Two `Texture2DRD` globals and a direction matrix, swapped on the render thread as the contact shadows do. The publication adds no GPU work.
+- `valid` drops only when there is no data. A history reset or a resize does not drop it, because the image is complete after every callback.
+- Readers take a coverage-weighted harmonic mean of the distance; "far" counts as 1/D = 0.
+- The images are allocated as RGBA32F while the shaders declare rgba16f, so the precision of `.b` depends on the driver. No cloud shader is changed: the R3a-1 test measures the precision and readers keep the half-float-safe rules.
+- **Capture hold.** Commit 78b8425 (test-speed B7b) added a debug-only `capture_hold` to `SunshineClouds.gd` that skips the march while held. R3a-1 builds on it. The published snapshot has two parts: content (textures, matrix, serial) changes only after a complete march, liveness is refreshed every main-view frame, so `valid` stays 1 during a hold and a half-written image is never published.
+- **Main view only.** The cloud pass has no main-view filter of its own. The check sits in the cloud callback and gates only the publication, not where clouds render. When another view's callback runs, the globals stay bound and the matrix stays the main view's last one, but `valid` is 0 until the next complete main-view march and for two frames after the other view last rendered, so readers fall back instead of reading a foreign view's clouds. Open question in the design (its section 9): whether any other view (minimap, capture viewport) renders with the main compositor at all.
+
+**Orders.** R3a-1 to R3a-3 are written out in the design file. None is started. `SunshineClouds.gd` and `RingSunshineCloudBridge.cs` are free since B7b was committed.
+- **R3a-0** Lead design of the points above, including the exact premultiplication of the colour image and what the display pass does between these images and the screen. Done.
+- **R3a-1** Implementer: publication in `SunshineClouds.gd` and the bridge (`scripts/RingSunshineCloudBridge.cs`), extending the existing backdrop publication. No change to any cloud shader. New GPU test `cloud_publish_identity_gpu_test`: with clocks, noise and jitter held, read back the cloud colour image, the cloud data image and the final frame with publication off and on; the bytes must be equal.
+- **R3a-2** Implementer: include `ring_cloud_reflection.gdshaderinc` (sample by direction: premultiplied colour, coverage, distance, valid), with a parity test of the reprojection and of the coverage-weighted filter.
+- **R3a-3** Implementer: consumption 2 and 3 in the water (at model 1), then 1 in the far-mirror capture when R3-1 exists.
+- Verification: the byte compare; `cloud_depth_weighting_gpu_test` and `compositor_temporal_stability_test` unchanged; `GPU.Clouds` unchanged within noise in the matrix; stills of a lake under broken cloud by day, at night and under a storm; a flicker movie while turning (history resets must fade the cloud layer of the reflection out, not flash).
+- Cost: see 10.3. Depends on R1-2a and R1-5 for consumption 2 and 3, on R3-1 for consumption 1. R3a-0 and R3a-1 can start now.
+
+### 10.6 Open decisions
+
+Decided: the Water tab rows Fresnel F0, Fresnel strength and SSR strength are removed at cleanup (user, 2026-11-17; see R1-8).
+
+For the primary agent:
+1. Offering the user a reset of their water SSR overrides (32 steps, 8 refinements, 1,000 m) to the new High values once R1-5 exists.
+2. R1-6: sky inputs as global shader parameters (recommended by the design; touches four tests) or a snapshot-uniform fallback.
+3. R3a: keep the lightning glow in what reflections read (recommended; it arrives one frame late).
+
+For the user, with the sign-off sheet:
+1. Trees and grass keep today's look (no sky sheen) until a canopy-visibility term exists. Accept as the interim?
+2. Metal undersides and shafts will show haze where ground should be until R2a. Accept as the interim, or hold the switch until R2a is in?
+3. Far water will reflect less sky toward the horizon than today's fixed blue. Accept the physical result, or study the far roughness?
+
+## 11. Sources
 
 Engine:
 - Godot PR 111210, "Overhaul screen-space reflections" (merged 2025-10-21, milestone 4.6): https://github.com/godotengine/godot/pull/111210
