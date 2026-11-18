@@ -1,0 +1,903 @@
+{
+ "schema": 1,
+ "note": "R1-5c (docs/work-orders/reflections/R1-2-R1-5-design.md): cost and look of the model-1 water march at a lake waterline, a lake from a cliff, open lake water, a river along its course and from its bank (the user's world, found with tools/InlandSwimProbe.cs) and the lifted coast. reflection_probe = stills at models 0 and 1; wm_* = model 1 against model 0; w1_* = at model 1 (baseline), the water SSR off, camera distance 400/600/800 m, max steps 12/16 against the user's values (32 steps, 8 refinements, 695 m). Run: tools/perf_bench.ps1 -Label r15c -ScenarioFile tools/fixtures/perf_bench_reflection_water.json",
+ "defaults": {
+  "window_s": 8,
+  "rounds": 2,
+  "settle_s": 4,
+  "time": {
+   "mode": "noon"
+  },
+  "hold_clocks": false
+ },
+ "key_scopes": [
+  "Trees frame request",
+  "Trees update (inclusive)",
+  "Trees camera cull",
+  "Trees output selection",
+  "Trees install",
+  "Grass update (inclusive)",
+  "Grass presentation (inclusive)",
+  "Water update",
+  "Terrain macro shadow install",
+  "Terrain macro shadow build",
+  "Terrain LOD coordinator update (inclusive)",
+  "Terrain proxy update (inclusive)",
+  "Terrain proxy install",
+  "Far ring update (inclusive)"
+ ],
+ "poses": {
+  "coast_eye": {
+   "around_m": 6338521.26995006,
+   "across_m": 190404.022585299,
+   "lift_m": 1.7,
+   "yaw_deg": 112.5,
+   "pitch_deg": -2.0,
+   "notes": "land 3.8 m, ocean 250 m along yaw 112.5"
+  },
+  "lake_waterline": {
+   "around_m": 9773480.0,
+   "across_m": 37352.0,
+   "vertical_m": 673.13,
+   "yaw_deg": 90.0,
+   "pitch_deg": -3.0,
+   "notes": "user's world (slot 3 v9): lake bank 1.8 m above the ground at the water's edge, lake level 671 m, looking across the lake (InlandSwimProbe lake_shore)"
+  },
+  "lake_cliff": {
+   "around_m": 9773480.0,
+   "across_m": 37202.0,
+   "vertical_m": 771.0,
+   "yaw_deg": 90.0,
+   "pitch_deg": -20.0,
+   "notes": "the same lake from 100 m above the water, 150 m behind the bank, pitch -20"
+  },
+  "lake_open": {
+   "around_m": 9773480.0,
+   "across_m": 37500.0,
+   "vertical_m": 702.0,
+   "yaw_deg": 0.0,
+   "pitch_deg": -3.0,
+   "notes": "31 m above the lake point, pitch -3 (InlandSwimProbe lake_open)"
+  },
+  "river_course": {
+   "around_m": 12057236.85,
+   "across_m": 3424.71,
+   "vertical_m": 205.62,
+   "yaw_deg": -100.12,
+   "pitch_deg": -12.0,
+   "notes": "16 m above a 15 m wide river, 120 m upstream, looking down its course (InlandSwimProbe river_aerial)"
+  },
+  "river_bank": {
+   "around_m": 12057226.0,
+   "across_m": 3306.0,
+   "vertical_m": 191.77,
+   "yaw_deg": 180.0,
+   "pitch_deg": -4.0,
+   "notes": "standing on the river bank, eye height, looking at the water (InlandSwimProbe river_bank)"
+  }
+ },
+ "scenarios": [
+  {
+   "name": "refl_coast_lift",
+   "kind": "reflection_probe",
+   "pose": "coast_eye",
+   "lift_m": 25,
+   "pitch_deg": -6
+  },
+  {
+   "name": "refl_lake_waterline",
+   "kind": "reflection_probe",
+   "pose": "lake_waterline"
+  },
+  {
+   "name": "refl_lake_cliff",
+   "kind": "reflection_probe",
+   "pose": "lake_cliff"
+  },
+  {
+   "name": "refl_lake_open",
+   "kind": "reflection_probe",
+   "pose": "lake_open"
+  },
+  {
+   "name": "refl_river_course",
+   "kind": "reflection_probe",
+   "pose": "river_course"
+  },
+  {
+   "name": "refl_river_bank",
+   "kind": "reflection_probe",
+   "pose": "river_bank"
+  },
+  {
+   "name": "wm_coast_lift",
+   "kind": "ab_matrix",
+   "pose": "coast_eye",
+   "window_s": 5,
+   "rounds": 3,
+   "hold_clocks": true,
+   "stills": false,
+   "variants": [
+    {
+     "name": "model1",
+     "ops": [
+      {
+       "reflection_model": 1
+      }
+     ]
+    }
+   ],
+   "lift_m": 25,
+   "pitch_deg": -6
+  },
+  {
+   "name": "w1_coast_lift",
+   "kind": "ab_matrix",
+   "pose": "coast_eye",
+   "window_s": 5,
+   "rounds": 2,
+   "hold_clocks": true,
+   "stills": false,
+   "baseline": [
+    {
+     "reflection_model": 1
+    }
+   ],
+   "variants": [
+    {
+     "name": "water_ssr_off",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrEnabled": false
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "cam400",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCameraDistance": 400.0
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "cam600",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCameraDistance": 600.0
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "cam800",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCameraDistance": 800.0
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "steps12",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCoarseSteps": 12
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "steps16",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCoarseSteps": 16
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    }
+   ],
+   "lift_m": 25,
+   "pitch_deg": -6
+  },
+  {
+   "name": "wm_lake_waterline",
+   "kind": "ab_matrix",
+   "pose": "lake_waterline",
+   "window_s": 5,
+   "rounds": 3,
+   "hold_clocks": true,
+   "stills": false,
+   "variants": [
+    {
+     "name": "model1",
+     "ops": [
+      {
+       "reflection_model": 1
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "w1_lake_waterline",
+   "kind": "ab_matrix",
+   "pose": "lake_waterline",
+   "window_s": 5,
+   "rounds": 2,
+   "hold_clocks": true,
+   "stills": false,
+   "baseline": [
+    {
+     "reflection_model": 1
+    }
+   ],
+   "variants": [
+    {
+     "name": "water_ssr_off",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrEnabled": false
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "cam400",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCameraDistance": 400.0
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "cam600",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCameraDistance": 600.0
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "cam800",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCameraDistance": 800.0
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "steps12",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCoarseSteps": 12
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "steps16",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCoarseSteps": 16
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "wm_lake_cliff",
+   "kind": "ab_matrix",
+   "pose": "lake_cliff",
+   "window_s": 5,
+   "rounds": 3,
+   "hold_clocks": true,
+   "stills": false,
+   "variants": [
+    {
+     "name": "model1",
+     "ops": [
+      {
+       "reflection_model": 1
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "w1_lake_cliff",
+   "kind": "ab_matrix",
+   "pose": "lake_cliff",
+   "window_s": 5,
+   "rounds": 2,
+   "hold_clocks": true,
+   "stills": false,
+   "baseline": [
+    {
+     "reflection_model": 1
+    }
+   ],
+   "variants": [
+    {
+     "name": "water_ssr_off",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrEnabled": false
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "cam400",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCameraDistance": 400.0
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "cam600",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCameraDistance": 600.0
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "cam800",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCameraDistance": 800.0
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "steps12",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCoarseSteps": 12
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "steps16",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCoarseSteps": 16
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "wm_lake_open",
+   "kind": "ab_matrix",
+   "pose": "lake_open",
+   "window_s": 5,
+   "rounds": 3,
+   "hold_clocks": true,
+   "stills": false,
+   "variants": [
+    {
+     "name": "model1",
+     "ops": [
+      {
+       "reflection_model": 1
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "w1_lake_open",
+   "kind": "ab_matrix",
+   "pose": "lake_open",
+   "window_s": 5,
+   "rounds": 2,
+   "hold_clocks": true,
+   "stills": false,
+   "baseline": [
+    {
+     "reflection_model": 1
+    }
+   ],
+   "variants": [
+    {
+     "name": "water_ssr_off",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrEnabled": false
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "cam400",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCameraDistance": 400.0
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "cam600",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCameraDistance": 600.0
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "cam800",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCameraDistance": 800.0
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "steps12",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCoarseSteps": 12
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "steps16",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCoarseSteps": 16
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "wm_river_course",
+   "kind": "ab_matrix",
+   "pose": "river_course",
+   "window_s": 5,
+   "rounds": 3,
+   "hold_clocks": true,
+   "stills": false,
+   "variants": [
+    {
+     "name": "model1",
+     "ops": [
+      {
+       "reflection_model": 1
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "w1_river_course",
+   "kind": "ab_matrix",
+   "pose": "river_course",
+   "window_s": 5,
+   "rounds": 2,
+   "hold_clocks": true,
+   "stills": false,
+   "baseline": [
+    {
+     "reflection_model": 1
+    }
+   ],
+   "variants": [
+    {
+     "name": "water_ssr_off",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrEnabled": false
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "cam400",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCameraDistance": 400.0
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "cam600",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCameraDistance": 600.0
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "cam800",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCameraDistance": 800.0
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "steps12",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCoarseSteps": 12
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "steps16",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCoarseSteps": 16
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "wm_river_bank",
+   "kind": "ab_matrix",
+   "pose": "river_bank",
+   "window_s": 5,
+   "rounds": 3,
+   "hold_clocks": true,
+   "stills": false,
+   "variants": [
+    {
+     "name": "model1",
+     "ops": [
+      {
+       "reflection_model": 1
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "w1_river_bank",
+   "kind": "ab_matrix",
+   "pose": "river_bank",
+   "window_s": 5,
+   "rounds": 2,
+   "hold_clocks": true,
+   "stills": false,
+   "baseline": [
+    {
+     "reflection_model": 1
+    }
+   ],
+   "variants": [
+    {
+     "name": "water_ssr_off",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrEnabled": false
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "cam400",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCameraDistance": 400.0
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "cam600",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCameraDistance": 600.0
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "cam800",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCameraDistance": 800.0
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "steps12",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCoarseSteps": 12
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    },
+    {
+     "name": "steps16",
+     "ops": [
+      {
+       "node": "GraphicsQuality",
+       "set": {
+        "WaterSsrCoarseSteps": 16
+       }
+      },
+      {
+       "node": "GraphicsQuality",
+       "call": "ApplyWaterTuning",
+       "args": []
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
