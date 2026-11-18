@@ -10,6 +10,7 @@
 .NOTES
   Exit codes: 0 process exited 0 (with -Marker: a PASS or SKIP line and no FAIL line), 1 anything else (non-zero exit, load-failed,
   stalled, timeout, marker FAIL), 2 preflight or usage problem (nothing was launched), 9 the user is playing (windowed runs only).
+  -Class shared [-Weight light] lets a correctness or picture run share the GPU (see gpu_queue.ps1); never for timing runs (default exclusive).
   Windowed runs hold the GPU queue (tools\gpu_queue.ps1) and heartbeat the ticket once a minute. Without -AppData the real profile
   is used. RINGWORLD_TEST_NO_GRAB=1 is set for the child.
 #>
@@ -18,7 +19,8 @@ param(
     [string]$EngineArgs = '', [string]$UserArgs = '',
     [string]$Log = '', [string]$AppData = '',
     [double]$TimeoutMin = 30, [double]$StallMinutes = 10,
-    [string]$Marker = '', [string]$Label = '', [switch]$NoQueue
+    [string]$Marker = '', [string]$Label = '', [switch]$NoQueue,
+    [ValidateSet('exclusive', 'shared')][string]$Class = 'exclusive', [ValidateSet('world', 'light')][string]$Weight = 'world'
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -79,7 +81,7 @@ $acquired = $false
 try {
     if ($useQueue) {
         Write-Host "GPU queue: acquiring as $Label"
-        & $queueScript -Acquire -Label $Label | Out-Host
+        & $queueScript -Acquire -Label $Label -Class $Class -Weight $Weight | Out-Host
         if ($LASTEXITCODE -ne 0) { Write-Host 'run_godot: could not acquire the GPU queue'; exit 1 }
         $acquired = $true
     }

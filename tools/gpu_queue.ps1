@@ -24,6 +24,9 @@
   so older script instances still see a plain FIFO and treat new tickets by name order only.
   A ticket not refreshed for 15 min is stale and removed (a finished agent that forgot -Release blocks the queue only that long).
   tools/run_tests.ps1 acquires this queue itself for its GPU phase; do not wrap it.
+  Nested mode: when $env:RINGWORLD_GPU_QUEUE_HELD is non-empty (the label of a ticket an ancestor process holds, set by run_tests.ps1
+    for .ps1 runner entries), -Wrap runs the command directly, -Acquire/-Release/-Heartbeat succeed at once, and no ticket is created,
+    so a runner started inside the run_tests ticket does not queue behind its own parent. History records the event "nested".
 #>
 param(
     [switch]$Acquire, [switch]$Release, [switch]$Heartbeat, [switch]$Status,
@@ -129,13 +132,13 @@ function Invoke-Acquire {
                     if (-not $vramNoted) { $vramNoted = $true; Write-Host ("GPU_QUEUE waiting for free VRAM: {0:N0} MiB free, shared world job needs {1} MiB" -f $free, $minFreeMb) }
                 }
             }
-            if ($ok) { Write-History "acquire" ((Get-Date) - $t0).TotalSeconds; "GPU_ACQUIRED $Label"; return $true }
+            if ($ok) { Write-History "acquire" ((Get-Date) - $t0).TotalSeconds; Write-Host "GPU_ACQUIRED $Label"; return $true }   # Write-Host: the return value must be the only output, or a timeout ("text", $false) reads as true
         }
         Start-Sleep -Seconds 15
     }
     Remove-Item $mine.FullName -ErrorAction SilentlyContinue
     Write-History "timeout" ((Get-Date) - $t0).TotalSeconds
-    "GPU_TIMEOUT $Label"; return $false
+    Write-Host "GPU_TIMEOUT $Label"; return $false
 }
 function Invoke-Release {
     $m = Get-Mine
@@ -158,12 +161,23 @@ if ($Status) {
     exit 0
 }
 
+$held = $env:RINGWORLD_GPU_QUEUE_HELD   # nested mode: an ancestor already holds a ticket
+if ($held -and $Acquire -and $Label -ne "") { Write-History "nested"; "GPU_ACQUIRED $Label (inside held ticket $held)"; exit 0 }
+if ($held -and $Release) { "GPU_RELEASED $Label"; exit 0 }
+if ($held -and $Heartbeat) { exit 0 }
+
 if ($null -ne $Wrap) {
     if ($Label -eq "") { $Label = "wrap_$PID" }
-    if (-not (Invoke-Acquire)) { exit 1 }
-    $hb = Start-Job -ArgumentList $dir, $Label -ScriptBlock {
-        param($d, $l)
-        while ($true) { Start-Sleep -Seconds 300; Get-ChildItem $d -Filter "*_$l.ticket" -ErrorAction SilentlyContinue | ForEach-Object { $_.LastWriteTime = Get-Date } }
+    $hb = $null
+    if ($held) {
+        Write-Host "GPU queue: inside the held ticket $held; no ticket of my own"
+        Write-History "nested"
+    } else {
+        if (-not (Invoke-Acquire)) { exit 1 }
+        $hb = Start-Job -ArgumentList $dir, $Label -ScriptBlock {
+            param($d, $l)
+            while ($true) { Start-Sleep -Seconds 300; Get-ChildItem $d -Filter "*_$l.ticket" -ErrorAction SilentlyContinue | ForEach-Object { $_.LastWriteTime = Get-Date } }
+        }
     }
     $code = 0
     $prevNoGrab = $env:RINGWORLD_TEST_NO_GRAB; $env:RINGWORLD_TEST_NO_GRAB = '1'   # TestRunMouseRelease autoload
@@ -174,8 +188,10 @@ if ($null -ne $Wrap) {
     } catch { Write-Host "gpu_queue: wrapped command failed: $($_.Exception.Message)"; $code = 1 }
     finally {
         $env:RINGWORLD_TEST_NO_GRAB = $prevNoGrab
-        Stop-Job $hb -ErrorAction SilentlyContinue; Remove-Job $hb -Force -ErrorAction SilentlyContinue
-        Invoke-Release
+        if ($hb) {
+            Stop-Job $hb -ErrorAction SilentlyContinue; Remove-Job $hb -Force -ErrorAction SilentlyContinue
+            Invoke-Release
+        }
     }
     exit $code
 }

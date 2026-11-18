@@ -82,7 +82,9 @@ if (-not $InQueue) {
     $(if ($Build) { " -Build" } else { "" }) + $(if ($SkipBuild) { " -SkipBuild" } else { "" }) +
     $(if ($ScriptArgs) { " -ScriptArgs $(Quote $ScriptArgs)" } else { "" }) + $(if ($EngineArgs) { " -EngineArgs $(Quote $EngineArgs)" } else { "" })
   # One ticket per run: gpu_queue finds tickets by label, so a shared label let a second run match the first one's ticket.
-  & (Join-Path $PSScriptRoot "gpu_queue.ps1") -Label "tree_vis_$($Label)_$RunId" -Wrap $inner
+  # frustum_identity, cull_verify and blob_probe check correctness or pictures and may share the GPU; oracle and cadence time things and stay exclusive.
+  $qClass = if ($Test -in @("frustum_identity", "cull_verify", "blob_probe")) { "shared" } else { "exclusive" }
+  & (Join-Path $PSScriptRoot "gpu_queue.ps1") -Label "tree_vis_$($Label)_$RunId" -Class $qClass -Wrap $inner
   exit $LASTEXITCODE
 }
 

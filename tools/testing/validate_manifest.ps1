@@ -89,7 +89,9 @@ foreach ($f in Get-ChildItem -LiteralPath $toolsDir -Filter '*.gd' -File) {
 # --- per-entry checks ---
 $kinds = 'test', 'tool'; $modes = 'headless', 'gpu', 'gpu-local'
 $tiers = 'smoke', 'gate', 'slow', 'extended', 'manual'; $gateTiers = 'smoke', 'gate', 'slow'
-$profiles = 'shared', 'fresh', 'own-runner'
+$profiles = 'shared', 'fresh', 'own-runner'; $gpuClasses = 'shared', 'exclusive'
+$dgc = Get-Val (Get-Val $m 'defaults') 'gpu_class'
+if ($null -ne $dgc -and $gpuClasses -notcontains $dgc) { Fail $mf "defaults.gpu_class '$dgc' must be shared or exclusive" }
 foreach ($name in @($entries.Keys | Sort-Object)) {
     $e = $entries[$name]; $where = "tools/$name.gd"
     $runner = Get-Val $e 'runner'
@@ -103,7 +105,10 @@ foreach ($name in @($entries.Keys | Sort-Object)) {
     if ($tiers -notcontains $tier) { Fail $where "bad tier '$tier'" }
     $prof = Get-Val $e 'profile'
     if ($prof -and $profiles -notcontains $prof) { Fail $where "bad profile '$prof'" }
+    $gc = Get-Val $e 'gpu_class'
+    if ($null -ne $gc -and $gpuClasses -notcontains $gc) { Fail $where "bad gpu_class '$gc' (shared or exclusive)" }
     $tags = Get-Val $e 'tags'
+    if ($gc -eq 'shared' -and @($tags) -contains 'perf-telemetry') { Fail $where 'a perf-telemetry test must not be gpu_class shared (it measures time)' }
     if ($null -eq $tags -or @($tags).Count -eq 0) { Fail $where 'no tags' }
     foreach ($t in @($tags)) { if (-not $tagNames.ContainsKey([string]$t)) { Fail $where "tag '$t' is not in the taxonomy" } }
     foreach ($num in 'expected_s', 'timeout_s') {

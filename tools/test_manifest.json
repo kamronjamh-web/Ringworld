@@ -813,6 +813,7 @@
     },
     "atmosphere_lut_gpu_test": {
       "kind": "test",
+      "gpu_class": "exclusive",
       "mode": "gpu-local",
       "tier": "gate",
       "tags": [
@@ -1338,6 +1339,7 @@
     },
     "cloud_shadow_crossfade_test": {
       "kind": "test",
+      "gpu_class": "exclusive",
       "mode": "gpu",
       "tier": "gate",
       "tags": [
@@ -4094,6 +4096,7 @@
     },
     "menu_continue_transition_test": {
       "kind": "test",
+      "gpu_class": "exclusive",
       "mode": "gpu",
       "tags": [
         "loading",
@@ -4387,6 +4390,7 @@
     },
     "precip_occlusion_gpu_test": {
       "kind": "test",
+      "gpu_class": "exclusive",
       "mode": "gpu",
       "tier": "gate",
       "tags": [
@@ -6115,6 +6119,7 @@
     },
     "terrain3d_gameplay_movement_test": {
       "kind": "test",
+      "gpu_class": "exclusive",
       "mode": "gpu",
       "tier": "gate",
       "tags": [

@@ -475,6 +475,8 @@ Run: `tools/perf_bench.ps1 -Label reflections_b1 -ScenarioFile tools/fixtures/pe
 
 Run: `tools/perf_bench.ps1 -Label reflections_b3a -ScenarioFile tools/fixtures/perf_bench_reflection_costs.json -Scenarios ssr_plains_wet,ssr_alt300_wet,water_coast_lift,sky_radiance_plains`, run id `20261117_150117`. RTX 4070, 1600 x 900, the user's frozen settings, noon, clocks held. New scenario kind `ab_matrix` (`tools/perf_bench_ab_matrix.gd`): baseline and variants interleaved A-X-A, 2 rounds of 5 s windows. The baseline spread of GPU p50 over 12 to 26 windows was 0.04 to 0.10 ms; the two rounds of a variant agreed within 0.03 ms.
 
+Note (2026-11-18): until then `_median` in `perf_bench_ab_matrix.gd` took the upper of the two middle values, so the 2-round "median" deltas in 9.2 and 9.3 are the less favourable round (at most the 0.03 ms round agreement away from the true median, slightly conservative); it now averages them.
+
 Engine SSR, ground forced wet, half size (what High runs whenever the wet world is valid). Delta of GPU p50 in ms against the baseline:
 
 | Variant | wet plains, eye height | wet plains, 300 m up |

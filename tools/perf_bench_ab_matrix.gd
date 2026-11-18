@@ -118,7 +118,10 @@ static func _median(values: Array) -> float:
 		return 0.0
 	var s := values.duplicate()
 	s.sort()
-	return float(s[s.size() / 2])
+	var n := s.size()
+	if n % 2 == 1:
+		return float(s[n / 2])
+	return 0.5 * (float(s[n / 2 - 1]) + float(s[n / 2]))  # even count: mean of the two middle values (was the upper one before 2026-11-18)
 
 
 static func _spread(values: Array) -> float:

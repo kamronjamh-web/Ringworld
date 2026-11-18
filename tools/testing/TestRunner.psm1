@@ -318,8 +318,14 @@ function New-TestSpec([string]$Name, $E, $Known, $Defaults = $null) {
     $ps = Get-Val $E 'parallel_safe'
     $parallelSafe = ($ps -ne $false) -and ($profile -ne 'fresh')   # a recreated fresh profile cannot be shared with parallel tests
     $kstatus = [string](Get-Val $Known 'status')
+    # GPU class: entry gpu_class, else exclusive for the perf-telemetry tag (timing), else defaults.gpu_class, else exclusive. Fixed = the entry or tag pins exclusive (-GpuClass shared cannot loosen it).
+    $gc = [string](Get-Val $E 'gpu_class'); $gcFixed = $false
+    if ($gc) { $gcFixed = ($gc -eq 'exclusive') }
+    elseif (@(Get-Val $E 'tags') -contains 'perf-telemetry') { $gc = 'exclusive'; $gcFixed = $true }
+    else { $gc = [string](Get-Val $Defaults 'gpu_class') }
+    if ($gc -ne 'shared') { $gc = 'exclusive' }
     return [pscustomobject]@{
-        Name = $Name; Kind = [string](Get-Val $E 'kind'); Mode = $mode; Tier = [string](Get-Val $E 'tier')
+        Name = $Name; Kind = [string](Get-Val $E 'kind'); Mode = $mode; Tier = [string](Get-Val $E 'tier'); GpuClass = $gc; GpuClassFixed = $gcFixed
         Tags = @(Get-Val $E 'tags'); Marker = [string](Get-Val $E 'marker'); MarkerFix = [string](Get-Val $E 'marker_fix')
         Args = (Split-ArgString ([string](Get-Val $E 'args'))); UserArgs = (Split-ArgString ([string](Get-Val $E 'user_args')))
         Runner = [string](Get-Val $E 'runner'); TimeoutS = [double]$timeout; StallS = [double]$stall; ExpectedS = [double]$expected
@@ -778,18 +784,22 @@ function Get-GpuWaiterCount($Ctx) {
     $mine = '*_' + (Get-GpuTicketLabel $Ctx) + '.ticket'
     return @(Get-ChildItem -LiteralPath $d -Filter '*.ticket' | Where-Object { $_.Name -notlike $mine -and ((Get-Date) - $_.LastWriteTime).TotalMinutes -lt 15 }).Count
 }
+# The group's class and weight (Ctx.GpuGroupClass / GpuGroupWeight) go to the ticket; text names them in the console lines.
+function Get-GpuGroupText($Ctx) { if ($Ctx.GpuGroupClass -eq 'shared') { "shared $($Ctx.GpuGroupWeight)" } else { 'exclusive' } }
 function Lock-GpuQueue($Ctx) {
     $q = Join-Path (Split-Path -Parent $PSScriptRoot) 'gpu_queue.ps1'
     $lbl = Get-GpuTicketLabel $Ctx
-    Write-Host ("{0:HH:mm:ss} GPU queue: waiting for {1}" -f (Get-Date), $lbl)
-    $out = & (Get-PsHost) -NoProfile -ExecutionPolicy Bypass -File $q -Acquire -Label $lbl 2>&1
+    Write-Host ("{0:HH:mm:ss} GPU queue: waiting for {1} ({2})" -f (Get-Date), $lbl, (Get-GpuGroupText $Ctx))
+    $qa = @('-Acquire', '-Label', $lbl, '-Class', $Ctx.GpuGroupClass)
+    if ($Ctx.GpuGroupClass -eq 'shared') { $qa += @('-Weight', $Ctx.GpuGroupWeight) }
+    $out = & (Get-PsHost) -NoProfile -ExecutionPolicy Bypass -File $q @qa 2>&1
     if ($LASTEXITCODE -ne 0) { throw "GPU queue acquire failed: $($out -join ' ')" }
     $Ctx.GpuHeld = $true; $Ctx.GpuSince = Get-Date
     $Ctx.GpuHeartbeat = Start-Job -ArgumentList (Get-GpuQueueDir), $lbl -ScriptBlock {
         param($d, $l)
         while ($true) { Start-Sleep -Seconds 300; Get-ChildItem $d -Filter "*_$l.ticket" -ErrorAction SilentlyContinue | ForEach-Object { $_.LastWriteTime = Get-Date } }
     }
-    Write-Host ("{0:HH:mm:ss} GPU queue: acquired {1}" -f (Get-Date), $lbl)
+    Write-Host ("{0:HH:mm:ss} GPU queue: acquired {1} ({2})" -f (Get-Date), $lbl, (Get-GpuGroupText $Ctx))
     $others = @(Get-Process -Name 'Godot*' -ErrorAction SilentlyContinue)
     if ($others.Count -gt 0) {
         Write-Host ("WARNING: {0} Godot process(es) already running (PIDs {1}) outside the queue. The runner never kills processes it did not start." -f $others.Count, (($others | ForEach-Object { $_.Id }) -join ','))
@@ -811,7 +821,7 @@ function Invoke-GpuYield($Ctx) {
     if (-not $Ctx.GpuHeld -or [double]$Ctx.YieldMinutes -le 0) { return }
     if (((Get-Date) - $Ctx.GpuSince).TotalMinutes -lt $Ctx.YieldMinutes) { return }
     if ((Get-GpuWaiterCount $Ctx) -eq 0) { $Ctx.GpuSince = Get-Date; return }
-    Write-Host ("{0:HH:mm:ss} GPU queue: held {1} min and others are waiting; yielding" -f (Get-Date), $Ctx.YieldMinutes)
+    Write-Host ("{0:HH:mm:ss} GPU queue: held {1} min and others are waiting; yielding ({2})" -f (Get-Date), $Ctx.YieldMinutes, (Get-GpuGroupText $Ctx))
     Unlock-GpuQueue $Ctx
     Start-Sleep -Seconds 60
     Lock-GpuQueue $Ctx
@@ -846,6 +856,7 @@ function Get-LaunchPlan($Ctx, $Spec) {
         # .ps1 runners isolate themselves from the REAL APPDATA (some refuse -AppData equal to $env:APPDATA), so the child
         # always sees the real roaming folder, never the runner's isolated profile.
         $env_ += "APPDATA=$(Get-RealAppDataRoot)"
+        if ($Ctx.GpuHeld) { $env_ += "RINGWORLD_GPU_QUEUE_HELD=$(Get-GpuTicketLabel $Ctx)" }   # runners that take the queue themselves (gpu_queue.ps1 nested mode) run inside this ticket
         return @{ Exe = (Get-PsHost); Args = (Join-ProcessArgs $a); Env = $env_ }
     }
     $appRoot = $Ctx.ProfileRoot
@@ -981,7 +992,7 @@ function Get-Verdict($Spec, $Proc, [string]$Kill, [double]$TimeoutS) {
 
 function New-ResultRecord($Spec, [string]$Reason) {
     return [ordered]@{
-        name = $Spec.Name; mode = $Spec.Mode; tier = $Spec.Tier; batch = $(if ($Spec.Batch) { $Spec.Batch } else { $null })
+        name = $Spec.Name; mode = $Spec.Mode; tier = $Spec.Tier; gpu_class = $Spec.GpuClass; batch = $(if ($Spec.Batch) { $Spec.Batch } else { $null })
         status = 'not-run'; marker = $(if ($Spec.Marker) { $Spec.Marker } else { $null }); exit_code = $null; exit_anomaly = $false
         duration_s = $null; attempts = 0; reason = $Reason; detail = ''; log = "logs/$($Spec.Name).log"
         expected_s = $Spec.ExpectedS
@@ -1010,7 +1021,7 @@ function Save-Results($Ctx, [bool]$Final) {
         run_id = $Ctx.RunId; label = $Ctx.Label; suite = $Ctx.SuiteName; base = $Ctx.Base; head = $Ctx.Head; dirty = $Ctx.Dirty
         machine = $Ctx.Machine; manifest = $Ctx.Manifest; known_failures = $Ctx.KnownFailures
         selection = [ordered]@{
-            changed_files = @($sel.Files).Count; tags = @($sel.Tags); unmapped = @($sel.Unmapped); unmapped_policy = [string]$sel.UnmappedPolicy; core = [bool]$sel.Core
+            gpu_class = $Ctx.GpuClassOpt; changed_files = @($sel.Files).Count; tags = @($sel.Tags); unmapped = @($sel.Unmapped); unmapped_policy = [string]$sel.UnmappedPolicy; core = [bool]$sel.Core
             parse_only = @(if ($sel.ParseOnly) { $sel.ParseOnly.Keys } else { @() })
             skipped = @($sel.Skipped.Keys | ForEach-Object { "$_ : $($sel.Skipped[$_])" })
         }
@@ -1039,6 +1050,7 @@ function Format-ResultsMarkdown($Ctx, $Sum, [double]$Wall, [bool]$Final) {
     [void]$sb.AppendLine("# Test run $($Ctx.Label) $($Ctx.RunId)  ($($Ctx.SuiteName) vs $($Ctx.Base), $($Ctx.Machine.gpu))")
     $state = if ($Final) { "Exit $exit." } else { 'IN PROGRESS (not final).' }
     [void]$sb.AppendLine("$n selected: $($parts -join ', '). Wall $(Format-Duration $Wall). $state")
+    if ($Ctx.GpuGroups -and $Ctx.GpuGroups.Count -gt 1) { [void]$sb.AppendLine("GPU groups: shared $($Ctx.GpuGroups['shared'].Count) ($($Ctx.GpuGroups['shared'].Weight)), exclusive $($Ctx.GpuGroups['exclusive'].Count)") }
     $fixed = @($Ctx.Results.Values | Where-Object { $_.status -eq 'fixed' })
     if ($fixed.Count -gt 0) {
         [void]$sb.AppendLine('')
@@ -1299,7 +1311,7 @@ function New-ValidatorSpec {
     return [pscustomobject]@{
         Name = 'manifest_validator'; Kind = 'test'; Mode = 'headless'; Tier = 'smoke'; Tags = @('tooling-policy'); Marker = 'VALIDATE_MANIFEST'; MarkerFix = ''
         Args = @(); UserArgs = @('-Quiet'); Runner = 'tools/testing/validate_manifest.ps1'; TimeoutS = 60; StallS = 0; ExpectedS = 12; Profile = 'own-runner'
-        ParallelSafe = $true; Batch = ''; Synthetic = $true; KnownStatus = ''; KnownMatch = ''; KnownRetries = 0; KnownTimeout = $null; Reason = 'smoke (manifest validator)'
+        GpuClass = 'exclusive'; GpuClassFixed = $true; ParallelSafe = $true; Batch = ''; Synthetic = $true; KnownStatus = ''; KnownMatch = ''; KnownRetries = 0; KnownTimeout = $null; Reason = 'smoke (manifest validator)'
     }
 }
 
@@ -1316,7 +1328,8 @@ function Invoke-TestRun {
         [int]$Parallel = 0, [int]$LocalLanes = 0, [double]$YieldMinutes = 0,
         [string]$Resume = '', [switch]$RetryFailed,
         [string]$ManifestPath = '', [string]$KnownFailuresPath = '',
-        [ValidateSet('smoke', 'full')][string]$UnmappedPolicy = 'smoke'
+        [ValidateSet('smoke', 'full')][string]$UnmappedPolicy = 'smoke',
+        [ValidateSet('', 'shared', 'exclusive')][string]$GpuClass = ''
     )
     Reset-SelectionCaches
     # powershell.exe -File passes 'a,b' as one string; split comma lists for all list parameters.
@@ -1380,6 +1393,8 @@ function Invoke-TestRun {
         if (-not $M.Tests.Contains($name)) { throw "test '$name' of the resumed run is not in manifest $ManifestPath" }
         $spec = New-TestSpec $name $M.Tests[$name] $M.Known[$name] $defaults
         $spec | Add-Member -NotePropertyName Reason -NotePropertyValue (($sel.Items[$name] | Select-Object -First 3) -join '; ') -Force
+        if ($GpuClass -eq 'exclusive') { $spec.GpuClass = 'exclusive' }
+        elseif ($GpuClass -eq 'shared' -and -not $spec.GpuClassFixed) { $spec.GpuClass = 'shared' }
         $specs.Add($spec)
     }
     # The manifest validator is a smoke check of its own (design 4.4). Not added for a scratch -ManifestPath.
@@ -1432,7 +1447,8 @@ function Invoke-TestRun {
         Label = $Label; RunId = $runId; RunDir = $runDir; SuiteName = $suiteName; Base = $(if ($resumeRun) { [string]$resumeRun.base } else { $Base })
         Manifest = $(if ($customManifest) { $ManifestPath } else { $null }); KnownFailures = $(if ($customManifest) { $KnownFailuresPath } else { $null }); Head = $head; Dirty = $dirty; Machine = $machineInfo; Selection = $sel; Engine = $engine; ProfileRoot = $null
         Results = [ordered]@{}; Started = (Get-Date); PriorWall = $(if ($resumeRun) { [double]$resumeRun.wall_s } else { 0.0 }); Active = $null
-        YieldMinutes = $YieldMinutes; GpuHeld = $false; GpuSince = $null; GpuHeartbeat = $null
+        YieldMinutes = $YieldMinutes; GpuHeld = $false; GpuSince = $null; GpuHeartbeat = $null; GpuClassOpt = $GpuClass
+        GpuGroupClass = 'exclusive'; GpuGroupWeight = 'world'; GpuGroups = $null
     }
     if ($resumeRun) {
         foreach ($t in $resumeRun.tests) {
@@ -1470,13 +1486,24 @@ function Invoke-TestRun {
         $parseFailed = @(Invoke-ScriptParseCheck $ctx $toLaunch)   # GPU specs whose entry script does not parse are recorded as error and not launched
         $gl = @($toLaunch | Where-Object { $_.Mode -eq 'gpu-local' -and $parseFailed -notcontains $_.Name } | Sort-Object @{e = { -$_.ExpectedS } }, Name)
         $gp = @($toLaunch | Where-Object { $_.Mode -eq 'gpu' -and $parseFailed -notcontains $_.Name } | Sort-Object Name)
-        if ($gl.Count -or $gp.Count) {
+        # Two groups: shared (own ticket, world weight when any spec boots a world) first, then exclusive; an empty group takes no ticket.
+        $groups = [ordered]@{}
+        foreach ($cls in @('shared', 'exclusive')) {
+            $gl2 = @($gl | Where-Object { $_.GpuClass -eq $cls }); $gp2 = @($gp | Where-Object { $_.GpuClass -eq $cls })
+            if ($gl2.Count -or $gp2.Count) {
+                $wt = if (@($gp2).Count -gt 0) { 'world' } else { 'light' }
+                $groups[$cls] = [pscustomobject]@{ Class = $cls; Weight = $wt; Local = $gl2; Gpu = $gp2; Count = ($gl2.Count + $gp2.Count) }
+            }
+        }
+        $ctx.GpuGroups = $groups
+        foreach ($g in $groups.Values) {
+            $ctx.GpuGroupClass = $g.Class; $ctx.GpuGroupWeight = $g.Weight
             Enter-GpuPhase $ctx
             try {
-                if ($gl.Count) { Write-Host ("GPU local lane: {0} tests, {1} parallel" -f $gl.Count, $LocalLanes) }
-                Invoke-Lane $ctx $gl $LocalLanes
-                if ($gp.Count) { Write-Host ("GPU lane: {0} tests, sequential" -f $gp.Count) }
-                Invoke-Lane $ctx $gp 1
+                if ($g.Local.Count) { Write-Host ("GPU local lane ({0}): {1} tests, {2} parallel" -f $g.Class, $g.Local.Count, $LocalLanes) }
+                Invoke-Lane $ctx $g.Local $LocalLanes
+                if ($g.Gpu.Count) { Write-Host ("GPU lane ({0}): {1} tests, sequential" -f $g.Class, $g.Gpu.Count) }
+                Invoke-Lane $ctx $g.Gpu 1
             } finally { Exit-GpuPhase $ctx }
         }
     } catch {
