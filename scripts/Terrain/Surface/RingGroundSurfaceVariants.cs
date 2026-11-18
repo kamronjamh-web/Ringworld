@@ -13,10 +13,14 @@ public static class RingGroundSurfaceVariants
     public const string ProxyGroundShader = "res://materials/ring_terrain_proxy_ground.gdshader";
     public const string Terrain3DShader = "res://materials/terrain3d_ring_surface.gdshader";
     public const string Terrain3DGroundShader = "res://materials/terrain3d_ring_surface_ground.gdshader";
+    public const string FarShader = "res://materials/ring_terrain_global.gdshader";
+    public const string FarGroundShader = "res://materials/ring_terrain_global_ground.gdshader";
 
     public static bool WorldHasGroundSurface => WorldGeneration.Has("ground.surface");
 
     public static string ProxyShaderPath => WorldHasGroundSurface ? ProxyGroundShader : ProxyShader;
 
     public static string Terrain3DShaderPath => WorldHasGroundSurface ? Terrain3DGroundShader : Terrain3DShader;
+
+    public static string FarShaderPath => WorldHasGroundSurface ? FarGroundShader : FarShader;
 }

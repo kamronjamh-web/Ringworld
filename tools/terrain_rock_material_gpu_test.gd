@@ -23,6 +23,7 @@ extends SceneTree
 #     shift (crest paler, hollow darker and greener), Terrain3D against the proxy within 0.02, and the Terrain3D tap reach at the window's far edge (--strict-reach makes a gap fail).
 #     The rock and scree checks of step 2 use each row's measured relief, since relief now enters D2 and D4.
 #  5. T4-4b detail normal (design D6): the global sampler binds (texels against the PNG), the weight follows rock and scree and is gone by 60 m, and the normal changes where it applies.
+#  6. T4-5 far rock tone: a ring_terrain_global_ground receiver with a surface tile of 10, 36 and 50 degree zones; rock exposure (debug view) against the C# model at the 128 m baseline, and the lit colour unchanged at 10 degrees and moved at 50.
 # Prints TERRAIN_ROCK_MATERIAL=PASS.
 const SURFACE = preload("res://scripts/Terrain/Surface/RingTerrain3DSurface.cs")
 const GEOMETRY = preload("res://scripts/Terrain/Surface/RingTerrain3DCollisionGeometry.cs")
@@ -50,6 +51,7 @@ const MOUND_SIGMA := 14.0
 const MOUND_VIEW_D := -120.0
 const REACH_VIEW_D := -232.0
 const DETAIL_NORMAL_PNG := "res://materials/biomes/alpine_rock_detail_normal.png"
+const FAR_ZONE_SLOPES := [10.0, 36.0, 50.0]
 
 var failures: PackedStringArray = []
 var _viewport: SubViewport
@@ -156,6 +158,7 @@ func _run() -> void:
 	await _check_sampler()
 	await _check_relief()
 	await _check_detail()
+	await _check_far()
 	if failures.is_empty():
 		print("TERRAIN_ROCK_MATERIAL=PASS")
 		await _finish(0)
@@ -312,19 +315,36 @@ func _build_far() -> void:
 	arrays[ArrayMesh.ARRAY_VERTEX] = PackedVector3Array([Vector3(PROXY_BASE, 0, -e), Vector3(PROXY_BASE + 2.0 * e, 0, -e), Vector3(PROXY_BASE + 2.0 * e, 0, e), Vector3(PROXY_BASE, 0, e)])
 	arrays[ArrayMesh.ARRAY_NORMAL] = PackedVector3Array([Vector3.RIGHT, Vector3.RIGHT, Vector3.RIGHT, Vector3.RIGHT])
 	arrays[ArrayMesh.ARRAY_COLOR] = PackedColorArray([Color(0.30, 0.34, 0.22), Color(0.45, 0.40, 0.30), Color(0.55, 0.52, 0.50), Color(0.35, 0.30, 0.25)])
+	arrays[ArrayMesh.ARRAY_TEX_UV2] = PackedVector2Array([Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1)])
 	arrays[ArrayMesh.ARRAY_INDEX] = PackedInt32Array([0, 1, 2, 0, 2, 3])
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	_far = MeshInstance3D.new()
 	_far.mesh = mesh
 	_far_material = ShaderMaterial.new()
-	_far_material.shader = load("res://materials/ring_terrain_global.gdshader") as Shader
+	_far_material.shader = load(str(MODEL.call("FarShaderPath"))) as Shader
 	_far_material.set_shader_parameter("ring_center", Vector3(RING_RADIUS, 0, 0))
 	_far_material.set_shader_parameter("sun_direction", Vector3(0.45, 0.2, 0.3).normalized())
 	_far_material.set_shader_parameter("wet_world_receiver", false)
 	_far_material.set_shader_parameter("fade_start_meters", -1.0)
 	_far_material.set_shader_parameter("fade_end_meters", 0.0)
 	_far_material.set_shader_parameter("analytic_cloud_shadow_enabled", false)
+	# T4-5 far tile: three zones along UV2.x with a constant normal each (10, 36 and 50 degrees about the around axis); the tile is only switched on by _check_far.
+	var tile_n := 30
+	var tile_colour := Image.create_empty(tile_n + 2, tile_n + 2, false, Image.FORMAT_RGBA8)
+	tile_colour.fill(Color(0.45, 0.40, 0.30, 1.0))
+	var tile_normal := Image.create_empty(tile_n + 2, tile_n + 2, false, Image.FORMAT_RGBA8)
+	for x in tile_n + 2:
+		var zone_slope: float = FAR_ZONE_SLOPES[0] if x <= 10 else (FAR_ZONE_SLOPES[1] if x <= 20 else FAR_ZONE_SLOPES[2])
+		var s := deg_to_rad(zone_slope)
+		for y in tile_n + 2:
+			tile_normal.set_pixel(x, y, Color(sin(s) * 0.5 + 0.5, cos(s) * 0.5 + 0.5, 0.5, 1.0))
+	_far_material.set_shader_parameter("surface_tile_color", ImageTexture.create_from_image(tile_colour))
+	_far_material.set_shader_parameter("surface_tile_normal", ImageTexture.create_from_image(tile_normal))
+	_far_material.set_shader_parameter("surface_tile_resolution", float(tile_n))
+	_far_material.set_shader_parameter("surface_tile_angle_start", PI) # tile up = +X, the receiver's ring-up
+	_far_material.set_shader_parameter("surface_tile_angle_span", 0.0)
+	_far_material.set_shader_parameter("surface_tile_blend", 1.0)
 	_far.material_override = _far_material
 	_far.visible = false
 	_viewport.add_child(_far)
@@ -631,6 +651,62 @@ func _check_tiers() -> void:
 	_set_mask(false)
 	_set_look(38.0, 0.12, false)
 
+
+
+# ------------------------------------------------------------------ check 6: far rock tone (T4-5, design D2)
+
+func _far_view(mask_on: bool, debug: bool) -> Image:
+	_show_only("far")
+	_far_material.set_shader_parameter("surface_tile_enabled", true)
+	_set_mask(mask_on)
+	_set_look(38.0, 0.12, debug)
+	_camera.projection = Camera3D.PROJECTION_ORTHOGONAL
+	_camera.size = ORTHO_SIZE
+	_camera.position = Vector3(PROXY_BASE + 40, -30, 0)
+	_camera.look_at(Vector3(PROXY_BASE + 40, 40, 0), Vector3.RIGHT)
+	_far_material.set_shader_parameter("camera_world_position", _camera.position)
+	await _settle()
+	return await _grab()
+
+
+func _far_zone_mean(image: Image, zone: int) -> Vector3:
+	var centre: int = [237, 135, 33][zone] # screen row of u = 0.17, 0.5, 0.83 (UV2.x runs along +X, the screen up direction of this view)
+	var mean := Vector3.ZERO
+	var count := 0
+	for y in range(centre - 20, centre + 20):
+		for x in range(150, 330):
+			mean += _decode(image, x, y)
+			count += 1
+	return mean / float(count)
+
+
+func _check_far() -> void:
+	var debug_image := await _far_view(true, true)
+	if failed():
+		return
+	var lit_on := await _far_view(true, false)
+	var lit_off := await _far_view(false, false)
+	_far_material.set_shader_parameter("surface_tile_enabled", false)
+	_set_mask(false)
+	_set_look(38.0, 0.12, false)
+	if failed():
+		return
+	var worst_rock := 0.0
+	for zone in 3:
+		var slope: float = FAR_ZONE_SLOPES[zone]
+		var rock := _far_zone_mean(debug_image, zone).x
+		var expected: float = MODEL.call("RockExposure", slope, 128.0, 0.0, 0.0, 38.0)
+		var on := _far_zone_mean(lit_on, zone)
+		var off := _far_zone_mean(lit_off, zone)
+		var delta := (on - off).abs()
+		var change := maxf(delta.x, maxf(delta.y, delta.z))
+		print("TERRAIN_ROCK_MATERIAL far zone %d deg: rock %.3f (model %.3f), colour change on against off %.4f" % [int(slope), rock, expected, change])
+		worst_rock = maxf(worst_rock, absf(rock - expected))
+		if expected == 0.0:
+			_check(change < 0.002, "far zone %d deg changes colour with the feature on (%.4f) although rock is 0" % [int(slope), change])
+		elif expected > 0.9:
+			_check(change > 0.002, "far zone %d deg has full rock but the colour did not move (%.4f)" % [int(slope), change])
+	_check(worst_rock < 0.05, "far rock exposure differs from the C# model by %.3f at the 128 m baseline" % worst_rock)
 
 # ------------------------------------------------------------------ check 4: colour variation (relief), both tiers
 

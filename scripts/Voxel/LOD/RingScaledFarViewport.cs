@@ -1198,7 +1198,7 @@ public partial class RingScaledFarViewport : Node
 		// triplanar textures. Cache their representative mip colours before
 		// the regional worker meshes consume the palette.
 		RingTerrainVisuals.PreloadTexturePalette();
-		Shader? terrainShader = GD.Load<Shader>("res://materials/ring_terrain_global.gdshader");
+		Shader? terrainShader = GD.Load<Shader>(global::RingworldTechDemo.Terrain.Surface.RingGroundSurfaceVariants.FarShaderPath);
 		if (terrainShader != null)
 		{
 			_terrainMaterial = new ShaderMaterial { Shader = terrainShader };

@@ -31,4 +31,11 @@ public partial class GameplaySurfaceTerrainSettings : Resource
     public const float DefaultGrassAlbedoScale = 1.0f;
     [Export] public float TerrainAlbedoScale { get; set; } = DefaultTerrainAlbedoScale;
     [Export] public float GrassAlbedoScale { get; set; } = DefaultGrassAlbedoScale;
+    // T4 ground surface (rock slope, strata contrast, colour variation): published as ringworld_ground_look and used only in worlds with ground.surface. Older files without these load the defaults.
+    public const float DefaultGroundRockSlopeDegrees = 38.0f;
+    public const float DefaultGroundStrataContrast = 0.12f;
+    public const float DefaultGroundColorVariation = 1.0f;
+    [Export] public float GroundRockSlopeDegrees { get; set; } = DefaultGroundRockSlopeDegrees;
+    [Export] public float GroundStrataContrast { get; set; } = DefaultGroundStrataContrast;
+    [Export] public float GroundColorVariation { get; set; } = DefaultGroundColorVariation;
 }

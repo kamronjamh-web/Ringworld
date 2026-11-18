@@ -13,8 +13,9 @@ public static class RingGroundSurfaceModel
     public const double ConvexShiftDeg = 6.0;
     public const double ForestShiftDeg = 4.0;
     public const double SlopeRefBaselineM = 4.0;
-    public const double SlopeBiasPerOctaveDeg = 1.5;
+    public const double SlopeBiasPerOctaveDeg = 1.0; // calibrated in T4-5 (GroundSlopeCalibration)
     public const double SlopeBiasMaxDeg = 12.0;
+    public const double FarTileBaselineM = 128.0;
     public const double ScreeInStart = 26.0, ScreeInEnd = 30.0, ScreeOutStart = 36.0, ScreeOutEnd = 40.0;
     public const double ScreeConvexFadeStart = 0.1, ScreeConvexFadeEnd = 0.5;
     public const double ScreeVegetated = 0.4;
@@ -41,8 +42,8 @@ public static class RingGroundSurfaceModel
 
     public static double SlopeDegrees(double upDot) => Math.Acos(Math.Clamp(upDot, -1.0, 1.0)) * 180.0 / Math.PI;
 
-    public static double SlopeBiasDegrees(double baselineM)
-        => Math.Min(SlopeBiasPerOctaveDeg * Math.Max(Math.Log2(baselineM / SlopeRefBaselineM), 0.0), SlopeBiasMaxDeg);
+    public static double SlopeBiasDegrees(double baselineM, double perOctaveDeg = SlopeBiasPerOctaveDeg)
+        => Math.Min(perOctaveDeg * Math.Max(Math.Log2(baselineM / SlopeRefBaselineM), 0.0), SlopeBiasMaxDeg);
 
     public static double RockExposure(double slopeDeg, double baselineM, double relief, double forestWeight, double rockStartDeg = DefaultRockStartDeg)
     {

@@ -56,6 +56,29 @@ public partial class SurfaceTerrainSettingsSmoke : Node
         System.IO.File.WriteAllText(albedoFile, urgentStripped.TrimEnd() + "\nMeshLods = 5\n");
         var meshLodsOld = new GameplaySurfaceTerrainDefaults(path); meshLodsOld.Initialize();
         if (meshLodsOld.LastError.Length != 0 || !Mathf.IsEqualApprox(meshLodsOld.Settings.BrushRadiusMeters, urgentOld.Settings.BrushRadiusMeters)) throw new InvalidOperationException("old surface file with MeshLods did not load quietly");
+        // T4 ground surface rows: defaults equal the designed look (and the ringworld_ground_look project default), round-trip, bounds, NaN fallback, and an older file loads the defaults.
+        var ground = new GameplaySurfaceTerrainDefaults(path); ground.Initialize();
+        Vector4 projectLook = ProjectSettings.GetSetting("shader_globals/ringworld_ground_look").AsGodotDictionary()["value"].AsVector4();
+        if (!Mathf.IsEqualApprox(ground.Settings.GroundRockSlopeDegrees, 38) || !Mathf.IsEqualApprox(ground.Settings.GroundStrataContrast, .12f) || !Mathf.IsEqualApprox(ground.Settings.GroundColorVariation, 1) || !Mathf.IsEqualApprox(projectLook.X, ground.Settings.GroundRockSlopeDegrees) || !Mathf.IsEqualApprox(projectLook.Y, ground.Settings.GroundStrataContrast) || !Mathf.IsEqualApprox(projectLook.Z, ground.Settings.GroundColorVariation)) throw new InvalidOperationException("ground surface settings did not default to the designed look (project default " + projectLook + ")");
+        if (ground.SetGroundRockSlopeDegrees(38) || ground.SetGroundStrataContrast(.12f) || ground.SetGroundColorVariation(1)) throw new InvalidOperationException("ground surface setters reported a change for the default value");
+        if (!ground.SetGroundRockSlopeDegrees(44.5f) || !ground.SetGroundStrataContrast(.2f) || !ground.SetGroundColorVariation(1.5f)) throw new InvalidOperationException("ground surface setters did not report a change");
+        if (!ground.Save()) throw new InvalidOperationException("ground surface settings did not save");
+        var groundLoaded = new GameplaySurfaceTerrainDefaults(path); groundLoaded.Initialize();
+        if (!Mathf.IsEqualApprox(groundLoaded.Settings.GroundRockSlopeDegrees, 44.5f) || !Mathf.IsEqualApprox(groundLoaded.Settings.GroundStrataContrast, .2f) || !Mathf.IsEqualApprox(groundLoaded.Settings.GroundColorVariation, 1.5f)) throw new InvalidOperationException("ground surface settings did not round-trip");
+        Vector4 published = RingLiveTuningDrawer.GroundLookGlobal(groundLoaded.Settings);
+        if (!Mathf.IsEqualApprox(published.X, 44.5f) || !Mathf.IsEqualApprox(published.Y, .2f) || !Mathf.IsEqualApprox(published.Z, 1.5f) || published.W != 0f) throw new InvalidOperationException("the published ringworld_ground_look did not carry the three ground surface settings (" + published + ")");
+        if (!Mathf.IsEqualApprox(GameplaySurfaceTerrainDefaults.ClampGroundRockSlopeDegrees(10), 30) || !Mathf.IsEqualApprox(GameplaySurfaceTerrainDefaults.ClampGroundRockSlopeDegrees(99), 50) || !Mathf.IsEqualApprox(GameplaySurfaceTerrainDefaults.ClampGroundRockSlopeDegrees(float.NaN), 38)
+            || !Mathf.IsEqualApprox(GameplaySurfaceTerrainDefaults.ClampGroundStrataContrast(-1), 0) || !Mathf.IsEqualApprox(GameplaySurfaceTerrainDefaults.ClampGroundStrataContrast(5), .3f) || !Mathf.IsEqualApprox(GameplaySurfaceTerrainDefaults.ClampGroundStrataContrast(float.PositiveInfinity), .12f)
+            || !Mathf.IsEqualApprox(GameplaySurfaceTerrainDefaults.ClampGroundColorVariation(-1), 0) || !Mathf.IsEqualApprox(GameplaySurfaceTerrainDefaults.ClampGroundColorVariation(9), 2) || !Mathf.IsEqualApprox(GameplaySurfaceTerrainDefaults.ClampGroundColorVariation(float.NaN), 1)) throw new InvalidOperationException("ground surface setting bounds were not enforced");
+        string groundFile = ProjectSettings.GlobalizePath(path);
+        string groundText = System.IO.File.ReadAllText(groundFile);
+        string groundStripped = string.Join('\n', Array.FindAll(groundText.Split('\n'), line => !line.StartsWith("GroundRockSlopeDegrees") && !line.StartsWith("GroundStrataContrast") && !line.StartsWith("GroundColorVariation")));
+        if (groundStripped.Length >= groundText.Length) throw new InvalidOperationException("ground surface settings were not written");
+        System.IO.File.WriteAllText(groundFile, groundStripped);
+        var groundOld = new GameplaySurfaceTerrainDefaults(path); groundOld.Initialize();
+        if (!Mathf.IsEqualApprox(groundOld.Settings.GroundRockSlopeDegrees, 38) || !Mathf.IsEqualApprox(groundOld.Settings.GroundStrataContrast, .12f) || !Mathf.IsEqualApprox(groundOld.Settings.GroundColorVariation, 1)) throw new InvalidOperationException("old surface file did not load the ground surface defaults");
+        groundOld.SetGroundRockSlopeDegrees(41); groundOld.Reset();
+        if (!Mathf.IsEqualApprox(groundOld.Settings.GroundRockSlopeDegrees, 38) || !Mathf.IsEqualApprox(groundOld.Settings.GroundColorVariation, 1)) throw new InvalidOperationException("surface reset did not restore the ground surface defaults");
         string invalidParent = path + ".invalid-parent.tres";
         if (ResourceSaver.Save(new GameplaySurfaceTerrainSettings(), invalidParent) != Error.Ok) throw new InvalidOperationException("invalid-path fixture write failed");
         var invalid = new GameplaySurfaceTerrainDefaults(invalidParent + "/child.tres"); invalid.Initialize(); invalid.SetBrushRadiusMeters(9);

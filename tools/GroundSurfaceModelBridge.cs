@@ -44,4 +44,6 @@ public partial class GroundSurfaceModelBridge : RefCounted
     public double DetailNormalWeight(double rock, double scree, double distanceM) => RingGroundSurfaceModel.DetailNormalWeight(rock, scree, distanceM);
 
     public string ProxyShaderPath() => RingGroundSurfaceVariants.ProxyShaderPath;
+
+    public string FarShaderPath() => RingGroundSurfaceVariants.FarShaderPath;
 }

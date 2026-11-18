@@ -24,9 +24,9 @@ public partial class GroundSurfaceModelTest : RefCounted
 
     static void RunChecks(List<string> failures)
     {
-        // Slope-bias table: 0 at the 4 m reference, 1.5 deg per octave, capped at 12.
+        // Slope-bias table: 0 at the 4 m reference, 1 deg per octave (T4-5 calibration), capped at 12.
         double[] biasBaselines = { 2, 4, 8, 16, 32, 64, 128, 1024, 100000 };
-        double[] biasExpected = { 0, 0, 1.5, 3, 4.5, 6, 7.5, 12, 12 };
+        double[] biasExpected = { 0, 0, 1, 2, 3, 4, 5, 8, 12 };
         for (int i = 0; i < biasBaselines.Length; i++)
             Check(failures, Math.Abs(RingGroundSurfaceModel.SlopeBiasDegrees(biasBaselines[i]) - biasExpected[i]) < 1e-9, $"slope bias at {biasBaselines[i]} m is {RingGroundSurfaceModel.SlopeBiasDegrees(biasBaselines[i])}, expected {biasExpected[i]}");
 
@@ -106,8 +106,27 @@ public partial class GroundSurfaceModelTest : RefCounted
         Check(failures, RingGroundSurfaceModel.StrataBand(100, 0.0, step, 5) == RingGroundSurfaceModel.Tone(2, 5), "a point sample is not the bed's flat tone");
         Check(failures, Math.Abs(RingGroundSurfaceModel.StrataFactor(100, 0.0, step, 5, 0.12) - (1 + 0.12 * RingGroundSurfaceModel.Tone(2, 5)) * (1 + 0.06 * RingGroundSurfaceModel.StrataBand(100, 0.0, 5, 5 ^ 40503u))) < 1e-12, "strata factor composition");
 
+        // T4-5 calibration (design D2, R3): the slope bias keeps the mean rock exposure at every coarser baseline within 20 % of the 4 m mean, over the T0 mountain and breaks anchors.
+        double[][][] slopes = GroundSlopeCalibration.MeasureSlopes();
+        for (double k = 0.0; k <= 3.01; k += 0.25)
+        {
+            double[][] sweep = GroundSlopeCalibration.MeanExposure(slopes, k);
+            string line = "";
+            for (int c = 0; c < sweep.Length; c++) { line += " " + GroundSlopeCalibration.Classes[c].Name + ":"; for (int b = 1; b < sweep[c].Length; b++) line += $" {(sweep[c][b] / Math.Max(sweep[c][0], 1e-9) - 1.0):+0%;-0%;0%}"; }
+            GD.Print($"GROUND_SURFACE_MODEL calibration k={k:F2} (8 16 32 64 128 m vs 4 m){line}");
+        }
+        double[][] meanTable = GroundSlopeCalibration.MeanExposure(slopes, RingGroundSurfaceModel.SlopeBiasPerOctaveDeg);
+        for (int c = 0; c < meanTable.Length; c++)
+        {
+            string row = "";
+            for (int b = 0; b < meanTable[c].Length; b++) row += $" {GroundSlopeCalibration.Baselines[b]:0} m {meanTable[c][b]:F4} ({(meanTable[c][b] / Math.Max(meanTable[c][0], 1e-9) - 1.0):+0.0%;-0.0%;0.0%});";
+            GD.Print($"GROUND_SURFACE_MODEL calibration {GroundSlopeCalibration.Classes[c].Name} (k={RingGroundSurfaceModel.SlopeBiasPerOctaveDeg}) mean rock exposure:{row}");
+        }
+        Check(failures, GroundSlopeCalibration.WorstDeviation(meanTable) <= 0.20, $"slope bias {RingGroundSurfaceModel.SlopeBiasPerOctaveDeg} deg per octave leaves a baseline more than 20 % from the 4 m mean rock exposure ({GroundSlopeCalibration.WorstDeviation(meanTable):P1})");
+        Check(failures, GroundSlopeCalibration.WorstDeviation(GroundSlopeCalibration.MeanExposure(slopes, 0.0)) > 0.20, "without the slope bias the coarse baselines are already within 20 %: the check cannot fail");
+
         // D7: the shipped near shaders are the frozen generation 1 shaders (no ground code); the ground variants define RING_GROUND_SURFACE.
-        foreach (string shipped in new[] { "ring_terrain_proxy", "terrain3d_ring_surface" })
+        foreach (string shipped in new[] { "ring_terrain_proxy", "terrain3d_ring_surface", "ring_terrain_global" })
         {
             string plain = FileAccess.GetFileAsString($"res://materials/{shipped}.gdshader");
             string ground = FileAccess.GetFileAsString($"res://materials/{shipped}_ground.gdshader");

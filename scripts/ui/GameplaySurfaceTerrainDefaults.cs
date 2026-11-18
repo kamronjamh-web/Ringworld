@@ -38,6 +38,12 @@ public sealed class GameplaySurfaceTerrainDefaults
     public const float MaximumRainWetnessStrength = 1f;
     public const float MinimumAlbedoScale = .05f;
     public const float MaximumAlbedoScale = 2f;
+    public const float MinimumGroundRockSlopeDegrees = 30f;
+    public const float MaximumGroundRockSlopeDegrees = 50f;
+    public const float MinimumGroundStrataContrast = 0f;
+    public const float MaximumGroundStrataContrast = .30f;
+    public const float MinimumGroundColorVariation = 0f;
+    public const float MaximumGroundColorVariation = 2f;
 
     private readonly string? _pathOverride;
     public GameplaySurfaceTerrainSettings Settings { get; private set; } = new();
@@ -101,6 +107,9 @@ public sealed class GameplaySurfaceTerrainDefaults
     public bool SetRainWetnessStrength(float value) { value = ClampRainWetnessStrength(value); if (Mathf.IsEqualApprox(Settings.RainWetnessStrength, value)) return false; Settings.RainWetnessStrength = value; Dirty = true; return true; }
     public bool SetTerrainAlbedoScale(float value) { value = ClampTerrainAlbedoScale(value); if (Mathf.IsEqualApprox(Settings.TerrainAlbedoScale, value)) return false; Settings.TerrainAlbedoScale = value; Dirty = true; return true; }
     public bool SetGrassAlbedoScale(float value) { value = ClampGrassAlbedoScale(value); if (Mathf.IsEqualApprox(Settings.GrassAlbedoScale, value)) return false; Settings.GrassAlbedoScale = value; Dirty = true; return true; }
+    public bool SetGroundRockSlopeDegrees(float value) { value = ClampGroundRockSlopeDegrees(value); if (Mathf.IsEqualApprox(Settings.GroundRockSlopeDegrees, value)) return false; Settings.GroundRockSlopeDegrees = value; Dirty = true; return true; }
+    public bool SetGroundStrataContrast(float value) { value = ClampGroundStrataContrast(value); if (Mathf.IsEqualApprox(Settings.GroundStrataContrast, value)) return false; Settings.GroundStrataContrast = value; Dirty = true; return true; }
+    public bool SetGroundColorVariation(float value) { value = ClampGroundColorVariation(value); if (Mathf.IsEqualApprox(Settings.GroundColorVariation, value)) return false; Settings.GroundColorVariation = value; Dirty = true; return true; }
     public bool SetSmoothTerrainShading(bool value) { if (Settings.SmoothTerrainShading == value) return false; Settings.SmoothTerrainShading = value; Dirty = true; return true; }
 
     public void Reset()
@@ -161,6 +170,9 @@ public sealed class GameplaySurfaceTerrainDefaults
             Settings.SmoothTerrainShading = loaded.SmoothTerrainShading;
             Settings.TerrainAlbedoScale = ClampTerrainAlbedoScale(loaded.TerrainAlbedoScale);
             Settings.GrassAlbedoScale = ClampGrassAlbedoScale(loaded.GrassAlbedoScale);
+            Settings.GroundRockSlopeDegrees = ClampGroundRockSlopeDegrees(loaded.GroundRockSlopeDegrees);
+            Settings.GroundStrataContrast = ClampGroundStrataContrast(loaded.GroundStrataContrast);
+            Settings.GroundColorVariation = ClampGroundColorVariation(loaded.GroundColorVariation);
         }
         catch (Exception error) { LastError = error.Message; }
         Dirty = false;
@@ -185,6 +197,9 @@ public sealed class GameplaySurfaceTerrainDefaults
         Settings.RainWetnessStrength = ClampRainWetnessStrength(Settings.RainWetnessStrength);
         Settings.TerrainAlbedoScale = ClampTerrainAlbedoScale(Settings.TerrainAlbedoScale);
         Settings.GrassAlbedoScale = ClampGrassAlbedoScale(Settings.GrassAlbedoScale);
+        Settings.GroundRockSlopeDegrees = ClampGroundRockSlopeDegrees(Settings.GroundRockSlopeDegrees);
+        Settings.GroundStrataContrast = ClampGroundStrataContrast(Settings.GroundStrataContrast);
+        Settings.GroundColorVariation = ClampGroundColorVariation(Settings.GroundColorVariation);
     }
 
     public static float ClampBrushRadiusMeters(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumBrushRadiusMeters, MaximumBrushRadiusMeters) : 8.0f;
@@ -203,5 +218,8 @@ public sealed class GameplaySurfaceTerrainDefaults
     public static float ClampWetRoughness(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumWetRoughness, MaximumWetRoughness) : .35f;
     public static float ClampTerrainAlbedoScale(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumAlbedoScale, MaximumAlbedoScale) : GameplaySurfaceTerrainSettings.DefaultTerrainAlbedoScale;
     public static float ClampGrassAlbedoScale(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumAlbedoScale, MaximumAlbedoScale) : GameplaySurfaceTerrainSettings.DefaultGrassAlbedoScale;
+    public static float ClampGroundRockSlopeDegrees(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumGroundRockSlopeDegrees, MaximumGroundRockSlopeDegrees) : GameplaySurfaceTerrainSettings.DefaultGroundRockSlopeDegrees;
+    public static float ClampGroundStrataContrast(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumGroundStrataContrast, MaximumGroundStrataContrast) : GameplaySurfaceTerrainSettings.DefaultGroundStrataContrast;
+    public static float ClampGroundColorVariation(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumGroundColorVariation, MaximumGroundColorVariation) : GameplaySurfaceTerrainSettings.DefaultGroundColorVariation;
     public static float ClampRainWetnessStrength(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumRainWetnessStrength, MaximumRainWetnessStrength) : 1f;
 }

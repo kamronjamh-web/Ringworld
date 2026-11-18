@@ -187,6 +187,10 @@ public partial class RingLiveTuningDrawer
         AddSurfaceTerrainSlider(parent, "Dry roughness", GameplaySurfaceTerrainDefaults.MinimumDryRoughness, GameplaySurfaceTerrainDefaults.MaximumDryRoughness, .01, _surfaceTerrainDefaults.Settings.DryRoughness, value => _surfaceTerrainDefaults.SetDryRoughness((float)value));
         AddSurfaceTerrainSlider(parent, "Terrain albedo", GameplaySurfaceTerrainDefaults.MinimumAlbedoScale, GameplaySurfaceTerrainDefaults.MaximumAlbedoScale, .01, _surfaceTerrainDefaults.Settings.TerrainAlbedoScale, value => _surfaceTerrainDefaults.SetTerrainAlbedoScale((float)value));
         AddSurfaceTerrainSlider(parent, "Grass albedo", GameplaySurfaceTerrainDefaults.MinimumAlbedoScale, GameplaySurfaceTerrainDefaults.MaximumAlbedoScale, .01, _surfaceTerrainDefaults.Settings.GrassAlbedoScale, value => _surfaceTerrainDefaults.SetGrassAlbedoScale((float)value));
+        // T4 ground surface: act only in worlds with the ground.surface feature (ringworld_ground_look; defaults are the designed realistic look, higher values are the player's own adjustment).
+        AddSurfaceTerrainSlider(parent, "Rock slope (deg)", GameplaySurfaceTerrainDefaults.MinimumGroundRockSlopeDegrees, GameplaySurfaceTerrainDefaults.MaximumGroundRockSlopeDegrees, .5, _surfaceTerrainDefaults.Settings.GroundRockSlopeDegrees, value => _surfaceTerrainDefaults.SetGroundRockSlopeDegrees((float)value), "Slope at which bare rock starts to replace soil (full rock 8 degrees steeper). Worlds with the ground surface feature only.");
+        AddSurfaceTerrainSlider(parent, "Rock strata contrast", GameplaySurfaceTerrainDefaults.MinimumGroundStrataContrast, GameplaySurfaceTerrainDefaults.MaximumGroundStrataContrast, .01, _surfaceTerrainDefaults.Settings.GroundStrataContrast, value => _surfaceTerrainDefaults.SetGroundStrataContrast((float)value), "Tone difference between rock beds. Worlds with the ground surface feature only.");
+        AddSurfaceTerrainSlider(parent, "Ground colour variation", GameplaySurfaceTerrainDefaults.MinimumGroundColorVariation, GameplaySurfaceTerrainDefaults.MaximumGroundColorVariation, .05, _surfaceTerrainDefaults.Settings.GroundColorVariation, value => _surfaceTerrainDefaults.SetGroundColorVariation((float)value), "Paler convex ground and darker, greener hollows (1 is the designed look, 0 is off). Worlds with the ground surface feature only.");
     }
 
     private void AddSurfaceTerrainSmoothShadingToggle(VBoxContainer parent)
@@ -196,11 +200,15 @@ public partial class RingLiveTuningDrawer
         parent.AddChild(_surfaceTerrainSmoothShadingToggle);
     }
 
+    /// <summary>The ringworld_ground_look global (rock start degrees, strata contrast, colour variation strength; w is the test-only debug view and stays 0 in the game).</summary>
+    public static Vector4 GroundLookGlobal(GameplaySurfaceTerrainSettings settings) => new(settings.GroundRockSlopeDegrees, settings.GroundStrataContrast, settings.GroundColorVariation, 0f);
+
     private Node? SurfaceTerrainTarget => _surfaceTerrainPilot ?? _surfaceTerrainGameplay;
     private void ApplySurfaceTerrainSettings()
     {
         RenderingServer.GlobalShaderParameterSet("ringworld_terrain_albedo_scale", _surfaceTerrainDefaults.Settings.TerrainAlbedoScale);
         RenderingServer.GlobalShaderParameterSet("ringworld_grass_albedo_scale", _surfaceTerrainDefaults.Settings.GrassAlbedoScale);
+        RenderingServer.GlobalShaderParameterSet("ringworld_ground_look", GroundLookGlobal(_surfaceTerrainDefaults.Settings));
         SurfaceTerrainTarget?.Call("ApplySurfaceSettings", _surfaceTerrainDefaults.Settings);
     }
 
@@ -424,7 +432,7 @@ public partial class RingLiveTuningDrawer
         double[] values = _generationPreview != null
             ? new[] { (double)_surfaceTerrainDefaults.Settings.MoveSpeedMetersPerSecond, _surfaceTerrainDefaults.Settings.GenerationWorkerCount, _surfaceTerrainDefaults.Settings.GenerationPrefetchMeters, _surfaceTerrainDefaults.Settings.GenerationCacheMiB, _surfaceTerrainDefaults.Settings.GenerationUploadBudgetMs, _surfaceTerrainDefaults.Settings.GenerationCollisionBudgetMs, _surfaceTerrainDefaults.Settings.GenerationUrgentBudgetMs, (double)_surfaceTerrainDefaults.Settings.GenerationColliderTileCells }
             : _runtimeSurfaceDefinitionStatus != null
-                ? new[] { (double)_surfaceTerrainDefaults.Settings.BrushRadiusMeters, _surfaceTerrainDefaults.Settings.BrushStepMeters, (double)_surfaceTerrainDefaults.Settings.MeshSize, _surfaceTerrainDefaults.Settings.HandoffDistanceMeters, _surfaceTerrainDefaults.Settings.MoveSpeedMetersPerSecond, _surfaceTerrainDefaults.Settings.DryRoughness, _surfaceTerrainDefaults.Settings.WetRoughness, _surfaceTerrainDefaults.Settings.RainWetnessStrength, _surfaceTerrainDefaults.Settings.TerrainAlbedoScale, _surfaceTerrainDefaults.Settings.GrassAlbedoScale, _surfaceTerrainDefaults.Settings.GenerationWorkerCount, _surfaceTerrainDefaults.Settings.GenerationPrefetchMeters, _surfaceTerrainDefaults.Settings.GenerationCacheMiB, _surfaceTerrainDefaults.Settings.GenerationUploadBudgetMs, _surfaceTerrainDefaults.Settings.GenerationCollisionBudgetMs, _surfaceTerrainDefaults.Settings.GenerationUrgentBudgetMs, (double)_surfaceTerrainDefaults.Settings.GenerationColliderTileCells }
+                ? new[] { (double)_surfaceTerrainDefaults.Settings.BrushRadiusMeters, _surfaceTerrainDefaults.Settings.BrushStepMeters, _surfaceTerrainDefaults.Settings.MoveSpeedMetersPerSecond, _surfaceTerrainDefaults.Settings.DryRoughness, _surfaceTerrainDefaults.Settings.TerrainAlbedoScale, _surfaceTerrainDefaults.Settings.GrassAlbedoScale, _surfaceTerrainDefaults.Settings.GroundRockSlopeDegrees, _surfaceTerrainDefaults.Settings.GroundStrataContrast, _surfaceTerrainDefaults.Settings.GroundColorVariation, _surfaceTerrainDefaults.Settings.GenerationWorkerCount, _surfaceTerrainDefaults.Settings.GenerationPrefetchMeters, _surfaceTerrainDefaults.Settings.GenerationCacheMiB, _surfaceTerrainDefaults.Settings.GenerationUploadBudgetMs, _surfaceTerrainDefaults.Settings.GenerationCollisionBudgetMs, _surfaceTerrainDefaults.Settings.GenerationUrgentBudgetMs, (double)_surfaceTerrainDefaults.Settings.GenerationColliderTileCells }
                 : new[] { (double)_surfaceTerrainDefaults.Settings.BrushRadiusMeters, _surfaceTerrainDefaults.Settings.BrushStepMeters, _surfaceTerrainDefaults.Settings.MoveSpeedMetersPerSecond };
         if (_surfaceTerrainControls.Count != values.Length) return;
         for (int index = 0; index < values.Length; index++)

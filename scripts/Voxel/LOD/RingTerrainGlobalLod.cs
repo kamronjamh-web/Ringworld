@@ -1599,7 +1599,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
     private void CreateMaterial()
     {
         RingTerrainVisuals.PreloadTexturePalette();
-        Shader? shader = GD.Load<Shader>("res://materials/ring_terrain_global.gdshader");
+        Shader? shader = GD.Load<Shader>(global::RingworldTechDemo.Terrain.Surface.RingGroundSurfaceVariants.FarShaderPath);
         if (shader == null) return;
         _material = new ShaderMaterial { Shader = shader };
         _material.SetShaderParameter("surface_apertures_enabled", true);

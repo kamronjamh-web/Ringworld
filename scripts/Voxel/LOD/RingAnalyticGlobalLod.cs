@@ -113,7 +113,7 @@ public partial class RingAnalyticGlobalLod : MeshInstance3D
 
     private void CreateMaterials()
     {
-        Shader? terrainShader = GD.Load<Shader>("res://materials/ring_terrain_global.gdshader");
+        Shader? terrainShader = GD.Load<Shader>(global::RingworldTechDemo.Terrain.Surface.RingGroundSurfaceVariants.FarShaderPath);
         if (terrainShader != null)
         {
             _surfaceMaterial = new ShaderMaterial { Shader = terrainShader };

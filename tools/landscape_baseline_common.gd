@@ -416,7 +416,7 @@ static func capture_original_state(ctx: Dictionary) -> Dictionary:
 	# viewport's global terrain (GlobalTerrainLod3, AnalyticGlobalRing). Far ocean, the structural hull and the cloud meshes stay on so clouds and water keep their cost.
 	var far_nodes: Array = []
 	for node in _all_nodes(ctx["scaled_far"]):
-		if node is MeshInstance3D and (node.name == "ScaledSeededRingSurface" or node.name.begins_with("ScaledFarLod") or _shader_name(node) == "ring_terrain_global.gdshader"):
+		if node is MeshInstance3D and (node.name == "ScaledSeededRingSurface" or node.name.begins_with("ScaledFarLod") or _shader_name(node) in ["ring_terrain_global.gdshader", "ring_terrain_global_ground.gdshader"]):
 			far_nodes.append(node)
 	for global_name in ["GlobalTerrainLod3", "AnalyticGlobalRing"]:
 		var global_node := game.get_node_or_null(global_name) as Node3D
