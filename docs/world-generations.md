@@ -15,8 +15,8 @@ The production feature table holds only open (unfrozen) features so far; `water.
 | `water.rivers` | 0 | T2 | Open |
 | `water.current` | 1 | T3 | Reserved |
 | `ground.surface` | 2 | T4 | Open |
-| `ground.river_beds` | 3 | T4 | Reserved |
-| `scatter.rocks` | 4 | T5 | Reserved |
+| `ground.river_beds` | 3 | T4 | Open (review) |
+| `scatter.rocks` | 4 | T5 | Open (review) |
 | `scatter.river` | 5 | T5 | Reserved |
 | `vegetation.forest_structure` | 6 | T6 | Reserved |
 | `vegetation.ground_cover` | 7 | T6 | Reserved |

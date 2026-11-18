@@ -90,7 +90,7 @@ public partial class RingTerrainProxySector
         cache.BeginCapture();
         foreach ((long around, int across) in points) cache.Get(around, across);
         CachedTerrainSampleRecord[] captured = cache.EndCapture();
-        if (!TrySaveCachedTerrainSamples(path, coordinate, captured, sampler.HasInlandWater, default))
+        if (!TrySaveCachedTerrainSamples(path, coordinate, captured, sampler.HasInlandWater, default, sampler.HasRiverBeds))
             return "the save was refused";
         byte[] bytes = System.IO.File.ReadAllBytes(path);
         version = BitConverter.ToInt32(bytes, 4);
@@ -117,6 +117,10 @@ public partial class RingTerrainProxySector
         staleLoaded = TryLoadCachedTerrainSamples(path, coordinate, staleCache, out _);
         return "";
     }
+
+    /// <summary>T4-7: the proxy cache definition string of a level (16 m, 1024 m sectors) for the given world kind, for the identity checks of river_bed_material_test.</summary>
+    public static string CacheDefinitionForTest(bool inlandWater, bool riverBeds)
+        => BuildLodSectorCacheDefinition(1, 2, 3UL, 4096, 1024, 1024, 16, 32, 64, null, inlandWater, riverBeds);
 
     private static CachedTerrainPoint LegacySampleCacheGet(
         RingLodSurfaceEditSnapshot edits, RingTerrainSampler sampler, int ringWidth, long around, int across)
@@ -165,6 +169,7 @@ public partial class RingTerrainProxySector
         if (!es.SiteMask.Equals(s.SiteMask)) return "Sample.SiteMask";
         if (es.HasExactWaterLevel != s.HasExactWaterLevel) return "Sample.HasExactWaterLevel";
         if (!Same(es.ExactWaterLevel, s.ExactWaterLevel)) return "Sample.ExactWaterLevel";
+        if (!es.RiverBeds.Equals(s.RiverBeds)) return "Sample.RiverBeds";
         if (e.TerrainHeight != a.TerrainHeight) return "TerrainHeight";
         if (e.DisplayedHeight != a.DisplayedHeight) return "DisplayedHeight";
         if (!Same(e.SmoothTerrainHeight, a.SmoothTerrainHeight)) return $"SmoothTerrainHeight {e.SmoothTerrainHeight:R} vs {a.SmoothTerrainHeight:R}";

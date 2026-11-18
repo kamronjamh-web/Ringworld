@@ -26,7 +26,7 @@ public partial class RingTerrainProxySector
         {
             var data = (SectorData)source;
             Coordinate = data.Coordinate; Cells = cells; Spacing = spacing; _geometry = geometry;
-            Vertices = data.Vertices; MorphData = data.MorphData; WaterIndices = data.OceanIndices; Attr = blocks?.Attr;
+            Vertices = data.Vertices; Colors = data.Colors; MorphData = data.MorphData; WaterIndices = data.OceanIndices; Attr = blocks?.Attr;
         }
 
         public RingTerrainSectorCoordinate Coordinate { get; }
@@ -34,6 +34,8 @@ public partial class RingTerrainProxySector
         public int Spacing { get; }
         /// <summary>Terrain lattice vertices (row-major), then the water lattice, then the clipped water vertices.</summary>
         public Vector3[] Vertices { get; }
+        /// <summary>Vertex colours (biome texture weights on the terrain lattice) in the same order as <see cref="Vertices"/> (T4-7 identity pre-capture).</summary>
+        public Color[] Colors { get; }
         public Vector2[] MorphData { get; }
         /// <summary>Water triangles: every wet triangle of the lattice and the clipped partial ones.</summary>
         public int[] WaterIndices { get; }

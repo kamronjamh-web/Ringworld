@@ -55,6 +55,10 @@ public partial class ProxyGpuBackendRoutingContractTest : RefCounted
         Check(R(-3, 100) && R(0, 100), "around index never excludes");
         Check(!R(5, 100, river: true), "river-touched sector => cpu");
         Check(!R(-3, 100, river: true) && !R(5, width / size, river: true), "river flag wins at any index");
+        // T4-7 (D11): a sector over a closed basin routes to the CPU; the flag defaults to off, so every older caller routes as before. (The envelope itself is tested in river_bed_material_test.)
+        bool Basin(long a, int z, bool basin) => RingTerrainProxySector.GpuSectorRoutable(new RingTerrainSectorCoordinate(a, z), size, spacing, width, false, false, false, false, 0, basin);
+        Check(!Basin(5, 100, true) && !Basin(-3, 100, true), "closed-basin sector => cpu");
+        Check(Basin(5, 100, false) && R(5, 100), "a sector that touches no basin routes as before");
         RiverRouting();
 
         if (_failures.Count == 0) { GD.Print("PROXY_GPU_BACKEND_ROUTING=PASS"); return 0; }

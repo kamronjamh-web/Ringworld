@@ -57,7 +57,8 @@ public sealed partial class RingTerrainSampler
         long globalAroundVoxel,
         int globalAcrossVoxel,
         in TerrainGenerationHeightModel.Diagnostics diagnostics,
-        float presentationHeight)
+        float presentationHeight,
+        double footprintMeters = 0d)
     {
         TerrainFields climate = GetRuntimeTerrainFieldsLocked(
             globalAroundVoxel, globalAcrossVoxel, diagnostics, presentationHeight);
@@ -77,11 +78,106 @@ public sealed partial class RingTerrainSampler
             waterSurface,
             diagnostics.SiteMask,
             exactLevel,
-            hasExactLevel);
+            hasExactLevel,
+            HasRiverBeds ? CreateRiverBedMaskLocked(globalAroundVoxel, globalAcrossVoxel, diagnostics, presentationHeight, climate.Moisture, footprintMeters) : default);
     }
 
     /// <summary>True for a water.rivers world: its samples can carry inland water with a float level (S9).</summary>
     internal bool HasInlandWater => _runtimeSurfaceParameters?.HasRivers == true;
+
+    // 0 unknown, 1 yes, -1 no: the recipe never changes after construction, so the feature lookup is done once.
+    private sbyte _riverBedsState;
+
+    /// <summary>T4-7 (D11): true for a world with a river graph and the ground.river_beds feature (bit 3). Only these worlds fill <see cref="TerrainSample.RiverBeds"/>, take land column weights on the proxies, write v14 cache records and route closed basins to the CPU.</summary>
+    internal bool HasRiverBeds
+    {
+        get
+        {
+            if (_riverBedsState == 0)
+                _riverBedsState = (sbyte)(_runtimeSurfaceParameters?.HasWorldFeature(RiverBedFeatureId) == true && RuntimeRiverGraph != null ? 1 : -1);
+            return _riverBedsState > 0;
+        }
+    }
+
+    internal const string RiverBedFeatureId = "ground.river_beds";
+
+    // Rule P memo: the membership indicators J of the last 2 x 2 block of 1 km cells for one basin. Samplers are worker-confined and every sample is built under the noise lock.
+    private bool _bedMemoValid;
+    private int _bedMemoX, _bedMemoY, _bedMemoBasin;
+    private int _bedMemoJ00, _bedMemoJ10, _bedMemoJ01, _bedMemoJ11;
+
+    /// <summary>
+    /// D11 decisions 4 and 5: the river/lake part from the operator's owner (kind, level, reach speed) and the playa cover of rule P, packed. Called only when <see cref="HasRiverBeds"/>.
+    /// A sample with no owner and no basin costs two branches and gets the default mask.
+    /// </summary>
+    internal Terrain.Surface.RiverBedMask CreateRiverBedMaskLocked(
+        long globalAroundVoxel,
+        int globalAcrossVoxel,
+        in TerrainGenerationHeightModel.Diagnostics diagnostics,
+        float presentationHeight,
+        float moisture,
+        double footprintMeters)
+    {
+        Terrain.Hydrology.InlandWaterKind kind = diagnostics.InlandWater;
+        bool owned = kind != Terrain.Hydrology.InlandWaterKind.None && double.IsFinite(diagnostics.WaterLevel);
+        if (!owned && diagnostics.DryBasin < 0) return default;
+        Terrain.Hydrology.RiverGraph graph = RuntimeRiverGraph!;
+        Terrain.Surface.RiverBedPart part = default;
+        if (owned)
+        {
+            double g = 0d;
+            if (kind == Terrain.Hydrology.InlandWaterKind.River && (uint)diagnostics.RiverReach < (uint)graph.Network.Sections.Length)
+                g = Terrain.Surface.RiverBedSurfaceModel.Coarseness(graph.Network.Sections[diagnostics.RiverReach].Speed);
+            part = Terrain.Surface.RiverBedSurfaceModel.RiverPart(kind, presentationHeight - diagnostics.WaterLevel, g, footprintMeters);
+        }
+        // Rule P: the basin of the sample's cell, else the basin of the lake there when the operator reports a Lake owner.
+        int basin = diagnostics.DryBasin;
+        if (basin < 0 && kind == Terrain.Hydrology.InlandWaterKind.Lake)
+        {
+            int lake = graph.LakeAt((double)globalAroundVoxel, (double)globalAcrossVoxel);
+            basin = lake >= 0 ? graph.Lakes[lake].Basin : -1;
+        }
+        double playa = 0d;
+        if (basin >= 0)
+        {
+            Terrain.Hydrology.RiverBasin b = graph.Basins[basin];
+            playa = Terrain.Surface.RiverBedSurfaceModel.PlayaBand(presentationHeight, b.FloorLevel, b.SpillLevel, moisture);
+            if (playa > 0d)
+                playa *= Terrain.Surface.RiverBedSurfaceModel.SmoothStep(Terrain.Surface.RiverBedSurfaceModel.PlayaMembershipStart, Terrain.Surface.RiverBedSurfaceModel.PlayaMembershipEnd,
+                    BasinMembershipLocked(graph, basin, globalAroundVoxel, globalAcrossVoxel));
+        }
+        return Terrain.Surface.RiverBedSurfaceModel.Pack(part, playa);
+    }
+
+    /// <summary>
+    /// P_b of rule P: the bilinear interpolation, between the four surrounding 1 km cell centres, of J = +1 for a member cell of the basin (its dry floor or a lake of it) and -1 otherwise.
+    /// Columns wrap the ring as the river index does, rows clamp to the first and last row. 0 on an edge between a member and a non-member cell.
+    /// </summary>
+    internal double BasinMembershipLocked(Terrain.Hydrology.RiverGraph graph, int basin, double globalAroundVoxel, double globalAcrossVoxel)
+    {
+        double circumference = graph.AroundStepMeters * graph.RingColumns, a = globalAroundVoxel;
+        if (a < 0 || a >= circumference) { a %= circumference; if (a < 0) a += circumference; }
+        double gx = a / graph.AroundStepMeters - 0.5, gy = globalAcrossVoxel / graph.AcrossStepMeters - 0.5;
+        int x0 = (int)Math.Floor(gx), y0 = (int)Math.Floor(gy);
+        double tx = gx - x0, ty = gy - y0;
+        if (!_bedMemoValid || _bedMemoX != x0 || _bedMemoY != y0 || _bedMemoBasin != basin)
+        {
+            _bedMemoJ00 = BasinJ(graph, basin, x0, y0); _bedMemoJ10 = BasinJ(graph, basin, x0 + 1, y0);
+            _bedMemoJ01 = BasinJ(graph, basin, x0, y0 + 1); _bedMemoJ11 = BasinJ(graph, basin, x0 + 1, y0 + 1);
+            _bedMemoX = x0; _bedMemoY = y0; _bedMemoBasin = basin; _bedMemoValid = true;
+        }
+        return (_bedMemoJ00 * (1d - tx) + _bedMemoJ10 * tx) * (1d - ty) + (_bedMemoJ01 * (1d - tx) + _bedMemoJ11 * tx) * ty;
+    }
+
+    private static int BasinJ(Terrain.Hydrology.RiverGraph graph, int basin, int col, int row)
+    {
+        int rc = graph.RingColumns;
+        col = ((col % rc) + rc) % rc;
+        row = row < 0 ? 0 : row >= graph.Rows ? graph.Rows - 1 : row;
+        if (graph.DryBasinAt(col, row) == basin) return 1;
+        int lake = graph.LakeAt(col, row);
+        return lake >= 0 && graph.Lakes[lake].Basin == basin ? 1 : -1;
+    }
 
     /// <summary>
     /// S9: the one runtime water classifier, shared by the full, height-only, fused and lattice sample paths. Without rivers it is the sea rule, unchanged. With rivers, in order:
@@ -294,7 +390,7 @@ public sealed partial class RingTerrainSampler
         TerrainGenerationHeightModel.Diagnostics diagnostics = model.SampleDiagnostics(globalAroundVoxel, globalAcrossVoxel, footprintMeters);
         RingProxyBuildCounters.AddModelEvaluations(1);
         presentationHeight = ResolveRuntimePresentationHeightLocked(globalAroundVoxel, globalAcrossVoxel, footprintMeters, diagnostics);
-        return CreateRuntimeTerrainSampleLocked(globalAroundVoxel, globalAcrossVoxel, diagnostics, presentationHeight);
+        return CreateRuntimeTerrainSampleLocked(globalAroundVoxel, globalAcrossVoxel, diagnostics, presentationHeight, footprintMeters);
     }
 
     private float GetRuntimePresentationSurfaceHeightLocked(long globalAroundVoxel, int globalAcrossVoxel)

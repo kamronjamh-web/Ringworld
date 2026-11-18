@@ -1,4 +1,5 @@
 using RingworldTechDemo.Terrain.Sites;
+using RingworldTechDemo.Terrain.Surface;
 
 namespace RingworldTechDemo.Voxel.Phase3;
 
@@ -15,7 +16,8 @@ public readonly record struct TerrainSample(
     int WaterSurfaceHeight,
     SiteSurfaceMask SiteMask = default,
     float ExactWaterLevel = 0f,
-    bool HasExactWaterLevel = false)
+    bool HasExactWaterLevel = false,
+    RiverBedMask RiverBeds = default)
 {
     /// <summary>S9: the float surface of inland water. The flag is set only by the sampler, only with Lake or River, a finite level and <c>WaterSurfaceHeight == floor(level)</c>; otherwise this is the whole-metre <see cref="WaterSurfaceHeight"/>.</summary>
     public float WaterLevel => HasExactWaterLevel ? ExactWaterLevel : WaterSurfaceHeight;

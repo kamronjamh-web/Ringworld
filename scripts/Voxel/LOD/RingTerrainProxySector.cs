@@ -556,6 +556,9 @@ public partial class RingTerrainProxySector : MeshInstance3D
     private const int LodSectorCacheVersion = 11;
     // T2R-10 (S9): water.rivers worlds use this version and append footprint, exact level and flag to every record; generation 1 keeps version 11 and its bytes.
     private const int LodSectorCacheRiverVersion = 13;
+    // T4-7 (D11 decision 7): ground.river_beds worlds use this version = version 13 plus the packed RiverBedMask (one uint) per record. Versions 11 and 13 keep their bytes.
+    private const int LodSectorCacheRiverBedVersion = 14;
+    private static int LodSectorRecordVersion(bool inlandWater, bool riverBeds) => riverBeds ? LodSectorCacheRiverBedVersion : inlandWater ? LodSectorCacheRiverVersion : LodSectorCacheVersion;
     /// <summary>T2R-12b (S11b): the river line coverage c is stored in UV2.y of terrain vertices as 0.49 c, below the 0.5 threshold every reader of that flag uses.</summary>
     private const float RiverLineMorphScale = 0.49f;
     private const float ShorelineOverlapMeters = RingShorelineClip.OverlapMeters;
@@ -783,6 +786,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
         public bool UsesRuntimeWaterPlane => _sampler.UsesRuntimeSurfaceGeneration;
         /// <summary>True for a water.rivers world: its disk records are the v12 layout (S9).</summary>
         public bool UsesInlandWaterRecords => _sampler.HasInlandWater;
+        /// <summary>True for a ground.river_beds world: its disk records are the v14 layout (D11), v13 plus the packed bed mask.</summary>
+        public bool UsesRiverBedRecords => _sampler.HasRiverBeds;
 
         /// <summary>The footprint code samples of the given proxy spacing carry: 0 in worlds without inland water (their keys and records are unchanged), else S10's rule.</summary>
         public int FootprintFor(int spacing) => _sampler.HasInlandWater ? RiverFootprint.ForProxySpacing(spacing) : 0;
@@ -3699,7 +3704,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 {
                     CachedTerrainSampleRecord[] captured = sampleCache.EndCapture();
                     if ((!loaded || captured.Length > loadedSampleCount)
-                        && TrySaveCachedTerrainSamples(cachePath, coordinate, captured, sampler.HasInlandWater, cancellation))
+                        && TrySaveCachedTerrainSamples(cachePath, coordinate, captured, sampler.HasInlandWater, cancellation, sampler.HasRiverBeds))
                     {
                         cacheWrites++;
                     }
@@ -3750,7 +3755,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
                         {
                             CachedTerrainSampleRecord[] captured = context.Cache.EndCapture();
                             if ((!loaded || captured.Length > loadedSampleCount)
-                                && TrySaveCachedTerrainSamples(cachePath, coordinate, captured, context.Sampler.HasInlandWater, cancellation))
+                                && TrySaveCachedTerrainSamples(cachePath, coordinate, captured, context.Sampler.HasInlandWater, cancellation, context.Sampler.HasRiverBeds))
                             {
                                 Interlocked.Increment(ref cacheWrites);
                             }
@@ -3804,7 +3809,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         // captures; mesh, material, lighting, and skirt settings do not.
         string definition = BuildLodSectorCacheDefinition(
             sampler.TerrainGeneratorVersion, sampler.Seed, sampler.TerrainDefinitionHash,
-            sampler.AroundRingVoxelLength, ringWidth, size, spacing, parentSpacing, cells, globalMorphIdentity, sampler.HasInlandWater);
+            sampler.AroundRingVoxelLength, ringWidth, size, spacing, parentSpacing, cells, globalMorphIdentity, sampler.HasInlandWater, sampler.HasRiverBeds);
         string activeWorld = ProjectSettings.GetSetting("ringworld/runtime/active_world_directory", "").AsString();
         // Hashing and path globalization only run when the definition or world changes.
         string cacheKey = definition + "|" + activeWorld;
@@ -3824,9 +3829,12 @@ public partial class RingTerrainProxySector : MeshInstance3D
         int terrainGeneratorVersion, int seed, ulong terrainDefinitionHash,
         long aroundLength, int ringWidth, int size, int spacing, int parentSpacing, int cells,
         RingTerrainGlobalMorphSnapshot.Identity? globalMorphIdentity,
-        bool inlandWater = false)
+        bool inlandWater = false,
+        bool riverBeds = false)
         => FormattableString.Invariant(
-            $"v{(inlandWater ? LodSectorCacheRiverVersion : LodSectorCacheVersion)}|g{terrainGeneratorVersion}|s{seed}|h{terrainDefinitionHash:X16}|a{aroundLength}|w{ringWidth}|z{size}|p{spacing}|q{parentSpacing}|m{globalMorphIdentity?.TopologyAndHeightHash ?? 0UL:X16}|n{cells}");
+            $"v{LodSectorRecordVersion(inlandWater, riverBeds)}|g{terrainGeneratorVersion}|s{seed}|h{terrainDefinitionHash:X16}|a{aroundLength}|w{ringWidth}|z{size}|p{spacing}|q{parentSpacing}|m{globalMorphIdentity?.TopologyAndHeightHash ?? 0UL:X16}|n{cells}")
+        // T4-7: river-beds worlds only, so a change to any D11 constant invalidates their caches and nobody else's.
+        + (riverBeds ? "|rb" + global::RingworldTechDemo.Terrain.Surface.RiverBedSurfaceModel.Version.ToString(System.Globalization.CultureInfo.InvariantCulture) : "");
 
     private static string ResolveLodSectorCachePath(string cacheDirectory, RingTerrainSectorCoordinate coordinate, bool createDirectory)
     {
@@ -3934,13 +3942,14 @@ public partial class RingTerrainProxySector : MeshInstance3D
         sampleCount = 0;
         if (!File.Exists(path)) return false;
         bool riverRecords = sampleCache.UsesInlandWaterRecords;
+        bool bedRecords = sampleCache.UsesRiverBedRecords;
         try
         {
             using var stream = new FileStream(path, FileMode.Open, System.IO.FileAccess.Read, FileShare.Read);
             using (var header = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true))
             {
                 if (header.ReadUInt32() != LodSectorCacheMagic
-                    || header.ReadInt32() != (riverRecords ? LodSectorCacheRiverVersion : LodSectorCacheVersion)
+                    || header.ReadInt32() != LodSectorRecordVersion(riverRecords, bedRecords)
                     || header.ReadInt64() != coordinate.AroundSector
                     || header.ReadInt32() != coordinate.AcrossSector)
                 {
@@ -3978,6 +3987,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 int footprint = 0;
                 float exactWaterLevel = 0.0f;
                 bool hasExactWaterLevel = false;
+                uint riverBedPacked = 0u;
                 if (riverRecords)
                 {
                     footprint = reader.ReadUInt16();
@@ -3991,6 +4001,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
                     {
                         throw new InvalidDataException("Invalid LOD inland water payload.");
                     }
+                    if (bedRecords) riverBedPacked = reader.ReadUInt32();
                 }
                 if (regionValue < (int)TerrainRegion.DeepOcean
                     || regionValue > (int)TerrainRegion.MountainBelt
@@ -4025,7 +4036,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
                     waterSurfaceHeight,
                     default,
                     exactWaterLevel,
-                    hasExactWaterLevel);
+                    hasExactWaterLevel,
+                    global::RingworldTechDemo.Terrain.Surface.RiverBedMask.FromPacked(riverBedPacked));
                 records[i] = new CachedTerrainSampleRecord(
                     around,
                     across,
@@ -4058,9 +4070,10 @@ public partial class RingTerrainProxySector : MeshInstance3D
         RingTerrainSectorCoordinate coordinate,
         IReadOnlyList<CachedTerrainSampleRecord> samples,
         bool riverRecords,
-        CancellationToken cancellation)
+        CancellationToken cancellation,
+        bool bedRecords = false)
     {
-        long estimatedBytes = 64L + samples.Count * (riverRecords ? 72L : 64L);
+        long estimatedBytes = 64L + samples.Count * (bedRecords ? 76L : riverRecords ? 72L : 64L);
         if (!RingGeneratedLodCacheBudget.CanWriteRegistered(path, estimatedBytes)) return false;
         string temporaryPath = path + $".{System.Environment.CurrentManagedThreadId}.tmp";
         bool recorded = false;
@@ -4072,7 +4085,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 using (var header = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true))
                 {
                     header.Write(LodSectorCacheMagic);
-                    header.Write(riverRecords ? LodSectorCacheRiverVersion : LodSectorCacheVersion);
+                    header.Write(LodSectorRecordVersion(riverRecords, bedRecords));
                     header.Write(coordinate.AroundSector);
                     header.Write(coordinate.AcrossSector);
                 }
@@ -4107,6 +4120,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
                         writer.Write((ushort)Math.Clamp(record.Footprint, 0, ushort.MaxValue));
                         writer.Write(sample.ExactWaterLevel);
                         writer.Write(sample.HasExactWaterLevel);
+                        if (bedRecords) writer.Write(sample.RiverBeds.Packed);
                     }
                 }
             }
@@ -4193,6 +4207,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         // fresh climate/hydrology query for every high-detail proxy vertex.
         const int biomeSampleSpacing = 16;
         Dictionary<TerrainColumnKey, Color> biomeWeightCache = scratch.BiomeWeightCache;
+        bool riverBedWorld = sampler.HasRiverBeds;
         // T2R-12b (S11b): the river line coverage of this lattice rides in UV2.y of terrain vertices as 0.49 c (every reader thresholds at 0.5); 0 without a river graph. S13.2: from the 8 m level up.
         float[] riverLine = scratch.RiverLine;
         bool hasRiverLine = false;
@@ -4217,6 +4232,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
             vertices[i] = vertexTransform * geometry.CanonicalToWorld(around, terrainSurface, across);
             colors[i] = ResolveBiomeTextureWeight(
                 sampler, around, across, ringWidth, biomeSampleSpacing, biomeWeightCache);
+            // T4-7 (D11 decision 6): the column holds land weights; the vertex's own bed, bank and playa mask goes on top at the level's footprint.
+            if (riverBedWorld) colors[i] = global::RingworldTechDemo.Terrain.Surface.RiverBedSurfaceModel.Apply(colors[i], terrainSample.RiverBeds);
             vertices[waterIndex] = vertexTransform * geometry.CanonicalToWorld(around, GetWaterRenderHeight(point) - underlay, across);
             uvs[i] = new Vector2(x / (float)cells, z / (float)cells);
             uvs[waterIndex] = uvs[i];
@@ -4633,6 +4650,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             float topY = height + (point.UsesPresentationSurface ? 0.0f : 1.0f) - underlay;
             Color terrainColor = ResolveBiomeTextureWeight(
                 sampler, a0, sampleAcross, ringWidth, biomeSampleSpacing, biomeWeightCache);
+            if (sampler.HasRiverBeds) terrainColor = global::RingworldTechDemo.Terrain.Surface.RiverBedSurfaceModel.Apply(terrainColor, terrainSample.RiverBeds);
             Vector2 coverageUv = new((x + 0.5f) / cells, (z + 0.5f) / cells);
 
             AddBlockyQuad(vertices, normals, colors, indices,
@@ -4807,7 +4825,10 @@ public partial class RingTerrainProxySector : MeshInstance3D
         var key = new TerrainColumnKey(sampledAround, sampledAcross);
         if (!cache.TryGetValue(key, out Color weight))
         {
-            weight = sampler.GetBiomeTextureWeights(sampledAround, sampledAcross).ToVertexColor();
+            // T4-7: river-beds worlds take land weights per column (River and Lake as land); the per-vertex mask is applied by the callers.
+            weight = (sampler.HasRiverBeds
+                ? sampler.GetLandBiomeTextureWeights(sampledAround, sampledAcross)
+                : sampler.GetBiomeTextureWeights(sampledAround, sampledAcross)).ToVertexColor();
             cache.Add(key, weight);
         }
         return weight;

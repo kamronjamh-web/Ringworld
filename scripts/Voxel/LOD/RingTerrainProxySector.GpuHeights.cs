@@ -73,9 +73,9 @@ public partial class RingTerrainProxySector
     /// (structural walls, clamped rows) and sectors the GPU already declined as coastal stay on the CPU (docs/gpu-offload-plan.md 4.1).
     /// </summary>
     internal static bool GpuSectorRoutable(RingTerrainSectorCoordinate coordinate, int size, int spacing, int ringWidth,
-        bool touchesEdits, bool touchesSite, bool touchesRiver, bool declinedByGpu, int reliefReachMeters = 0)
+        bool touchesEdits, bool touchesSite, bool touchesRiver, bool declinedByGpu, int reliefReachMeters = 0, bool touchesBasin = false)
     {
-        if (touchesEdits || touchesSite || touchesRiver || declinedByGpu) return false;
+        if (touchesEdits || touchesSite || touchesRiver || touchesBasin || declinedByGpu) return false;
         long acrossStart = (long)coordinate.AcrossSector * size;
         long acrossEnd = acrossStart + size;
         // Window halo, parent samples and the 16 m biome centres all stay two lattice steps inside the last presentation row.
@@ -94,6 +94,18 @@ public partial class RingTerrainProxySector
         long around0 = coordinate.AroundSector * (long)size;
         double across0 = (double)coordinate.AcrossSector * size;
         return sampler.IntersectsRiverInfluence(around0 - halo, around0 + size + halo, across0 - halo, across0 + size + halo);
+    }
+
+    /// <summary>
+    /// T4-7 (D11 decision 8): the same envelope as <see cref="SectorTouchesRiver"/> tested against closed basins (dry floor cells and the cells of balance lakes). False without ground.river_beds, so every other world routes as before.
+    /// The playa (rule P) has no GLSL port, so these sectors build on the CPU.
+    /// </summary>
+    internal static bool SectorTouchesBasin(RingTerrainSampler sampler, RingTerrainSectorCoordinate coordinate, int size, int spacing, int parentSpacing)
+    {
+        long halo = Math.Max(4L * spacing, 2L * parentSpacing);
+        long around0 = coordinate.AroundSector * (long)size;
+        double across0 = (double)coordinate.AcrossSector * size;
+        return sampler.IntersectsClosedBasin(around0 - halo, around0 + size + halo, across0 - halo, across0 + size + halo);
     }
 
     /// <summary>Resolves the backend for this level. Called from <see cref="RefreshVertexTableInstall"/> once the slot pool exists.</summary>
@@ -202,7 +214,10 @@ public partial class RingTerrainProxySector
             if (touchesEdits || touchesSite) RingProxyBuildCounters.AddGpuEditedToCpu(SampleSpacingMeters);
             bool touchesRiver = SectorTouchesRiver(sampler, coordinate, size, spacing, parentSpacing);
             if (touchesRiver) RingProxyBuildCounters.AddGpuRiverToCpu(SampleSpacingMeters);
-            if (room <= 0 || !GpuSectorRoutable(coordinate, size, spacing, ringWidth, touchesEdits, touchesSite, touchesRiver, _gpuCpuRoute.Contains(coordinate), reliefReach)
+            bool touchesBasin = SectorTouchesBasin(sampler, coordinate, size, spacing, parentSpacing);
+            // Counted once per routing decision, and only for sectors the river envelope did not already keep on the CPU, so the two counters never add up twice.
+            if (touchesBasin && !touchesRiver) RingProxyBuildCounters.AddGpuBasinToCpu(SampleSpacingMeters);
+            if (room <= 0 || !GpuSectorRoutable(coordinate, size, spacing, ringWidth, touchesEdits, touchesSite, touchesRiver, _gpuCpuRoute.Contains(coordinate), reliefReach, touchesBasin)
                 || !pool.TryAcquire(out int slot))
             {
                 cpu.Add(coordinate);

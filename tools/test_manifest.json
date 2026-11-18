@@ -5292,6 +5292,18 @@
       "expected_s": 30,
       "timeout_s": 240
     },
+    "river_bed_material_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain",
+        "water"
+      ],
+      "marker": "RIVER_BED_MATERIAL",
+      "expected_s": 15,
+      "timeout_s": 60
+    },
     "proxy_river_true_width_test": {
       "kind": "test",
       "mode": "headless",

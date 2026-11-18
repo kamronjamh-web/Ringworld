@@ -1,0 +1,8 @@
+{
+  "sectors": [
+    { "label": "river_2m", "spacing": 2, "around_sector": 78854, "across_sector": 1369, "vertices": 10053, "color_hash": "972FD68CCBBEBE66" },
+    { "label": "river_4m", "spacing": 4, "around_sector": 38913, "across_sector": 325, "vertices": 9031, "color_hash": "E8EF9BE84DADA86A" },
+    { "label": "river_64m", "spacing": 64, "around_sector": 2447, "across_sector": 28, "vertices": 10254, "color_hash": "7722E7BFF0E2B6EA" },
+    { "label": "lake_shore_4m", "spacing": 4, "around_sector": 39185, "across_sector": 259, "vertices": 9003, "color_hash": "A1B833B82B6C3F1A" }
+  ]
+}

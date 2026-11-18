@@ -47,6 +47,7 @@ internal static class RingProxyBuildCounters
     private static readonly long[] GpuLatencySumUs = new long[LevelSlots], GpuLatencyMaxUs = new long[LevelSlots], GpuLatencyCount = new long[LevelSlots];
     private static readonly long[] GpuEditedToCpu = new long[LevelSlots];
     private static readonly long[] GpuRiverToCpu = new long[LevelSlots];
+    private static readonly long[] GpuBasinToCpu = new long[LevelSlots];
     // T2R-12b: river line splat (S11b) calls, Stopwatch ticks and the largest single call per level.
     private static readonly long[] RiverSplatCalls = new long[LevelSlots], RiverSplatTicks = new long[LevelSlots], RiverSplatMaxTicks = new long[LevelSlots];
     private static long _windowStart = Stopwatch.GetTimestamp();
@@ -163,6 +164,9 @@ internal static class RingProxyBuildCounters
     /// <summary>T2R-11: a GPU-level sector kept on the CPU because a river or lake reaches it (S10); counted once per routing decision, before queue pressure.</summary>
     public static void AddGpuRiverToCpu(int spacingMeters) => Interlocked.Increment(ref GpuRiverToCpu[SlotFor(spacingMeters)]);
     public static long GpuRiverToCpuCount(int spacingMeters) => Interlocked.Read(ref GpuRiverToCpu[SlotFor(spacingMeters)]);
+    /// <summary>T4-7 (D11): a GPU-level sector kept on the CPU because a closed basin (dry floor or balance lake) reaches it and no river or lake already does; counted once per routing decision, before queue pressure.</summary>
+    public static void AddGpuBasinToCpu(int spacingMeters) => Interlocked.Increment(ref GpuBasinToCpu[SlotFor(spacingMeters)]);
+    public static long GpuBasinToCpuCount(int spacingMeters) => Interlocked.Read(ref GpuBasinToCpu[SlotFor(spacingMeters)]);
 
     /// <summary>T2R-12b: one river line splat of a sector at the given spacing took <paramref name="ticks"/> Stopwatch ticks.</summary>
     public static void AddRiverLineSplat(int spacingMeters, long ticks)
@@ -222,6 +226,7 @@ internal static class RingProxyBuildCounters
             Interlocked.Exchange(ref GpuLatencySumUs[i], 0); Interlocked.Exchange(ref GpuLatencyMaxUs[i], 0); Interlocked.Exchange(ref GpuLatencyCount[i], 0);
             Interlocked.Exchange(ref GpuEditedToCpu[i], 0);
             Interlocked.Exchange(ref GpuRiverToCpu[i], 0);
+            Interlocked.Exchange(ref GpuBasinToCpu[i], 0);
             Interlocked.Exchange(ref RiverSplatCalls[i], 0); Interlocked.Exchange(ref RiverSplatTicks[i], 0); Interlocked.Exchange(ref RiverSplatMaxTicks[i], 0);
         }
         Interlocked.Exchange(ref _shorelineRebuilds, 0);
@@ -283,16 +288,16 @@ internal static class RingProxyBuildCounters
     private static object GpuSnapshot()
     {
         var levels = new List<object>();
-        long batches = 0, sectors = 0, dry = 0, ocean = 0, toCpu = 0, editedToCpu = 0, riverToCpu = 0;
+        long batches = 0, sectors = 0, dry = 0, ocean = 0, toCpu = 0, editedToCpu = 0, riverToCpu = 0, basinToCpu = 0;
         for (int i = 0; i < LevelSlots; i++)
         {
             long b = Interlocked.Read(ref GpuBatches[i]), s = Interlocked.Read(ref GpuSectorsDispatched[i]);
-            long d = Interlocked.Read(ref GpuInstalledDry[i]), o = Interlocked.Read(ref GpuInstalledOcean[i]), c = Interlocked.Read(ref GpuToCpu[i]), e = Interlocked.Read(ref GpuEditedToCpu[i]), rv = Interlocked.Read(ref GpuRiverToCpu[i]);
-            if (b == 0 && s == 0 && d == 0 && o == 0 && c == 0 && e == 0 && rv == 0) continue;
-            batches += b; sectors += s; dry += d; ocean += o; toCpu += c; editedToCpu += e; riverToCpu += rv;
-            levels.Add(new { level = "spacing_" + (1 << i) + "m", batches = b, sectorsDispatched = s, installedDry = d, installedOcean = o, routedToCpuCoastal = c, routedToCpuEdited = e, routedToCpuRiver = rv, meanLatencyMs = Interlocked.Read(ref GpuLatencyCount[i]) == 0 ? 0.0 : Interlocked.Read(ref GpuLatencySumUs[i]) / 1000.0 / Interlocked.Read(ref GpuLatencyCount[i]), maxLatencyMs = Interlocked.Read(ref GpuLatencyMaxUs[i]) / 1000.0 });
+            long d = Interlocked.Read(ref GpuInstalledDry[i]), o = Interlocked.Read(ref GpuInstalledOcean[i]), c = Interlocked.Read(ref GpuToCpu[i]), e = Interlocked.Read(ref GpuEditedToCpu[i]), rv = Interlocked.Read(ref GpuRiverToCpu[i]), bs = Interlocked.Read(ref GpuBasinToCpu[i]);
+            if (b == 0 && s == 0 && d == 0 && o == 0 && c == 0 && e == 0 && rv == 0 && bs == 0) continue;
+            batches += b; sectors += s; dry += d; ocean += o; toCpu += c; editedToCpu += e; riverToCpu += rv; basinToCpu += bs;
+            levels.Add(new { level = "spacing_" + (1 << i) + "m", batches = b, sectorsDispatched = s, installedDry = d, installedOcean = o, routedToCpuCoastal = c, routedToCpuEdited = e, routedToCpuRiver = rv, routedToCpuBasin = bs, meanLatencyMs = Interlocked.Read(ref GpuLatencyCount[i]) == 0 ? 0.0 : Interlocked.Read(ref GpuLatencySumUs[i]) / 1000.0 / Interlocked.Read(ref GpuLatencyCount[i]), maxLatencyMs = Interlocked.Read(ref GpuLatencyMaxUs[i]) / 1000.0 });
         }
-        return new { batches, sectorsDispatched = sectors, installedDry = dry, installedOcean = ocean, routedToCpuCoastal = toCpu, routedToCpuEdited = editedToCpu, routedToCpuRiver = riverToCpu, levels };
+        return new { batches, sectorsDispatched = sectors, installedDry = dry, installedOcean = ocean, routedToCpuCoastal = toCpu, routedToCpuEdited = editedToCpu, routedToCpuRiver = riverToCpu, routedToCpuBasin = basinToCpu, levels };
     }
 
     private static Dictionary<string, long> SlotPeakSnapshot()

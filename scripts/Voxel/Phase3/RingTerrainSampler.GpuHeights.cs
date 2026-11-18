@@ -68,6 +68,32 @@ public sealed partial class RingTerrainSampler
         => RuntimeRiverGraph?.Index.AnyNear(aroundMin, aroundMax, acrossMin, acrossMax) ?? false;
 
     /// <summary>
+    /// T4-7 (D11 decision 8): true when any 1 km cell overlapping the (wrapped) rectangle is a dry cell of a closed basin, or a wet cell of a lake with <c>Basin &gt;= 0</c>. False without
+    /// ground.river_beds (<see cref="HasRiverBeds"/>), so every other world routes as before. Such sectors build on the CPU, which owns rule P (there is no GLSL port). Same cell walk as <see cref="RiverSpatialIndex.AnyNear"/>.
+    /// </summary>
+    internal bool IntersectsClosedBasin(long aroundMin, long aroundMax, double acrossMin, double acrossMax)
+    {
+        if (!HasRiverBeds || RuntimeRiverGraph is not { } graph) return false;
+        int columns = graph.RingColumns;
+        double step = graph.AroundStepMeters, circumference = step * columns;
+        double start = aroundMin % circumference;
+        if (start < 0) start += circumference;
+        long c0 = (long)(start / step);
+        long c1 = (long)((start + Math.Max(0L, aroundMax - aroundMin)) / step);
+        c1 = Math.Min(c1, c0 + columns - 1);
+        int r0 = graph.Index.RowOf(acrossMin), r1 = graph.Index.RowOf(acrossMax);
+        for (int row = r0; row <= r1; row++)
+            for (long c = c0; c <= c1; c++)
+            {
+                int col = (int)(c % columns);
+                if (graph.DryBasinAt(col, row) >= 0) return true;
+                int lake = graph.LakeAt(col, row);
+                if (lake >= 0 && graph.Lakes[lake].Basin >= 0) return true;
+            }
+        return false;
+    }
+
+    /// <summary>
     /// T2R-12 (S11): the far line coverage of a cell of the given size centred on (around, across): 0 on a world without a river graph (generation 1 and legacy rivers), so the far
     /// vertex alpha and the tile alpha keep their old values there.
     /// </summary>
@@ -97,9 +123,15 @@ public sealed partial class RingTerrainSampler
     /// <see cref="RiverFootprint.Far"/> (valley only, no River sample). Heights are unchanged; lakes and the ocean are untouched.
     /// </summary>
     internal TerrainSample WithoutFarRiverOwner(in TerrainSample sample)
-        => RuntimeRiverGraph != null && sample.WaterKind == SurfaceWaterKind.River
+    {
+        if (RuntimeRiverGraph == null) return sample;
+        TerrainSample far = sample.WaterKind == SurfaceWaterKind.River
             ? sample with { WaterKind = SurfaceWaterKind.None, WaterSurfaceHeight = sample.SurfaceHeight, ExactWaterLevel = 0f, HasExactWaterLevel = false }
             : sample;
+        // T4-7 (D11 decision 9): a far vertex that lands on a bank or bed paints no river cell; the playa part stays (a dry lakebed shows from orbit).
+        if (far.RiverBeds.RiverCover != 0 && HasRiverBeds) far = far with { RiverBeds = far.RiverBeds with { RiverCover = 0 } };
+        return far;
+    }
 
     /// <summary>T2R-12: true when far meshes of this sampler carry the river line coverage in their alpha (the owners then set <c>river_line_enabled</c> on the terrain material).</summary>
     internal bool HasRiverLine => RuntimeRiverGraph != null;

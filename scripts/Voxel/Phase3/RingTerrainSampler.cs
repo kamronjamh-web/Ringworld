@@ -774,7 +774,22 @@ public sealed partial class RingTerrainSampler : IDisposable
     /// macro colours match the close proxy shader's blended texture weights.
     /// </summary>
     public BiomeTextureWeights GetBiomeTextureWeights(in TerrainSample sample)
-        => ApplySiteSurfaceMask(GetNaturalBiomeTextureWeights(sample), sample.SiteMask);
+        => RiverBedSurfaceModel.Apply(ApplySiteSurfaceMask(GetNaturalBiomeTextureWeights(sample), sample.SiteMask), sample.RiverBeds);
+
+    /// <summary>
+    /// T4-7 (D11 decision 6): the proxy column weights of a ground.river_beds world. Natural weights with River and Lake samples treated as land (climate blend; the ocean stays sand),
+    /// the site mask applied and no river mask: each terrain vertex then applies its own mask on top (<see cref="RiverBedSurfaceModel.Apply(Color, in RiverBedMask)"/>).
+    /// </summary>
+    public BiomeTextureWeights GetLandBiomeTextureWeights(long globalAroundVoxel, int globalAcrossVoxel)
+    {
+        lock (_noiseLock)
+        {
+            TerrainSample sample = GetTerrainSampleLocked(globalAroundVoxel, globalAcrossVoxel);
+            if (sample.WaterKind is SurfaceWaterKind.River or SurfaceWaterKind.Lake)
+                sample = sample with { WaterKind = SurfaceWaterKind.None, WaterSurfaceHeight = sample.SurfaceHeight, ExactWaterLevel = 0f, HasExactWaterLevel = false };
+            return ApplySiteSurfaceMask(GetNaturalBiomeTextureWeights(sample), sample.SiteMask);
+        }
+    }
 
     /// <summary>Emitter-site rock (pads, cut faces) shifts weight into the Alpine channel and beach sand into the Desert channel.
     /// A default mask (rock and sand both zero) returns the natural weights untouched.</summary>
