@@ -605,7 +605,9 @@ func ApplySurfaceSettings(settings: Resource) -> void:
 	if settings == null:
 		return
 	_move_speed = clampf(float(settings.get("MoveSpeedMetersPerSecond")), 2.0, 60.0)
-	_mesh_lods = clampi(int(settings.get("MeshLods")), 2, 6)
+	# MeshLods left the settings in 5b51bc3 (NT-1 builds only the levels past the handoff); keep the shipped 4 when it is absent.
+	var mesh_lods = settings.get("MeshLods")
+	_mesh_lods = clampi(int(mesh_lods), 2, 6) if mesh_lods != null else 4
 	_worker_count = clampi(int(settings.get("GenerationWorkerCount")), 1, 4)
 	_prefetch_m = clampf(float(settings.get("GenerationPrefetchMeters")), 16.0, 160.0)
 	_cache_mib = clampi(int(settings.get("GenerationCacheMiB")), 1, 64)

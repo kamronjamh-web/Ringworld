@@ -86,14 +86,13 @@ func _run() -> void:
 	var around_offset := fposmod(bounded[0] + 2048.0 + 15707968.0, 31415936.0) - 15707968.0
 	_expect(absf(around_offset) <= 176.001 and absf(bounded[1] - 159000.0) <= 176.001, "physics constrains both patch edges")
 	var speed_slider := drawer.find_child("Movementspeed*", true, false) as HSlider
-	var lod_slider := drawer.find_child("Meshdetaillevels", true, false) as HSlider
-	_expect(speed_slider != null and lod_slider != null, "playable movement and mesh controls exist")
-	if speed_slider == null or lod_slider == null: return
+	# The mesh detail row left the menu in 5b51bc3 (NT-1 builds only the levels past the handoff).
+	_expect(speed_slider != null, "playable movement control exists")
+	_expect(drawer.find_child("Meshdetaillevels", true, false) == null, "retired mesh detail row stays out of the menu")
+	if speed_slider == null: return
 	speed_slider.value = 24
-	lod_slider.value = 3
 	await create_timer(.7).timeout
-	_expect(playable.get("_move_speed") == 24.0 and playable.get("_mesh_lods") == 3, "tuning changes active movement and LOD settings")
-	_expect(int(surface.get("TerrainNode").get("mesh_lods")) == 3, "mesh setting reaches native Terrain3D")
+	_expect(playable.get("_move_speed") == 24.0, "tuning changes active movement settings")
 	_expect(FileAccess.file_exists(PREFERENCES_PATH), "playable preferences persist in fixture")
 	playable.apply_recipe_setting("land_balance", 0.1)
 	playable.apply_recipe_setting("land_balance", -0.1)
@@ -134,7 +133,7 @@ func _run() -> void:
 		await process_frame
 		if playable.get_preview_diagnostics().ready: break
 	_expect(playable.get_preview_diagnostics().ready, "reopened playable patch commits")
-	_expect(playable.get("_move_speed") == 24.0 and playable.get("_mesh_lods") == 3, "playable preferences reload")
+	_expect(playable.get("_move_speed") == 24.0, "playable preferences reload")
 	_expect(FileAccess.get_file_as_bytes(RECIPE_PATH) == saved_recipe_bytes, "navigation never saves recipe implicitly")
 	HANDOFF.stage(playable.get_recipe_snapshot(), 24.0, 159000.0, RECIPE_PATH, true, "protected")
 	var handoff: Dictionary = HANDOFF.consume()
