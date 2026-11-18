@@ -150,6 +150,73 @@ static func freeze_noise(tree: SceneTree, game: Node, what: PackedStringArray) -
 	return info
 
 
+## Still-capture mode (docs/test-speed-plan.md 3.8): Engine.time_scale 0 and the Sunshine cloud march held (capture_hold keeps presenting the last march), then a
+## self-check of two consecutive byte-identical frame pairs. Never wait on a SceneTreeTimer in here (with time scale 0 it never fires); this counts frames.
+## Pair with capture_end(). Returns {deterministic, frames_waited, last_pair_differing_px, cloud_hold}.
+static func capture_begin(tree: SceneTree, game: Node) -> Dictionary:
+	if not game.has_meta("capture_prev_time_scale"):
+		game.set_meta("capture_prev_time_scale", Engine.time_scale)
+	Engine.time_scale = 0.0
+	var clouds := _cloud_node(game)
+	var held := false
+	if clouds != null:
+		clouds.set("capture_hold", true)
+		held = bool(clouds.get("capture_hold"))
+	var frames := 0
+	for i in 60:
+		await tree.process_frame
+		frames += 1
+	var ok_pairs := 0
+	var last_px := -1
+	var diff_a: Image
+	var diff_b: Image
+	while frames < 180 and ok_pairs < 2:
+		await RenderingServer.frame_post_draw
+		frames += 1
+		var a := grab(tree)
+		await RenderingServer.frame_post_draw
+		frames += 1
+		var b := grab(tree)
+		if a.get_data() == b.get_data():
+			ok_pairs += 1
+			last_px = 0
+		else:
+			ok_pairs = 0
+			diff_a = a
+			diff_b = b
+	if ok_pairs < 2 and diff_a != null:
+		last_px = _differing_px(diff_a, diff_b)
+	return {"deterministic": ok_pairs >= 2, "frames_waited": frames, "last_pair_differing_px": last_px, "cloud_hold": held}
+
+
+static func capture_end(game: Node) -> void:
+	if game == null or not is_instance_valid(game):
+		return
+	var clouds := _cloud_node(game)
+	if clouds != null:
+		clouds.set("capture_hold", false)
+	if game.has_meta("capture_prev_time_scale"):
+		Engine.time_scale = float(game.get_meta("capture_prev_time_scale"))
+		game.remove_meta("capture_prev_time_scale")
+
+
+static func _cloud_node(game: Node) -> Object:
+	var driver := game.get_node_or_null("SunshineCloudsDriver")
+	return driver.get("clouds_resource") as Object if driver != null else null
+
+
+static func _differing_px(a: Image, b: Image) -> int:
+	var da := a.get_data()
+	var db := b.get_data()
+	if da.size() != db.size():
+		return -1
+	var n := 0
+	for i in range(0, da.size(), 4):
+		if da[i] != db[i] or da[i + 1] != db[i + 1] or da[i + 2] != db[i + 2] or da[i + 3] != db[i + 3]:
+			n += 1
+	return n
+
+
 static func hold_wind() -> void:
 	RenderingServer.global_shader_parameter_set("ring_local_wind_enabled", 0.0)
 	RenderingServer.global_shader_parameter_set("ring_wind_field_enabled", 0.0)

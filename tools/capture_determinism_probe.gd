@@ -7,6 +7,9 @@ extends SceneTree
 ## to --raw=<dir> for offline pixel counts and heatmaps. Writes <out>/probe_report.json. Read-only on game state except the switches it restores.
 ## Args (after --): --out=<abs dir> [--raw=<abs dir>] [--poses=save_spot,forest_interior_eye,plains_eye,coast_eye] [--warm=20] [--plan=clouds|residual]
 ## --plan=clouds runs the cloud-focused second pass (bridge-held cloud switches, fixed dither index, no history rejection, root-level nodes).
+## --plan=hold (B7b): per pose freeze_world only (nothing hidden, no freeze_noise, no hold_wind), TVW.capture_begin (time scale 0 + capture_hold on the cloud node),
+## then N vs N+1 and N vs N+30, a held-frame PNG, a clouds-hidden frame (proves the clouds are in the held picture) and a check that the march resumes after
+## TVW.capture_end. PASS only when every pose is 0 / 0 with the self-check true. Per-pose result: result["hold"].
 ## Verdict: CAPTURE_DETERMINISM_PROBE=PASS when every pose was measured (it reports, it does not judge), =FAIL <reason> otherwise.
 
 const COMMON := preload("res://tools/shadow_harness_common.gd")
@@ -535,6 +538,11 @@ func _pose(name: String, pose: Dictionary) -> Dictionary:
 	await COMMON.settle(self, 3.0)
 	result["idle_2"] = await _wait_idle(90.0)
 	TVW.freeze_world(game)
+	if String(args.get("plan", "")) == "hold":
+		hold_wind_on = false
+		result["hold"] = await _hold_pose(name)
+		hold_wind_on = true
+		return result
 	result["freeze_noise"] = TVW.freeze_noise(self, game, PackedStringArray(["clouds", "taa"]))
 	_hide_overlays_except_droplets()
 	await _frames(60)
@@ -577,6 +585,61 @@ func _pose(name: String, pose: Dictionary) -> Dictionary:
 	await _frames(warm * 3)
 	result["ladder"].append(await _measure(name, "ladder_restored_base", warm))
 	return result
+
+
+## --plan=hold body for one pose (see the header). The clouds-hidden frame is taken with the bridge held so it cannot re-enable the effect.
+func _hold_pose(name: String) -> Dictionary:
+	var h := {"pass": false}
+	stage = "%s/hold_begin" % name
+	var sc: Dictionary = await TVW.capture_begin(self, game)
+	h["self_check"] = sc
+	_log("%s capture_begin %s" % [name, str(sc)])
+	stage = "%s/hold_measure" % name
+	var a: Dictionary = await _grab()
+	var b: Dictionary = await _grab()
+	await _frames(29)
+	var c: Dictionary = await _grab()
+	var ia: Image = a["img"]
+	h["n_vs_n1"] = _compare_px(ia, b["img"])
+	h["n_vs_n30"] = _compare_px(ia, c["img"])
+	var png := out_dir.path_join("%s__held.png" % name)
+	ia.save_png(png)
+	h["png"] = png
+	h["counters"] = [a["counters"], c["counters"]]
+	_log("%s held N/N+1 %s  N/N+30 %s" % [name, str(h["n_vs_n1"]), str(h["n_vs_n30"])])
+	stage = "%s/hold_clouds_off" % name
+	if bridge != null:
+		_enforce(bridge, "process_mode", Node.PROCESS_MODE_DISABLED)
+	if clouds != null:
+		_enforce(clouds, "enabled", false)
+	await _frames(20)
+	var off: Dictionary = await _grab()
+	h["clouds_off_vs_held"] = _compare_px(ia, off["img"])
+	_restore_all()
+	hold_wind_on = false
+	stage = "%s/hold_end" % name
+	TVW.capture_end(game)
+	await _frames(20)
+	var r1: Dictionary = await _grab()
+	var r2: Dictionary = await _grab()
+	var r3: Dictionary = await _grab()
+	h["resumed_frames_differ"] = not (r1["img"].get_data() == r2["img"].get_data() and r2["img"].get_data() == r3["img"].get_data())
+	h["resumed_vs_held"] = _compare_px(ia, r3["img"])
+	h["resumed_counters"] = [r1["counters"], r3["counters"]]
+	h["resumed"] = h["resumed_frames_differ"] or r1["counters"].get("cloud_accumulation_is_a") != r2["counters"].get("cloud_accumulation_is_a")
+	h["time_scale_after"] = Engine.time_scale
+	var zero: bool = sc.get("deterministic", false) and sc.get("cloud_hold", false) and h["n_vs_n1"]["px"] == 0 and h["n_vs_n30"]["px"] == 0 		and h["n_vs_n1"]["max"] == 0.0 and h["n_vs_n30"]["max"] == 0.0
+	h["pass"] = zero and h["resumed"]
+	_log("%s clouds_off_vs_held px=%d resumed=%s (frames differ %s) -> %s" % [name, h["clouds_off_vs_held"]["px"], str(h["resumed"]), str(h["resumed_frames_differ"]), "ok" if zero else "FAIL"])
+	if not h["resumed"]:
+		report["errors"].append("%s march did not resume after capture_end" % name)
+	return h
+
+
+func _compare_px(a: Image, b: Image) -> Dictionary:
+	var d := _compare(a, b)
+	d["px"] = 0 if d["same"] else TVW._differing_px(a, b)
+	return d
 
 
 func _hide_overlays_except_droplets() -> void:

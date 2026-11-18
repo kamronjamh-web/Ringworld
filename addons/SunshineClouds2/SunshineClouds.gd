@@ -624,6 +624,18 @@ var _continuity_last_usec : int = 0
 var filter_index = 0
 
 var last_render_target : RID
+
+# Debug-only (not exported, in no menu): a harness sets this while it takes a still. The cloud march is then skipped and the last resolved frame is
+# presented again, so two captures of one frozen state are byte-identical. Any change of target, size, camera or projection marches normally.
+var capture_hold := false:
+	set(value):
+		capture_hold = value
+		capture_hold_armed = false
+var capture_hold_armed := false
+var capture_hold_target : RID
+var capture_hold_size := Vector2i.ZERO
+var capture_hold_camera := Transform3D.IDENTITY
+var capture_hold_projection := Projection.IDENTITY
 var last_msaa_mode := RenderingServer.ViewportMSAA.VIEWPORT_MSAA_DISABLED
 var msaa_mode := RenderingServer.ViewportMSAA.VIEWPORT_MSAA_DISABLED
 var diagnostic_last_callback_target := RID()
@@ -2696,6 +2708,16 @@ func _render_callback(effect_callback_type, render_data):
 			var viewProj : Projection = rendersceneData.get_cam_projection();
 			
 			var rendertarget: RID = buffers.get_render_target()
+			# Debug-only still capture: while capture_hold is on and nothing about the view changed, keep presenting the last march (see capture_hold).
+			var holding := false
+			if capture_hold:
+				holding = capture_hold_armed and not accumulation_resources_rebuilt and rendertarget == capture_hold_target and size == capture_hold_size and cameraTR == capture_hold_camera and viewProj == capture_hold_projection
+				if not holding:
+					capture_hold_target = rendertarget
+					capture_hold_size = size
+					capture_hold_camera = cameraTR
+					capture_hold_projection = viewProj
+					capture_hold_armed = not accumulation_resources_rebuilt
 			temporal_history_last_render_target_id = rendertarget.get_id()
 			if diagnostic_raw_density_matte and (rendertarget != diagnostic_last_callback_target \
 					or size != diagnostic_last_callback_size \
@@ -2723,26 +2745,27 @@ func _render_callback(effect_callback_type, render_data):
 			last_size = size
 			last_megastorm_strip_texture_generation = megastorm_strip.texture_generation
 			
-			# Encode a bounded batch before publishing samplePointsCount. Previously
-			# the full queued count could be sent to a 32-element SSBO, which let a
-			# large cloud-shadow request read beyond the GPU buffer.
-			if (!positionQuerying && !positionResetting && positionQueries.size() > 0):
-				encode_sample_points()
-			general_data_ring_index = 1 + (general_data_ring_index % GENERAL_DATA_MAIN_RING_SIZE)
-			update_matrices(cameraTR, viewProj, new_size)
-			if weather_systems_dirty:
-				update_weather_systems()
-			if cloud_layers_live_dirty:
-				update_cloud_layers_live()
-			update_macro_weather_map()
-			update_storm_profile_map()
-			update_megastorm_strip()
-			dispatch_gpu_cloud_shadows()
-			update_gpu_cloud_shadow_crossfades()
-			if lights_updated or directional_lights_data.size() == 0:
-				update_lights()
-			if segment_lights_dirty:
-				update_segment_lights()
+			if not holding:
+				# Encode a bounded batch before publishing samplePointsCount. Previously
+				# the full queued count could be sent to a 32-element SSBO, which let a
+				# large cloud-shadow request read beyond the GPU buffer.
+				if (!positionQuerying && !positionResetting && positionQueries.size() > 0):
+					encode_sample_points()
+				general_data_ring_index = 1 + (general_data_ring_index % GENERAL_DATA_MAIN_RING_SIZE)
+				update_matrices(cameraTR, viewProj, new_size)
+				if weather_systems_dirty:
+					update_weather_systems()
+				if cloud_layers_live_dirty:
+					update_cloud_layers_live()
+				update_macro_weather_map()
+				update_storm_profile_map()
+				update_megastorm_strip()
+				dispatch_gpu_cloud_shadows()
+				update_gpu_cloud_shadow_crossfades()
+				if lights_updated or directional_lights_data.size() == 0:
+					update_lights()
+				if segment_lights_dirty:
+					update_segment_lights()
 			
 			var prepass_x_groups = ((size.x - 1) / 8) + 1
 			var prepass_y_groups = ((size.y - 1) / 8) + 1
@@ -2775,56 +2798,57 @@ func _render_callback(effect_callback_type, render_data):
 						gpu_timestamp_composite_begin = gpu_timestamp_begin_marker_for_scope.replace(":Clouds:", ":CloudComposite:")
 						gpu_timestamp_composite_end = gpu_timestamp_candidate_end_marker.replace(":Clouds:", ":CloudComposite:")
 						rd.capture_timestamp(gpu_timestamp_begin_marker_for_scope)
-				if gpu_timestamp_scope_active:
-					rd.capture_timestamp(gpu_timestamp_prepass_begin)
-				var prepass_list = rd.compute_list_begin()
-				rd.compute_list_bind_compute_pipeline(prepass_list, prepass_pipeline)
-				rd.compute_list_bind_uniform_set(prepass_list, general_data_uniform_sets[general_data_ring_index][view * 3], 0)
-				rd.compute_list_dispatch(prepass_list, x_groups, y_groups, 1)
-				rd.compute_list_end()
-				if gpu_timestamp_scope_active:
-					rd.capture_timestamp(gpu_timestamp_prepass_end)
-
-				if gpu_timestamp_scope_active:
-					rd.capture_timestamp(gpu_timestamp_raymarch_begin)
-				if _terrain_sun_bindings_present: _update_terrain_sun_set()
-				var march_pipeline := pipeline
-				var march_x_groups: int = x_groups
-				var march_y_groups: int = y_groups
-				if interleave_active_block > 0:
-					# CloudInterleave: one thread per block, so the dispatch covers ceil(W / n) x ceil(H / n) pixels.
-					march_pipeline = interleave_main_pipelines[interleave_active_block]
-					march_x_groups = (((new_size.x + interleave_active_block - 1) / interleave_active_block - 1) / 8) + 1
-					march_y_groups = (((new_size.y + interleave_active_block - 1) / interleave_active_block - 1) / 8) + 1
-				if not storm_profile_map.valid:
-					# Map invalid: the kernel variant that still carries HEAD's analytic storm shape (see RING_STORM_FALLBACK).
-					var fallback_pipeline := _storm_fallback_pipeline(interleave_active_block)
-					if fallback_pipeline.is_valid():
-						march_pipeline = fallback_pipeline
-				if megastorm_strip.valid:
-					# Megastorm strip valid (the wall is near): the kernel variant with the strip path compiled in (RING_MEGASTORM = 1).
-					var megastorm_pipeline := _megastorm_march_pipeline(interleave_active_block, not storm_profile_map.valid)
-					if megastorm_pipeline.is_valid():
-						march_pipeline = megastorm_pipeline
-				var compute_list = rd.compute_list_begin()
-				rd.compute_list_bind_compute_pipeline(compute_list, march_pipeline)
-				rd.compute_list_bind_uniform_set(compute_list, general_data_uniform_sets[general_data_ring_index][view * 3 + 1], 0)
-				if _terrain_sun_bindings_present: rd.compute_list_bind_uniform_set(compute_list, _terrain_sun_set, 1)
-				rd.compute_list_dispatch(compute_list, march_x_groups, march_y_groups, 1)
-				rd.compute_list_end()
-				if gpu_timestamp_scope_active:
-					rd.capture_timestamp(gpu_timestamp_raymarch_end)
-				if interleave_active_block > 0:
-					var interleave_stamped := gpu_timestamp_diagnostics_enabled and view == 0 and gpu_timestamp_interleave_begin_marker != "" and gpu_timestamp_interleave_end_marker != ""
-					if interleave_stamped:
-						rd.capture_timestamp(gpu_timestamp_interleave_begin_marker)
-					var fill_list = rd.compute_list_begin()
-					rd.compute_list_bind_compute_pipeline(fill_list, interleave_fill_pipelines[interleave_active_block])
-					rd.compute_list_bind_uniform_set(fill_list, interleave_fill_sets[general_data_ring_index][view], 0)
-					rd.compute_list_dispatch(fill_list, ((new_size.x - 1) / 8) + 1, ((new_size.y - 1) / 8) + 1, 1)
+				if not holding:
+					if gpu_timestamp_scope_active:
+						rd.capture_timestamp(gpu_timestamp_prepass_begin)
+					var prepass_list = rd.compute_list_begin()
+					rd.compute_list_bind_compute_pipeline(prepass_list, prepass_pipeline)
+					rd.compute_list_bind_uniform_set(prepass_list, general_data_uniform_sets[general_data_ring_index][view * 3], 0)
+					rd.compute_list_dispatch(prepass_list, x_groups, y_groups, 1)
 					rd.compute_list_end()
-					if interleave_stamped:
-						rd.capture_timestamp(gpu_timestamp_interleave_end_marker)
+					if gpu_timestamp_scope_active:
+						rd.capture_timestamp(gpu_timestamp_prepass_end)
+
+					if gpu_timestamp_scope_active:
+						rd.capture_timestamp(gpu_timestamp_raymarch_begin)
+					if _terrain_sun_bindings_present: _update_terrain_sun_set()
+					var march_pipeline := pipeline
+					var march_x_groups: int = x_groups
+					var march_y_groups: int = y_groups
+					if interleave_active_block > 0:
+						# CloudInterleave: one thread per block, so the dispatch covers ceil(W / n) x ceil(H / n) pixels.
+						march_pipeline = interleave_main_pipelines[interleave_active_block]
+						march_x_groups = (((new_size.x + interleave_active_block - 1) / interleave_active_block - 1) / 8) + 1
+						march_y_groups = (((new_size.y + interleave_active_block - 1) / interleave_active_block - 1) / 8) + 1
+					if not storm_profile_map.valid:
+						# Map invalid: the kernel variant that still carries HEAD's analytic storm shape (see RING_STORM_FALLBACK).
+						var fallback_pipeline := _storm_fallback_pipeline(interleave_active_block)
+						if fallback_pipeline.is_valid():
+							march_pipeline = fallback_pipeline
+					if megastorm_strip.valid:
+						# Megastorm strip valid (the wall is near): the kernel variant with the strip path compiled in (RING_MEGASTORM = 1).
+						var megastorm_pipeline := _megastorm_march_pipeline(interleave_active_block, not storm_profile_map.valid)
+						if megastorm_pipeline.is_valid():
+							march_pipeline = megastorm_pipeline
+					var compute_list = rd.compute_list_begin()
+					rd.compute_list_bind_compute_pipeline(compute_list, march_pipeline)
+					rd.compute_list_bind_uniform_set(compute_list, general_data_uniform_sets[general_data_ring_index][view * 3 + 1], 0)
+					if _terrain_sun_bindings_present: rd.compute_list_bind_uniform_set(compute_list, _terrain_sun_set, 1)
+					rd.compute_list_dispatch(compute_list, march_x_groups, march_y_groups, 1)
+					rd.compute_list_end()
+					if gpu_timestamp_scope_active:
+						rd.capture_timestamp(gpu_timestamp_raymarch_end)
+					if interleave_active_block > 0:
+						var interleave_stamped := gpu_timestamp_diagnostics_enabled and view == 0 and gpu_timestamp_interleave_begin_marker != "" and gpu_timestamp_interleave_end_marker != ""
+						if interleave_stamped:
+							rd.capture_timestamp(gpu_timestamp_interleave_begin_marker)
+						var fill_list = rd.compute_list_begin()
+						rd.compute_list_bind_compute_pipeline(fill_list, interleave_fill_pipelines[interleave_active_block])
+						rd.compute_list_bind_uniform_set(fill_list, interleave_fill_sets[general_data_ring_index][view], 0)
+						rd.compute_list_dispatch(fill_list, ((new_size.x - 1) / 8) + 1, ((new_size.y - 1) / 8) + 1, 1)
+						rd.compute_list_end()
+						if interleave_stamped:
+							rd.capture_timestamp(gpu_timestamp_interleave_end_marker)
 
 				if gpu_timestamp_scope_active:
 					rd.capture_timestamp(gpu_timestamp_reconstruct_begin)
