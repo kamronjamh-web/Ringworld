@@ -50,7 +50,7 @@ public sealed class GameplayLodTransitionDefaults
     }
 
     public static float SanitizeFarProxyErrorScale(float value)
-        => float.IsFinite(value) ? Mathf.Clamp(value, 1f, 4f) : 1f;
+        => float.IsFinite(value) ? Mathf.Clamp(value, 1f, 4f) : GameplayLodTransitionSettings.DefaultFarProxyErrorScale;
 
     public bool SetFarProxyErrorScale(float value)
     {

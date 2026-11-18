@@ -942,7 +942,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         RefreshPartialCoverageMeshCullingStatus();
         _proxyFarErrorScaleSlider = AddProxyDetailSlider(
             handoff, "ProxyFarErrorScale", "Far terrain coarseness", 1, 4, 0.25,
-            _lodPauseMenu?.FarProxyErrorScale ?? 1f,
+            _lodPauseMenu?.FarProxyErrorScale ?? GameplayLodTransitionSettings.DefaultFarProxyErrorScale,
             "Coarser proxy terrain beyond about 4 km: 1 = full detail. 2 halves the detail of distant terrain and saves about 0.3 ms.",
             value => _lodPauseMenu?.SetFarProxyErrorScale((float)value));
     }

@@ -34,8 +34,8 @@ public partial class LodTransitionSettingsSmoke : RefCounted
             bool persisted = !loaded.Settings.IntermediateLodTiersEnabled && !loaded.Dirty;
 
             // Proxy detail settings (U-1 / U-2): defaults, set/save/reload, sanitize, older files.
-            bool detailDefaults = defaults.Settings.FarProxyErrorScale == 1f;
-            bool detailNoOp = !defaults.SetFarProxyErrorScale(1f);
+            bool detailDefaults = defaults.Settings.FarProxyErrorScale == 2f;
+            bool detailNoOp = !defaults.SetFarProxyErrorScale(2f);
             bool detailSet = defaults.SetFarProxyErrorScale(2.5f) && defaults.Dirty;
             bool detailSaved = defaults.Save();
             var detailLoaded = new GameplayLodTransitionDefaults(isolatedPath);
@@ -43,13 +43,13 @@ public partial class LodTransitionSettingsSmoke : RefCounted
             bool detailPersisted = detailLoaded.Settings.FarProxyErrorScale == 2.5f
                 && !detailLoaded.Settings.IntermediateLodTiersEnabled;
             bool detailNaN = detailLoaded.SetFarProxyErrorScale(float.NaN)
-                && detailLoaded.Settings.FarProxyErrorScale == 1f;
+                && detailLoaded.Settings.FarProxyErrorScale == 2f;
             detailLoaded.SetFarProxyErrorScale(9f);
             bool clampHigh = detailLoaded.Settings.FarProxyErrorScale == 4f;
             detailLoaded.SetFarProxyErrorScale(0.2f);
             bool clampLow = detailLoaded.Settings.FarProxyErrorScale == 1f;
             detailLoaded.Reset();
-            bool resetOk = detailLoaded.Settings.FarProxyErrorScale == 1f;
+            bool resetOk = detailLoaded.Settings.FarProxyErrorScale == 2f;
 
             // Older file without the new fields: strip their lines and reload.
             string text = File.ReadAllText(absolute);
@@ -59,7 +59,7 @@ public partial class LodTransitionSettingsSmoke : RefCounted
             File.WriteAllText(absolute, string.Join("\n", kept));
             var older = new GameplayLodTransitionDefaults(isolatedPath);
             older.Load();
-            bool olderOk = older.LastError.Length == 0 && older.Settings.FarProxyErrorScale == 1f
+            bool olderOk = older.LastError.Length == 0 && older.Settings.FarProxyErrorScale == 2f
                 && !older.Settings.IntermediateLodTiersEnabled;
 
             // A retired save that still carries Lod1ReachCapMeters must load quietly.
