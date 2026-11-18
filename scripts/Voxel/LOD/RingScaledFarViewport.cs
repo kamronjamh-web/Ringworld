@@ -2451,6 +2451,7 @@ public partial class RingScaledFarViewport : Node
 
 		UpdateFarEclipseAmbient();
 		UpdateFarHubSunColor();
+		SyncFarFogValuesToMain();
 		// The far sun lights below follow the live key light; the derived material, atmosphere and cloud uniforms use a throttled copy.
 		Vector3 sunDirection = _materialSunThrottle.Resolve(_sourceSun is not null
 			? (worldToCanonical * _sourceSun.GlobalTransform.Basis.Z).Normalized()
