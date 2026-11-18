@@ -685,6 +685,17 @@
       "expected_s": null,
       "timeout_s": 120
     },
+    "prepare_rock_assets": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "PREPARE_ROCK_ASSETS",
+      "expected_s": null,
+      "timeout_s": 60
+    },
     "load_time_benchmark": {
       "kind": "tool",
       "mode": "gpu",
@@ -6819,6 +6830,17 @@
       "marker": "SCATTER_ROCK_PLACEMENT",
       "expected_s": 30,
       "timeout_s": 90
+    },
+    "scatter_rock_mesh_validation_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "SCATTER_ROCK_MESH_VALIDATION",
+      "expected_s": 15,
+      "timeout_s": 60
     },
     "ground_relief_field_test": {
       "kind": "test",

@@ -105,7 +105,7 @@ public static class WorldGenerationFingerprint
         row["scatter_params"] = new Dictionary<string, object?>
         {
             ["class_table_hash"] = Hex(table.Hash), ["algorithm_version"] = RingBiomeDecorationLayer.ScatterAlgorithmVersion,
-            ["rock_catalog_sha256"] = "none", // TODO(T5-6): the rock catalog manifest's artifact SHA-256
+            ["rock_catalog_sha256"] = RockCatalog.ArtifactSha256, // T5-6: the manifest only, no Godot textures
             ["layout"] = "production"
         };
     }

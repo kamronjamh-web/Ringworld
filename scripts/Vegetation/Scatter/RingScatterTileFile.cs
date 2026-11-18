@@ -56,12 +56,12 @@ internal static class RingScatterTileFile
     }
 
     /// <summary>
-    /// The identity directory name: SHA-256 of the A6 string, first 12 bytes as hex (the tree files' style). The rock catalog version is "m0" until T5-6 provides one.
+    /// The identity directory name: SHA-256 of the A6 string, first 12 bytes as hex (the tree files' style). The rock catalog version is "m" + RockCatalog.CatalogVersion (T5-6).
     /// </summary>
     public static string Identity(RingTerrainSampler sampler, RingScatterClassTable table, ulong treeSettingsHash,
-        int algorithmVersion = RingBiomeDecorationLayer.ScatterAlgorithmVersion, string rockCatalogVersion = "m0")
+        int algorithmVersion = RingBiomeDecorationLayer.ScatterAlgorithmVersion, string? rockCatalogVersion = null)
     {
-        // TODO(T5-6): pass RockCatalog.CatalogVersion as rockCatalogVersion (formatted "m<version>") once the prepared rock resource exists.
+        rockCatalogVersion ??= "m" + RockCatalog.CatalogVersion;
         string flags = (sampler.EmitterSites != null ? "|es1" : "") + (sampler.ClimateMachines != null ? "|cm1" : "") + (sampler.WeatherLung != null ? "|wl1" : "");
         string definition = FormattableString.Invariant(
             $"sv{RingBiomeDecorationLayer.ScatterCacheVersion}|a{algorithmVersion}|c{table.Hash:X16}|{rockCatalogVersion}|g{sampler.TerrainGeneratorVersion}|seed{sampler.Seed}|h{sampler.TerrainDefinitionHash:X16}|t{treeSettingsHash:X16}{flags}");

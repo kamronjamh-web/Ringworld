@@ -1,0 +1,609 @@
+{
+  "schema_version": 1,
+  "generator_version": 1,
+  "catalog_version": 1,
+  "seed": 5006,
+  "engine_identity": "none: pure C# generator, little-endian binary artifact, no engine types in the geometry",
+  "implementation_identity": "tools/PrepareRockAssets.cs generator_version 1",
+  "artifact_sha256": "C8D6FF602196FBC71FFD67DEF5CD75DD63E7DE0040269F3D38FF4FDC2F3760FB",
+  "artifact_path": "resources/rocks/prepared/rock_catalog.bin",
+  "artifact_bytes": 800176,
+  "groups": [
+    {
+      "name": "outcrops",
+      "variants": 8,
+      "lods": [
+        {
+          "vertices": 1490,
+          "triangles": 1728
+        },
+        {
+          "vertices": 386,
+          "triangles": 432
+        },
+        {
+          "vertices": 182,
+          "triangles": 192
+        }
+      ]
+    },
+    {
+      "name": "boulders",
+      "variants": 16,
+      "lods": [
+        {
+          "vertices": 642,
+          "triangles": 1280
+        },
+        {
+          "vertices": 162,
+          "triangles": 320
+        },
+        {
+          "vertices": 42,
+          "triangles": 80
+        }
+      ]
+    },
+    {
+      "name": "cobbles",
+      "variants": 6,
+      "lods": [
+        {
+          "vertices": 252,
+          "triangles": 480
+        },
+        {
+          "vertices": 72,
+          "triangles": 120
+        },
+        {
+          "vertices": 36,
+          "triangles": 48
+        }
+      ]
+    }
+  ],
+  "meshes": [
+    {
+      "group": "outcrops",
+      "lod": 0,
+      "variant": 0,
+      "sha256": "5FF9856382EB28AC69DBFF555D531E218AB74F398BC7A6791709D648FF82F789"
+    },
+    {
+      "group": "outcrops",
+      "lod": 0,
+      "variant": 1,
+      "sha256": "2EC24AFECE5ADC5FB0AA452DFFCEC039B7842930A12E2C718AAFFA906B60718E"
+    },
+    {
+      "group": "outcrops",
+      "lod": 0,
+      "variant": 2,
+      "sha256": "8E0462616B746FE32F81F14A55E6DD29BD80DBFD7785CCB941BC361B14CA50E6"
+    },
+    {
+      "group": "outcrops",
+      "lod": 0,
+      "variant": 3,
+      "sha256": "C16807DCA582EC0E196E0C494A41532338C382D0F32FF83C170D5D4BAFE9991E"
+    },
+    {
+      "group": "outcrops",
+      "lod": 0,
+      "variant": 4,
+      "sha256": "205DDBAC5A4F0AABA9E388E279EC6325C0E21FCAA7FA85E5D70FD1A20769BCC6"
+    },
+    {
+      "group": "outcrops",
+      "lod": 0,
+      "variant": 5,
+      "sha256": "D34EA9A88DDA878B9257FCEA21585EE846C1B5E87047243CDF9B5CD13699EDBD"
+    },
+    {
+      "group": "outcrops",
+      "lod": 0,
+      "variant": 6,
+      "sha256": "A5B5416044729B3F864AB172B063E67C9CF6BBE9ED9F94066C79CB4382CAFA92"
+    },
+    {
+      "group": "outcrops",
+      "lod": 0,
+      "variant": 7,
+      "sha256": "8D10D31F3B7BD0075371CD8676E5DF4B38266902F33AF995BA2FCCA98AE7C62F"
+    },
+    {
+      "group": "outcrops",
+      "lod": 1,
+      "variant": 0,
+      "sha256": "26FC09635FD5DA153C358C54404064F3E01B46860F825B57B3707740A6C3462B"
+    },
+    {
+      "group": "outcrops",
+      "lod": 1,
+      "variant": 1,
+      "sha256": "E489B10286ACF9531A4AC1845116214B03FFA2C45FC997FD660836C358B09179"
+    },
+    {
+      "group": "outcrops",
+      "lod": 1,
+      "variant": 2,
+      "sha256": "FD01F843608ECB1F3FDFA69C4AC34D4430B40B757D1F911AC9E2464E2D067FE2"
+    },
+    {
+      "group": "outcrops",
+      "lod": 1,
+      "variant": 3,
+      "sha256": "B8E0915807C299099AE9C28245A46F0719843E25202940B6DBF51ABC86F204FB"
+    },
+    {
+      "group": "outcrops",
+      "lod": 1,
+      "variant": 4,
+      "sha256": "A10E56D8441D3A0DF244D5876F90A14CDFAE07335950D0756D982F077D15CD74"
+    },
+    {
+      "group": "outcrops",
+      "lod": 1,
+      "variant": 5,
+      "sha256": "3ED0481ADBD48C3568F268B8DC45208C88DA289C65ED1A73461779312D647C09"
+    },
+    {
+      "group": "outcrops",
+      "lod": 1,
+      "variant": 6,
+      "sha256": "A97429BFFFBC714EA05779A81B97E14B8B7CE5F9CA6B5EF9DD62CE6BB8CE5AE9"
+    },
+    {
+      "group": "outcrops",
+      "lod": 1,
+      "variant": 7,
+      "sha256": "1F30A4E011D9F7DCF533A694A3A93E31BCB25E95D1884F7E4ED5579FCD7EF560"
+    },
+    {
+      "group": "outcrops",
+      "lod": 2,
+      "variant": 0,
+      "sha256": "22BE5BE439D188B81830BBE183528DB4EE10566621FCF61AA4BD11B2F20C4D0D"
+    },
+    {
+      "group": "outcrops",
+      "lod": 2,
+      "variant": 1,
+      "sha256": "7376CCA2927ED85B30BF1DBD1BB9CE29C45CE5D1D04D60CFCF8983033F73983D"
+    },
+    {
+      "group": "outcrops",
+      "lod": 2,
+      "variant": 2,
+      "sha256": "EFBDA220F16D32673CB55B4E6A58F712927BA5611CBB7EF405904A312B72D6EB"
+    },
+    {
+      "group": "outcrops",
+      "lod": 2,
+      "variant": 3,
+      "sha256": "8B5DC0FD4B292BDED3E15C9B3AA61F0E0902B7DC05C40483074CEF06CFDBE2D3"
+    },
+    {
+      "group": "outcrops",
+      "lod": 2,
+      "variant": 4,
+      "sha256": "D40C081A55A15552B3233BE03FC7657D0C5195B850FA473EC1C32DBA913C07E8"
+    },
+    {
+      "group": "outcrops",
+      "lod": 2,
+      "variant": 5,
+      "sha256": "8D2B9380B0B92756B8083E2B2C417D73716028DCBA386DF499C4E771A2782637"
+    },
+    {
+      "group": "outcrops",
+      "lod": 2,
+      "variant": 6,
+      "sha256": "98D130C88A04E9A9FE669FD190E767FDB8D725FDAC1A07D7E7CCAA31F7E6927E"
+    },
+    {
+      "group": "outcrops",
+      "lod": 2,
+      "variant": 7,
+      "sha256": "11B14CE9A158D37C03B9547BFB54EE7A21F809587F6C4B60BD1BAFA55CCC6531"
+    },
+    {
+      "group": "boulders",
+      "lod": 0,
+      "variant": 0,
+      "sha256": "3148134AC88135BD193929BA0652FDD4CBF8537D78989258DEC5603FA171BBD4"
+    },
+    {
+      "group": "boulders",
+      "lod": 0,
+      "variant": 1,
+      "sha256": "86F8780CE02784A033444E31FAB71B5E33FA7E394675D131492EB1257BB763B4"
+    },
+    {
+      "group": "boulders",
+      "lod": 0,
+      "variant": 2,
+      "sha256": "C0E07AE75786791EE0A3C8F95A65B546A644BC7D86E0A5AE5B94F0670C58FE83"
+    },
+    {
+      "group": "boulders",
+      "lod": 0,
+      "variant": 3,
+      "sha256": "5A6D6EA3DBCF46C111CB5E1923EFD4EB5A259FD3858CE5C7ECEB104B12B27A53"
+    },
+    {
+      "group": "boulders",
+      "lod": 0,
+      "variant": 4,
+      "sha256": "5BE2022B1D9D4EDEE4D0122B9FD78C8B474CF8DAF64DACC8A1C4A9E74AEC9BB9"
+    },
+    {
+      "group": "boulders",
+      "lod": 0,
+      "variant": 5,
+      "sha256": "17D7DB5536D79FBC08BDC02C71679ABFED0490FAC19533B3850E4520B72F7331"
+    },
+    {
+      "group": "boulders",
+      "lod": 0,
+      "variant": 6,
+      "sha256": "C336BC65F174ACA4A0351FAC4582379E247437C8DA834D708AF82249BC552E15"
+    },
+    {
+      "group": "boulders",
+      "lod": 0,
+      "variant": 7,
+      "sha256": "6EE91FEFC39DEF5396E011D587784535C310496FD6E0256C8CEC0A135B663732"
+    },
+    {
+      "group": "boulders",
+      "lod": 0,
+      "variant": 8,
+      "sha256": "FA4F0847579D0AAF38D7F64980622D17425C8AF365B7EEF2D4D27B43B5742FA7"
+    },
+    {
+      "group": "boulders",
+      "lod": 0,
+      "variant": 9,
+      "sha256": "D975E7E5F43CB2FD416E3FF4686BC85DD569BFCD798A864060F25691908E9F9C"
+    },
+    {
+      "group": "boulders",
+      "lod": 0,
+      "variant": 10,
+      "sha256": "EBD72BD44D8DE775C2B579DE53C918F33BC331569B82DF44D87BCCCC64B24548"
+    },
+    {
+      "group": "boulders",
+      "lod": 0,
+      "variant": 11,
+      "sha256": "21D0742791CAB548334AD5B90BE0C9F5E51D33FC22285CFEA8F959CD6ED65DFB"
+    },
+    {
+      "group": "boulders",
+      "lod": 0,
+      "variant": 12,
+      "sha256": "1601C6E1238252DEA5738EF42246ACEC6395396F73CB4137280560E1D617C935"
+    },
+    {
+      "group": "boulders",
+      "lod": 0,
+      "variant": 13,
+      "sha256": "FD05C4EBB10920F1BA8C755695C632E51C9CD63B9A950394C5D379BA8B481AB6"
+    },
+    {
+      "group": "boulders",
+      "lod": 0,
+      "variant": 14,
+      "sha256": "5523CE45950ACEA00358583DFFC28EFCD32A6B48C0EB2A622CB1E5A8EE0D7F5A"
+    },
+    {
+      "group": "boulders",
+      "lod": 0,
+      "variant": 15,
+      "sha256": "0BE5DEA2AE5F20BE2AC6E91BC83681D2CF210984798A298E7E7B71890F72AF2C"
+    },
+    {
+      "group": "boulders",
+      "lod": 1,
+      "variant": 0,
+      "sha256": "AE5B199D56241D717F620E0418F5946FC177F075F6AF485D2B1DE86D961A29F3"
+    },
+    {
+      "group": "boulders",
+      "lod": 1,
+      "variant": 1,
+      "sha256": "82A73DEABDE5F712FA1E37F336A98D127E4EBE34141A5CF96FF803075E570DE8"
+    },
+    {
+      "group": "boulders",
+      "lod": 1,
+      "variant": 2,
+      "sha256": "7040C146E900E9C7649DD3333A247B4533A78FE2755B2C6A9D21D8C4548234FD"
+    },
+    {
+      "group": "boulders",
+      "lod": 1,
+      "variant": 3,
+      "sha256": "9F1C48D7164E7EE05F2EA35AEA6406C92DF5C39DD3E253551F02D7178A3AB21D"
+    },
+    {
+      "group": "boulders",
+      "lod": 1,
+      "variant": 4,
+      "sha256": "D7E28EF48EE7E124CF3831A32F856872D1BF8D4C53DCDB55E660A4A6F593A7CC"
+    },
+    {
+      "group": "boulders",
+      "lod": 1,
+      "variant": 5,
+      "sha256": "BDE14E0DF0474BD342F5B0C39281C0FB82D26759158C2C6CAC318F4DDEC28841"
+    },
+    {
+      "group": "boulders",
+      "lod": 1,
+      "variant": 6,
+      "sha256": "5672C7C69578B1112D0E0229D4FB57A7E47C7F69E491055B95102920B8F8670F"
+    },
+    {
+      "group": "boulders",
+      "lod": 1,
+      "variant": 7,
+      "sha256": "F15CF5D04595CDC09E19A6F4A3550F803248FD1A3B2B64D1C0BBB3FE6DA45926"
+    },
+    {
+      "group": "boulders",
+      "lod": 1,
+      "variant": 8,
+      "sha256": "1A78DCC2AB7CFDE875DE997D03179C3C8203D90DB147171AF1A2E53E2D2B67FF"
+    },
+    {
+      "group": "boulders",
+      "lod": 1,
+      "variant": 9,
+      "sha256": "7C395D9068289A730F96988567BBE5A3B99DDBFFD839326DB75DF78985C0BFE3"
+    },
+    {
+      "group": "boulders",
+      "lod": 1,
+      "variant": 10,
+      "sha256": "2A3A10A56A6A71BA2F77D0D47DB81A70FC22F666235636F00EF56EA13BDD89E0"
+    },
+    {
+      "group": "boulders",
+      "lod": 1,
+      "variant": 11,
+      "sha256": "5AC77B388544183E5C9810316C4858F0F45B36273B13E80EA26BDA3552838A3A"
+    },
+    {
+      "group": "boulders",
+      "lod": 1,
+      "variant": 12,
+      "sha256": "6A1FF445E87AEF798F72C22AE854E04DBC037DF521E1357BBCD1A9C997EC9B7C"
+    },
+    {
+      "group": "boulders",
+      "lod": 1,
+      "variant": 13,
+      "sha256": "512BA445DAACB46E42FEA0E809F695D957EA582F253F4998CF22FE9A5D92C1F4"
+    },
+    {
+      "group": "boulders",
+      "lod": 1,
+      "variant": 14,
+      "sha256": "D38A799A92970ECF387B0C1FD08A32459B331A70BD61FDC83971AEBAC7C2E8EF"
+    },
+    {
+      "group": "boulders",
+      "lod": 1,
+      "variant": 15,
+      "sha256": "254CE904B16E02DC84233BF6B1E7273AA307127CBA8B990218E73714E0EFAFFD"
+    },
+    {
+      "group": "boulders",
+      "lod": 2,
+      "variant": 0,
+      "sha256": "324EF3225905AEB3CBB8828E421082CC9204BFCF114D4B0B667531432A495222"
+    },
+    {
+      "group": "boulders",
+      "lod": 2,
+      "variant": 1,
+      "sha256": "82403D4055A6A202E57E8CF9CA7B1E39BE6D0BA23E49923A553707A138A67A50"
+    },
+    {
+      "group": "boulders",
+      "lod": 2,
+      "variant": 2,
+      "sha256": "CA0312C422AF3494D9303F632F9AD85F40EC73EC153E5789E2A618302EAFBF0F"
+    },
+    {
+      "group": "boulders",
+      "lod": 2,
+      "variant": 3,
+      "sha256": "99DE6D106F03A8EC30AA9964CED20D788B1DF7F0C30B789CDBEE47CBBA382F52"
+    },
+    {
+      "group": "boulders",
+      "lod": 2,
+      "variant": 4,
+      "sha256": "76932F8262BE7DB26E85CCC7F19C51E6FF481349C15637F2C4771B27AF0A0004"
+    },
+    {
+      "group": "boulders",
+      "lod": 2,
+      "variant": 5,
+      "sha256": "FBF25DB22D39C212DEE42E725E5A2D5A5C3D6081191227AA7CC9F4BA46AD4F74"
+    },
+    {
+      "group": "boulders",
+      "lod": 2,
+      "variant": 6,
+      "sha256": "2D3FB17B003EFCB18220219276C8886ADB0F8829CC810D309F84D22C17AC3E92"
+    },
+    {
+      "group": "boulders",
+      "lod": 2,
+      "variant": 7,
+      "sha256": "23DC1E2B617CD0D5CB1E340738743773081534D468689BCF08E621BAB49AE58B"
+    },
+    {
+      "group": "boulders",
+      "lod": 2,
+      "variant": 8,
+      "sha256": "9E872959483CBDC17058555E387CA12CF11DC0B0969FE01DF355EE81D278D636"
+    },
+    {
+      "group": "boulders",
+      "lod": 2,
+      "variant": 9,
+      "sha256": "F79B1F138624785A44120BD652C0E2B1C38446482F52A79D646EAF94A27290FC"
+    },
+    {
+      "group": "boulders",
+      "lod": 2,
+      "variant": 10,
+      "sha256": "FA2D7E46255BA88993E1F7E8F0A2958600D1A9DDF5B0AE69873249D1DFCA4B13"
+    },
+    {
+      "group": "boulders",
+      "lod": 2,
+      "variant": 11,
+      "sha256": "CD108D04A215FFCA0A51DA829F0070184147BCA73C6E37B8A11D4D63B3A4BC6F"
+    },
+    {
+      "group": "boulders",
+      "lod": 2,
+      "variant": 12,
+      "sha256": "145FCE1CBD12E3C954C2CA01F99E2CF0BD3F33C272C7DF2F77447E82AA1037D9"
+    },
+    {
+      "group": "boulders",
+      "lod": 2,
+      "variant": 13,
+      "sha256": "7AFD81A5DF49896381D822B5D703EF54689552FFC14BEE28383921A28A739099"
+    },
+    {
+      "group": "boulders",
+      "lod": 2,
+      "variant": 14,
+      "sha256": "464FBD91F1979AB71F9FF3EF1BAC15355C62874CAB31390F61E4E5FF3F616705"
+    },
+    {
+      "group": "boulders",
+      "lod": 2,
+      "variant": 15,
+      "sha256": "68BB4B149B06A843612FA18DFE07BF8F6EC10C6A29F56208E5F3B0E88185CA86"
+    },
+    {
+      "group": "cobbles",
+      "lod": 0,
+      "variant": 0,
+      "sha256": "48FC14B8E2FBB71505E5EB5DC80D76E975800519D94EB28952FC325D6E5B2202"
+    },
+    {
+      "group": "cobbles",
+      "lod": 0,
+      "variant": 1,
+      "sha256": "C66661314CD309129DB31642B5657EB2B51A73A0F71E60BD4BE68651E25A5F70"
+    },
+    {
+      "group": "cobbles",
+      "lod": 0,
+      "variant": 2,
+      "sha256": "B07BB6CAD13F3BBBAFE856DB0B88FADD66831729584FF0D0FAE517FC79667990"
+    },
+    {
+      "group": "cobbles",
+      "lod": 0,
+      "variant": 3,
+      "sha256": "C680D59C049A8033476FAA0C3CDF23648DAB99B377B8F22CB7D0F3C0D1F0DD50"
+    },
+    {
+      "group": "cobbles",
+      "lod": 0,
+      "variant": 4,
+      "sha256": "B192CA0D32370AD8C2B3B129FECCC44D4EA234A5446BB0583DE8B8E09D124ED5"
+    },
+    {
+      "group": "cobbles",
+      "lod": 0,
+      "variant": 5,
+      "sha256": "1C438564E4763F5198FDA8E53543A41ADCCB62491D01CC96F6B119A96094F308"
+    },
+    {
+      "group": "cobbles",
+      "lod": 1,
+      "variant": 0,
+      "sha256": "EDC591D9CFF810CBEF0169D574B76AF00524DE9B2EACF8DDC5F14A2A162B5400"
+    },
+    {
+      "group": "cobbles",
+      "lod": 1,
+      "variant": 1,
+      "sha256": "650AE81F7C9086116F6D878EE8CFA76C3AD34453748AB585DB7C119171048BE6"
+    },
+    {
+      "group": "cobbles",
+      "lod": 1,
+      "variant": 2,
+      "sha256": "510F528BBA1E030B1A5E84A2B4DED031BA6382448DA62DF9DE9EBEDE4E043015"
+    },
+    {
+      "group": "cobbles",
+      "lod": 1,
+      "variant": 3,
+      "sha256": "4D8AB5A5BC52CD7CE123A77BB3A8870F8B778CA15EC5016AA6602E6F0FEB34FF"
+    },
+    {
+      "group": "cobbles",
+      "lod": 1,
+      "variant": 4,
+      "sha256": "BEC4D50B4BE0CDC3C0812EFCD1D3E95572C67D96B359B840B0D246101CF43991"
+    },
+    {
+      "group": "cobbles",
+      "lod": 1,
+      "variant": 5,
+      "sha256": "4FD772DB2007705A4D9C3F1E0BADAD8C84700957961E0932703B000BD96C543F"
+    },
+    {
+      "group": "cobbles",
+      "lod": 2,
+      "variant": 0,
+      "sha256": "58B8A11390CDD95479E6996727B33F663AF67D8D372409255F35E3CAF2851ECD"
+    },
+    {
+      "group": "cobbles",
+      "lod": 2,
+      "variant": 1,
+      "sha256": "A2ECA33BAD5EA66A81748B302AAF7D25EEACAF25C1C0E214B769D86A818D0C98"
+    },
+    {
+      "group": "cobbles",
+      "lod": 2,
+      "variant": 2,
+      "sha256": "C86482E2A7FF60113E17D299BBBEBEC25E623BBC82D1E00D610F4B91CEB5ADFB"
+    },
+    {
+      "group": "cobbles",
+      "lod": 2,
+      "variant": 3,
+      "sha256": "A80D5CAC7F329DB95D806E0A419D9F22BC1082504F59EDF41B789D703D8862EC"
+    },
+    {
+      "group": "cobbles",
+      "lod": 2,
+      "variant": 4,
+      "sha256": "201D906867DDB91B64F43DCD548FD901232FAEEDF603F2ED45392880B5B032A8"
+    },
+    {
+      "group": "cobbles",
+      "lod": 2,
+      "variant": 5,
+      "sha256": "66CD5ECF9E3ACFCA01D2A89E6441BE75732CC7704F61D82D021B80018BE5F46B"
+    }
+  ]
+}
