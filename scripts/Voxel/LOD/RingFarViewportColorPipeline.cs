@@ -47,6 +47,8 @@ public partial class RingFarViewportColorPipeline : RefCounted
 	{
 		mainEnvironment.BackgroundMode = Godot.Environment.BGMode.Color;
 		mainEnvironment.BackgroundColor = Colors.Black;
+		// With a colour background the engine reflects that colour (black); the Sky resource stays for ambient and, at model 1, for reflections.
+		RingReflectionModel.RegisterMain(mainEnvironment);
 	}
 
 	/// <summary>Adds the far-backdrop compositor effect first in the main compositor.</summary>

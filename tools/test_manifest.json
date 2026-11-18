@@ -403,7 +403,9 @@
         "scripts/**/*Resolution*",
         "scripts/**/*Fsr*",
         "scripts/**/*Compositor*",
-        "scripts/*AmbientOcclusion*"
+        "scripts/*AmbientOcclusion*",
+        "scripts/**/RingReflectionModel*",
+        "materials/ring_reflection_model*"
       ]
     },
     "perf-telemetry": {
@@ -7915,6 +7917,18 @@
       "marker": "LANDSCAPE_DRESSING_POSES",
       "expected_s": 30,
       "timeout_s": 150
+    },
+    "reflection_environment_contract_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "far-viewport",
+        "render-core"
+      ],
+      "marker": "REFLECTION_ENVIRONMENT_CONTRACT",
+      "expected_s": 20,
+      "timeout_s": 90
     }
   }
 }

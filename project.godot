@@ -191,6 +191,10 @@ ringworld_night_light_scale={
 "type": "float",
 "value": 1.0
 }
+ringworld_reflection_model={
+"type": "float",
+"value": 0.0
+}
 ring_conduit_phase={
 "type": "float",
 "value": 0.0

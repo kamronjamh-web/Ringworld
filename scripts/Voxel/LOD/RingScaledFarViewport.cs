@@ -21,6 +21,11 @@ namespace RingworldTechDemo.Voxel.LOD;
 /// </summary>
 public partial class RingScaledFarViewport : Node
 {
+	// Deliberately not copied from main: whole-ring far (Sky background) resolves to the radiance map, regional far
+	// (transparent black) to no reflection, exactly as before the reflection model switch.
+	internal const Godot.Environment.ReflectionSource FarReflectionSource = Godot.Environment.ReflectionSource.Bg;
+	internal const Godot.Environment.ReflectionSource RegionalFarReflectionSource = Godot.Environment.ReflectionSource.Bg;
+
 	/// <summary>Read-only render targets for diagnostics; each remains a separate GPU interval.</summary>
 	public SubViewport? OuterViewportForDiagnostics => _farViewport != null && GodotObject.IsInstanceValid(_farViewport) ? _farViewport : null;
 	public SubViewport? RegionalViewportForDiagnostics => _regionalFarViewport != null && GodotObject.IsInstanceValid(_regionalFarViewport) ? _regionalFarViewport : null;
@@ -1034,7 +1039,7 @@ public partial class RingScaledFarViewport : Node
 			AmbientLightSource = sourceEnvironment?.AmbientLightSource ?? Godot.Environment.AmbientSource.Color,
 			AmbientLightColor = sourceEnvironment?.AmbientLightColor ?? new Color(0.53f, 0.58f, 0.65f),
 			AmbientLightEnergy = sourceEnvironment?.AmbientLightEnergy ?? 0.4f,
-			ReflectedLightSource = sourceEnvironment?.ReflectedLightSource ?? Godot.Environment.ReflectionSource.Sky,
+			ReflectedLightSource = FarReflectionSource,
 			FogEnabled = false
 		};
 		// The far ring is composited behind the main viewport, so both views must
@@ -1152,7 +1157,7 @@ public partial class RingScaledFarViewport : Node
 			AmbientLightSource = sourceEnvironment?.AmbientLightSource ?? Godot.Environment.AmbientSource.Color,
 			AmbientLightColor = sourceEnvironment?.AmbientLightColor ?? new Color(0.53f, 0.58f, 0.65f),
 			AmbientLightEnergy = sourceEnvironment?.AmbientLightEnergy ?? 0.4f,
-			ReflectedLightSource = sourceEnvironment?.ReflectedLightSource ?? Godot.Environment.ReflectionSource.Disabled,
+			ReflectedLightSource = RegionalFarReflectionSource,
 			FogEnabled = false,
 			VolumetricFogEnabled = false
 		};
