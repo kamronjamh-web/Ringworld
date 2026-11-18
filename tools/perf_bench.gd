@@ -4,7 +4,7 @@ extends SceneTree
 ## snapshot and presses Continue, as the player does (tools/tree_visibility_world.gd), then runs the scenarios of tools/fixtures/perf_bench_scenarios.json:
 ## per scenario, A-A rounds of one window each (stand / yaw_sweep / fly), with per-frame wall, frame setup, main-thread process, render CPU and GPU,
 ## draw calls, primitives, VRAM, GC, per-viewport GPU, every RingPerformanceGpu detailed interval and the key CPU scopes.
-## Args (after --): --out=<abs dir> --scenarios=<abs json> [--select=all|quick|a,b] [--expect=a,b] [--vsync-pass] [--stills] [--rounds=N] [--window-scale=F]
+## Args (after --): --out=<abs dir> --scenarios=<abs json> [--select=all|quick|a,b] [--expect=a,b] [--vsync-pass] [--stills] [--no-capture] [--tails] [--rounds=N] [--window-scale=F]
 ## --expect is the plan the runner resolved (tools/perf_bench.ps1: the names _select returns, in its order, which is the file order for all / quick and the --select order for a name list; the run order by kind comes later); a different list from _select is PERF_BENCH=FAIL "plan mismatch" before any boot work, and the list is recorded as report["expected"].
 ## Poses may be {"poi": "weather_lung"|"emitter", "viewpoint": N}, reached through the live tuning drawer's teleports. Scenarios of kind "ssr_fade" run last, after the stills, then those of kind "reflection_probe" (tools/perf_bench_reflection_probe.gd; results in report["reflection_probes"]).
 ## Scenarios of kind "ab_matrix" (tools/perf_bench_ab_matrix.gd; baseline plus named variants, interleaved A-X-A windows, optional stills) run right after the generic measured loop; results in report["ab_matrices"].
@@ -16,6 +16,7 @@ const COMMON := preload("res://tools/shadow_harness_common.gd")
 const TVW := preload("res://tools/tree_visibility_world.gd")
 const REFLECTION_PROBE := preload("res://tools/perf_bench_reflection_probe.gd")
 const AB_MATRIX := preload("res://tools/perf_bench_ab_matrix.gd")
+const ADAPTIVE := preload("res://tools/perf_bench_adaptive.gd")
 
 var args := {}
 var out_dir := ""
@@ -249,8 +250,9 @@ func _scenario(sc: Dictionary, vsync_on: bool) -> Dictionary:
 	var kind := String(sc["kind"])
 	var rounds := int(args.get("rounds", _opt(sc, "rounds")))
 	var seconds := float(_opt(sc, "window_s")) * float(args.get("window-scale", "1"))
-	var result := {"name": name, "kind": kind, "pose_name": String(sc["pose"]), "pose": pose, "vsync": vsync_on, "window_s": seconds, "rounds": [], "setup": {}}
-	_log("scenario %s (%s, %d x %.0f s)" % [name, kind, rounds, seconds])
+	var adaptive := kind == "stand" and not args.has("tails")  # stand windows may stop early once settled; flights and sweeps keep fixed windows; --tails = full windows
+	var result := {"name": name, "kind": kind, "pose_name": String(sc["pose"]), "pose": pose, "vsync": vsync_on, "window_s": seconds, "rounds": [], "setup": {}, "adaptive": adaptive}
+	_log("scenario %s (%s, %d x %.0f s%s)" % [name, kind, rounds, seconds, ", adaptive" if adaptive else ""])
 	_release_keys()
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	var speed := float(sc.get("speed_mps", 0.0))
@@ -314,7 +316,7 @@ func _scenario(sc: Dictionary, vsync_on: bool) -> Dictionary:
 			w = await _window(tag, seconds, {"yaw_rate": float(sc.get("deg_per_s", 360.0)), "yaw0": float(pose.get("yaw_deg", 0.0)), "pitch": float(pose.get("pitch_deg", 0.0))})
 		else:
 			await COMMON.settle(self, 1.5 if r > 0 else 2.0)
-			w = await _window(tag, seconds, {})
+			w = await _window(tag, seconds, {"adaptive": true} if adaptive else {})
 		result["rounds"].append(w)
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	return result
@@ -448,18 +450,35 @@ func _stills(chosen: Array) -> void:
 			continue
 		await COMMON.settle(self, 3.0)
 		await COMMON.wait_builds_idle(self, game, 90.0)
-		if not hidden:
-			entry["hidden"] = TVW.quiet_scene(game)
-			TVW.hide_overlays(game)
-			hidden = true
-			quiet_done = true
-		TVW.freeze_world(game)
-		report["still_noise"] = TVW.freeze_noise(self, game, PackedStringArray(["clouds", "taa"]))
-		for _i in 20:
-			TVW.hold_wind()
-			await process_frame
-		await RenderingServer.frame_post_draw
-		var img := TVW.grab(self)
+		var img: Image
+		if args.has("no-capture"):
+			if not hidden:
+				entry["hidden"] = TVW.quiet_scene(game)
+				TVW.hide_overlays(game)
+				hidden = true
+				quiet_done = true
+			TVW.freeze_world(game)
+			report["still_noise"] = TVW.freeze_noise(self, game, PackedStringArray(["clouds", "taa"]))
+			for _i in 20:
+				TVW.hold_wind()
+				await process_frame
+			await RenderingServer.frame_post_draw
+			img = TVW.grab(self)
+		else:
+			# Still-capture mode (docs/test-speed-plan.md 3.8): time scale 0 and the cloud march held, so clouds, grass and gust debris stay visible. Timers only before capture_begin.
+			if not hidden:
+				TVW.hide_overlays(game)
+				hidden = true
+			TVW.freeze_world(game)
+			report["still_noise"] = TVW.freeze_noise(self, game, PackedStringArray(["taa"]))
+			var cap: Dictionary = await TVW.capture_begin(self, game)
+			entry["capture"] = cap
+			if not bool(cap.get("deterministic", false)):
+				entry["capture_fallback"] = true
+				_log("still %s: capture not deterministic (%s px differ), saved anyway" % [name, str(cap.get("last_pair_differing_px", -1))])
+			await RenderingServer.frame_post_draw
+			img = TVW.grab(self)
+			TVW.capture_end(game)
 		var path := dir.path_join("%s.png" % name)
 		var save_err := img.save_png(path)
 		entry["path"] = path
@@ -656,6 +675,10 @@ func _window(tag: String, seconds: float, opts: Dictionary) -> Dictionary:
 	var start := Time.get_ticks_usec()
 	var last := start
 	var n := 0
+	var adaptive := bool(opts.get("adaptive", false))
+	var block_starts := PackedInt32Array([0])  # adaptive only: the frame index at each 2 s boundary
+	var stop := "cap"
+	var check := {}
 	while (Time.get_ticks_usec() - start) * 0.000001 < seconds:
 		await RenderingServer.frame_post_draw
 		var now := Time.get_ticks_usec()
@@ -692,6 +715,15 @@ func _window(tag: String, seconds: float, opts: Dictionary) -> Dictionary:
 			if not COMMON.builds_idle(game):
 				busy += 1
 		n += 1
+		if adaptive:
+			var at_s := (now - start) * 0.000001
+			if at_s >= ADAPTIVE.BLOCK_S * float(block_starts.size()):
+				block_starts.append(n)
+				if block_starts.size() >= 3:
+					check = ADAPTIVE.check(f["wall"], f["gpu"], block_starts, at_s)
+					if bool(check["settled"]):
+						stop = "settled"
+						break
 	var elapsed := (Time.get_ticks_usec() - start) * 0.000001
 	var gc1: Dictionary = probe.Gc()
 	var frames: int = f["wall"].size()
@@ -736,6 +768,10 @@ func _window(tag: String, seconds: float, opts: Dictionary) -> Dictionary:
 	var result := {"tag": tag, "seconds": elapsed, "vsync": DisplayServer.window_get_vsync_mode(), "window": DisplayServer.window_get_size(), "busy_fraction": float(busy) / maxf(1.0, float(checks)),
 		"m": m, "viewports": viewports, "monitor_dropped": mon.get("dropped", -1), "monitor_gpu_available": mon.get("gpu_available", false),
 		"working_set_mb": mon.get("working_set_mb", -1), "managed_heap_mb": mon.get("managed_heap_mb", -1), "pose": COMMON.pose_now(game)}
+	if adaptive:
+		result["adaptive"] = {"cap_s": seconds, "stop": stop, "blocks": maxi(0, block_starts.size() - 1), "check": check}
+		if stop == "settled":
+			result["tails_info"] = true
 	var cycle := game.get_node_or_null("RingDayNightCycle")
 	if cycle != null:
 		result["sun_elevation_deg"] = float(cycle.get("SunElevationDegrees"))

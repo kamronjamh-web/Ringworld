@@ -7,7 +7,8 @@
   .\tools\perf_bench.ps1 -Label after_fix -Quick -Baseline baseline_a785e4b   # adds the delta table (before / after / delta / noise / verdict)
   .\tools\perf_bench.ps1 -Label full_x                                        # the full list, about 20 min
   .\tools\perf_bench.ps1 -Label t -Scenarios save_spot,fly_240                # picked scenarios (names in tools/fixtures/perf_bench_scenarios.json)
-  .\tools\perf_bench.ps1 -Label t -Quick -VsyncOn -Stills -Baseline x         # also the VSync-on pass, one quiet still per standing pose (SSIM vs the baseline's)
+  .\tools\perf_bench.ps1 -Label t -Quick -VsyncOn -Stills -Baseline x         # also the VSync-on pass, one capture-mode still per standing pose (SSIM vs the baseline's)
+  .\tools\perf_bench.ps1 -Label t -Quick -Tails                               # full windows everywhere (default: standing windows stop early once settled; tails then informational)
   .\tools\perf_bench.ps1 -Label t -Scenarios plains -Variants .\my_variants.json  # in-session A/B (A-X-A) of run-time toggles at the standing scenarios; see docs/perf-bench.md
   .\tools\perf_bench.ps1 -Snapshot -SnapshotOnly                              # freeze the player's current slot 3 as a new benchmark world and stop
   .\tools\perf_bench.ps1 -Label x -ReportFrom .godot\perf_bench\x\<run id>    # rebuild report.json / report.md of a finished run (no game)
@@ -28,6 +29,9 @@
   run_context.json carries job_status and job_detail; a status other than exited is a FAIL, but a driver_report.json that exists is still turned into a report first.
   VSync: all windows are VSync off (GPU-bound numbers, comparable with the perf-pass doc); -VsyncOn adds one extra pass of the scenarios marked vsync_pass with VSync as shipped.
   If the monitor is off, VSync-on runs at ~4 fps: the pass is skipped with a note (and the VSync-off runs are unaffected).
+  Adaptive windows: standing windows stop early (never later than window_s) once the median is stable (docs/perf-bench.md); such scenarios carry window_actual_s / window_stop / tails_info,
+  and their tail metrics (p99, max, hitches, GC) are informational and not compared against a baseline. -Tails runs full windows everywhere.
+  Stills (-Stills) are taken in still-capture mode (time scale 0, cloud march held, TAA off); -NoCapture restores the old quiet stills (no clouds, grass, debris; wind off).
 #>
 param(
   [string]$Label = "",
@@ -35,6 +39,8 @@ param(
   [string[]]$Scenarios = @(),
   [switch]$VsyncOn,
   [switch]$Stills,
+  [switch]$NoCapture,
+  [switch]$Tails,
   [string]$Baseline = "",
   [switch]$FailOnRegression,
   [string]$World = "",
@@ -183,6 +189,8 @@ function Get-NoiseFloor([string]$metric, [double]$before) {
   return 0.3   # ms-valued metrics: medians, per-pass GPU and CPU scope times
 }
 $informational = @("frames", "speed_mps", "distance_m")
+# Window-length dependent: informational (not compared against a baseline) when a window stopped early (adaptive, tails_info).
+$tailInfo = @("wall_p99", "wall_max", "hitch33_count", "hitch33_worst_ms", "gc_gen1", "gc_gen2", "gc_pause_ms")
 
 function Get-Metrics($scenario) {
   $metrics = @{}
@@ -260,6 +268,10 @@ function Build-Report([string]$out, [hashtable]$ctx) {
       $entry["busy_fraction"] = @($s.rounds | ForEach-Object { $_.busy_fraction })
       $entry["monitor_dropped"] = @($s.rounds | ForEach-Object { $_.monitor_dropped })
       $entry["sun_elevation_deg"] = @($s.rounds | ForEach-Object { $_.sun_elevation_deg })
+      # Adaptive windows (absent in reports of older drivers: fixed, no tails_info).
+      $entry["window_actual_s"] = @($s.rounds | ForEach-Object { [math]::Round([double]$_.seconds, 1) })
+      $entry["window_stop"] = @($s.rounds | ForEach-Object { if ($_.ContainsKey("adaptive") -and $_.adaptive -is [System.Collections.IDictionary]) { [string]$_.adaptive.stop } else { "fixed" } })
+      $entry["tails_info"] = (@($s.rounds | Where-Object { $_.ContainsKey("tails_info") -and [bool]$_.tails_info }).Count -gt 0)
     }
     $rep.scenarios[$s.name] = $entry
   }
@@ -289,9 +301,12 @@ function Add-Baseline($rep, [string]$baselineReportPath) {
     $cur = $rep.scenarios[$n]
     if (-not $base.scenarios.ContainsKey($n) -or -not $cur.Contains("metrics") -or -not $base.scenarios[$n].ContainsKey("metrics")) { $cmp.warnings += "scenario $n has no baseline counterpart"; continue }
     $bm = $base.scenarios[$n].metrics
+    $skipTails = ($cur.Contains("tails_info") -and [bool]$cur.tails_info) -or ($base.scenarios[$n].ContainsKey("tails_info") -and [bool]$base.scenarios[$n].tails_info)
+    if ($skipTails) { $cmp.warnings += "${n}: adaptive window, tails informational (p99, max, hitches, GC not compared)" }
     $rows = @()
     foreach ($k in $cur.metrics.Keys) {
       if ($k -in $informational -or -not $bm.ContainsKey($k)) { continue }
+      if ($skipTails -and $k -in $tailInfo) { continue }
       $b = [double]$bm[$k].value; $a = [double]$cur.metrics[$k].value
       $noise = [math]::Max([math]::Max([double]$bm[$k].noise, [double]$cur.metrics[$k].noise), (Get-NoiseFloor $k $b))
       $delta = $a - $b
@@ -356,15 +371,24 @@ function Write-ReportMd($rep, [string]$path) {
   $L.Add("## Summary per scenario"); $L.Add("")
   $L.Add("Median of the A-A rounds; the number after +/- is the spread between the rounds (the noise floor of that metric). Windows: VSync off, clocks running, streaming idle before measuring."); $L.Add("")
   $L.Add("| scenario | rounds x s | fps | frame p50 | p95 | p99 | max | hitches > 33 ms (worst) | setup p50 | process p50 | render CPU p50 | GPU p50 | draws | prims | VRAM MB |"); $L.Add("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+  $anyAdaptive = $false
   foreach ($n in $rep.scenarios.Keys) {
     $sc = $rep.scenarios[$n]
     if ($sc.Contains("error")) { $L.Add("| $n | | FAILED: $($sc.error) |||||||||||||"); continue }
     if (-not $sc.Contains("metrics")) { continue }
     $mm = $sc.metrics
     $cell = { param($k) "{0} +/- {1}" -f (Format-Num $mm[$k].value $k), (Format-Num $mm[$k].noise $k) }
-    $L.Add("| $n | $($sc.rounds) x $([math]::Round($sc.window_s)) | $(& $cell 'fps') | $(& $cell 'wall_p50') | $(& $cell 'wall_p95') | $(& $cell 'wall_p99') | $(& $cell 'wall_max') | $(Format-Num $mm.hitch33_count.value 'hitch33_count') ($(Format-Num $mm.hitch33_worst_ms.value 'x') ms) | $(& $cell 'setup_p50') | $(& $cell 'process_p50') | $(& $cell 'render_cpu_p50') | $(& $cell 'gpu_total_p50') | $(Format-Num $mm.draws_p50.value 'draws_p50') | $(Format-Num $mm.prims_p50.value 'prims_p50') | $(Format-Num $mm.vram_mb.value 'vram_mb') |")
+    $info = if ($sc.Contains("tails_info") -and [bool]$sc.tails_info) { " (info)" } else { "" }
+    $rx = "$($sc.rounds) x $([math]::Round($sc.window_s))"
+    if ($sc.Contains("window_stop") -and @($sc.window_stop | Where-Object { $_ -ne "fixed" }).Count -gt 0) {
+      $act = @($sc.window_actual_s | Measure-Object -Minimum -Maximum)
+      $rx = "$($sc.rounds) x " + ("{0:N1}..{1:N1} of {2:N0} (adaptive)" -f $act.Minimum, $act.Maximum, $sc.window_s)
+      $anyAdaptive = $true
+    }
+    $L.Add("| $n | $rx | $(& $cell 'fps') | $(& $cell 'wall_p50') | $(& $cell 'wall_p95') | $(& $cell 'wall_p99')$info | $(& $cell 'wall_max')$info | $(Format-Num $mm.hitch33_count.value 'hitch33_count') ($(Format-Num $mm.hitch33_worst_ms.value 'x') ms)$info | $(& $cell 'setup_p50') | $(& $cell 'process_p50') | $(& $cell 'render_cpu_p50') | $(& $cell 'gpu_total_p50') | $(Format-Num $mm.draws_p50.value 'draws_p50') | $(Format-Num $mm.prims_p50.value 'prims_p50') | $(Format-Num $mm.vram_mb.value 'vram_mb') |")
   }
   $L.Add("")
+  if ($anyAdaptive) { $L.Add("Adaptive windows: a standing window stops once the median is stable (never longer than the cap, the number after of); (info) tails of such scenarios are informational and not compared against a baseline. ``-Tails`` runs full windows."); $L.Add("") }
   $flights = @($rep.scenarios.Keys | Where-Object { $rep.scenarios[$_].kind -eq "fly" -and -not $rep.scenarios[$_].Contains("error") })
   if ($flights.Count -gt 0) {
     $L.Add("Flights: " + (($flights | ForEach-Object { "$_ mean speed $([math]::Round($rep.scenarios[$_].metrics.speed_mps.value)) m/s, $([math]::Round($rep.scenarios[$_].metrics.distance_m.value / 1000.0, 1)) km flown; GC gen2 $([math]::Round($rep.scenarios[$_].metrics.gc_gen2.value)), allocated $([math]::Round($rep.scenarios[$_].metrics.alloc_mb_s.value)) MB/s" }) -join " | ")); $L.Add("")
@@ -460,12 +484,21 @@ function Write-ReportMd($rep, [string]$path) {
   }
   if ($rep.stills -and @($rep.stills).Count -gt 0) {
     $L.Add("## Stills"); $L.Add("")
-    $L.Add("One quiet still per standing pose (clouds, grass, gust debris hidden; clocks, wind, TAA and cloud interleave held; HUD hidden) in ``$(Split-Path (Split-Path $rep.stills[0].path -Parent) -Parent)\stills``.")
+    $L.Add("One still per standing pose, HUD hidden, in ``$(Split-Path (Split-Path $rep.stills[0].path -Parent) -Parent)\stills``. Capture mode (default): time scale 0, cloud march held, TAA off, wind frozen, clouds, grass and gust debris visible. Legacy (-NoCapture): quiet scene (clouds, grass, debris hidden, wind off). Stills of the two modes are not comparable.")
+    $L.Add("")
+    foreach ($st in @($rep.stills)) {
+      $how = "legacy (no capture)"
+      if ($st.ContainsKey("capture") -and $st.capture -is [System.Collections.IDictionary]) {
+        $cp = $st.capture
+        $how = if ($cp.ContainsKey("deterministic") -and [bool]$cp.deterministic) { "capture: deterministic, $($cp.frames_waited) frames" } else { "capture fallback (not deterministic, $($cp.last_pair_differing_px) px)" }
+      }
+      $L.Add("- $($st.name): $how")
+    }
     $L.Add("")
     if ($rep.Contains("stills_compare")) {
       $L.Add("| pose | SSIM vs baseline | PSNR | heatmap |"); $L.Add("|---|---|---|---|")
       foreach ($c in $rep.stills_compare) { $L.Add("| $($c.name) | $(if ($c.ContainsKey('ssim')) { $c.ssim } else { $c.note }) | $(if ($c.ContainsKey('psnr')) { $c.psnr } else { '' }) | $($c.heatmap) |") }
-      $L.Add(""); $L.Add("Cloud-free stills of identical scenes should be near 1.0; judge the heatmap, not only the number (visual-golden-check skill).")
+      $L.Add(""); $L.Add("Capture-mode stills keep the clouds, which move between two runs (the clocks run until the still), so identical code gives SSIM about 0.986 to 0.996 with differences in the sky; quiet (-NoCapture) stills of identical scenes are near 1.0. Judge the heatmap, not only the number (visual-golden-check skill).")
     } else { $L.Add("(no baseline: nothing compared)") }
     $L.Add("")
   }
@@ -646,7 +679,7 @@ if (-not $InQueue) {
   $inner = "& $(Quote $PSCommandPath) -InQueue -Label $(Quote $Label) -RunId $RunId -Resolution $Resolution -TimeoutMin $TimeoutMin -StallMinutes $StallMinutes -World $(Quote $worldInfo.dir) -WindowScale $WindowScale -Rounds $Rounds"
   if ($Quick) { $inner += " -Quick" }
   if ($Scenarios.Count -gt 0) { $inner += " -Scenarios " + (($Scenarios | ForEach-Object { Quote $_ }) -join ",") }
-  foreach ($sw in @("VsyncOn", "Stills", "LiveSettings")) { if ($derivedSpec -and $sw -eq "Stills") { continue }; if ((Get-Variable $sw).Value) { $inner += " -$sw" } }
+  foreach ($sw in @("VsyncOn", "Stills", "LiveSettings", "Tails", "NoCapture")) { if ($derivedSpec -and $sw -eq "Stills") { continue }; if ((Get-Variable $sw).Value) { $inner += " -$sw" } }
   if ($EngineArgs) { $inner += " -EngineArgs $(Quote $EngineArgs)" }
   if ($ScenarioFile) { $inner += " -ScenarioFile $(Quote $scenarioPath)" }
   if ($SettingsOverlay) { $inner += " -SettingsOverlay $(Quote $SettingsOverlay)" }
@@ -673,7 +706,7 @@ if (-not $InQueue) {
     Write-Host "$marker=FAIL no driver_report.json (godot exit $code); see $out\console.log"
     exit 1
   }
-  $ctx = @{ label = $Label; run_id = $RunId; started = $rc.started; mode = $mode; args = @{ quick = $argQuick; scenarios = $argScenarios; scenario_file = $argScenarioFile; variants = $variantsSource; settings_overlay = $SettingsOverlay; vsync_on = [bool]$VsyncOn; stills = [bool]$Stills; rounds = $Rounds; window_scale = $WindowScale; baseline = $Baseline; live_settings = [bool]$LiveSettings }
+  $ctx = @{ label = $Label; run_id = $RunId; started = $rc.started; mode = $mode; args = @{ quick = $argQuick; scenarios = $argScenarios; scenario_file = $argScenarioFile; variants = $variantsSource; settings_overlay = $SettingsOverlay; vsync_on = [bool]$VsyncOn; stills = [bool]$Stills; no_capture = [bool]$NoCapture; tails = [bool]$Tails; rounds = $Rounds; window_scale = $WindowScale; baseline = $Baseline; live_settings = [bool]$LiveSettings }
     git = (Get-GitInfo); world_meta = $worldInfo.meta; settings_source = $rc.settings_source; settings = $rc.settings; resolution = $Resolution; godot_exit = $code }
   $rep = Build-Report $out $ctx
   if ($baseRun) {
@@ -751,6 +784,8 @@ $drvArgs = @("--out=$out", "--scenarios=$scenarioPath", "--select=$select")
 if ($expectNames) { $drvArgs += "--expect=$expectNames" }   # no names: no check (the driver also skips an empty list)
 if ($VsyncOn) { $drvArgs += "--vsync-pass" }
 if ($Stills) { $drvArgs += "--stills" }
+if ($NoCapture) { $drvArgs += "--no-capture" }
+if ($Tails) { $drvArgs += "--tails" }
 if ($Rounds -gt 0) { $drvArgs += "--rounds=$Rounds" }
 if ($WindowScale -ne 1.0) { $drvArgs += "--window-scale=$WindowScale" }
 

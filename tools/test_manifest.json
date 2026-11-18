@@ -8076,6 +8076,17 @@
       "runner": "tools/perf_bench.ps1",
       "user_args": "-Label manifest -Quick"
     },
+    "perf_bench_adaptive_rule_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "perf-telemetry"
+      ],
+      "marker": "PERF_BENCH_ADAPTIVE_RULE",
+      "expected_s": 1,
+      "timeout_s": 30
+    },
     "landscape_dressing_poses_test": {
       "kind": "test",
       "mode": "headless",
