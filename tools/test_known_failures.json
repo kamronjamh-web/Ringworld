@@ -210,9 +210,10 @@
       ]
     },
     "far_weather_refresh_smoke_test": {
-      "status": "known-fail",
+      "status": "flaky",
       "match": "FAR_WEATHER_REFRESH_SMOKE_TEST=FAIL timeout",
-      "evidence": "2026-11-06 gpu-offload GPU-4: fails at HEAD 5bcff69 too (headless CPU path publishes at frame 447 vs MAX_FRAMES 420; working tree 421). Frame count follows the per-frame CPU budget, so it is load-dependent; needs a time-based limit instead of frames",
+      "retries": 1,
+      "evidence": "2026-11-06 gpu-offload GPU-4: fails at HEAD 5bcff69 too (headless CPU path publishes at frame 447 vs MAX_FRAMES 420; working tree 421). Frame count follows the per-frame CPU budget, so it is load-dependent; needs a time-based limit instead of frames. 2026-11-18: passed in merge_tvr and r16d, so it is load-dependent, now flaky with one retry",
       "since": "2026-11-06",
       "machines": [
         "desktop_mid_high"
