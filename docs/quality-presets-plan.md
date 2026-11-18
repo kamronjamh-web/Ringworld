@@ -45,6 +45,8 @@ Walking was grounded throughout and covered 212.7 m (observed 7.09 m/s; requeste
 
 **RTX A1000 remains deferred to the user's other machine.** Keep its 1080p Medium target and power-valid measurements pending; none of the RTX 4070 results prove A1000 performance.
 
+**2026-11-18, user decision:** every A1000 gate outstanding on this date is PASSED. The user runs A1000 measurements themselves and said: "all pending a1000 tests that are currently outstanding pass them". Do not hold work for an A1000 run; new A1000 checks go to the user.
+
 ### Empty-user-profile startup
 
 [The empty-profile Release capture](../.godot/quality_presets/4070_empty-profile/report.json) uses the frozen source-loader baseline with `Cache none`. It completed with zero rendering errors. Only the isolated user profile was empty; project import caches, OS file caches and driver caches were not flushed. This is a first-user-profile measurement, not a fully cold-machine measurement.
