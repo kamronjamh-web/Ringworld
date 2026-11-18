@@ -13,7 +13,7 @@ State on 2026-11-18, night (overnight lead: `claude-lead`; this section is kept 
 
 | Item | Cost |
 |---|---|
-| Sky radiance map update | 0.18 ms every frame, dry or wet |
+| Sky radiance map update | **0.38 ms every frame**: two rebuilds of 0.19 ms each, in the far viewport and in the main view, caused by the fog flip between their Environments (R1-6a, 9.4; 9.2 measured only the Incremental half, 0.18) |
 | Engine SSR at half size (what High runs) | 0.12 ms dry plains, 0.18 to 0.24 ms wet plains and forest, 0.21 ms Weather Lung, 0.28 ms save spot |
 | Engine SSR at full size | a further 0.17 to 0.32 ms where pixels trace |
 | Engine SSR steps 64 instead of 128 | -0.06 ms at the Weather Lung and the save spot, about -0.02 ms elsewhere; tolerance and fades: nothing |
@@ -50,7 +50,7 @@ State on 2026-11-18, night (overnight lead: `claude-lead`; this section is kept 
 | R1-3 housekeeping | Not started | 10.4 |
 | R1-4 trace only where it shows (the wet-ground trial) | **Parked** with R1-1d (same files) | 10.4 |
 | R1-5a water march, R1-5c measurements | Designed, not started. After R1-2a | `docs/work-orders/reflections/R1-2-R1-5-design.md` |
-| R1-6 radiance cadence | Designed. **R1-6a (measurement) running 2026-11-18**: `ab_matrix` at `plains_eye`, scenario file `tools/fixtures/perf_bench_sky_radiance_cadence.json` (Incremental, Quality, DaySideAtmosphere frozen, frozen plus main fog values set to the far Environment's) | `docs/work-orders/reflections/R1-6-design.md` |
+| R1-6 radiance cadence | Designed. **R1-6a done 2026-11-18 (9.4):** the map is rebuilt twice per frame (far and main, 0.19 ms each, 0.38 ms in all), and the main/far fog flip alone causes it. Next: R1-6d (fog flip) first, then R1-6b/c | `docs/work-orders/reflections/R1-6-design.md` |
 | R1-7 sign-off sheet, R1-8 cleanup | After the above | 10.4 |
 | R3a-0 cloud publication design | **Done**, including the capture hold and the main-view filter (its sections 2.5 and 2.6) | `docs/work-orders/reflections/R3a-design.md` |
 | R3a-1 publication | **Staged and reviewed 2026-11-18** in `<scratchpad>/refl/r3a1/` (patch `r3a1.patch`; C# compiles in a scratch copy of the sources, 0 errors). Not in the tree, not yet run by Godot. Two Lead corrections applied in staging: the valid ramp runs on unscaled real time (it must finish under time scale 0), and no new manifest tag. Deviations to know: B7b un-holds on any camera change, so case C4 checks "content kept while held; one complete march on a turn"; `compositor_temporal_stability_test` has no manifest entry, so the new entry copies `atmosphere_visual_test` (gpu, extended, certified world, timeout 900 s est.) | same file |
@@ -59,7 +59,7 @@ State on 2026-11-18, night (overnight lead: `claude-lead`; this section is kept 
 
 No helper agent is running. No order was left half-applied in the tree (R1-2a is complete in the tree; R3a-1 exists only in staging).
 
-Next, one at a time: R1-6a result, then R3a-1 into the tree with its byte-compare test, then R1-5a. Parked: R1-1d and R1-4 (terrain/proxy shaders held by T4-4b).
+Next, one at a time: R3a-1 into the tree with its byte-compare test, then R1-6d (fog flip, worth about 0.19 ms), then R1-5a. Parked: R1-1d and R1-4 (terrain/proxy shaders held by T4-4b).
 
 **How model-0 identity is proven (2026-11-18).** Stills of one session are byte-comparable between models (capture mode). Across sessions (before/after a code change) they are not: clouds, tree crowns in wind and a thin band of distant terrain at the horizon differ by a few thousand pixels (SSIM 0.9999+), and a pose without them (night emitter) is byte-identical. So an order is identical at model 0 when the before/after heatmap shows only that noise and no structure on reflective surfaces (test spheres, wet ground, water, metal). Even within one session the repeat frame differs on the horizon band with models [0, 0] (diag runs), so that band is harness noise, not a model effect. A "before" assembly is built from a scratch copy of the C# sources with the order's hunks reverted and run through `perf_bench.ps1 -SkipBuild` after copying it into `bin\OptRelease` (old timestamp so the next bench rebuilds); the probe falls back to `env.reflected_light_source` when `RingReflectionModel` is not in the assembly. Shader-only orders need no such build: run the probe before the edit and after it.
 
@@ -80,7 +80,8 @@ Tests for R1-2a (`.godot/test_runs/r1_2a/`):
 - `.godot/audit_baseline/common/reflections/r1_0/`: `r10_identity_1.png`, `r10_identity_2.png` (pre-R1-0 assembly against R1-0 at model 0, and one model-1 pair; columns before | after | difference x8) and both driver reports (runs `.godot/perf_bench/refl_r10_before/20261118_002141`, `refl_r10_after/20261118_003414`).
 - `.godot/audit_baseline/common/reflections/r1_1/`: `r11_identity_1.png` (R1-0 against R1-1a+b at model 0: noise only), `r11_m0m1_1.png` (model 0 against 1 after R1-1a+b: trees and cards unchanged, POI metal and wet ground reflect the sky), and `model_stills/` = the R1-1a+b state at model 0 and 1, all 13 scenarios (the "before" set R1-2a was checked against; superseded by `r1_2/model_stills/`).
 - `.godot/audit_baseline/common/reflections/r1_2/`: `r12a_identity_1.png` (R1-1 stills against R1-2a at model 0, coast, lifted coast, night arch, Weather Lung dam: clouds, crowns and the horizon band only) and `model_stills/` = the R1-2a state at model 0 and 1, all scenarios, with the driver report (run `.godot/perf_bench/refl_r12a/20261118_030258`): the "before" set for R1-5a.
-- `.godot/audit_baseline/common/reflections/signoff_2026-11-18/`: the sign-off sheets, the summary and the model cost table (run `.godot/perf_bench/refl_model_cost/20261118_030855`).
+- `.godot/audit_baseline/common/reflections/r1_2/lake/`: lake 20792 area stills of the rivers world (seed 876374626), model 0 and 1 (`*_m1.png`), noon, clouds on; north-facing views show the river and the lake (the water mask confirms them), the south-facing `lake20792s_*` show a dry flat that is not water. Taken with a scratch subclass of `tools/river_site_capture.gd` (variant `m1` through `RingReflectionModel`), kept at `.godot/audit_baseline/common/reflections/scratch_tools/refl_lake_capture.gd` (not a tracked tool; `.godot` outside the kept folders is pruned, which deleted its first location).
+- `.godot/audit_baseline/common/reflections/signoff_2026-11-18/`: the two sign-off sheets, `README.md` (summary, cost table, user questions), the cost run's report and driver report (run `.godot/perf_bench/refl_model_cost/20261118_030855`).
 - `.godot/perf_bench/reflections_b1/20261117_144547/`, `reflections_b3a/20261117_150117/`, `reflections_b3b/20261117_153047/`: reports, stills and heatmaps of the three runs. `.godot/perf_bench/refl_tooling_check/`: the quick run of 0.6.
 
 ### 0.6 Handover of the bench tooling to the test-speed lane (B2a)
@@ -542,6 +543,36 @@ No stills at the save spot. Tolerance 0.12 and 0.5 and both fade values were wit
 - The sky source costs 0.01 to 0.08 ms, most where most of the frame is glossy or near.
 
 Evidence: `.godot/perf_bench/reflections_b3b/20261117_153047/`.
+
+### 9.4 R1-6a: what rebuilds the sky radiance map (2026-11-18)
+
+`ab_matrix` at `plains_eye` (pitch -3), noon, clocks held, High, RTX 4070, 1600 x 900, the user's frozen settings; 3 rounds of 6 s windows, A-X-A; baseline spread 0.06 ms on the total. Scenario file `tools/fixtures/perf_bench_sky_radiance_cadence.json`. The GPU time of the far viewport is measured separately (`vp.*.FarRingViewport`); the main view is the total minus it.
+
+| Variant (against Realtime today) | Total GPU | Far viewport | Main view (difference) |
+|---|---|---|---|
+| Sky process mode Incremental | -0.17 ms | -0.085 | -0.085 |
+| Sky process mode Quality | +1.01 ms | +0.48 | +0.53 |
+| DaySideAtmosphere frozen (no sky material writes at all) | -0.01 ms (noise) | 0 | 0 |
+| Frozen, plus the main Environment's seven fog values set to the far Environment's (fog stays off; nothing visible changes) | **-0.38 ms** | **-0.19** | **-0.19** |
+| Frozen, Incremental | -0.16 ms | -0.085 | -0.075 |
+
+Each round agreed within 0.03 ms.
+
+What this settles (design R1-6, sections 1.4 and 5):
+- **Today the map is rebuilt twice per frame**, once when the far viewport renders and once when the main view does. Each rebuild costs about 0.19 ms, so the radiance map costs **0.38 ms per frame**, not the 0.18 ms of 9.2. 9.2 measured the Incremental delta, which removes only half of it.
+- **The fog flip is a dirtier on its own.** With every sky-material write stopped, the map is still rebuilt twice per frame. Only when the fog values also match does the cost go away. The two Environments render the same Sky with different fog values, so each viewport's `setup_sky` sees the other's values and marks the map dirty.
+- **The material writes would also dirty it.** Freezing them alone saves nothing because the flip already rebuilds every frame. After a fog fix, the uncached `ring_radius_meters` write (and the per-frame inputs) would still cause one rebuild per frame. This is inferred, not measured: fog-match without the freeze could not be measured, because the atmosphere rewrites the fog every frame.
+- **Incremental is not free.** It halves the cost, -0.085 ms in each viewport, which matches the design's reading of the engine (one importance-sampled layer per frame per dirty sky).
+- **A clean sky costs nothing in Realtime.** With no writes and no flip the total fell by the whole 0.38 ms. This matches design 1.2, so the escalation condition of R1-6a does not apply.
+
+Consequences for R1-6:
+- **R1-6d (the fog flip) is needed and comes first.** It is the smaller change and saves about 0.19 ms on its own (est.: one rebuild per frame left).
+- R1-6b and R1-6c (cadence) then take the remaining 0.19 ms down to the refresh rate of design 5.
+- Total available is about 0.38 ms on High, twice what 10.3 assumed. That leaves room under the user's +0.2 ms rule for R3 (the far mirror).
+- The matching values used here are the engine defaults the far Environment has (fog off, density 0.01, light colour (0.518, 0.553, 0.608), energy 1, sun scatter 0, aerial perspective 0, sky affect 1).
+- R1-6d must keep the underwater and cave looks. In water and caves the main fog is really on and is applied in the cubemap pass. The design's 4.5 handles that case.
+
+Evidence: `.godot/perf_bench/refl_r16a/20261118_034642/`; `driver_report.json` and `report.md` copied to `.godot/audit_baseline/common/reflections/r1_6a/` (kept by the prune).
 
 ## 10. Revised orders after Phase B (2026-11-17)
 
