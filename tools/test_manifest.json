@@ -6843,6 +6843,19 @@
       "expected_s": 15,
       "timeout_s": 60
     },
+    "scatter_haze_shadow_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "vegetation",
+        "atmosphere-haze",
+        "shadows"
+      ],
+      "marker": "SCATTER_HAZE_SHADOW_GPU",
+      "expected_s": 30,
+      "timeout_s": 90
+    },
     "ground_relief_field_test": {
       "kind": "test",
       "mode": "headless",
