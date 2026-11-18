@@ -30,7 +30,7 @@ func _init() -> void:
 		print("WATER_REFLECTION_MODEL_CONTRACT=FAIL")
 		quit(1)
 		return
-	print("WATER_REFLECTION_MODEL_CONTRACT=PASS proxy_branch,global_branch,physical_f0,model0_verbatim,no_radiance")
+	print("WATER_REFLECTION_MODEL_CONTRACT=PASS proxy_branch,global_branch,physical_f0,model0_verbatim,no_radiance,horizon_march")
 	quit()
 
 func _check_appearance(appearance: String) -> void:
@@ -103,6 +103,27 @@ func _check_proxy(proxy: String) -> void:
 	_check(storm_at >= 0 and storm_at < int(parts["start"]), "storm_reflection must be defined before the model branch")
 	_check(proxy.find("storm_reflection);", int(parts["close"])) >= 0, "AO must still use storm_reflection after the branch")
 	_check(proxy.find("ring_water_ssr(") >= 0, "proxy must still call ring_water_ssr(")
+	_check_horizon_march(proxy)
+
+# R1-5a: the model 1 march (design 3.1 to 3.4) is a separate function; model 0 still calls the old one, unedited.
+func _check_horizon_march(proxy: String) -> void:
+	var define_at := proxy.find("vec4 ring_water_ssr_horizon(")
+	_check(define_at >= 0, "proxy must define ring_water_ssr_horizon(")
+	if define_at < 0:
+		return
+	var body_end := proxy.find("\n}\n", define_at)
+	var body := proxy.substr(define_at, body_end - define_at) if body_end > define_at else ""
+	_check(not body.is_empty(), "ring_water_ssr_horizon body not found")
+	for token in ["same_surface", "hit_kind = 0.5", "hit_kind = 1.0", "ceil(", "1e-6", "smoothstep(0.001, 0.004,", "smoothstep(50.0, 150.0,", "water_ssr_camera_distance", "water_ssr_coarse_steps", "water_ssr_refinement_steps"]:
+		_check(body.find(token) >= 0, "horizon march missing: " + token)
+	for token in ["water_ssr_strength", "water_ssr_max_ray_distance", "water_ssr_depth_tolerance_far", "distance_confidence"]:
+		_check(body.find(token) < 0, "horizon march must not use " + token)
+	var model1_call := proxy.find("ring_water_ssr_horizon(ssr_origin")
+	var model0_call := proxy.find("ring_water_ssr(ssr_origin")
+	_check(model1_call >= 0 and model0_call > model1_call, "model 1 call must come first with the old call in the else path")
+	var gate := proxy.rfind("if (ringworld_reflection_model >= 0.5)", model1_call)
+	_check(gate >= 0 and model1_call - gate < 80 and proxy.find("else", model1_call) > 0 and proxy.find("else", model1_call) < model0_call, "march call must sit under the model gate with an else for the old call")
+	_check(proxy.find("vec3(ssr_hit_kind)") >= 0, "model 1 debug mode 2 must show ssr_hit_kind")
 
 func _check_global(global: String) -> void:
 	# The global shader also renders in the far viewport: model include only, no camera-sky gate.

@@ -8,6 +8,7 @@ const TEST_SCENE := preload("res://scenes/VoxelRingIntegrationTest.tscn")
 const LAUNCHER_SCENE := preload("res://scenes/WorldSizeLauncher.tscn")
 const OUTPUT_PATHS := preload("res://tools/generated_output_paths.gd")
 const WATER_PROBE := preload("res://scripts/Tools/WaterRenderingProbe.cs")
+const REFLECTION_MODEL := preload("res://scripts/Voxel/LOD/RingReflectionModel.cs")
 const TIMEOUT_FRAMES := 2200
 const SETTLE_FRAMES := 150
 
@@ -28,6 +29,10 @@ var _paths := {}
 var _legacy_roughness := false
 var _medium_ssr := false
 var _legacy_shader: Shader
+var _model1 := false # --reflection-model=1 (R1-5a): the horizon march at model 1, plus a marker about 600 m ahead that must be hit
+var _model_switch: RefCounted
+var _far_marker_mirror := Vector3.ZERO
+var _far_marker_half_px := Vector2.ZERO
 
 func _initialize() -> void:
 	_boot.call_deferred()
@@ -39,6 +44,7 @@ func _boot() -> void:
 	ProjectSettings.set_setting("ringworld/runtime/active_world_directory", "")
 	_legacy_roughness = OS.get_cmdline_user_args().has("--ssr-legacy-roughness")
 	_medium_ssr = OS.get_cmdline_user_args().has("--ssr-medium")
+	_model1 = OS.get_cmdline_user_args().has("--reflection-model=1")
 	if _legacy_roughness:
 		# A/B baseline only: modify the already-loaded resource for this process;
 		# never write a shader asset to disk.
@@ -93,6 +99,10 @@ func _process(_delta: float) -> bool:
 		if not bool(binding.get("controller_ready", false)) or int(binding.get("bound_materials", 0)) <= 0 or (int(binding.get("geometry_meshes", 0)) <= 0 and int(binding.get("covered_coarse_meshes", 0)) <= 0): return false
 		if _frame < _phase_frame + SETTLE_FRAMES: return false
 		_add_reflection_marker()
+		if _model1:
+			_model_switch = REFLECTION_MODEL.new()
+			_model_switch.call("SetModel", 1.0)
+			_add_far_marker()
 		_freeze_presentation()
 		_drawer.call("SetBenchmarkDrawerOpen", false)
 		_set_ssr(false, 0, 0.0)
@@ -130,6 +140,12 @@ func _finish_comparison() -> void:
 	var restore := _mean_difference(_off, _off_again)
 	var hit := _bright_fraction(_hit)
 	print("WATER_SSR_LIVE_CONTROLS_GPU_TEST=METRICS legacy=%s response=%.5f hit=%.5f restore=%.5f captures=%s" % [_legacy_roughness, response, hit, restore, _paths])
+	if _model1:
+		var far := _far_marker_metrics()
+		print("WATER_SSR_LIVE_CONTROLS_GPU_TEST=FAR_MARKER_600M mirror_px=%s half_px=%s on_minus_off_r=%.4f on_minus_off_r_minus_b=%.4f" % [far["centre_px"], far["half_px"], far["dr"], far["drb"]])
+		# The marker is warm (red above blue) and the backdrop is not, so a rise in red minus blue between SSR off and on, at the mirror image of the marker, means the
+		# march found the marker 600 m away. The old march ends at the ray length and cannot.
+		if float(far["dr"]) < 0.04 or float(far["drb"]) < 0.02: _fail("600 m marker not hit at model 1 (on-off red %.4f, red-minus-blue %.4f)" % [far["dr"], far["drb"]]); return
 	if response < 0.003: _fail("SSR on/off water ROI response too small %.5f" % response); return
 	if hit < 0.002: _fail("SSR hit-mask ROI has no measurable hits %.5f" % hit); return
 	if restore > maxf(0.02, response * 0.45): _fail("SSR off-again did not restore baseline %.5f" % restore); return
@@ -191,6 +207,47 @@ func _add_reflection_marker() -> void:
 	marker.global_position = camera.global_position + planar_forward * 40.0 + up * 2.0
 	marker.global_basis = Basis(planar_forward.cross(up).normalized(), up, -planar_forward)
 
+func _add_far_marker() -> void:
+	# Model 1 only: a slab 600 m ahead (and 200 m to the right, clear of the near marker) with the same water clearance. Its mirror image sits just
+	# below the horizon; the horizon march must find it (the old march ends at the ray length). Metrics read a patch around the mirrored centre.
+	var camera := root.get_viewport().get_camera_3d()
+	var explorer := _scene.get_node_or_null("Explorer")
+	if camera == null or explorer == null: return
+	var up: Vector3 = explorer.call("GetCanonicalSurfaceUp")
+	var planar_forward := -camera.global_transform.basis.z
+	planar_forward = (planar_forward - up * planar_forward.dot(up)).normalized()
+	var marker := MeshInstance3D.new()
+	var box := BoxMesh.new(); box.size = Vector3(160.0, 60.0, 4.0)
+	marker.mesh = box
+	var material := StandardMaterial3D.new(); material.albedo_color = Color(1.0, .92, .25); material.emission_enabled = true; material.emission = Color(1.0, .7, .08); material.emission_energy_multiplier = 4.0; material.disable_fog = true # the ring haze would hide an emissive slab 600 m away
+	marker.material_override = material
+	_scene.add_child(marker)
+	# The near marker spans camera -5 m to +9 m (bottom 1 m above the ocean), so the water plane is 6 m below the camera.
+	var water_point := camera.global_position - up * 6.0
+	# Offset 200 m to the right so the near marker does not hide it.
+	var right := planar_forward.cross(up).normalized()
+	var centre := camera.global_position + planar_forward * 600.0 + right * 200.0 + up * 25.0
+	marker.global_position = centre
+	marker.global_basis = Basis(planar_forward.cross(up).normalized(), up, -planar_forward)
+	_far_marker_mirror = centre - up * (2.0 * (centre - water_point).dot(up))
+	var centre_px := camera.unproject_position(_far_marker_mirror)
+	_far_marker_half_px = Vector2((camera.unproject_position(_far_marker_mirror + right * 80.0) - centre_px).x, (camera.unproject_position(_far_marker_mirror + up * 30.0) - centre_px).y).abs()
+
+func _far_marker_metrics() -> Dictionary:
+	var camera := root.get_viewport().get_camera_3d()
+	var centre_px := camera.unproject_position(_far_marker_mirror) if camera != null else Vector2.ZERO
+	var half := Vector2(maxf(_far_marker_half_px.x * 0.3, 4.0), maxf(_far_marker_half_px.y * 0.3, 4.0))
+	var dr := 0.0; var drb := 0.0; var count := 0
+	for y in range(int(centre_px.y - half.y), int(centre_px.y + half.y) + 1, 2):
+		for x in range(int(centre_px.x - half.x), int(centre_px.x + half.x) + 1, 2):
+			if x < 0 or y < 0 or x >= _on.get_width() or y >= _on.get_height(): continue
+			var on := _on.get_pixel(x, y); var off := _off.get_pixel(x, y)
+			dr += on.r - off.r
+			drb += (on.r - on.b) - (off.r - off.b)
+			count += 1
+	var n := float(maxi(count, 1))
+	return {"centre_px": centre_px, "half_px": half, "dr": dr / n, "drb": drb / n}
+
 func _freeze_presentation() -> void:
 	# Freeze time, weather, clouds, and local storm effects after streaming settles.
 	for node_name in ["RingDayNightCycle", "SunshineCloudsDriver", "SunshineCloudBridge", "CloudProviderController", "LocalWeatherEffects", "WeatherAudio", "WeatherAmbience"]:
@@ -245,6 +302,7 @@ func _bright_fraction(image: Image) -> float:
 	return float(bright) / max(1, count)
 
 func _cleanup() -> void:
+	if _model_switch != null: _model_switch.call("SetModel", 0.0)
 	if not _defaults.is_empty(): DirAccess.remove_absolute(_defaults)
 
 func _fail(reason: String) -> bool:

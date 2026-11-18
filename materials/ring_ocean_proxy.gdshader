@@ -161,6 +161,119 @@ vec4 ring_water_ssr(vec3 surface_view, vec3 normal_view, float roughness, mat4 p
 	float confidence = edge_confidence * distance_confidence * camera_confidence * roughness_confidence * depth_agreement;
 	return vec4(textureLod(water_screen_texture, hit_uv, roughness * 4.0).rgb, confidence);
 }
+
+// Model 1 depth fetch: -1 for raw depth <= 0 or > 1 (sky and backdrop, which the march treats as infinitely far). Only the z and w rows of the
+// inverse projection are evaluated.
+float ring_water_view_depth_zw(vec2 uv, mat4 inverse_projection) {
+	float raw_depth = texture(water_depth_texture, uv).r;
+	if (raw_depth <= 0.0 || raw_depth > 1.0) return -1.0;
+	vec2 ndc = uv * 2.0 - 1.0;
+	float view_z = inverse_projection[0][2] * ndc.x + inverse_projection[1][2] * ndc.y + inverse_projection[2][2] * raw_depth + inverse_projection[3][2];
+	float view_w = inverse_projection[0][3] * ndc.x + inverse_projection[1][3] * ndc.y + inverse_projection[2][3] * raw_depth + inverse_projection[3][3];
+	return view_w > 0.0 ? -view_z / view_w : -1.0;
+}
+
+// Model 1 march (reflections design 3.1 to 3.4): screen-uniform and perspective-correct, from the surface to the horizon. uv(s) = mix(uv0, uv1, s)
+// and 1/z(s) = mix(1/z0, 0, s), so z(s) = z0 / (1 - s) for any projection. Returns rgb and a confidence; hit_kind is 1 for geometry, 0.5 for a hit
+// at infinity (a backdrop pixel at the vanishing point), 0 for a miss.
+vec4 ring_water_ssr_horizon(vec3 surface_view, vec3 ray_direction, vec3 up_view, float eye_height, float roughness, mat4 projection, mat4 inverse_projection, vec2 viewport_px, out float step_ratio, out float hit_kind) {
+	step_ratio = 0.0;
+	hit_kind = 0.0;
+	if (!water_ssr_enabled || roughness >= water_ssr_roughness_cutoff)
+		return vec4(0.0);
+	float camera_distance = length(surface_view);
+	if (camera_distance > water_ssr_camera_distance) return vec4(0.0);
+	if (ray_direction.z >= -0.0001) return vec4(0.0);
+	vec4 start_clip = projection * vec4(surface_view, 1.0);
+	vec4 horizon_clip = projection * vec4(ray_direction, 0.0);
+	if (start_clip.w <= 1e-6 || horizon_clip.w <= 1e-6) return vec4(0.0);
+	vec2 uv0 = start_clip.xy / start_clip.w * 0.5 + 0.5;
+	vec2 uv1 = horizon_clip.xy / horizon_clip.w * 0.5 + 0.5;
+	vec2 duv = uv1 - uv0;
+	// Clip to the screen (margin half a texel); s_max is 1 when the vanishing point is on screen.
+	vec2 margin = 0.5 / viewport_px;
+	vec2 lo = margin;
+	vec2 hi = vec2(1.0) - margin;
+	float s_max = 1.0;
+	if (duv.x > 1e-8) s_max = min(s_max, (hi.x - uv0.x) / duv.x);
+	else if (duv.x < -1e-8) s_max = min(s_max, (lo.x - uv0.x) / duv.x);
+	if (duv.y > 1e-8) s_max = min(s_max, (hi.y - uv0.y) / duv.y);
+	else if (duv.y < -1e-8) s_max = min(s_max, (lo.y - uv0.y) / duv.y);
+	if (s_max <= 0.0) return vec4(0.0);
+	bool reaches_horizon = s_max >= 1.0;
+	float z0 = -surface_view.z;
+	float segment_px = length(duv * s_max * viewport_px);
+	int steps = int(min(max(ceil(segment_px / 3.0), 4.0), float(clamp(water_ssr_coarse_steps, 1, 32))));
+	// Seed the bracket at the biased surface. A backdrop pixel (depth -1) is infinitely far, so the ray is always in front of it and the bracket is never invalidated.
+	float start_scene_depth = ring_water_view_depth_zw(uv0, inverse_projection);
+	float previous_s = 0.0;
+	float previous_signed_delta = start_scene_depth > 0.0 ? z0 - start_scene_depth : -1.0;
+	bool bracketed = false;
+	bool hit = false;
+	float hit_s = 0.0;
+	vec2 hit_uv = vec2(0.0);
+	float hit_confidence = 0.0;
+	for (int step_index = 1; step_index <= 32; step_index++) {
+		if (step_index > steps) break;
+		float s = s_max * float(step_index) / float(steps);
+		vec2 uv = mix(uv0, uv1, s);
+		float ray_depth = z0 / max(1.0 - s, 1e-4);
+		float scene_depth = ring_water_view_depth_zw(uv, inverse_projection);
+		float signed_delta = scene_depth > 0.0 ? ray_depth - scene_depth : -1.0;
+		if (previous_signed_delta < 0.0 && signed_delta >= 0.0) {
+			bracketed = true;
+			float low = previous_s;
+			float high = s;
+			for (int refine = 0; refine < 8; refine++) {
+				if (refine >= water_ssr_refinement_steps) break;
+				float mid = (low + high) * 0.5;
+				float mid_scene_depth = ring_water_view_depth_zw(mix(uv0, uv1, mid), inverse_projection);
+				if (mid_scene_depth > 0.0 && z0 / max(1.0 - mid, 1e-4) - mid_scene_depth >= 0.0) high = mid;
+				else low = mid;
+			}
+			hit_uv = mix(uv0, uv1, high);
+			float scene_hi = ring_water_view_depth_zw(hit_uv, inverse_projection);
+			float ray_hi = z0 / max(1.0 - high, 1e-4);
+			float ray_lo = z0 / max(1.0 - low, 1e-4);
+			float scene_lo = ring_water_view_depth_zw(mix(uv0, uv1, low), inverse_projection);
+			float gap_hi = ray_hi - scene_hi;
+			// Thickness: a fixed far tolerance punches holes in grazing terrain (one pixel spans hundreds of metres of depth), so the same-surface test lets
+			// the allowed gap follow the bracket; a depth ratio above 2 (a thin trunk in front of a far shore) keeps the plain tolerance.
+			float tol = max(water_ssr_depth_tolerance_near, 0.03 * scene_hi);
+			bool same_surface = scene_lo > 0.0 && max(scene_lo, scene_hi) <= 2.0 * min(scene_lo, scene_hi);
+			float allowed = same_surface ? max(tol, ray_hi - ray_lo) : tol;
+			if (scene_hi > 0.0 && gap_hi <= allowed) {
+				hit = true;
+				hit_s = high;
+				step_ratio = float(step_index) / float(steps);
+				hit_confidence = 1.0 - smoothstep(0.5 * allowed, allowed, gap_hi);
+			}
+			break;
+		}
+		previous_s = s;
+		previous_signed_delta = signed_delta;
+	}
+	float camera_confidence = 1.0 - smoothstep(0.8 * water_ssr_camera_distance, water_ssr_camera_distance, camera_distance);
+	float roughness_confidence = 1.0 - smoothstep(water_ssr_roughness_cutoff * 0.55, water_ssr_roughness_cutoff, roughness);
+	if (hit) {
+		float edge = min(min(hit_uv.x, hit_uv.y), min(1.0 - hit_uv.x, 1.0 - hit_uv.y));
+		float edge_confidence = smoothstep(0.0, water_ssr_edge_fade, edge);
+		hit_kind = 1.0;
+		return vec4(textureLod(water_screen_texture, hit_uv, roughness * 4.0).rgb, edge_confidence * camera_confidence * roughness_confidence * hit_confidence);
+	}
+	// Hit at infinity: no bracket at all and the vanishing point lands on a backdrop pixel (raw depth 0). The up-guard keeps downward-facing facets out
+	// (their vanishing point lands on water pixels) and the height-guard fades it out for a high camera (the backdrop parallax grows with height).
+	if (reaches_horizon && !bracketed && ring_water_view_depth_zw(uv1, inverse_projection) < 0.0) {
+		float edge = min(min(uv1.x, uv1.y), min(1.0 - uv1.x, 1.0 - uv1.y));
+		float edge_confidence = smoothstep(0.0, water_ssr_edge_fade, edge);
+		float up_guard = smoothstep(0.001, 0.004, dot(ray_direction, up_view));
+		float height_guard = 1.0 - smoothstep(50.0, 150.0, eye_height);
+		step_ratio = 1.0;
+		hit_kind = 0.5;
+		return vec4(textureLod(water_screen_texture, uv1, roughness * 4.0).rgb, edge_confidence * camera_confidence * roughness_confidence * up_guard * height_guard);
+	}
+	return vec4(0.0);
+}
 // Enables the whole-ring far weather cloud shadow (ring_far_weather_shadow.gdshaderinc) beyond the Sunshine maps.
 uniform bool analytic_cloud_shadow_enabled = true;
 // Per-sector ownership proof from the terrain LOD hierarchy. Unlike the
@@ -610,7 +723,16 @@ void fragment() {
 		1.0);
 	base_roughness = clamp(base_roughness + 0.08 * rain_matte * smoothstep(30.0, 50.0, distance_to_camera) + 0.15 * hail_chop, 0.02, 1.0);
 	float ssr_step_ratio;
-	vec4 ssr = ring_water_ssr(VERTEX + water_normal_view * water_ssr_ray_bias, water_normal_view, base_roughness, PROJECTION_MATRIX, INV_PROJECTION_MATRIX, ssr_step_ratio);
+	float ssr_hit_kind = 0.0;
+	vec4 ssr;
+	vec3 ssr_origin = VERTEX + water_normal_view * water_ssr_ray_bias;
+	if (ringworld_reflection_model >= 0.5)
+		ssr = ring_water_ssr_horizon(ssr_origin, normalize(reflect(normalize(ssr_origin), water_normal_view)),
+			normalize((VIEW_MATRIX * vec4(smooth_water_normal_world, 0.0)).xyz),
+			dot(camera_world_position - world_position, smooth_water_normal_world),
+			base_roughness, PROJECTION_MATRIX, INV_PROJECTION_MATRIX, VIEWPORT_SIZE, ssr_step_ratio, ssr_hit_kind);
+	else
+		ssr = ring_water_ssr(ssr_origin, water_normal_view, base_roughness, PROJECTION_MATRIX, INV_PROJECTION_MATRIX, ssr_step_ratio);
 	// Storm light: Sunshine composites AFTER the water, so the screen-space reflection sees the clear sky (sun halo and all) behind a closed storm and
 	// paints it as sun glints. Under a storm the SSR fades out and the fallback sky colour dims with the sky factor. Both follow the sun fade F(D), so a
 	// light overcast (D below the fade start) leaves the water reflection exactly as in clear air.
@@ -634,7 +756,7 @@ void fragment() {
 		SPECULAR = RING_WATER_SPECULAR * sqrt(max(haze_k * (1.0 - hit_weight), 0.0));
 		if (water_ssr_debug_mode != 0) {
 			vec3 debug_value = water_ssr_debug_mode == 1 ? vec3(ssr.a)
-				: water_ssr_debug_mode == 2 ? vec3(ssr.a > 0.001 ? 1.0 : 0.0) : vec3(ssr_step_ratio);
+				: water_ssr_debug_mode == 2 ? vec3(ssr_hit_kind) : vec3(ssr_step_ratio);
 			ALBEDO = vec3(0.0); EMISSION = debug_value; SPECULAR = 0.0; // unlit at model 1
 		}
 	} else {

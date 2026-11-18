@@ -7662,6 +7662,19 @@
       "expected_s": null,
       "timeout_s": 300
     },
+    "water_ssr_live_controls_model1_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "water"
+      ],
+      "world": "certified",
+      "marker": "WATER_SSR_LIVE_CONTROLS_GPU_TEST",
+      "user_args": "--reflection-model=1",
+      "expected_s": null,
+      "timeout_s": 300
+    },
     "water_traversal_profile": {
       "kind": "tool",
       "mode": "gpu",
