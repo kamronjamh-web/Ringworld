@@ -25,6 +25,8 @@ The runner selects tests from `tools/test_manifest.json`, builds C#, keeps one i
 - Other flags: `-NoBuild` (skip the C# build), `-Cache copy|reuse|none` (default `reuse`; the first run copies the warm caches), `-Parallel` / `-LocalLanes` (lane counts, 0 = default), `-YieldMinutes` (release the GPU between groups when another agent waits).
 - Output: `.godot/test_runs/<label>/<run id>/results.md`, `results.json` and `logs/<test>.log`. Exit 0 = no fail/timeout/crash/error, 1 = failures, 2 = runner error.
 - Read the `results.md` summary line and non-pass rows only. Open a log for `fail`, `timeout`, `crash` or `error` with the `log-triage` skill. Do not re-triage `known-fail` rows (list: `tools/test_known_failures.json`); report `fixed` rows so the list is updated.
+- Godot entries are killed after `stall_s` (manifest entry or `defaults.stall_s`, default 600 s) without any output (status `timeout`, detail `stalled`), and at once when their entry script does not load (status `error`, detail `entry script did not load`). `.ps1` runner entries have no stall watchdog unless they set `stall_s`. Known-failure matching also applies to timeouts.
+- A `script_parse_check` row appears when parse-only entries, or (with a changed `tools/*.gd`) the selected GPU entries, were parse-checked before the GPU phase; a GPU entry that fails it is marked `error` and not launched.
 - Do not wrap the runner in `gpu_queue.ps1 -Wrap`; it takes the queue itself.
 - Use a distinct `-Label` per task; do not run two runs with the same label at once.
 - After adding or editing a manifest entry, `pwsh -File tools/testing/validate_manifest.ps1` must pass.

@@ -7,6 +7,7 @@
 #           | reporting (6) | Invoke-TestRun.
 
 $script:Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+Import-Module (Join-Path $PSScriptRoot 'GpuJob.psm1') -DisableNameChecking   # RingGpuJobProc (stall watchdog) + Test-GodotScriptParseBatch
 
 if (-not ('RingTestProcV2' -as [type])) {
     Add-Type -TypeDefinition @'
@@ -300,8 +301,14 @@ function Import-TestManifest([string]$ManifestPath, [string]$KnownPath) {
 }
 
 # A runnable spec from one manifest entry. Defaults: unknown timeout 300 gpu / 120 headless (manifest note).
-function New-TestSpec([string]$Name, $E, $Known) {
+function New-TestSpec([string]$Name, $E, $Known, $Defaults = $null) {
     $mode = [string](Get-Val $E 'mode')
+    # Stall limit (s without output): entry stall_s, else defaults.stall_s / 600 for Godot entries; .ps1 runners may sit silently in the GPU queue, so 0 (off).
+    $stall = Get-Val $E 'stall_s'
+    if ($null -eq $stall) {
+        if (Get-Val $E 'runner') { $stall = 0 }
+        else { $stall = Get-Val $Defaults 'stall_s'; if ($null -eq $stall) { $stall = 600 } }
+    }
     $timeout = Get-Val $E 'timeout_s'
     if (-not $timeout) { $timeout = if ($mode -eq 'headless') { 120 } else { 300 } }
     $expected = Get-Val $E 'expected_s'
@@ -315,7 +322,7 @@ function New-TestSpec([string]$Name, $E, $Known) {
         Name = $Name; Kind = [string](Get-Val $E 'kind'); Mode = $mode; Tier = [string](Get-Val $E 'tier')
         Tags = @(Get-Val $E 'tags'); Marker = [string](Get-Val $E 'marker'); MarkerFix = [string](Get-Val $E 'marker_fix')
         Args = (Split-ArgString ([string](Get-Val $E 'args'))); UserArgs = (Split-ArgString ([string](Get-Val $E 'user_args')))
-        Runner = [string](Get-Val $E 'runner'); TimeoutS = [double]$timeout; ExpectedS = [double]$expected
+        Runner = [string](Get-Val $E 'runner'); TimeoutS = [double]$timeout; StallS = [double]$stall; ExpectedS = [double]$expected
         Profile = $profile; ParallelSafe = $parallelSafe; Batch = [string](Get-Val $E 'batch'); Synthetic = $false
         KnownStatus = $kstatus; KnownMatch = [string](Get-Val $Known 'match'); KnownRetries = [int](Get-Val $Known 'retries')
         KnownTimeout = (Get-Val $Known 'timeout_s')
@@ -891,13 +898,32 @@ function Resolve-KnownFailure($Spec, [string]$FailText) {
     return $null
 }
 
-function Get-Verdict($Spec, $Proc, [bool]$TimedOut, [double]$TimeoutS) {
+# Known-failure resolution for a failing verdict (fail/crash/error/timeout): a match is known-fail; a different failure on a known entry says so.
+function Resolve-FailedVerdict($Spec, $v, $Lines) {
+    $text = (($Lines -join "`n") + "`n" + $v.detail)
+    if ((Resolve-KnownFailure $Spec $text) -eq 'known') { $v.status = 'known-fail' }
+    elseif ($Spec.KnownStatus -in @('known-fail', 'flaky') -and $Spec.KnownMatch) { $v.detail = "NEW failure (does not match known /$($Spec.KnownMatch)/): $($v.detail)" }
+    return $v
+}
+
+# The entry script of a Godot test failed to load (Godot keeps running after this; the runner kills it). Returns the detail line or $null.
+function Get-LoadFailure($Spec, $Lines) {
+    if ($Spec.Runner -or $Spec.Synthetic) { return $null }
+    $needle = "Failed to load script `"res://tools/$($Spec.Name).gd`""
+    $hit = @($Lines | Where-Object { $_.Contains($needle) } | Select-Object -First 1)
+    if ($hit.Count -eq 0) { return $null }
+    $first = $Lines | Where-Object { $_ -match 'Parse Error|Compile Error' } | Select-Object -First 1
+    if ($first) { return [string]$first }
+    return [string]$hit[0]
+}
+
+# $Kill: '' (the process exited by itself), 'timeout', 'stalled' or 'load-failed' (the runner killed the process tree).
+function Get-Verdict($Spec, $Proc, [string]$Kill, [double]$TimeoutS) {
     $lines = $Proc.Lines()
     $v = [ordered]@{ status = 'error'; marker_line = ''; exit_code = $null; exit_anomaly = $false; detail = '' }
-    if ($TimedOut) {
-        $v.status = 'timeout'; $v.detail = "timed out after $([int]$TimeoutS) s (process tree killed)"
-        return $v
-    }
+    if ($Kill -eq 'timeout') { $v.status = 'timeout'; $v.detail = "timed out after $([int]$TimeoutS) s (process tree killed)"; return (Resolve-FailedVerdict $Spec $v $lines) }
+    if ($Kill -eq 'stalled') { $v.status = 'timeout'; $v.detail = "stalled: no output for $([int]$Proc.SilentSeconds) s (process tree killed)"; return (Resolve-FailedVerdict $Spec $v $lines) }
+    if ($Kill -eq 'load-failed') { $v.detail = "entry script did not load: $(Get-LoadFailure $Spec $lines)"; return (Resolve-FailedVerdict $Spec $v $lines) }
     $code = [int]$Proc.ExitCode
     $v.exit_code = $code
     $isCrash = ($code -lt 0) -or ($code -gt 255)
@@ -929,6 +955,11 @@ function Get-Verdict($Spec, $Proc, [bool]$TimedOut, [double]$TimeoutS) {
         $e = Get-FirstErrorLine $lines
         if ($e) { $v.detail = "$($v.detail) | $e" }
     }
+    # The entry script did not load but the engine exited on its own (no marker line): error with the load failure (a crash code stays a crash).
+    if ($found.Count -eq 0) {
+        $lf = Get-LoadFailure $Spec $lines
+        if ($lf) { if (-not $isCrash) { $v.status = 'error' }; $v.detail = "entry script did not load: $lf" }
+    }
     # Engine instance-uniform overflow: a run whose log carries it never passes (failed allocations do not recover, so
     # instance parameters silently stop working for later nodes), whatever marker or exit code it printed.
     if ($v.status -in @('pass', 'captured', 'skip') -or ($v.status -eq 'fixed')) {
@@ -939,9 +970,7 @@ function Get-Verdict($Spec, $Proc, [bool]$TimedOut, [double]$TimeoutS) {
     }
     # Known failures: a matching failure is known-fail; a known-fail test that passes is fixed.
     if ($v.status -in @('fail', 'crash', 'error')) {
-        $text = ($lines -join "`n")
-        if ((Resolve-KnownFailure $Spec $text) -eq 'known') { $v.status = 'known-fail' }
-        elseif ($Spec.KnownStatus -in @('known-fail', 'flaky') -and $Spec.KnownMatch) { $v.detail = "NEW failure (does not match known /$($Spec.KnownMatch)/): $($v.detail)" }
+        $v = Resolve-FailedVerdict $Spec $v $lines
     } elseif ($v.status -eq 'pass' -and $Spec.KnownStatus -eq 'known-fail') {
         $v.status = 'fixed'
     }
@@ -1059,8 +1088,8 @@ function Start-TestItem($Ctx, $Spec) {
     $rec.attempts = [int]$rec.attempts + 1
     $plan = Get-LaunchPlan $Ctx $Spec
     $log = Join-Path $Ctx.RunDir $rec.log
-    $proc = New-Object RingTestProcV2
-    $ok = $proc.Start($plan.Exe, $plan.Args, $script:Root, $log, [string[]]$plan.Env)
+    $proc = New-Object RingGpuJobProc
+    $ok = $proc.Start($plan.Exe, $plan.Args, $script:Root, $log, $null, $null, [string[]]$plan.Env)
     if (-not $ok) {
         $rec.status = 'error'; $rec.detail = "could not start: $($proc.StartError)"
         Save-Results $Ctx $false
@@ -1068,17 +1097,22 @@ function Start-TestItem($Ctx, $Spec) {
     }
     $timeout = $Spec.TimeoutS
     if ($Spec.KnownStatus -eq 'quarantined' -and $Spec.KnownTimeout) { $timeout = [double]$Spec.KnownTimeout }
-    Write-Host ("  start  {0}  [{1}, timeout {2}s]" -f $Spec.Name, $Spec.Mode, [int]$timeout)
-    return [pscustomobject]@{ Spec = $Spec; Proc = $proc; Timeout = $timeout }
+    $stallNote = if ($Spec.StallS -gt 0) { ", stall $([int]$Spec.StallS)s" } else { '' }
+    Write-Host ("  start  {0}  [{1}, timeout {2}s{3}]" -f $Spec.Name, $Spec.Mode, [int]$timeout, $stallNote)
+    return [pscustomobject]@{ Spec = $Spec; Proc = $proc; Timeout = $timeout; Scanned = 0; Warned = $false }
 }
 
-function Complete-TestItem($Ctx, $Item, [bool]$TimedOut) {
+function Complete-TestItem($Ctx, $Item, [string]$Kill) {
     $spec = $Item.Spec; $proc = $Item.Proc; $rec = $Ctx.Results[$spec.Name]
     $slept = $proc.SleptSeconds
     $sleptNote = if ($slept -ge 5) { "; system slept $([int]$slept) s during this test" } else { '' }
-    if ($TimedOut) { $proc.KillTree(); [void]$proc.Complete("TIMEOUT after $([int]$Item.Timeout) s; process tree killed by runner$sleptNote") }
+    if ($Kill) {
+        $proc.KillTree()
+        $why = switch ($Kill) { 'timeout' { "TIMEOUT after $([int]$Item.Timeout) s" } 'stalled' { "STALLED (no output for $([int]$proc.SilentSeconds) s)" } default { 'LOAD-FAILED (entry script did not load)' } }
+        [void]$proc.Complete("$why; process tree killed by runner$sleptNote")
+    }
     else { [void]$proc.Complete("exit code $($proc.ExitCode)$sleptNote") }
-    $v = Get-Verdict $spec $proc $TimedOut $Item.Timeout
+    $v = Get-Verdict $spec $proc $Kill $Item.Timeout
     $dur = $proc.Elapsed   # active (sleep-free) seconds
     $rec.duration_s = [math]::Round($dur, 1)
     $rec.exit_code = $v.exit_code; $rec.exit_anomaly = $v.exit_anomaly; $rec.detail = $v.detail
@@ -1117,17 +1151,100 @@ function Invoke-Lane {
         Start-Sleep -Milliseconds 100
         for ($i = $running.Count - 1; $i -ge 0; $i--) {
             $it = $running[$i]
-            $done = $false; $timedOut = $false
+            $done = $false; $kill = ''
             if ($it.Proc.HasExited) { $done = $true }
-            elseif ($it.Proc.Elapsed -gt $it.Timeout) { $done = $true; $timedOut = $true }
+            else {
+                if (-not ($it.Spec.Runner -or $it.Spec.Synthetic)) {
+                    $new = $it.Proc.LinesFrom($it.Scanned)
+                    $it.Scanned += $new.Count
+                    $needle = "Failed to load script `"res://tools/$($it.Spec.Name).gd`""
+                    if (@($new | Where-Object { $_.Contains($needle) }).Count -gt 0) {
+                        $it.Proc.Note('LOAD-FAILED: entry script did not load; process tree killed by runner')
+                        $done = $true; $kill = 'load-failed'
+                    }
+                }
+                $stall = [double]$it.Spec.StallS
+                if (-not $done -and $stall -gt 0) {
+                    $silent = $it.Proc.SilentSeconds
+                    if ($silent -ge $stall) {
+                        $it.Proc.Note("STALLED: no output for $([int]$silent) s; process tree killed by runner")
+                        $done = $true; $kill = 'stalled'
+                    } elseif (-not $it.Warned -and $silent -ge ($stall / 2)) {
+                        $it.Warned = $true
+                        $it.Proc.Note("WARNING: no output for $([int]$silent) s (stall limit $([int]$stall) s)")
+                    }
+                }
+                if (-not $done -and $it.Proc.Elapsed -gt $it.Timeout) { $done = $true; $kill = 'timeout' }
+            }
             if ($done) {
                 $running.RemoveAt($i)
-                $requeue = Complete-TestItem $Ctx $it $timedOut
+                $requeue = Complete-TestItem $Ctx $it $kill
                 if ($requeue) { $queue.Insert(0, $it.Spec) }
             }
         }
     }
     $Ctx.Active = $null
+}
+
+# ---------------------------------------------------------------- parse check before the GPU phase (test-speed plan 3.2)
+
+# res:// paths to parse-check: parse-only entries' scripts, and (when a tools/*.gd changed) the GPU Godot entries about to launch.
+function Get-ParseCandidates($Sel, $ToLaunch) {
+    $c = New-Object System.Collections.Generic.List[string]
+    if ($Sel.ParseOnly) {
+        foreach ($n in $Sel.ParseOnly.Keys) {
+            if ((Test-Path -LiteralPath (Join-Path $script:Root "tools\$n.gd")) -and -not $c.Contains("res://tools/$n.gd")) { $c.Add("res://tools/$n.gd") }
+        }
+    }
+    $toolGd = @(@($Sel.Files) | Where-Object { ([string]$_ -replace '[\\]', '/') -match '^tools/[^/]+\.gd$' })
+    if ($toolGd.Count -gt 0) {
+        foreach ($s in $ToLaunch) {
+            if ($s.Mode -in @('gpu', 'gpu-local') -and -not $s.Runner -and -not $s.Synthetic -and -not $c.Contains("res://tools/$($s.Name).gd")) { $c.Add("res://tools/$($s.Name).gd") }
+        }
+    }
+    return @($c)
+}
+
+# Runs the parse check; adds the script_parse_check row. Returns the names of GPU specs whose script failed (recorded as error, not to be launched).
+function Invoke-ScriptParseCheck($Ctx, $ToLaunch) {
+    $cands = @(Get-ParseCandidates $Ctx.Selection $ToLaunch)
+    if ($cands.Count -eq 0) { return @() }
+    $t0 = Get-Date
+    $results = @(Test-GodotScriptParseBatch -Scripts $cands -Engine $Ctx.Engine -Parallel 4)
+    $wall = ((Get-Date) - $t0).TotalSeconds
+    $failed = @($results | Where-Object { -not $_.Ok })
+    $logLines = New-Object System.Collections.Generic.List[string]
+    foreach ($r in $results) {
+        $logLines.Add(("{0,-4} {1}  ({2:N1} s)" -f $(if ($r.Ok) { 'ok' } else { 'FAIL' }), $r.Script, $r.Seconds))
+        foreach ($e in $r.Errors) { $logLines.Add("     $e") }
+    }
+    Write-Utf8NoBom (Join-Path $Ctx.RunDir 'logs\script_parse_check.log') ($logLines -join "`n")
+    $detail = "$($cands.Count) scripts parse-checked"
+    if ($failed.Count -gt 0) {
+        $detail = "$($failed.Count) of $($cands.Count) failed: " + (($failed | ForEach-Object { ($_.Script -replace '^res://tools/|\.gd$', '') + ': ' + ([string]($_.Errors | Select-Object -First 1)) }) -join '; ')
+        if ($detail.Length -gt 600) { $detail = $detail.Substring(0, 600) + '...' }
+    }
+    $Ctx.Results['script_parse_check'] = [ordered]@{
+        name = 'script_parse_check'; mode = 'headless'; tier = 'smoke'; batch = $null
+        status = $(if ($failed.Count -eq 0) { 'pass' } else { 'fail' }); marker = $null; exit_code = $null; exit_anomaly = $false
+        duration_s = [math]::Round($wall, 1); attempts = 1; reason = "parse check of $($cands.Count) script(s) before the GPU phase"; detail = $detail
+        log = 'logs/script_parse_check.log'; expected_s = 0
+    }
+    $skip = @()
+    foreach ($r in $failed) {
+        foreach ($s in $ToLaunch) {
+            if ($s.Mode -in @('gpu', 'gpu-local') -and -not $s.Runner -and -not $s.Synthetic -and $r.Script -eq "res://tools/$($s.Name).gd") {
+                $v = [ordered]@{ status = 'error'; detail = "parse check: $([string]($r.Errors | Select-Object -First 1))" }
+                $v = Resolve-FailedVerdict $s $v $r.Errors
+                $rec = $Ctx.Results[$s.Name]
+                $rec.status = $v.status; $rec.detail = $v.detail
+                $skip += $s.Name
+            }
+        }
+    }
+    Write-Host ("Parse check: {0} scripts, {1} failed ({2:N1} s)" -f $cands.Count, $failed.Count, $wall)
+    Save-Results $Ctx $false
+    return $skip
 }
 
 function Stop-ActiveTests($Ctx) {
@@ -1181,7 +1298,7 @@ function Invoke-Build($Ctx) {
 function New-ValidatorSpec {
     return [pscustomobject]@{
         Name = 'manifest_validator'; Kind = 'test'; Mode = 'headless'; Tier = 'smoke'; Tags = @('tooling-policy'); Marker = 'VALIDATE_MANIFEST'; MarkerFix = ''
-        Args = @(); UserArgs = @('-Quiet'); Runner = 'tools/testing/validate_manifest.ps1'; TimeoutS = 60; ExpectedS = 12; Profile = 'own-runner'
+        Args = @(); UserArgs = @('-Quiet'); Runner = 'tools/testing/validate_manifest.ps1'; TimeoutS = 60; StallS = 0; ExpectedS = 12; Profile = 'own-runner'
         ParallelSafe = $true; Batch = ''; Synthetic = $true; KnownStatus = ''; KnownMatch = ''; KnownRetries = 0; KnownTimeout = $null; Reason = 'smoke (manifest validator)'
     }
 }
@@ -1246,7 +1363,7 @@ function Invoke-TestRun {
     if ($resumeRun) {
         $suiteName = [string]$resumeRun.suite
         $sel = [pscustomobject]@{ Items = [ordered]@{}; Skipped = [ordered]@{}; Tags = @($resumeRun.selection.tags); Core = $null; Unmapped = @($resumeRun.selection.unmapped); Files = @(); Meta = $false; Ignored = 0; UnmappedPolicy = $(if ($resumeRun.selection.unmapped_policy) { [string]$resumeRun.selection.unmapped_policy } else { 'full' }) }
-        foreach ($t in $resumeRun.tests) { $sel.Items[[string]$t.name] = @([string]$t.reason) }
+        foreach ($t in $resumeRun.tests) { if ([string]$t.name -ne 'script_parse_check') { $sel.Items[[string]$t.name] = @([string]$t.reason) } }   # the parse-check row is not a manifest entry
     } else {
         $explicit = ($Tags.Count -gt 0) -or ($Tests.Count -gt 0) -or [bool]$Suite -or ($Files.Count -gt 0)
         if ($Changed -or $Since -or (-not $explicit)) { $useFiles = $true }
@@ -1261,7 +1378,7 @@ function Invoke-TestRun {
     foreach ($name in $sel.Items.Keys) {
         if ($name -eq 'manifest_validator') { $specs.Add((New-ValidatorSpec)); continue }
         if (-not $M.Tests.Contains($name)) { throw "test '$name' of the resumed run is not in manifest $ManifestPath" }
-        $spec = New-TestSpec $name $M.Tests[$name] $M.Known[$name]
+        $spec = New-TestSpec $name $M.Tests[$name] $M.Known[$name] $defaults
         $spec | Add-Member -NotePropertyName Reason -NotePropertyValue (($sel.Items[$name] | Select-Object -First 3) -join '; ') -Force
         $specs.Add($spec)
     }
@@ -1297,6 +1414,8 @@ function Invoke-TestRun {
         }
         foreach ($k in $sel.Skipped.Keys) { Write-Host ("  skipped   {0}: {1}" -f $k, $sel.Skipped[$k]) }
         if ($sel.ParseOnly) { foreach ($k in $sel.ParseOnly.Keys) { Write-Host ("  parse-only {0}" -f $k); Write-Host ("            reason: {0}" -f $sel.ParseOnly[$k]) } }
+        $pcN = @(Get-ParseCandidates $sel $toLaunch).Count
+        if ($pcN -gt 0) { Write-Host ("Parse check before the GPU phase: {0} script(s)" -f $pcN) }
         Write-Host ("Estimate: headless ~{0} ({1} lanes), gpu-local ~{2} ({3} lanes), gpu ~{4}; total ~{5} + build" -f (Format-Duration $est.Headless), $Parallel, (Format-Duration $est.GpuLocal), $LocalLanes, (Format-Duration $est.Gpu), (Format-Duration $est.Total))
         return 0
     }
@@ -1317,6 +1436,7 @@ function Invoke-TestRun {
     }
     if ($resumeRun) {
         foreach ($t in $resumeRun.tests) {
+            if ([string]$t.name -eq 'script_parse_check') { continue }
             $r = [ordered]@{}; foreach ($p in $t.PSObject.Properties) { $r[$p.Name] = $p.Value }
             if ($redo -contains [string]$t.status) { $r['status'] = 'not-run' }
             $ctx.Results[[string]$t.name] = $r
@@ -1347,8 +1467,9 @@ function Invoke-TestRun {
         if ($hl.Count) { Write-Host ("Headless lane: {0} tests, {1} parallel ({2} run alone)" -f $hl.Count, $Parallel, $unsafe.Count) }
         Invoke-Lane $ctx $safe $Parallel
         Invoke-Lane $ctx $unsafe 1
-        $gl = @($toLaunch | Where-Object { $_.Mode -eq 'gpu-local' } | Sort-Object @{e = { -$_.ExpectedS } }, Name)
-        $gp = @($toLaunch | Where-Object { $_.Mode -eq 'gpu' } | Sort-Object Name)
+        $parseFailed = @(Invoke-ScriptParseCheck $ctx $toLaunch)   # GPU specs whose entry script does not parse are recorded as error and not launched
+        $gl = @($toLaunch | Where-Object { $_.Mode -eq 'gpu-local' -and $parseFailed -notcontains $_.Name } | Sort-Object @{e = { -$_.ExpectedS } }, Name)
+        $gp = @($toLaunch | Where-Object { $_.Mode -eq 'gpu' -and $parseFailed -notcontains $_.Name } | Sort-Object Name)
         if ($gl.Count -or $gp.Count) {
             Enter-GpuPhase $ctx
             try {

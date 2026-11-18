@@ -111,6 +111,8 @@ foreach ($name in @($entries.Keys | Sort-Object)) {
         if ($num -eq 'timeout_s' -and ($null -eq $v -or $v -le 0)) { Fail $where 'timeout_s missing or not positive' }
         if ($num -eq 'expected_s' -and $null -ne $v -and $v -lt 0) { Fail $where 'expected_s negative' }
     }
+    $stall = Get-Val $e 'stall_s'
+    if ($null -ne $stall -and ($stall -is [bool] -or $stall -isnot [ValueType] -or $stall -le 0)) { Fail $where 'stall_s must be a positive number' }
     $batch = Get-Val $e 'batch'
     if ($batch) {
         $w = Get-Val $e 'world'
@@ -160,6 +162,8 @@ try {
     $ctx = Import-TestManifest $manifestPath $knownPath
     $unmappedPaths = @(Get-UnmappedFiles $ctx)
 } catch { Fail $mf "coverage check could not run: $($_.Exception.Message)" }
+$dstall = Get-Val (Get-Val $m 'defaults') 'stall_s'
+if ($null -ne $dstall -and ($dstall -is [bool] -or $dstall -isnot [ValueType] -or $dstall -le 0)) { Fail $mf 'defaults.stall_s must be a positive number' }
 $max = Get-Val (Get-Val $m 'defaults') 'unmapped_max'
 if ($null -eq $max) { Fail $mf "defaults.unmapped_max is missing (the allowed number of unmapped tracked files)" }
 elseif ($unmappedPaths.Count -gt [int]$max) {

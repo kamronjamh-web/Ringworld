@@ -458,60 +458,6 @@ $monoTemp = Join-Path $project ".godot\mono\temp"
 $optDir = Join-Path $monoTemp "bin\OptRelease"
 $optDll = Join-Path $optDir "$name.dll"; $optPdb = Join-Path $optDir "$name.pdb"
 
-# True when a .cs file (tracked or untracked, not ignored) is newer than the optimized assembly. Any git failure counts as stale (build), never fresh.
-function Test-OptStale {
-  if (-not (Test-Path $optDll)) { return $true }
-  $built = (Get-Item $optDll).LastWriteTimeUtc
-  $ErrorActionPreference = 'Continue'   # 5.1 turns native stderr (CRLF warnings) into terminating errors otherwise
-  $tracked = @(& git -C $project -c core.quotepath=false ls-files '*.cs' 2>$null)
-  if ($LASTEXITCODE -ne 0) { return $true }
-  $others = @(& git -C $project -c core.quotepath=false ls-files --others --exclude-standard '*.cs' 2>$null)
-  if ($LASTEXITCODE -ne 0) { return $true }
-  foreach ($f in @($tracked + $others)) {
-    if (-not $f -or $f -match '(^|/)(\.godot|artifacts|addons|\.git)/') { continue }
-    $fi = New-Object System.IO.FileInfo (Join-Path $project $f)
-    if ($fi.Exists -and $fi.LastWriteTimeUtc -gt $built) { return $true }
-  }
-  return $false
-}
-
-# Staleness check and optimized build, serialised by a lock file because two agents may prepare at once. Returns 0 or the exit code to stop with.
-function Invoke-OptBuild {
-  New-Item -ItemType Directory -Force $monoTemp | Out-Null
-  $lockPath = Join-Path $monoTemp "opt_build.lock"
-  $lock = $null
-  $deadline = (Get-Date).AddMinutes(10)
-  while (-not $lock) {
-    try { $lock = [System.IO.File]::Open($lockPath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None) }
-    catch [System.IO.IOException] {
-      if ((Get-Date) -gt $deadline) { Write-Host "$marker=FAIL the optimized build lock $lockPath was held for 10 min"; return 2 }
-      Write-Host "waiting for another run to finish the optimized build (lock $lockPath) ..."
-      Start-Sleep -Seconds 2
-    }
-  }
-  try {
-    $stale = Test-OptStale
-    if ($Build -or (-not $SkipBuild -and $stale)) {
-      $dotnetRoot = Join-Path $project "artifacts\engine-upgrade\dotnet"
-      $envNames = @('DOTNET_ROOT', 'DOTNET_ROOT_X64', 'PATH', 'DOTNET_CLI_HOME', 'NUGET_PACKAGES', 'NUGET_HTTP_CACHE_PATH', 'DOTNET_CLI_TELEMETRY_OPTOUT', 'DOTNET_GENERATE_ASPNET_CERTIFICATE', 'DOTNET_ADD_GLOBAL_TOOLS_TO_PATH')
-      $oldEnv = @{}; foreach ($n in $envNames) { $oldEnv[$n] = [Environment]::GetEnvironmentVariable($n, 'Process') }
-      try {
-        $env:DOTNET_ROOT = $dotnetRoot; $env:DOTNET_ROOT_X64 = $dotnetRoot; $env:PATH = "$dotnetRoot;$($oldEnv['PATH'])"
-        $env:DOTNET_CLI_HOME = Join-Path $project 'artifacts\engine-upgrade\dotnet-cli'
-        $env:NUGET_PACKAGES = Join-Path $project 'artifacts\engine-upgrade\nuget-packages'
-        $env:NUGET_HTTP_CACHE_PATH = Join-Path $project 'artifacts\engine-upgrade\nuget-http-cache'
-        $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'; $env:DOTNET_GENERATE_ASPNET_CERTIFICATE = 'false'; $env:DOTNET_ADD_GLOBAL_TOOLS_TO_PATH = 'false'
-        Write-Host "Building optimized C# into $optDir ..."
-        & (Join-Path $dotnetRoot 'dotnet.exe') build (Join-Path $project "$name.csproj") -c Debug -p:Optimize=true -p:NuGetAudit=false -v:minimal "-p:OutputPath=$optDir\" "-p:IntermediateOutputPath=$(Join-Path $monoTemp 'obj\OptRelease')\" | Out-Host
-        $buildExit = $LASTEXITCODE
-      } finally { foreach ($n in $envNames) { [Environment]::SetEnvironmentVariable($n, $oldEnv[$n], 'Process') } }
-      if ($buildExit -ne 0) { Write-Host "$marker=FAIL optimized C# build failed (exit $buildExit)"; return 1 }
-    }
-    if (-not (Test-Path $optDll)) { Write-Host "$marker=FAIL no OptRelease build (run with -Build)"; return 1 }
-    return 0
-  } finally { $lock.Dispose() }
-}
-
 if (-not $InQueue) {
   $worldInfo = Resolve-BenchWorld   # may create the snapshot (reads the live slot; before the queue, no GPU needed)
   if ($SnapshotOnly) { Write-Host "snapshot ready: $($worldInfo.dir)"; exit 0 }
@@ -533,7 +479,7 @@ if (-not $InQueue) {
     Write-Host "$marker=FAIL preflight: $first"; exit 2
   }
   # Everything else that does not need the GPU happens before the ticket: the build (staleness check, lock) and the prune.
-  $buildRc = Invoke-OptBuild
+  $buildRc = Invoke-OptimizedBuild -Build:$Build -SkipBuild:$SkipBuild -Marker $marker
   if ($buildRc -ne 0) { exit $buildRc }
   & (Join-Path $PSScriptRoot "prune_test_output.ps1") -Apply -Quiet -Exclude "appdata_perf_bench", "perf_bench"
   $mode = if ($Quick) { "quick" } elseif ($Scenarios.Count -gt 0) { "scenarios: " + ($Scenarios -join ",") } else { "full" }

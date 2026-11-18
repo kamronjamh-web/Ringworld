@@ -1,7 +1,7 @@
 # Shared Godot launcher pieces (test-speed plan B1a): pre-launch parse check, supervised launch with a stall watchdog.
 # Works on Windows PowerShell 5.1 and PowerShell 7. No Python. Windows only (taskkill).
 #
-# Exports: Test-GodotScriptParse | Invoke-GodotPreflight | Invoke-GodotJob | Test-UserPlaying
+# Exports: Test-GodotScriptParse | Invoke-GodotPreflight | Invoke-GodotJob | Test-UserPlaying | Invoke-OptimizedBuild
 # Class RingGpuJobProc is a superset of RingTestProcV2 (tools/testing/TestRunner.psm1): merged timestamped log or two raw files,
 # plus SilentSeconds (time since the last output line) and LineCount. All times are unbiased interrupt time (sleep does not count).
 
@@ -294,6 +294,25 @@ function Test-GodotScriptParse {
     return (Complete-ParseProc $h $TimeoutS)
 }
 
+# Parse-checks many scripts a few at a time; returns one result per script ({Script, Ok, Errors, Seconds}), in input order.
+function Test-GodotScriptParseBatch {
+    param([Parameter(Mandatory)][string[]]$Scripts, [int]$Parallel = 4, [string]$Engine = $script:DefaultEngine, [int]$TimeoutS = 60)
+    $results = @{}; $queue = New-Object System.Collections.Queue; $running = New-Object System.Collections.ArrayList
+    foreach ($s in $Scripts) { $queue.Enqueue($s) }
+    while ($queue.Count -gt 0 -or $running.Count -gt 0) {
+        while ($queue.Count -gt 0 -and $running.Count -lt [math]::Max(1, $Parallel)) {
+            $s = $queue.Dequeue()
+            if (-not (Test-Path -LiteralPath $Engine)) { $results[$s] = [pscustomobject]@{ Script = $s; Ok = $false; Errors = @("engine not found: $Engine"); Seconds = 0 }; continue }
+            [void]$running.Add((Start-ParseProc $s $Engine))
+        }
+        foreach ($h in @($running)) {
+            if ($h.Proc.HasExited -or $h.Proc.Elapsed -ge $TimeoutS -or -not $h.StartOk) { $results[$h.Script] = Complete-ParseProc $h $TimeoutS; [void]$running.Remove($h) }
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    return @($Scripts | ForEach-Object { $results[$_] })
+}
+
 function Invoke-GodotPreflight {
     param([Parameter(Mandatory)][string[]]$EntryScripts, [string[]]$RequiredFiles = @(), [int]$Parallel = 4, [string]$Engine = $script:DefaultEngine)
     $problems = 0
@@ -301,27 +320,14 @@ function Invoke-GodotPreflight {
         $p = if ([System.IO.Path]::IsPathRooted($f)) { $f } else { Join-Path $script:Root $f }
         if (-not (Test-Path -LiteralPath $p)) { Write-Host "PREFLIGHT problem: required file missing: $f"; $problems++ }
     }
-    $queue = New-Object System.Collections.Queue
-    foreach ($s in ($EntryScripts | Where-Object { $_ })) { $queue.Enqueue($s) }
-    $running = New-Object System.Collections.ArrayList
-    $deadline = @{}
-    while ($queue.Count -gt 0 -or $running.Count -gt 0) {
-        while ($queue.Count -gt 0 -and $running.Count -lt [math]::Max(1, $Parallel)) {
-            $s = $queue.Dequeue()
-            if (-not (Test-Path -LiteralPath $Engine)) { Write-Host "PREFLIGHT problem: engine not found: $Engine"; $problems++; continue }
-            [void]$running.Add((Start-ParseProc $s $Engine))
-        }
-        foreach ($h in @($running)) {
-            if ($h.Proc.HasExited -or $h.Proc.Elapsed -ge 60 -or -not $h.StartOk) {
-                $r = Complete-ParseProc $h 60
-                [void]$running.Remove($h)
-                if (-not $r.Ok) {
-                    $problems++
-                    foreach ($e in $r.Errors) { Write-Host "PREFLIGHT problem: $($r.Script): $e" }
-                }
+    $scripts = @($EntryScripts | Where-Object { $_ })
+    if ($scripts.Count -gt 0) {
+        foreach ($r in @(Test-GodotScriptParseBatch -Scripts $scripts -Parallel $Parallel -Engine $Engine)) {
+            if (-not $r.Ok) {
+                $problems++
+                foreach ($e in $r.Errors) { Write-Host "PREFLIGHT problem: $($r.Script): $e" }
             }
         }
-        Start-Sleep -Milliseconds 100
     }
     if ($problems -eq 0) { Write-Host 'PREFLIGHT=PASS'; return $true }
     Write-Host "PREFLIGHT=FAIL $problems problem(s)"
@@ -402,4 +408,64 @@ function Invoke-GodotJob {
     }
 }
 
-Export-ModuleMember -Function Test-GodotScriptParse, Invoke-GodotPreflight, Invoke-GodotJob, Test-UserPlaying
+# True when a .cs file (tracked or untracked, not ignored) is newer than the optimized assembly. Any git failure counts as stale (build), never fresh.
+function Test-OptimizedBuildStale([string]$Project, [string]$OptDll) {
+    if (-not (Test-Path $OptDll)) { return $true }
+    $built = (Get-Item $OptDll).LastWriteTimeUtc
+    $ErrorActionPreference = 'Continue'   # 5.1 turns native stderr (CRLF warnings) into terminating errors otherwise
+    $tracked = @(& git -C $Project -c core.quotepath=false ls-files '*.cs' 2>$null)
+    if ($LASTEXITCODE -ne 0) { return $true }
+    $others = @(& git -C $Project -c core.quotepath=false ls-files --others --exclude-standard '*.cs' 2>$null)
+    if ($LASTEXITCODE -ne 0) { return $true }
+    foreach ($f in @($tracked + $others)) {
+        if (-not $f -or $f -match '(^|/)(\.godot|artifacts|addons|\.git)/') { continue }
+        $fi = New-Object System.IO.FileInfo (Join-Path $Project $f)
+        if ($fi.Exists -and $fi.LastWriteTimeUtc -gt $built) { return $true }
+    }
+    return $false
+}
+
+# Staleness check and optimized build (bin\OptRelease, as tools/play.ps1), serialised by a lock file because two agents may prepare at once.
+# Returns 0 or the exit code the caller should stop with (1 build failed or missing, 2 lock timeout); prints "<Marker>=FAIL ..." for those.
+function Invoke-OptimizedBuild {
+    param([string]$Project = $script:Root, [switch]$Build, [switch]$SkipBuild, [string]$Marker = 'BUILD')
+    $name = 'RingworldTechDemo'
+    $monoTemp = Join-Path $Project '.godot\mono\temp'
+    $optDir = Join-Path $monoTemp 'bin\OptRelease'
+    $optDll = Join-Path $optDir "$name.dll"
+    New-Item -ItemType Directory -Force $monoTemp | Out-Null
+    $lockPath = Join-Path $monoTemp 'opt_build.lock'
+    $lock = $null
+    $deadline = (Get-Date).AddMinutes(10)
+    while (-not $lock) {
+        try { $lock = [System.IO.File]::Open($lockPath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None) }
+        catch [System.IO.IOException] {
+            if ((Get-Date) -gt $deadline) { Write-Host "$Marker=FAIL the optimized build lock $lockPath was held for 10 min"; return 2 }
+            Write-Host "waiting for another run to finish the optimized build (lock $lockPath) ..."
+            Start-Sleep -Seconds 2
+        }
+    }
+    try {
+        $stale = Test-OptimizedBuildStale $Project $optDll
+        if ($Build -or (-not $SkipBuild -and $stale)) {
+            $dotnetRoot = Join-Path $Project 'artifacts\engine-upgrade\dotnet'
+            $envNames = @('DOTNET_ROOT', 'DOTNET_ROOT_X64', 'PATH', 'DOTNET_CLI_HOME', 'NUGET_PACKAGES', 'NUGET_HTTP_CACHE_PATH', 'DOTNET_CLI_TELEMETRY_OPTOUT', 'DOTNET_GENERATE_ASPNET_CERTIFICATE', 'DOTNET_ADD_GLOBAL_TOOLS_TO_PATH')
+            $oldEnv = @{}; foreach ($n in $envNames) { $oldEnv[$n] = [Environment]::GetEnvironmentVariable($n, 'Process') }
+            try {
+                $env:DOTNET_ROOT = $dotnetRoot; $env:DOTNET_ROOT_X64 = $dotnetRoot; $env:PATH = "$dotnetRoot;$($oldEnv['PATH'])"
+                $env:DOTNET_CLI_HOME = Join-Path $Project 'artifacts\engine-upgrade\dotnet-cli'
+                $env:NUGET_PACKAGES = Join-Path $Project 'artifacts\engine-upgrade\nuget-packages'
+                $env:NUGET_HTTP_CACHE_PATH = Join-Path $Project 'artifacts\engine-upgrade\nuget-http-cache'
+                $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'; $env:DOTNET_GENERATE_ASPNET_CERTIFICATE = 'false'; $env:DOTNET_ADD_GLOBAL_TOOLS_TO_PATH = 'false'
+                Write-Host "Building optimized C# into $optDir ..."
+                & (Join-Path $dotnetRoot 'dotnet.exe') build (Join-Path $Project "$name.csproj") -c Debug -p:Optimize=true -p:NuGetAudit=false -v:minimal "-p:OutputPath=$optDir\" "-p:IntermediateOutputPath=$(Join-Path $monoTemp 'obj\OptRelease')\" | Out-Host
+                $buildExit = $LASTEXITCODE
+            } finally { foreach ($n in $envNames) { [Environment]::SetEnvironmentVariable($n, $oldEnv[$n], 'Process') } }
+            if ($buildExit -ne 0) { Write-Host "$Marker=FAIL optimized C# build failed (exit $buildExit)"; return 1 }
+        }
+        if (-not (Test-Path $optDll)) { Write-Host "$Marker=FAIL no OptRelease build (run with -Build)"; return 1 }
+        return 0
+    } finally { $lock.Dispose() }
+}
+
+Export-ModuleMember -Function Test-GodotScriptParse, Test-GodotScriptParseBatch, Invoke-GodotPreflight, Invoke-GodotJob, Test-UserPlaying, Invoke-OptimizedBuild
