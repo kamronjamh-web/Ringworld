@@ -61,6 +61,8 @@ var _gate_seen := false
 var _gate_altitude := INF
 var _continue_report := {}
 var _frame_count := 0
+## RingWarmWorld.warm_failed's message: the warm waits stop at once instead of running out WARM_TIMEOUT_MS, and the failure names the reason.
+var _warm_failure := ""
 
 func _initialize() -> void:
 	for argument in OS.get_cmdline_user_args():
@@ -101,6 +103,9 @@ func _wait_until(condition: Callable, timeout_ms: int) -> bool:
 			return true
 		await process_frame
 	return condition.call()
+
+func _warm_failure_suffix() -> String:
+	return "" if _warm_failure.is_empty() else " (warm load failed: %s)" % _warm_failure
 
 func _wait_seconds(seconds: float) -> void:
 	var end := Time.get_ticks_msec() + int(seconds * 1000.0)
@@ -201,7 +206,7 @@ func _find_land(terrain: Node, around: float, across: float) -> Dictionary:
 ## --case=prep: warms the world once, then rewrites the isolated copy's saved player to stand on the ground (noclip off, zero velocity) so the
 ## next process (--case=ground) exercises the real Continue landing instead of a save made in flight.
 func _prepare_ground_save() -> void:
-	if not _expect(await _wait_until(func() -> bool: return int(_warm.state) == 2, WARM_TIMEOUT_MS), "prep: warm world did not become ready"):
+	if not _expect(await _wait_until(func() -> bool: return int(_warm.state) == 2 or not _warm_failure.is_empty(), WARM_TIMEOUT_MS) and _warm_failure.is_empty(), "prep: warm world did not become ready%s" % _warm_failure_suffix()):
 		return _finish()
 	var world: Node = _warm.world
 	var pose: Dictionary = _warm.bridge.call("GetHomePose")
@@ -259,6 +264,7 @@ func _run() -> void:
 	_warm = root.get_node_or_null("RingWarmWorld")
 	if not _expect(_warm != null, "menu did not create RingWarmWorld"):
 		return _finish()
+	_warm.warm_failed.connect(func(message: String) -> void: _warm_failure = message)
 	if _case == "prep":
 		await _prepare_ground_save()
 		return
@@ -274,7 +280,7 @@ func _run() -> void:
 		_expect(_menu.continue_subline.text.begins_with("Preparing "), "Continue subline does not show Preparing NN%%: '%s'" % _menu.continue_subline.text)
 		_expect(_menu.continue_button.disabled, "Continue stayed pressable while pending")
 		_results["pending_subline"] = _menu.continue_subline.text
-	if not _expect(await _wait_until(func() -> bool: return int(_warm.state) == 2 or _handed_off != null, WARM_TIMEOUT_MS), "warm world did not become ready"):
+	if not _expect(await _wait_until(func() -> bool: return int(_warm.state) == 2 or _handed_off != null or not _warm_failure.is_empty(), WARM_TIMEOUT_MS) and _warm_failure.is_empty(), "warm world did not become ready%s" % _warm_failure_suffix()):
 		return _finish()
 	var bridge: Node = _warm.bridge
 	var world: Node = _warm.world

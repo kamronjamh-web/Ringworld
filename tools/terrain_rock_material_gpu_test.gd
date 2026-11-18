@@ -353,10 +353,17 @@ func _set_look(rock_start: float, contrast: float, debug: bool, view := 1.0) -> 
 	RenderingServer.global_shader_parameter_set("ringworld_ground_look", Vector4(rock_start, contrast, 1.0, view if debug else 0.0))
 
 
+# Terrain3D re-centres its clipmap on the camera (and sets _camera_pos) in its physics process, not per drawn frame. With VSync off, SETTLE_FRAMES process
+# frames can all fall inside one 60 Hz physics tick, leaving the clipmap at the previous view (the far receiver, 2.4 km away) so the grab shows only the
+# background. Two physics ticks after the last camera update guarantee one full Terrain3D physics process.
 func _settle() -> void:
 	for frame in SETTLE_FRAMES:
 		_surface.call("UpdateCamera", _camera.global_position)
 		await process_frame
+	for tick in 2:
+		_surface.call("UpdateCamera", _camera.global_position)
+		await physics_frame
+	await process_frame
 
 
 func _grab() -> Image:

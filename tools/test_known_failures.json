@@ -111,15 +111,6 @@
       "evidence": "batch close record: the same localized-contrast check fails on e2485b7 (head_gpu). Intermittent, not fixed: 2026-10-30 passed on main b8b175a (worktree, mainbase 083004) and in WO3's megastorm3b run, but failed with the same message on the megastorm tree (megastorm 050118 and 083409). retries 0: a pass is a pass, a matching failure is known-fail",
       "since": "2026-10-29"
     },
-    "menu_continue_transition_test": {
-      "status": "known-fail",
-      "match": "pose jumped [0-9.]+ m when the scripted flight ended",
-      "evidence": "2026-10-30 (RTX 4070): case=main fails identically on main b8b175a (worktree) and on the megastorm tree: end_jump=246850.646 m (limit 2.0), MENU_UNLOCK reason=cap; the ground/prep cases pass. Depends on the local real save slots 1 and 2 the script copies",
-      "since": "2026-10-30",
-      "machines": [
-        "desktop_mid_high"
-      ]
-    },
     "cloud_shadow_crossfade_test": {
       "status": "flaky",
       "match": "CLOUD_SHADOW_CROSSFADE=PASS",

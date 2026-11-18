@@ -10,12 +10,15 @@
   the real profile plus the gameplay_*.tres preferences; the test refuses to run unless user:// resolves into such a profile. The primary
   slot must be the most recently played one (it is the slot the menu warm-loads). Output: .godot\phase_c_live\<Label>\console_<case>.log
   and results_<case>.json.
+  -Primary / -Secondary 0 (the default) pick the most and second most recently played real slots (world.json last_played_unix): the slot
+  the user last played is the one the current code can load (an older slot can be refused, e.g. "Terrain definition hash is not accepted"
+  after a terrain or hydrology version bump).
 #>
 param(
   [string]$Label = "c6",
   [ValidateSet("all","main","ground","underground","warming","timeout")][string]$Case = "all",
-  [int]$Primary = 1,
-  [int]$Secondary = 2,
+  [int]$Primary = 0,
+  [int]$Secondary = 0,
   [switch]$Headless,
   [switch]$Movie,
   [int]$ExitGraceSeconds = 60,
@@ -28,6 +31,18 @@ $realProfile = Join-Path $env:APPDATA "Godot\app_userdata\$ProjectName"
 $base = Join-Path $project ".godot\phase_c_live"
 $outDir = Join-Path $base $Label
 New-Item -ItemType Directory -Force $outDir | Out-Null
+if ($Primary -le 0 -or $Secondary -le 0) {
+  $played = @(Get-ChildItem (Join-Path $realProfile "worlds") -Directory -Filter "slot_*" | ForEach-Object {
+    $meta = Join-Path $_.FullName "world.json"
+    if (-not (Test-Path $meta)) { return }
+    $json = Get-Content -Raw $meta | ConvertFrom-Json
+    [pscustomobject]@{ Slot = [int]($_.Name -replace '^slot_', ''); Played = [double]$json.last_played_unix }
+  } | Sort-Object Played -Descending)
+  if ($Primary -le 0) { $Primary = @($played | Where-Object { $_.Slot -ne $Secondary })[0].Slot }
+  if ($Secondary -le 0) { $Secondary = @($played | Where-Object { $_.Slot -ne $Primary })[0].Slot }
+  if (-not $Primary -or -not $Secondary) { throw "need two saved slots with world.json under $realProfile\worlds" }
+}
+"real slots: primary slot_$Primary, secondary slot_$Secondary" | Out-Host
 function Invoke-Godot([string]$caseArg, [string]$logName, [string]$extraArg = "") {
   $arguments = @("--path", $project)
   if ($Headless) { $arguments += "--headless" }
@@ -70,6 +85,9 @@ foreach ($caseName in $cases) {
   if (Test-Path $isoRoot) { cmd /c "rd /s /q \\?\$isoRoot" }
   if (Test-Path $isoRoot) { Remove-Item -Recurse -Force $isoRoot }
   New-Item -ItemType Directory -Force (Join-Path $isoProfile "worlds") | Out-Null
+  # Copies keep the saves' old timestamps, so another runner's prune_test_output.ps1 would take this fresh profile for a stale one (newest
+  # file > 24 h) and delete it mid-run. A file written now keeps the profile young.
+  Set-Content -Path (Join-Path $isoRoot "profile_created.txt") -Value (Get-Date -Format o)
   Copy-Item -Recurse (Join-Path $realProfile "worlds\slot_$Primary") (Join-Path $isoProfile "worlds\slot_1")
   Copy-Item -Recurse (Join-Path $realProfile "worlds\slot_$Secondary") (Join-Path $isoProfile "worlds\slot_2")
   foreach ($pair in @(@(1, $Primary), @(2, $Secondary))) {
