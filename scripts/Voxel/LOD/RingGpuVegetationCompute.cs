@@ -14,6 +14,9 @@ namespace RingworldTechDemo.Voxel.LOD;
 public sealed class RingGpuVegetationCompute : IDisposable
 {
     public const int TreeFloats = 12, TreeCustomFloats = 16, GrassFloats = 20;
+    private static float _faintShareThreshold;
+    /// <summary>Debug / A-B (TR perf pass T2): the share of a dithered tree's pixels below which its row is not drawn at all; 0 = off. Takes effect with the next full cull (<see cref="InvalidateLastRequest"/>).</summary>
+    public static float FaintShareThreshold { get => Volatile.Read(ref _faintShareThreshold); set => Volatile.Write(ref _faintShareThreshold, value); }
     private const int ParameterBytes = 512;
     private const int ParameterWordCount = ParameterBytes / 4;
     internal const int MaximumRootsPerBatch = 1_048_576;
@@ -34,7 +37,10 @@ public sealed class RingGpuVegetationCompute : IDisposable
         MultiMesh? CameraTarget = null, MultiMesh? VerifyTarget = null);
     /// <summary>The latched, padded camera frustum for tree camera lists (<see cref="RequestCameraCull"/>). Planes follow Camera3D.GetFrustum(): world space,
     /// positive signed distance is outside. Disabled keeps every row (camera list = full list).</summary>
-    public sealed record CameraCullState(bool Enabled, Vector4[] Planes, float WindFraction, float GuardMeters, bool Verify);
+    public sealed record CameraCullState(bool Enabled, Vector4[] Planes, float WindFraction, float GuardMeters, bool Verify, ShadowCullState? Shadow = null);
+    /// <summary>Phase 7 (the tree sun-shadow mirrors): the padded camera planes cut off at the shadow distance and the travel direction of each shadow-casting light (1 or 2, unit, world space).
+    /// A caster is kept when the ray from it along a direction can enter the planes' volume (shader shadow_keeps). Null keeps every row.</summary>
+    public sealed record ShadowCullState(Vector4[] Planes, Vector3[] Directions);
     public readonly record struct BatchFrameParameters(int BatchId, Transform3D LocalToWorld, bool Grass,
         int LodPass, float NearDistance, float FarDistance, float TransitionDistance,
         float NearDensity, float FarDensity, bool EnableLod, float TreeRankGate,
@@ -61,6 +67,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
         public Rid Source, Metadata, Parameters, Flags, Counts, Offsets, Set, Output, Commands;
         public Rid CameraOutput, CameraCommands, VerifyOutput, VerifyCommands;
         public bool HasCamera => CameraOutput.IsValid && CameraCommands.IsValid;
+        public bool CameraTermsRefreshed; // set by a terms refresh that wrote the camera slots itself (render thread only)
         public long CameraBytes;
         // Stamp of the last frame dispatch that included this batch; phase 6 filters only batches of the latest one (others keep every row: their transform words may be stale).
         public int FrameStamp;
@@ -98,6 +105,10 @@ public sealed class RingGpuVegetationCompute : IDisposable
         public bool Allocated, Ready, PendingCopy;
         public bool Grass, Custom, Retired;
         public long Bytes;
+        // Tree mirrors are compacted by phase 7 (a copy of the source batch's set with bindings 9 / 10 on the mirror's buffers) instead of copied whole. The sphere is the mirror mesh's (instance space).
+        public Rid Set;
+        public Vector3 SphereCenter;
+        public float SphereRadius;
     }
 
     /// <summary>One immutable candidate upload may feed more than one indirect
@@ -222,6 +233,13 @@ public sealed class RingGpuVegetationCompute : IDisposable
     public float ShadowRefreshMeters { get; set; } = 8f;
     public long ShadowRefreshDispatchCount => Interlocked.Read(ref _shadowRefreshDispatchCount);
     public long ShadowRefreshCount => Interlocked.Read(ref _shadowRefreshCount);
+    /// <summary>Perf-pass counters (cumulative): terms-refresh lists, camera-only re-cuts (latch changes), full cull dispatches. Debug / bench only.</summary>
+    public long CameraOnlyDispatchCount => Interlocked.Read(ref _cameraOnlyDispatchCount);
+    public long TermsRefreshDispatchCount => Interlocked.Read(ref _termsRefreshDispatchCount);
+    private long _cameraOnlyDispatchCount, _termsRefreshDispatchCount, _termsRefreshSkippedCutCount;
+    public long TermsRefreshSkippedCutCount => Interlocked.Read(ref _termsRefreshSkippedCutCount);
+    /// <summary>Debug / A-B (perf pass G4): a terms refresh rewrites the camera list's slots in the same pass instead of cutting the camera list again (phase 6). Off = the old behaviour.</summary>
+    public static bool TermsRefreshWritesCamera { get; set; } = true;
     /// <summary>True once the per-instance shadow atlas exists and the channel can go live.</summary>
     public bool ShadowAtlasReady => _shadowAtlasReady;
 
@@ -535,8 +553,10 @@ public sealed class RingGpuVegetationCompute : IDisposable
             target.CustomAabb = source.Registration.CustomAabb;
             RetireMirror(sourceBatchId);
             bool custom = source.Registration.Grass || source.Registration.TreeCustomData || source.Registration.TreeDitherData;
+            Aabb mirrorBounds = targetMesh.GetAabb();
+            float mirrorRadius = mirrorBounds.Position.IsFinite() && mirrorBounds.Size.IsFinite() ? mirrorBounds.GetCenter().Length() + mirrorBounds.Size.Length() : 1e9f;
             _mirrors[sourceBatchId] = new OutputMirror { Target = target, Mesh = targetMesh, PendingCopy = true,
-                Grass = source.Registration.Grass, Custom = custom };
+                Grass = source.Registration.Grass, Custom = custom, SphereRadius = mirrorRadius };
             QueueWork();
             return true;
         }
@@ -548,6 +568,12 @@ public sealed class RingGpuVegetationCompute : IDisposable
     private void RetireMirror(int sourceBatchId)
     {
         if (_mirrors.Remove(sourceBatchId, out OutputMirror? mirror)) { mirror.Retired = true; _retiringMirrorTargets.Add(mirror.Target); _retiredMirrors.Enqueue(mirror); }
+    }
+
+    /// <summary>Main thread. Forgets the last frame request so the next one is culled in full even when nothing else changed (a debug switch that alters the compute words).</summary>
+    public void InvalidateLastRequest()
+    {
+        lock (_gate) { ReleaseSnapshotOf(_lastRequest); _lastRequest = null; }
     }
 
     public bool RequestFrame(FrameRequest request)
@@ -812,9 +838,9 @@ public sealed class RingGpuVegetationCompute : IDisposable
                 // Dispatch is the last reader of the pending snapshot; an exception skips this and merely drops it to the GC.
                 ReleaseSnapshotOf(frame);
             }
-            else CopyOutputMirrors(_rd!);
             if (hazeOn && refreshPending || shadowOn && shadowRefreshPending) DispatchTermsRefresh(batches, hazeOn && refreshPending, shadowOn && shadowRefreshPending, hazeOn, shadowOn);
             if (cullPending) DispatchCameraOnly(batches, hazeOn, shadowOn);
+            UpdateOutputMirrors(_rd!, cullPending);
             if (_cameraWorkTicks > _cameraCullMaxTicks) _cameraCullMaxTicks = _cameraWorkTicks;
             _cameraWorkTicks = 0;
         }
@@ -1381,7 +1407,6 @@ public sealed class RingGpuVegetationCompute : IDisposable
             Volatile.Write(ref item.Batch.CompletedVisibilityRevision, item.Frame.VisibilityRevision);
             if (grassOnly) item.Batch.LastGrassFrameRevision = grassFrameRevision;
         }
-        CopyOutputMirrors(rd);
         Interlocked.Increment(ref _completedUpdates);
     }
 
@@ -1403,6 +1428,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
         mirror.Commands = RenderingServer.MultimeshGetCommandBufferRdRid(multimesh);
         mirror.SurfaceCount = mirror.Mesh.GetSurfaceCount();
         if (!mirror.Output.IsValid || !mirror.Commands.IsValid) throw new InvalidOperationException("Indirect mirror buffers unavailable");
+        if (!source.Registration.Grass && source.Set.IsValid) mirror.Set = CreateMirrorSet(_rd!, source, mirror);
         mirror.Allocated = true;
         mirror.Bytes = source.Registration.Capacity * (long)source.OutputStride * 4L + mirror.SurfaceCount * 20L;
         Interlocked.Add(ref _estimatedBytes, mirror.Bytes);
@@ -1410,23 +1436,75 @@ public sealed class RingGpuVegetationCompute : IDisposable
         }
     }
 
-    private void CopyOutputMirrors(RenderingDevice rd)
+    /// <summary>The batch's own set with bindings 9 / 10 (the camera list slots, unused by phase 7) on the mirror's rows and commands.</summary>
+    private Rid CreateMirrorSet(RenderingDevice rd, Batch source, OutputMirror mirror)
+    {
+        var uniforms = new Godot.Collections.Array<RDUniform>();
+        Rid[] resources = { source.Source, source.Metadata, source.Output, source.Commands, source.Parameters, source.Flags, source.Counts, source.Offsets, _budgets,
+            mirror.Output, mirror.Commands, _budgets, _budgets };
+        for (int i = 0; i < resources.Length; i++)
+        {
+            if (!resources[i].IsValid) return default;
+            var uniform = new RDUniform { UniformType = RenderingDevice.UniformType.StorageBuffer, Binding = i };
+            uniform.AddId(resources[i]);
+            uniforms.Add(uniform);
+        }
+        Rid set = rd.UniformSetCreate(uniforms, _shader, 0);
+        return set.IsValid ? set : default;
+    }
+
+    /// <summary>Brings each shadow mirror up to date, and only the ones whose input changed: the source batch was dispatched this Work (new rows), or the latched cull state changed
+    /// (<paramref name="cullChanged"/>), or the mirror is new. Tree mirrors are compacted by phase 7 (rows that cannot throw a shadow into view are left out); the rest are copied whole.</summary>
+    private void UpdateOutputMirrors(RenderingDevice rd, bool cullChanged)
     {
         lock (_gate)
         {
-        foreach (KeyValuePair<int, OutputMirror> pair in _mirrors)
-        {
-            if (!_batches.TryGetValue(pair.Key, out Batch? source) || source.Retired || !source.Dispatched) continue;
-            OutputMirror mirror = pair.Value;
-            if (!mirror.Allocated || !source.Output.IsValid || !source.Commands.IsValid) continue;
-            rd.BufferCopy(source.Output, mirror.Output, 0, 0, (uint)(source.Registration.Capacity * source.OutputStride * 4));
-            for (int surface = 0; surface < mirror.SurfaceCount; surface++)
-                rd.BufferCopy(source.Commands, mirror.Commands, 4, (uint)(surface * 20 + 4), 4);
-            mirror.PendingCopy = false;
-            mirror.Ready = true;
-        }
+            long list = -1;
+            foreach (KeyValuePair<int, OutputMirror> pair in _mirrors)
+            {
+                if (!_batches.TryGetValue(pair.Key, out Batch? source) || source.Retired || !source.Dispatched) continue;
+                OutputMirror mirror = pair.Value;
+                if (!mirror.Allocated || !source.Output.IsValid || !source.Commands.IsValid) continue;
+                bool compact = mirror.Set.IsValid && rd.UniformSetIsValid(mirror.Set) && rd.UniformSetIsValid(source.Set);
+                bool dirty = mirror.PendingCopy || !mirror.Ready || _dispatchedIds.Contains(source.Id) || (compact && cullChanged);
+                if (!dirty) continue;
+                if (compact)
+                {
+                    if (list < 0)
+                    {
+                        list = rd.ComputeListBegin();
+                        _boundVariant = -1;
+                        BindPipeline(rd, list, 0);
+                    }
+                    rd.ComputeListBindUniformSet(list, mirror.Set, 0);
+                    WritePush(7, (uint)source.Count, (uint)source.Registration.Capacity, (uint)mirror.SurfaceCount, source.FrameStamp == _dispatchStamp ? 0u : 1u, 0, source, false, false);
+                    BitConverter.TryWriteBytes(_push.AsSpan(32, 4), mirror.SphereCenter.X);
+                    BitConverter.TryWriteBytes(_push.AsSpan(36, 4), mirror.SphereCenter.Y);
+                    BitConverter.TryWriteBytes(_push.AsSpan(40, 4), mirror.SphereCenter.Z);
+                    BitConverter.TryWriteBytes(_push.AsSpan(44, 4), mirror.SphereRadius);
+                    rd.ComputeListSetPushConstant(list, _push, PushBytes);
+                    rd.ComputeListDispatch(list, 1, 1, 1);
+                    Interlocked.Increment(ref _dispatchCount);
+                    Interlocked.Increment(ref _mirrorCompactCount);
+                }
+                else
+                {
+                    rd.BufferCopy(source.Output, mirror.Output, 0, 0, (uint)(source.Registration.Capacity * source.OutputStride * 4));
+                    for (int surface = 0; surface < mirror.SurfaceCount; surface++)
+                        rd.BufferCopy(source.Commands, mirror.Commands, 4, (uint)(surface * 20 + 4), 4);
+                    Interlocked.Increment(ref _mirrorCopyCount);
+                }
+                mirror.PendingCopy = false;
+                mirror.Ready = true;
+            }
+            if (list >= 0) rd.ComputeListEnd();
         }
     }
+
+    private long _mirrorCompactCount, _mirrorCopyCount;
+    /// <summary>Shadow mirror updates so far: phase 7 compactions and whole-buffer copies (debug / bench counters).</summary>
+    public long MirrorCompactCount => Interlocked.Read(ref _mirrorCompactCount);
+    public long MirrorCopyCount => Interlocked.Read(ref _mirrorCopyCount);
 
     /// <summary>Called while holding <see cref="_gate"/>. A budgeted stationary
     /// grass frame goes idle after each currently requested output has processed
@@ -1531,9 +1609,9 @@ public sealed class RingGpuVegetationCompute : IDisposable
         data[111] = meshCenter.X; data[112] = meshCenter.Y; data[113] = meshCenter.Z;
     }
 
-    internal const int CameraCullBlockBytes = 7 * 16;
+    internal const int CameraCullBlockBytes = 16 * 16;
 
-    /// <summary>The shared frame block of phase 6 (set 1, binding 8, std140): six planes then (mode, wind fraction, guard, plane count). Mode 0 keeps every row
+    /// <summary>The shared frame block of phase 6 (set 1, binding 8, std140): six planes then (mode, wind fraction, guard, plane count), then phase 7's six shadow planes, two light directions and (shadow mode, 0, 0, 0). Mode 0 keeps every row
     /// (no state, disabled, or no planes), 1 filters, 2 filters and fills the verify lists.</summary>
     internal static byte[] CameraCullBytes(CameraCullState? state)
     {
@@ -1548,6 +1626,20 @@ public sealed class RingGpuVegetationCompute : IDisposable
         data[24] = state.Verify ? 2 : 1;
         data[25] = Math.Max(0, Finite(state.WindFraction, .6f)); data[26] = Math.Max(0, Finite(state.GuardMeters, .25f));
         data[27] = planes;
+        if (state.Shadow is { Planes.Length: 6, Directions.Length: >= 1 and <= 2 } shadow)
+        {
+            for (int i = 0; i < 6; i++)
+            {
+                Vector4 plane = shadow.Planes[i];
+                data[28 + i * 4] = plane.X; data[29 + i * 4] = plane.Y; data[30 + i * 4] = plane.Z; data[31 + i * 4] = plane.W;
+            }
+            for (int i = 0; i < shadow.Directions.Length; i++)
+            {
+                Vector3 direction = shadow.Directions[i];
+                data[52 + i * 4] = direction.X; data[53 + i * 4] = direction.Y; data[54 + i * 4] = direction.Z; data[55 + i * 4] = 1;
+            }
+            data[60] = 1;
+        }
         return FloatBytes(data);
     }
 
@@ -1585,6 +1677,8 @@ public sealed class RingGpuVegetationCompute : IDisposable
         data[56] = Finite(p.TreeFadeInStart, -1); data[57] = Finite(p.TreeFadeInEnd, -1);
         data[58] = Finite(p.TreeFadeOutStart, -1); data[59] = Finite(p.TreeFadeOutEnd, -1);
         data[60] = treeDitherData ? 1 : 0;
+        // Trees with dither words: p[84] > 0 drops rows whose dissolve keeps less than that share of their pixels (shader accepted()).
+        data[84] = !p.Grass && treeDitherData ? Math.Clamp(Finite(Volatile.Read(ref _faintShareThreshold), 0), 0, .5f) : 0;
         // Steep-view rule (trees, TR-6): p[78] / p[79] sin of the elevation band, p[80] role (1 cards, 2 far quad), p[81] end of the quad's steep near
         // cross-dither, p[82] the quad's rank gate for steep trees. All zero = off.
         if (!p.Grass && p.TreeSteepRole is 1 or 2 && p.TreeSteepSinHigh > p.TreeSteepSinLow)
@@ -1768,7 +1862,10 @@ public sealed class RingGpuVegetationCompute : IDisposable
         foreach (Batch batch in _refreshBatches)
         {
             rd.ComputeListBindUniformSet(list, batch.Set, 0);
-            WritePush(4, (uint)batch.Count, (uint)batch.Registration.Capacity, (uint)batch.SurfaceCount, 0, 0, batch, haze, shadow);
+            // Tree batches with a camera list rewrite its slots in the same pass (shader phase 4): sweep = camera slot base + 1, protected_base_valid = its tag.
+            bool withCamera = TermsRefreshWritesCamera && CameraListEligible(batch) && batch.CameraHazeBase >= 0;
+            WritePush(4, (uint)batch.Count, (uint)batch.Registration.Capacity, (uint)batch.SurfaceCount, withCamera ? (uint)batch.CameraHazeBase + 1u : 0u, withCamera ? (uint)batch.CameraHazeTag : 0u, batch, haze, shadow);
+            if (withCamera) batch.CameraTermsRefreshed = true;
             rd.ComputeListSetPushConstant(list, _push, PushBytes);
             rd.ComputeListDispatch(list, (uint)((batch.Registration.Capacity + 63) / 64), 1, 1);
             Interlocked.Increment(ref _dispatchCount);
@@ -1778,7 +1875,13 @@ public sealed class RingGpuVegetationCompute : IDisposable
         AddBarrier(rd, list);
         bool cameraBarrier = true;
         foreach (Batch batch in _refreshBatches)
-            if (CameraListEligible(batch)) DispatchCameraBatch(rd, list, batch, hazeLive, shadowLive, ref cameraBarrier);
+        {
+            if (!CameraListEligible(batch)) continue;
+            // Rows and camera membership did not change: the pass above already rewrote the camera slots. Cut the list again only when it could not.
+            if (batch.CameraTermsRefreshed) { batch.CameraTermsRefreshed = false; Interlocked.Increment(ref _termsRefreshSkippedCutCount); continue; }
+            DispatchCameraBatch(rd, list, batch, hazeLive, shadowLive, ref cameraBarrier);
+            Interlocked.Increment(ref _termsRefreshDispatchCount);
+        }
         rd.ComputeListEnd();
         if (haze) Interlocked.Increment(ref _hazeRefreshCount);
         if (shadow) Interlocked.Increment(ref _shadowRefreshCount);
@@ -1809,6 +1912,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
                 _boundVariant = -1;
             }
             DispatchCameraBatch(rd, list, batch, hazeOn, shadowOn, ref barrier);
+            Interlocked.Increment(ref _cameraOnlyDispatchCount);
         }
         if (list < 0) return;
         rd.ComputeListEnd();
@@ -1906,6 +2010,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
         {
             OutputMirror mirror;
             lock (_gate) { if (_retiredMirrors.Count == 0) return count; mirror = _retiredMirrors.Dequeue(); }
+            Free(ref mirror.Set, uniform: true);
             if (mirror.Commands.IsValid)
             {
                 // Godot owns the output RID, but command RIDs need the same detach

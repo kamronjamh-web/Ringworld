@@ -12,7 +12,7 @@ extends SceneTree
 ## SKIPs cleanly (TREE_FRUSTUM_IDENTITY=SKIP ...) while the TreeFrustumCulling property does not exist on the BiomeDecorations layer (lane T adds it in OC-2).
 ## Run (windowed Vulkan, not --headless; never on the player's save; takes the GPU queue):
 ##   tools/tree_visibility_run.ps1 -Test frustum_identity -Build      (or via tools/run_tests.ps1 -Tests tree_frustum_identity_gpu_test)
-## Args (after --): --out=<dir> [--names=forest_interior_eye,forest_edge_eye,plains_eye,spawn_ground] [--yaws=0,90,180,270] [--skip-moves] [--freeze=clouds,taa] [--strict] [--quiet-scene]
+## Args (after --): --prop=<property> --sun-elevation=<deg> --out=<dir> [--names=forest_interior_eye,forest_edge_eye,plains_eye,spawn_ground] [--yaws=0,90,180,270] [--skip-moves] [--freeze=clouds,taa] [--strict] [--quiet-scene]
 ##   [--baseline-only] (no property needed: captures A twice to prove the harness is deterministic) [--settle=60]
 ## --freeze removes per-frame noise (cloud interleave and jitter, temporal AA) that makes two captures of one state differ; default none (measured: cloud interleave off made forest yaw 90 worse, 779k pixels differing; the game runs FXAA, no TAA).
 ## Prints TREE_FRUSTUM_IDENTITY=PASS | SKIP <why> | FAIL <why>. On a mismatch the A and B PNGs are saved under --out; compare them with
@@ -20,7 +20,7 @@ extends SceneTree
 
 const COMMON := preload("res://tools/shadow_harness_common.gd")
 const WORLD := preload("res://tools/tree_visibility_world.gd")
-const PROP := "TreeFrustumCulling"
+var PROP := "TreeFrustumCulling"   # --prop=<BiomeDecorations bool property> A/Bs another switch the same way (off = A, on = B), e.g. TreeDropFaintInstances
 const NOISE_LSB := 2   # +-1..2 LSB drift (sky banding, dither) is not counted toward the tile density
 
 var args := {}
@@ -40,6 +40,7 @@ func _initialize() -> void:
 		if text.begins_with("--"):
 			var eq := text.find("=")
 			args[text.substr(2, eq - 2) if eq > 0 else text.substr(2)] = text.substr(eq + 1) if eq > 0 else "1"
+	PROP = String(args.get("prop", PROP))
 	create_timer(3000.0).timeout.connect(func(): _finish("FAIL timeout"))
 	call_deferred("_run")
 
@@ -105,6 +106,15 @@ func _run() -> void:
 		for yo in yaw_offsets:
 			var yaw := fposmod(float(pose["yaw_deg"]) + float(yo), 360.0)
 			var idle: bool = await WORLD.go_pose(self, game, pose, yaw, true)
+			if args.has("sun-elevation"):
+				# Low (or negative) sun: shadows come from outside the view. --sun-elevation=5 (degrees, rising); logs which lights cast.
+				report["time"] = COMMON.apply_time(game, {"mode": "elevation", "value": float(args["sun-elevation"]), "rising": true})
+				WORLD.freeze_world(game)
+				await _settle(settle_frames * 2)
+				for ln in ["StarLight", "PlanetLight"]:
+					var light := game.get_node_or_null(ln) as DirectionalLight3D
+					if light != null:
+						_log("%s energy %.3f shadow %s visible %s" % [ln, light.light_energy, str(light.shadow_enabled), str(light.visible)])
 			WORLD.freeze_world(game)
 			var tag := "%s_yaw%d" % [name, int(round(yaw))]
 			await _triple(tag + "_rest", baseline_only)

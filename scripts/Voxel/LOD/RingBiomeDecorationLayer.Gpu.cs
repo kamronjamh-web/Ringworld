@@ -1648,10 +1648,33 @@ public partial class RingBiomeDecorationLayer
     // frustum. The latch follows RingStandingGrassLayer's rules (GrassCullingFrustum.Pad): it is rebuilt after a turn of TreeCullRotationDegrees or a move of
     // TreeCullMovementMeters, widened by TreeCullPaddingDegrees and by the movement threshold plus a margin for the camera's own speed (the render camera can be
     // a frame or two ahead of the one this thread sees). Culling is off while a megastorm blast bends the trees and for the frame the layer is rebased.
+    /// <summary>A/B switch (debug, not a tuning row; perf pass): false keeps every row in the sun-shadow mirrors. On, the mirrors hold only the casters whose shadow can reach the padded camera
+    /// frustum out to the shadow distance (compute phase 7, along each shadow-casting light's direction); the shadows seen on screen are the same.</summary>
+    public bool TreeShadowCulling { get; set; } = true;
+    /// <summary>A/B switch (debug, not a tuning row; perf pass G4): a terms refresh rewrites the camera list's slots in the same pass instead of cutting the camera list again.</summary>
+    public bool TreeTermsRefreshWritesCamera { get => RingGpuVegetationCompute.TermsRefreshWritesCamera; set => RingGpuVegetationCompute.TermsRefreshWritesCamera = value; }
+    public long TreeShadowMirrorCompactions => _gpuTreeCompute?.MirrorCompactCount ?? 0;
+    public long TreeShadowMirrorCopies => _gpuTreeCompute?.MirrorCopyCount ?? 0;
     /// <summary>A/B switch (debug, not a tuning row): false keeps every row in the camera list. The picture is identical either way; only the draw cost differs.</summary>
     public bool TreeFrustumCulling { get; set; } = true;
     /// <summary>Debug: draws the rows the frustum filter drops in magenta (unshaded). Must be set before the outputs are created. A magenta pixel in a frame means a visible row was culled.</summary>
     public bool TreeCullVerify { get; set; }
+    /// <summary>A/B switch (debug, not a tuning row; perf pass T2): drops tree instances whose dissolve keeps under <see cref="TreeFaintShare"/> of their pixels. Off by default until the user approves the look (it moves each fade edge by 1 to 3 m).</summary>
+    public bool TreeDropFaintInstances
+    {
+        get => _treeDropFaint;
+        set { if (_treeDropFaint == value) return; _treeDropFaint = value; ApplyTreeFaintDrop(); }
+    }
+    public float TreeFaintShare { get; set; } = .02f;
+    private bool _treeDropFaint;
+    private void ApplyTreeFaintDrop()
+    {
+        RingGpuVegetationCompute.FaintShareThreshold = _treeDropFaint ? TreeFaintShare : 0f;
+        _gpuTreeCompute?.InvalidateLastRequest();
+        InvalidateGpuTreeFrameCache();
+    }
+    /// <summary>Cumulative counters of the tree compute for cadence checks: "cull=phase 6 dispatches haze=refresh lists shadow=refresh lists camOnly=latch re-cut batches terms=terms-refresh batches updates=frame dispatches skipped=skipped frame requests".</summary>
+    public string TreeComputeCounters => _gpuTreeCompute is null ? "none" : $"cull={_gpuTreeCompute.CameraCullDispatchCount} haze={_gpuTreeCompute.HazeRefreshCount} shadow={_gpuTreeCompute.ShadowRefreshCount} camOnly={_gpuTreeCompute.CameraOnlyDispatchCount} terms={_gpuTreeCompute.TermsRefreshDispatchCount} cutSkipped={_gpuTreeCompute.TermsRefreshSkippedCutCount} mirrorCompact={_gpuTreeCompute.MirrorCompactCount} mirrorCopy={_gpuTreeCompute.MirrorCopyCount} updates={_gpuTreeCompute.CompletedUpdates} skipped={_gpuTreeCompute.SkippedUnchangedUpdates} relatches={TreeCullRelatches}";
     public long TreeCullRelatches { get; private set; }
     public string TreeCullLastRelatchReason { get; private set; } = "none";
     public bool TreeCullActive => _treeCullSentEnabled;
@@ -1679,8 +1702,56 @@ public partial class RingBiomeDecorationLayer
     private Vector3 _treeCullPreviousOrigin;
     private ulong _treeCullHoldUntilUsec;
     private ulong _treeCullPreviousUsec;
-    private Vector4[]? _treeCullPlanes;
+    private Vector4[]? _treeCullPlanes, _treeCullShadowPlanes;
     private Plane[]? _treeCullPlaneScratch;
+    // Latched shadow-cull inputs (phase 7): the casting lights' travel directions, the shadow distance and whether the filter was sent at all.
+    private Vector3[] _treeCullShadowDirections = Array.Empty<Vector3>();
+    private float _treeCullShadowDistance;
+    private bool _treeCullSentShadow;
+    private const float TreeShadowDirectionDegrees = .5f;
+    private readonly Vector3[] _treeCullShadowScratch = new Vector3[2];
+
+    /// <summary>The travel direction (unit, world) of each shadow-casting directional light the tree mirrors draw into (the sun, the planet light), and the farthest shadow distance among them.
+    /// False when nothing casts, or a light is unusual enough that the mirrors must stay whole.</summary>
+    private bool TryReadTreeShadowLights(Vector3[] directions, out int count, out float distance)
+    {
+        count = 0; distance = 0f;
+        ResolveTreeSunLight();
+        if (!AddTreeShadowLight(_treeSunLight, directions, ref count, ref distance) || !AddTreeShadowLight(ResolveTreePlanetLight(), directions, ref count, ref distance)) return false;
+        return count > 0 && float.IsFinite(distance) && distance > 1f;
+    }
+
+    private static bool AddTreeShadowLight(DirectionalLight3D? light, Vector3[] directions, ref int count, ref float distance)
+    {
+        if (light == null || !GodotObject.IsInstanceValid(light) || !light.IsInsideTree() || !light.Visible || !IsCasting(light)) return true;
+        Vector3 travel = -light.GlobalTransform.Basis.Z;
+        if (!travel.IsFinite() || travel.LengthSquared() < .5f) return false;
+        directions[count++] = travel.Normalized();
+        distance = Mathf.Max(distance, light.DirectionalShadowMaxDistance);
+        return true;
+    }
+
+    /// <summary>Planes of the latched padded frustum with the far plane pulled in to the shadow distance (plus the latch's movement margin). The far plane is the one facing the view direction.</summary>
+    private Vector4[]? BuildTreeShadowPlanes(Vector4[] padded, Transform3D camera, float distance, float margin)
+    {
+        if (padded.Length != 6) return null;
+        Vector3 forward = -camera.Basis.Z;
+        int far = 0;
+        float best = -2f;
+        for (int i = 0; i < 6; i++)
+        {
+            float facing = new Vector3(padded[i].X, padded[i].Y, padded[i].Z).Normalized().Dot(forward);
+            if (facing > best) { best = facing; far = i; }
+        }
+        if (best < .5f) return null;
+        if (_treeCullShadowPlanes is null || _treeCullShadowPlanes.Length != 6) _treeCullShadowPlanes = new Vector4[6];
+        Array.Copy(padded, _treeCullShadowPlanes, 6);
+        Vector4 plane = padded[far];
+        Vector3 normal = new(plane.X, plane.Y, plane.Z);
+        float limited = normal.Dot(camera.Origin) + (distance + margin) * normal.Length();
+        if (limited < plane.W) _treeCullShadowPlanes[far] = new Vector4(plane.X, plane.Y, plane.Z, limited);
+        return _treeCullShadowPlanes;
+    }
 
 
     private bool TreeCullTransformsCurrent()
@@ -1688,6 +1759,18 @@ public partial class RingBiomeDecorationLayer
         foreach (GpuTreeOutput output in _gpuTreeOutputs.Values)
             if (output.TransformCacheVersion != _gpuTreeFrameCacheVersion || output.CachedGlobalTransform != output.Renderer.GlobalTransform) return false;
         return true;
+    }
+
+    private bool TreeShadowCullChanged()
+    {
+        Vector3[] now = _treeCullShadowScratch;
+        int count = 0; float distance = 0f;
+        bool have = TreeShadowCulling && TryReadTreeShadowLights(now, out count, out distance);
+        if (!have) return _treeCullSentShadow;
+        if (!_treeCullSentShadow || count != _treeCullShadowDirections.Length || Math.Abs(distance - _treeCullShadowDistance) > 1f) return true;
+        float cosine = Mathf.Cos(Mathf.DegToRad(TreeShadowDirectionDegrees));
+        for (int i = 0; i < count; i++) if (now[i].Dot(_treeCullShadowDirections[i]) < cosine) return true;
+        return false;
     }
 
     private void UpdateTreeCameraCulling()
@@ -1730,6 +1813,7 @@ public partial class RingBiomeDecorationLayer
                 ? GrassCullingFrustum.BasisAngleDegrees(_treeCullTransform.Basis, transform.Basis) > TreeCullRotationDegrees
                 : transform.Basis != _treeCullTransform.Basis) reason = "rotation";
             else if (neededMargin > _treeCullSpeedMargin) reason = "speed";
+            else if (TreeShadowCullChanged()) reason = "shadow";
             else if (_treeCullSpeedMargin > neededMargin * 4f + 4f) reason = "settled";
         }
         _treeCullLayer = GlobalTransform;
@@ -1738,6 +1822,7 @@ public partial class RingBiomeDecorationLayer
         TreeCullRelatches++; TreeCullLastRelatchReason = reason;
         if (!enabled)
         {
+            _treeCullSentShadow = false;
             _gpuTreeCompute.RequestCameraCull(new RingGpuVegetationCompute.CameraCullState(false, Array.Empty<Vector4>(), TreeCullWindFraction, TreeCullGuardMeters, false));
             return;
         }
@@ -1754,7 +1839,16 @@ public partial class RingBiomeDecorationLayer
         float movement = TreeCullMovementMeters + _treeCullSpeedMargin + Math.Abs(camera.HOffset) + Math.Abs(camera.VOffset)
             + Math.Abs(camera.FrustumOffset.X) + Math.Abs(camera.FrustumOffset.Y);
         GrassCullingFrustum.Pad(exact, _treeCullTransform, camera.Near, camera.Far, movement, perspective ? TreeCullPaddingDegrees : 0f, perspective, _treeCullPlanes, _treeCullPlaneScratch!);
-        _gpuTreeCompute.RequestCameraCull(new RingGpuVegetationCompute.CameraCullState(true, _treeCullPlanes, TreeCullWindFraction, TreeCullGuardMeters, verify));
+        RingGpuVegetationCompute.ShadowCullState? shadowState = null;
+        _treeCullSentShadow = false;
+        Vector3[] lights = _treeCullShadowScratch;
+        if (TreeShadowCulling && perspective && TryReadTreeShadowLights(lights, out int lightCount, out float shadowDistance)
+            && BuildTreeShadowPlanes(_treeCullPlanes, _treeCullTransform, shadowDistance, movement) is { } shadowPlanes)
+        {
+            _treeCullShadowDirections = lights[..lightCount]; _treeCullShadowDistance = shadowDistance; _treeCullSentShadow = true;
+            shadowState = new RingGpuVegetationCompute.ShadowCullState((Vector4[])shadowPlanes.Clone(), _treeCullShadowDirections);
+        }
+        _gpuTreeCompute.RequestCameraCull(new RingGpuVegetationCompute.CameraCullState(true, _treeCullPlanes, TreeCullWindFraction, TreeCullGuardMeters, verify, shadowState));
     }
 
     /// <summary>Debug: an unshaded magenta copy of the tree material (same vertex shader, so wind and the camera-facing impostors move the vertices as drawn), or null when

@@ -19,7 +19,7 @@
   Do not run two copies at once (one shared profile).
 #>
 param(
-  [ValidateSet("oracle", "frustum_identity", "cull_verify", "blob_probe")][string]$Test = "oracle",
+  [ValidateSet("oracle", "frustum_identity", "cull_verify", "blob_probe", "cadence")][string]$Test = "oracle",
   [string]$Label = "occl-v",
   [string]$ScriptArgs = "",
   [string]$Resolution = "1600x900",
@@ -37,6 +37,7 @@ $spec = @{
   oracle           = @{ Script = "tree_visibility_oracle.gd";           Marker = "TREE_VISIBILITY_ORACLE";  Needs = $null }
   frustum_identity = @{ Script = "tree_frustum_identity_gpu_test.gd";   Marker = "TREE_FRUSTUM_IDENTITY";   Needs = "TreeFrustumCulling" }
   cull_verify      = @{ Script = "tree_cull_verify_sweep.gd";          Marker = "TREE_CULL_VERIFY_SWEEP";  Needs = "TreeCullVerify" }
+  cadence          = @{ Script = "tree_cadence_probe.gd";               Marker = "TREE_CADENCE";            Needs = $null }
   blob_probe       = @{ Script = "tree_frustum_blob_probe.gd";         Marker = "TREE_FRUSTUM_BLOB";       Needs = "TreeFrustumCulling" }
 }[$Test]
 $marker = $spec.Marker

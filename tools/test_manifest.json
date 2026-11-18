@@ -7875,6 +7875,21 @@
       "runner": "tools/tree_visibility_run.ps1",
       "user_args": "-Test cull_verify"
     },
+    "tree_cadence_probe": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "vegetation",
+        "perf-telemetry"
+      ],
+      "marker": "TREE_CADENCE",
+      "expected_s": 400,
+      "timeout_s": 1800,
+      "profile": "own-runner",
+      "runner": "tools/tree_visibility_run.ps1",
+      "user_args": "-Test cadence"
+    },
     "perf_bench": {
       "kind": "test",
       "mode": "gpu",
