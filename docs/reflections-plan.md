@@ -55,7 +55,7 @@ State on 2026-11-18, morning (lead: `claude-lead`; this section is kept current 
 | R1-7 sign-off sheet, R1-8 cleanup | After the above | 10.4 |
 | R3a-0 cloud publication design | **Done**, including the capture hold and the main-view filter (its sections 2.5 and 2.6) | `docs/work-orders/reflections/R3a-design.md` |
 | R3a-1 publication | **Committed** (61063f0). `cloud_publish_identity_gpu_test` passes: C1 (native) and C2 (half, 2x2 interleave) give off == on == off-again, byte for byte, for the cloud colour image, the data image and the final frame; C3 (lightning glow published, gone from callback 6), C4 (capture hold) and C5 (another view) pass. Lead corrections over the staged code: the ramp runs on unscaled real time; the bridge keeps the gameplay frame arguments as doubles (as floats the radius never matched the effect's and every frame read as a jump); the test reads the bound RID and params from the bridge status (`global_shader_parameter_get` is editor-only at run time), holds time with `Engine.time_scale = 0`, discards one reset after warm-up and holds the wall-clock cloud-shadow crossfade off (design 4.2). Deviations: B7b un-holds on any camera change, so C4 checks "content kept while held; one complete march on a turn"; the "params never written while off" check became "params.x is 0 while off" (the publication is on from boot); no new manifest tag. Measured: `.b` of the data image is stored at full fp32 on the 4070 (max 172,196 m, 1,378 samples above 65,504, fp16-exact share 0.0001); readers keep the half-float-safe rules of 3.3 | same file |
-| R3a-2 include and parity test | **Written, in the tree, NOT yet run** (2026-11-18): new `materials/ring_cloud_reflection.gdshaderinc` (matches design 3.1/3.2/6.1 on review; no forward declarations, Godot has none; heaviest-tap tie rule for `opaque_limit`: highest weight x coverage, then weight, first wins), new `tools/cloud_reflection_include_gpu_test.gd`, one manifest entry (tag `clouds` only: `reflections` is not a manifest taxonomy tag). Its GPU run `.godot/test_runs/r3a2/20261118-101449` was queued; not committable until it passes with the residual bounds of design 6.2 | same file |
+| R3a-2 include and parity test | **Done, in the tree, ready for commit 2026-11-18.** `cloud_reflection_include_gpu_test` passes (`.godot/test_runs/r3a2_main/20261118-112311`). Residuals against design 6.2: reprojection max 0.00018 texel unjittered (bound 1e-3), jittered 0.1202 / 0.0452 texel against the jitter bound 0.1212 / 0.0461 (mean = the jitter exactly), the odd 801 x 451 case with no half-texel offset (mean residual under 2e-5 texel); 16-direction double reference 2e-7 in uv (tolerance 1e-4); behind/outside valid 0, uv 0.001 valid 0.0058, uv 0.5 valid = params.x; all ten filter patterns match the double reference within 1e-3 (harmonic 3,200 m, near beside far 2,000 m, NaN/inf/1e5 far with weight 1, a 0.05 gives no distance, premultiplied colour, NaN colour tap ignored, enclosed weight, params.x 0, fallback data, heaviest-tap opaque limit 100 m); placement: origin = camera identical, placed uv error 1.8e-7, shift 0.07326 = reference. Test fixes over the staged file (the include is unchanged): no `Vector3.max_axis_value` in GDScript; typed `size` loop; the test shader writes with `blend_disabled` into a transparent viewport (an opaque viewport forced alpha to 1, and alpha carries data); the two-part fp16 encoding clears mantissa bits by hand (the driver folded `unpackHalf2x16(packHalf2x16(v))` to `v` and the target store truncates); no `%e` in GDScript format strings | same file |
 | R3a-3 | Designed, not started | same file |
 | R2 (ring radiance map), R3 (far mirror), R4 (beams), R5 (reserve) | Not designed beyond sections 4 and 6 | — |
 
@@ -748,9 +748,15 @@ Decided by the user on 2026-11-18 (the three sign-off questions below):
 - Q3: far water reflecting less sky is **to be studied first**: far-water roughness and normal variance at distance (Toksvig, LEAN-style roughness from the wave slope variance as normals are filtered), what a physical result looks like, then a proposal with before/after stills. Study: 10.7.
 - R1-6d (fog values, about 0.19 ms): **go**.
 
+Decided on 2026-11-18, second round:
+- Q1 and Q2 interims: **accepted** (user; confirmed).
+- Q3, far water (10.7): **accept the physical far roughness, at model 1 only** (user): inland water (lakes and rivers) 0.155, ocean a constant 0.30 as the first step; the wind-driven Cox and Munk curve for the ocean comes later. No boost.
+- The Water tab row **"Far roughness" is retired at cleanup (R1-8)** with the other rows (user).
+- R1-6b/c: **via global shader parameters**, as the design recommends (primary agent; item 2 below).
+
 For the primary agent:
 1. Offering the user a reset of their water SSR overrides (32 steps, 8 refinements, 1,000 m) to the new High values once R1-5 exists.
-2. R1-6: sky inputs as global shader parameters (recommended by the design; touches four tests) or a snapshot-uniform fallback.
+2. R1-6: sky inputs as global shader parameters (recommended by the design; touches four tests) or a snapshot-uniform fallback. **Decided 2026-11-18: global shader parameters.**
 3. R3a: keep the lightning glow in what reflections read (recommended; it arrives one frame late).
 
 For the user, with the sign-off sheet:
@@ -808,6 +814,8 @@ For the user, with the sign-off sheet:
 4. Not proposed: brightening the far sky term by any factor beyond what a lower roughness gives (that would be a boost; ask the user first).
 
 User questions: (a) accept physically derived far roughness (inland 0.155, ocean from the wind) at model 1? (b) the "Far roughness" row: retire or keep as a multiplier?
+
+**User answers (2026-11-18):** (a) accepted at model 1 only: inland 0.155, ocean a constant 0.30 as the first step (the wind-driven Cox and Munk curve later), no boost; (b) retire the row at R1-8. Model 0 keeps the uniform `far_water_roughness` (0.46, the row) unchanged until cleanup.
 
 ## 11. Sources
 

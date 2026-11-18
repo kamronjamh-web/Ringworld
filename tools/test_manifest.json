@@ -1377,6 +1377,17 @@
       "expected_s": null,
       "timeout_s": 300
     },
+    "cloud_reflection_include_gpu_test": {
+      "kind": "test",
+      "mode": "gpu-local",
+      "tier": "extended",
+      "tags": [
+        "clouds"
+      ],
+      "marker": "CLOUD_REFLECTION_INCLUDE_GPU_TEST",
+      "expected_s": null,
+      "timeout_s": 300
+    },
     "cloud_shadow_crossfade_test": {
       "kind": "test",
       "gpu_class": "exclusive",
