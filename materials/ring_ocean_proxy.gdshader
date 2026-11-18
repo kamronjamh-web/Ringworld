@@ -208,7 +208,6 @@ vec4 ring_water_ssr_horizon(vec3 surface_view, vec3 ray_direction, vec3 up_view,
 	float start_scene_depth = ring_water_view_depth_zw(uv0, inverse_projection);
 	float previous_s = 0.0;
 	float previous_signed_delta = start_scene_depth > 0.0 ? z0 - start_scene_depth : -1.0;
-	bool bracketed = false;
 	bool hit = false;
 	float hit_s = 0.0;
 	vec2 hit_uv = vec2(0.0);
@@ -221,7 +220,6 @@ vec4 ring_water_ssr_horizon(vec3 surface_view, vec3 ray_direction, vec3 up_view,
 		float scene_depth = ring_water_view_depth_zw(uv, inverse_projection);
 		float signed_delta = scene_depth > 0.0 ? ray_depth - scene_depth : -1.0;
 		if (previous_signed_delta < 0.0 && signed_delta >= 0.0) {
-			bracketed = true;
 			float low = previous_s;
 			float high = s;
 			for (int refine = 0; refine < 8; refine++) {
@@ -247,8 +245,19 @@ vec4 ring_water_ssr_horizon(vec3 surface_view, vec3 ray_direction, vec3 up_view,
 				hit_s = high;
 				step_ratio = float(step_index) / float(steps);
 				hit_confidence = 1.0 - smoothstep(0.5 * allowed, allowed, gap_hi);
+				if (same_surface) {
+					// R1-5d: a crossing of one continuous surface is a hit whatever its place inside the final bracket. Rating it by gap_hi / (ray_hi - ray_lo)
+					// made the confidence a sawtooth of the sub-step position: regular stripes on a large surface seen in the water. Place the hit at the
+					// linear crossing of the two signed depth gaps instead, at full confidence.
+					float gap_lo = ray_lo - scene_lo;
+					hit_s = mix(low, high, clamp(-gap_lo / max(gap_hi - gap_lo, 1e-6), 0.0, 1.0));
+					hit_uv = mix(uv0, uv1, hit_s);
+					hit_confidence = 1.0;
+				}
+				break;
 			}
-			break;
+			// R1-5d: a rejected bracket means the ray passed behind a thin occluder (a few-pixel bank strip, a trunk), so it keeps marching (it used to end as
+			// a miss, which also ruled out the hit at infinity).
 		}
 		previous_s = s;
 		previous_signed_delta = signed_delta;
@@ -261,9 +270,9 @@ vec4 ring_water_ssr_horizon(vec3 surface_view, vec3 ray_direction, vec3 up_view,
 		hit_kind = 1.0;
 		return vec4(textureLod(water_screen_texture, hit_uv, roughness * 4.0).rgb, edge_confidence * camera_confidence * roughness_confidence * hit_confidence);
 	}
-	// Hit at infinity: no bracket at all and the vanishing point lands on a backdrop pixel (raw depth 0). The up-guard keeps downward-facing facets out
+	// Hit at infinity: no accepted hit (a rejected bracket does not count, R1-5d) and the vanishing point lands on a backdrop pixel (raw depth 0). The up-guard keeps downward-facing facets out
 	// (their vanishing point lands on water pixels) and the height-guard fades it out for a high camera (the backdrop parallax grows with height).
-	if (reaches_horizon && !bracketed && ring_water_view_depth_zw(uv1, inverse_projection) < 0.0) {
+	if (reaches_horizon && ring_water_view_depth_zw(uv1, inverse_projection) < 0.0) {
 		float edge = min(min(uv1.x, uv1.y), min(1.0 - uv1.x, 1.0 - uv1.y));
 		float edge_confidence = smoothstep(0.0, water_ssr_edge_fade, edge);
 		float up_guard = smoothstep(0.001, 0.004, dot(ray_direction, up_view));
