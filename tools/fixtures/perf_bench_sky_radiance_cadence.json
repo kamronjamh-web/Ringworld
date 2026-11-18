@@ -1,0 +1,118 @@
+{
+ "schema": 1,
+ "note": "R1-6a (docs/work-orders/reflections/R1-6-design.md section 7): what dirties the sky radiance map and how often it is rebuilt. ab_matrix at plains_eye, clocks held, baseline = today (Realtime). Variants: Incremental and Quality modes; atmo_frozen = DaySideAtmosphere process disabled (no sky material writes at all; with clocks held its inputs are constant, so nothing visible changes); atmo_frozen_fog_match = also the main Environment's seven fog values set to the far Environment's (engine defaults, fog stays off), removing the suspected main/far fog flip; atmo_frozen_incremental. Read gpu_total_p50 and the per-viewport vp.*.gpu_p50 deltas. Run: tools/perf_bench.ps1 -Label refl_r16a -ScenarioFile tools/fixtures/perf_bench_sky_radiance_cadence.json",
+ "defaults": {
+  "window_s": 8,
+  "rounds": 2,
+  "settle_s": 4,
+  "time": {
+   "mode": "noon"
+  },
+  "hold_clocks": false
+ },
+ "key_scopes": [],
+ "poses": {
+  "plains_eye": {
+   "around_m": 6380021.26995006,
+   "across_m": 166154.022585299,
+   "lift_m": 1.7,
+   "yaw_deg": 0.0,
+   "pitch_deg": -3.0,
+   "notes": "Plains on a 1.5 km ring, ground 741 m"
+  }
+ },
+ "scenarios": [
+  {
+   "name": "plains",
+   "kind": "stand",
+   "pose": "plains_eye",
+   "window_s": 4,
+   "rounds": 1
+  },
+  {
+   "name": "r16a_plains_noon",
+   "kind": "ab_matrix",
+   "pose": "plains_eye",
+   "window_s": 6,
+   "rounds": 3,
+   "hold_clocks": true,
+   "stills": false,
+   "variants": [
+    {
+     "name": "sky_incremental",
+     "ops": [
+      {
+       "sky": {
+        "process_mode": 2
+       }
+      }
+     ]
+    },
+    {
+     "name": "sky_quality",
+     "ops": [
+      {
+       "sky": {
+        "process_mode": 1
+       }
+      }
+     ]
+    },
+    {
+     "name": "atmo_frozen",
+     "ops": [
+      {
+       "node": "DaySideAtmosphere",
+       "set": {
+        "process_mode": 4
+       }
+      }
+     ]
+    },
+    {
+     "name": "atmo_frozen_fog_match",
+     "ops": [
+      {
+       "node": "DaySideAtmosphere",
+       "set": {
+        "process_mode": 4
+       }
+      },
+      {
+       "env": {
+        "fog_density": 0.01,
+        "fog_light_color": [
+         0.518,
+         0.553,
+         0.608,
+         1.0
+        ],
+        "fog_light_energy": 1.0,
+        "fog_sun_scatter": 0.0,
+        "fog_aerial_perspective": 0.0,
+        "fog_sky_affect": 1.0
+       }
+      }
+     ]
+    },
+    {
+     "name": "atmo_frozen_incremental",
+     "ops": [
+      {
+       "node": "DaySideAtmosphere",
+       "set": {
+        "process_mode": 4
+       }
+      },
+      {
+       "sky": {
+        "process_mode": 2
+       }
+      }
+     ]
+    }
+   ],
+   "pitch_deg": -3
+  }
+ ]
+}

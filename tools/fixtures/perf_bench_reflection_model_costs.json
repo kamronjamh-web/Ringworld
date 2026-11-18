@@ -1,0 +1,365 @@
+{
+ "schema": 1,
+ "note": "Cost of the reflection model switch (docs/reflections-plan.md 10.2, 10.3; sign-off R1-7): ab_matrix scenarios (tools/perf_bench_ab_matrix.gd) measure model 1 against model 0 (op reflection_model) in interleaved A-X-A windows at each probe pose, clocks held, the user's settings. User rule: model 1 may cost at most +0.2 ms GPU over model 0 on High at any measured pose. Run: tools/perf_bench.ps1 -Label refl_model_cost -ScenarioFile tools/fixtures/perf_bench_reflection_model_costs.json . Same schema as perf_bench_reflection_costs.json; force_wet is [film, soak, standing, rain] for WetWorld.ForceUniform.",
+ "defaults": {
+  "window_s": 8,
+  "rounds": 2,
+  "settle_s": 4,
+  "time": {
+   "mode": "noon"
+  },
+  "hold_clocks": false
+ },
+ "key_scopes": [
+  "Trees frame request",
+  "Trees update (inclusive)",
+  "Trees camera cull",
+  "Trees output selection",
+  "Trees install",
+  "Grass update (inclusive)",
+  "Grass presentation (inclusive)",
+  "Water update",
+  "Terrain macro shadow install",
+  "Terrain macro shadow build",
+  "Terrain LOD coordinator update (inclusive)",
+  "Terrain proxy update (inclusive)",
+  "Terrain proxy install",
+  "Far ring update (inclusive)"
+ ],
+ "poses": {
+  "plains_eye": {
+   "around_m": 6380021.26995006,
+   "across_m": 166154.022585299,
+   "lift_m": 1.7,
+   "yaw_deg": 0.0,
+   "pitch_deg": -3.0,
+   "notes": "Plains on a 1.5 km ring, ground 741 m"
+  },
+  "plains_arch": {
+   "around_m": 6380021.26995006,
+   "across_m": 166154.022585299,
+   "lift_m": 1.7,
+   "yaw_deg": 0.0,
+   "pitch_deg": 8.0,
+   "notes": "plains_eye with pitch 8: the distant terrain band at eye level and the arch above"
+  },
+  "coast_eye": {
+   "around_m": 6338521.26995006,
+   "across_m": 190404.022585299,
+   "lift_m": 1.7,
+   "yaw_deg": 112.5,
+   "pitch_deg": -2.0,
+   "notes": "land 3.8 m, ocean 250 m along yaw 112.5"
+  },
+  "forest_interior_eye": {
+   "around_m": 6381171.26995006,
+   "across_m": 151854.022585299,
+   "lift_m": 1.7,
+   "yaw_deg": 0.0,
+   "pitch_deg": 0.0,
+   "notes": "dense forest, 6 trees within 30 m, ground 675 m"
+  },
+  "alt300_plains": {
+   "around_m": 6380021.26995006,
+   "across_m": 166154.022585299,
+   "lift_m": 300.0,
+   "yaw_deg": 0.0,
+   "pitch_deg": -15.0,
+   "notes": "plains_eye 300 m up, pitched down 15"
+  },
+  "wl_dam": {
+   "poi": "weather_lung",
+   "viewpoint": 0,
+   "notes": "Weather Lung viewpoint 0 (dam), breath frozen"
+  },
+  "wl_overlook": {
+   "poi": "weather_lung",
+   "viewpoint": 1,
+   "notes": "Weather Lung viewpoint 1 (overlook), breath frozen"
+  },
+  "emitter_rim": {
+   "poi": "emitter",
+   "viewpoint": 0,
+   "notes": "main emitter site, viewpoint 0"
+  },
+  "save_spot": {
+   "around_m": 20295044.84,
+   "across_m": 123862.6,
+   "vertical_m": 624.12,
+   "yaw_deg": 144.49,
+   "pitch_deg": 2.08,
+   "notes": "the user's save spot during the 2026-11 perf pass (perf-pass doc 0.x, the nt/waste/gpub drivers): noclip hover at 624 m absolute"
+  },
+  "emitter_bore": {
+   "poi": "emitter",
+   "viewpoint": 1,
+   "notes": "main emitter site, viewpoint 1 (bore), as shadow_harness_common emitter_bore_noon"
+  }
+ },
+ "scenarios": [
+  {
+   "name": "plains",
+   "kind": "stand",
+   "pose": "plains_eye",
+   "window_s": 4,
+   "rounds": 1
+  },
+  {
+   "name": "m1_plains_dry",
+   "kind": "ab_matrix",
+   "pose": "plains_eye",
+   "window_s": 5,
+   "rounds": 3,
+   "hold_clocks": true,
+   "stills": false,
+   "variants": [
+    {
+     "name": "model1",
+     "ops": [
+      {
+       "reflection_model": 1
+      }
+     ]
+    }
+   ],
+   "pitch_deg": -12
+  },
+  {
+   "name": "m1_plains_wet",
+   "kind": "ab_matrix",
+   "pose": "plains_eye",
+   "window_s": 5,
+   "rounds": 3,
+   "hold_clocks": true,
+   "stills": false,
+   "variants": [
+    {
+     "name": "model1",
+     "ops": [
+      {
+       "reflection_model": 1
+      }
+     ]
+    }
+   ],
+   "pitch_deg": -12,
+   "force_wet": [
+    1.0,
+    1.0,
+    0.9,
+    0.0
+   ]
+  },
+  {
+   "name": "m1_forest_wet",
+   "kind": "ab_matrix",
+   "pose": "forest_interior_eye",
+   "window_s": 5,
+   "rounds": 3,
+   "hold_clocks": true,
+   "stills": false,
+   "variants": [
+    {
+     "name": "model1",
+     "ops": [
+      {
+       "reflection_model": 1
+      }
+     ]
+    }
+   ],
+   "pitch_deg": -12,
+   "force_wet": [
+    1.0,
+    1.0,
+    0.9,
+    0.0
+   ]
+  },
+  {
+   "name": "m1_alt300_wet",
+   "kind": "ab_matrix",
+   "pose": "alt300_plains",
+   "window_s": 5,
+   "rounds": 3,
+   "hold_clocks": true,
+   "stills": false,
+   "variants": [
+    {
+     "name": "model1",
+     "ops": [
+      {
+       "reflection_model": 1
+      }
+     ]
+    }
+   ],
+   "pitch_deg": -12,
+   "force_wet": [
+    1.0,
+    1.0,
+    0.9,
+    0.0
+   ]
+  },
+  {
+   "name": "m1_coast",
+   "kind": "ab_matrix",
+   "pose": "coast_eye",
+   "window_s": 5,
+   "rounds": 3,
+   "hold_clocks": true,
+   "stills": false,
+   "variants": [
+    {
+     "name": "model1",
+     "ops": [
+      {
+       "reflection_model": 1
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "m1_coast_lift",
+   "kind": "ab_matrix",
+   "pose": "coast_eye",
+   "window_s": 5,
+   "rounds": 3,
+   "hold_clocks": true,
+   "stills": false,
+   "variants": [
+    {
+     "name": "model1",
+     "ops": [
+      {
+       "reflection_model": 1
+      }
+     ]
+    }
+   ],
+   "lift_m": 25,
+   "pitch_deg": -6
+  },
+  {
+   "name": "m1_wl_dam",
+   "kind": "ab_matrix",
+   "pose": "wl_dam",
+   "window_s": 5,
+   "rounds": 3,
+   "hold_clocks": true,
+   "stills": false,
+   "variants": [
+    {
+     "name": "model1",
+     "ops": [
+      {
+       "reflection_model": 1
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "m1_wl_overlook",
+   "kind": "ab_matrix",
+   "pose": "wl_overlook",
+   "window_s": 5,
+   "rounds": 3,
+   "hold_clocks": true,
+   "stills": false,
+   "variants": [
+    {
+     "name": "model1",
+     "ops": [
+      {
+       "reflection_model": 1
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "m1_emitter_rim",
+   "kind": "ab_matrix",
+   "pose": "emitter_rim",
+   "window_s": 5,
+   "rounds": 3,
+   "hold_clocks": true,
+   "stills": false,
+   "variants": [
+    {
+     "name": "model1",
+     "ops": [
+      {
+       "reflection_model": 1
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "m1_emitter_bore",
+   "kind": "ab_matrix",
+   "pose": "emitter_bore",
+   "window_s": 5,
+   "rounds": 3,
+   "hold_clocks": true,
+   "stills": false,
+   "variants": [
+    {
+     "name": "model1",
+     "ops": [
+      {
+       "reflection_model": 1
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "m1_night_emitter",
+   "kind": "ab_matrix",
+   "pose": "emitter_rim",
+   "window_s": 5,
+   "rounds": 3,
+   "hold_clocks": true,
+   "stills": false,
+   "variants": [
+    {
+     "name": "model1",
+     "ops": [
+      {
+       "reflection_model": 1
+      }
+     ]
+    }
+   ],
+   "time": {
+    "mode": "elevation",
+    "value": -30.0,
+    "rising": false
+   }
+  },
+  {
+   "name": "m1_save_spot",
+   "kind": "ab_matrix",
+   "pose": "save_spot",
+   "window_s": 5,
+   "rounds": 3,
+   "hold_clocks": true,
+   "stills": false,
+   "variants": [
+    {
+     "name": "model1",
+     "ops": [
+      {
+       "reflection_model": 1
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
