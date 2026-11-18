@@ -20,8 +20,22 @@ param(
 )
 $ErrorActionPreference = "Stop"
 $dir = Join-Path (Split-Path -Parent $PSScriptRoot) ".godot\gpu_queue"
+if ($env:RINGWORLD_GPU_QUEUE_DIR) { $dir = $env:RINGWORLD_GPU_QUEUE_DIR }   # tests only
 New-Item -ItemType Directory -Force $dir | Out-Null
 $staleAfter = [TimeSpan]::FromMinutes(15)   # holders heartbeat every <= 5-10 min, waiters every 15 s
+$historyPath = Join-Path $dir "history.jsonl"
+
+# One JSON line per queue event (enqueue, acquire, release, timeout) for later wait analysis; never changes the queue's behaviour or output.
+function Write-History([string]$kind, $waitedSeconds = $null) {
+    try {
+        $o = [ordered]@{ time = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"); event = $kind; label = $Label; pid = $PID }
+        if ($null -ne $waitedSeconds) { $o["waited_s"] = [math]::Round([double]$waitedSeconds, 1) }
+        $line = ($o | ConvertTo-Json -Compress) + "`n"
+        for ($i = 1; $i -le 4; $i++) {
+            try { [System.IO.File]::AppendAllText($historyPath, $line); break } catch { Start-Sleep -Milliseconds (40 * $i) }
+        }
+    } catch { }
+}
 
 function Get-Tickets {
     Get-ChildItem $dir -Filter *.ticket | ForEach-Object {
@@ -36,20 +50,23 @@ function Invoke-Acquire {
     if (-not $mine) {
         $name = "{0:D20}_{1}.ticket" -f [DateTime]::UtcNow.Ticks, $Label
         $mine = New-Item -ItemType File (Join-Path $dir $name) -ErrorAction Stop
+        Write-History "enqueue"
     }
+    $t0 = Get-Date
     $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
     while ((Get-Date) -lt $deadline) {
         $mine.LastWriteTime = Get-Date
         $head = Get-Tickets | Select-Object -First 1
-        if ($head -and $head.Name -eq $mine.Name) { "GPU_ACQUIRED $Label"; return $true }
+        if ($head -and $head.Name -eq $mine.Name) { Write-History "acquire" ((Get-Date) - $t0).TotalSeconds; "GPU_ACQUIRED $Label"; return $true }
         Start-Sleep -Seconds 15
     }
     Remove-Item $mine.FullName -ErrorAction SilentlyContinue
+    Write-History "timeout" ((Get-Date) - $t0).TotalSeconds
     "GPU_TIMEOUT $Label"; return $false
 }
 function Invoke-Release {
     $m = Get-Mine
-    if ($m) { Remove-Item $m.FullName -ErrorAction SilentlyContinue }
+    if ($m) { Remove-Item $m.FullName -ErrorAction SilentlyContinue; Write-History "release" }
     "GPU_RELEASED $Label (wait >= 60 s before acquiring again)"
 }
 

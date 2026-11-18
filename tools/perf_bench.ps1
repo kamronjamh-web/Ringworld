@@ -12,13 +12,14 @@
   .\tools\perf_bench.ps1 -Label x -ReportFrom .godot\perf_bench\x\<run id>    # rebuild report.json / report.md of a finished run (no game)
 .NOTES
   World: never the live slot. The first run (or -Snapshot) copies worlds\slot_3 (and the top-level settings .tres files) of the real profile to
-  %APPDATA%\Godot\app_userdata\RingworldTechDemo\bench_worlds\slot3_<date>\ ; every run copies from that snapshot into the isolated profile
+  %APPDATA%\Godot\app_userdata\RingworldTechDemo\bench_worlds\slot3_<date>\ ; every run mirrors that snapshot (robocopy /MIR, only what the game changed is copied) into the isolated profile
   .godot\appdata_perf_bench (one reused profile, the game autosaves into the copy). -World <snapshot dir or world dir> overrides it. The real profile is only READ,
   and only the snapshot step writes (below bench_worlds). Settings: the snapshot's frozen copy of the user's *.tres files is used (-LiveSettings: the live files now);
   the values that were used are recorded in report.json (settings_files) and report.md.
-  Safety: exits 9 (USER_PLAYING) when a Godot with --remote-debug runs or .godot\mono\temp\bin\DebugPlaySaved holds an assembly. Takes the GPU queue for the whole run
-  (tools/gpu_queue.ps1 -Wrap; do not wrap this in the queue). The optimized C# assembly (bin\OptRelease, as tools/play.ps1) is swapped into the Debug slot and
-  restored in a finally block. It is rebuilt when a .cs file is newer (or with -Build); -SkipBuild reuses it. Never kills a Godot it did not start.
+  Safety: exits 9 (USER_PLAYING) when a Godot with --remote-debug runs or .godot\mono\temp\bin\DebugPlaySaved holds an assembly. Takes the GPU queue (tools/gpu_queue.ps1 -Wrap; do not wrap this in the queue)
+  only for the Godot part: the staleness check (git ls-files), the optimized build (under .godot\mono\temp\opt_build.lock) and the prune run before the ticket, the
+  world mirror (robocopy /MIR), assembly swap and launch inside it, the report and baseline deltas after it. The optimized C# assembly (bin\OptRelease, as tools/play.ps1) is
+  swapped into the Debug slot and restored in a finally block. It is rebuilt when a .cs file is newer (or with -Build); -SkipBuild reuses it. Never kills a Godot it did not start.
   Output: .godot\perf_bench\<Label>\<run id>\ (report.json, report.md, driver_report.json, console.log, power_log.csv, stills\). Verdict line PERF_BENCH=PASS / FAIL.
   Exit: 0 pass, 1 fail (a scenario failed, no verdict, or -FailOnRegression and a regression), 2 setup problem, 9 user playing.
   VSync: all windows are VSync off (GPU-bound numbers, comparable with the perf-pass doc); -VsyncOn adds one extra pass of the scenarios marked vsync_pass with VSync as shipped.
@@ -229,6 +230,10 @@ function Build-Report([string]$out, [hashtable]$ctx) {
     machine = (Get-Machine $drv); power = (Get-PowerSummary (Join-Path $out "power_log.csv"))
     scenarios = [ordered]@{}; stills = $drv.stills; skipped = $drv.skipped; errors = $drv.errors; godot_exit = $ctx.godot_exit
   }
+  # Driver kinds whose results are not in "scenarios": carried through unchanged (no report.md section yet).
+  $probes = @($drv["reflection_probes"] | Where-Object { $null -ne $_ }); $matrices = @($drv["ab_matrices"] | Where-Object { $null -ne $_ })
+  if ($drv.ContainsKey("reflection_probes")) { $rep["reflection_probes"] = $drv["reflection_probes"] }
+  if ($drv.ContainsKey("ab_matrices")) { $rep["ab_matrices"] = $drv["ab_matrices"] }
   foreach ($s in $drv.scenarios) {
     $entry = [ordered]@{ name = $s.name; kind = $s.kind; pose_name = $s.pose_name; pose = $s.pose; vsync = $s.vsync; window_s = $s.window_s; rounds = @($s.rounds).Count; setup = $s.setup }
     if ($s.ContainsKey("error")) { $entry["error"] = $s.error }
@@ -243,11 +248,12 @@ function Build-Report([string]$out, [hashtable]$ctx) {
   }
   $verdict = "PASS"; $why = @()
   $expected = @($drv.selected)
-  foreach ($n in $expected) { if (-not $rep.scenarios.Contains($n)) { $verdict = "FAIL"; $why += "scenario $n did not run" } }
+  foreach ($n in $expected) { if (-not $rep.scenarios.Contains($n) -and @($probes + $matrices | Where-Object { $_.name -eq $n }).Count -eq 0) { $verdict = "FAIL"; $why += "scenario $n did not run" } }
   foreach ($n in $rep.scenarios.Keys) { if ($rep.scenarios[$n].Contains("error")) { $verdict = "FAIL"; $why += "$n : $($rep.scenarios[$n].error)" } }
+  foreach ($e in @($probes + $matrices)) { if ($e.ContainsKey("error")) { $verdict = "FAIL"; $why += "$($e.name) : $($e.error)" } }
   foreach ($st in @($drv.stills)) { if ($st.ContainsKey("error")) { $verdict = "FAIL"; $why += "still $($st.name): $($st.error)" } }
   foreach ($e in @($drv.errors)) { $verdict = "FAIL"; $why += "$e" }
-  if (-not $drv.ContainsKey("selected") -or @($drv.scenarios).Count -eq 0) { $verdict = "FAIL"; $why += "driver reported no scenarios" }
+  if (-not $drv.ContainsKey("selected") -or @($drv.scenarios).Count + $probes.Count + $matrices.Count -eq 0) { $verdict = "FAIL"; $why += "driver reported no scenarios" }
   $rep["verdict"] = $verdict; $rep["verdict_reasons"] = $why
   return $rep
 }
@@ -443,34 +449,131 @@ foreach ($n in $Scenarios) { foreach ($x in ($n -split ",")) { if ($x -and $x -n
 $Scenarios = @($Scenarios | ForEach-Object { $_ -split "," } | Where-Object { $_ })
 if ($Quick -and $Scenarios.Count -gt 0) { Write-Host "$marker=FAIL use -Quick or -Scenarios, not both"; exit 2 }
 
+$monoTemp = Join-Path $project ".godot\mono\temp"
+$optDir = Join-Path $monoTemp "bin\OptRelease"
+$optDll = Join-Path $optDir "$name.dll"; $optPdb = Join-Path $optDir "$name.pdb"
+
+# True when a .cs file (tracked or untracked, not ignored) is newer than the optimized assembly. Any git failure counts as stale (build), never fresh.
+function Test-OptStale {
+  if (-not (Test-Path $optDll)) { return $true }
+  $built = (Get-Item $optDll).LastWriteTimeUtc
+  $ErrorActionPreference = 'Continue'   # 5.1 turns native stderr (CRLF warnings) into terminating errors otherwise
+  $tracked = @(& git -C $project -c core.quotepath=false ls-files '*.cs' 2>$null)
+  if ($LASTEXITCODE -ne 0) { return $true }
+  $others = @(& git -C $project -c core.quotepath=false ls-files --others --exclude-standard '*.cs' 2>$null)
+  if ($LASTEXITCODE -ne 0) { return $true }
+  foreach ($f in @($tracked + $others)) {
+    if (-not $f -or $f -match '(^|/)(\.godot|artifacts|addons|\.git)/') { continue }
+    $fi = New-Object System.IO.FileInfo (Join-Path $project $f)
+    if ($fi.Exists -and $fi.LastWriteTimeUtc -gt $built) { return $true }
+  }
+  return $false
+}
+
+# Staleness check and optimized build, serialised by a lock file because two agents may prepare at once. Returns 0 or the exit code to stop with.
+function Invoke-OptBuild {
+  New-Item -ItemType Directory -Force $monoTemp | Out-Null
+  $lockPath = Join-Path $monoTemp "opt_build.lock"
+  $lock = $null
+  $deadline = (Get-Date).AddMinutes(10)
+  while (-not $lock) {
+    try { $lock = [System.IO.File]::Open($lockPath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None) }
+    catch [System.IO.IOException] {
+      if ((Get-Date) -gt $deadline) { Write-Host "$marker=FAIL the optimized build lock $lockPath was held for 10 min"; return 2 }
+      Write-Host "waiting for another run to finish the optimized build (lock $lockPath) ..."
+      Start-Sleep -Seconds 2
+    }
+  }
+  try {
+    $stale = Test-OptStale
+    if ($Build -or (-not $SkipBuild -and $stale)) {
+      $dotnetRoot = Join-Path $project "artifacts\engine-upgrade\dotnet"
+      $envNames = @('DOTNET_ROOT', 'DOTNET_ROOT_X64', 'PATH', 'DOTNET_CLI_HOME', 'NUGET_PACKAGES', 'NUGET_HTTP_CACHE_PATH', 'DOTNET_CLI_TELEMETRY_OPTOUT', 'DOTNET_GENERATE_ASPNET_CERTIFICATE', 'DOTNET_ADD_GLOBAL_TOOLS_TO_PATH')
+      $oldEnv = @{}; foreach ($n in $envNames) { $oldEnv[$n] = [Environment]::GetEnvironmentVariable($n, 'Process') }
+      try {
+        $env:DOTNET_ROOT = $dotnetRoot; $env:DOTNET_ROOT_X64 = $dotnetRoot; $env:PATH = "$dotnetRoot;$($oldEnv['PATH'])"
+        $env:DOTNET_CLI_HOME = Join-Path $project 'artifacts\engine-upgrade\dotnet-cli'
+        $env:NUGET_PACKAGES = Join-Path $project 'artifacts\engine-upgrade\nuget-packages'
+        $env:NUGET_HTTP_CACHE_PATH = Join-Path $project 'artifacts\engine-upgrade\nuget-http-cache'
+        $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'; $env:DOTNET_GENERATE_ASPNET_CERTIFICATE = 'false'; $env:DOTNET_ADD_GLOBAL_TOOLS_TO_PATH = 'false'
+        Write-Host "Building optimized C# into $optDir ..."
+        & (Join-Path $dotnetRoot 'dotnet.exe') build (Join-Path $project "$name.csproj") -c Debug -p:Optimize=true -p:NuGetAudit=false -v:minimal "-p:OutputPath=$optDir\" "-p:IntermediateOutputPath=$(Join-Path $monoTemp 'obj\OptRelease')\" | Out-Host
+        $buildExit = $LASTEXITCODE
+      } finally { foreach ($n in $envNames) { [Environment]::SetEnvironmentVariable($n, $oldEnv[$n], 'Process') } }
+      if ($buildExit -ne 0) { Write-Host "$marker=FAIL optimized C# build failed (exit $buildExit)"; return 1 }
+    }
+    if (-not (Test-Path $optDll)) { Write-Host "$marker=FAIL no OptRelease build (run with -Build)"; return 1 }
+    return 0
+  } finally { $lock.Dispose() }
+}
+
 if (-not $InQueue) {
   $worldInfo = Resolve-BenchWorld   # may create the snapshot (reads the live slot; before the queue, no GPU needed)
   if ($SnapshotOnly) { Write-Host "snapshot ready: $($worldInfo.dir)"; exit 0 }
   if (-not $RunId) { $RunId = Get-Date -Format "yyyyMMdd_HHmmss" }
+  $baseRun = $null
+  if ($Baseline) { $baseRun = Find-BaselineRun $Baseline; if (-not $baseRun) { Write-Host "$marker=FAIL no baseline run with a report.json under $benchRoot\$Baseline"; exit 2 } }
+  if ($SettingsOverlay) {
+    $overlayDir = if ([System.IO.Path]::IsPathRooted($SettingsOverlay)) { $SettingsOverlay } else { Join-Path $project $SettingsOverlay }
+    if (-not (Test-Path -LiteralPath $overlayDir)) { Write-Host "$marker=FAIL settings overlay directory not found: $overlayDir"; exit 2 }
+  }
+  # Everything that does not need the GPU happens before the ticket: the build (staleness check, lock) and the prune.
+  $buildRc = Invoke-OptBuild
+  if ($buildRc -ne 0) { exit $buildRc }
+  & (Join-Path $PSScriptRoot "prune_test_output.ps1") -Apply -Quiet -Exclude "appdata_perf_bench", "perf_bench"
+  $mode = if ($Quick) { "quick" } elseif ($Scenarios.Count -gt 0) { "scenarios: " + ($Scenarios -join ",") } else { "full" }
+  $out = Join-Path $benchRoot "$Label\$RunId"
+  New-Item -ItemType Directory -Force $out | Out-Null
+  $ctxPath = Join-Path $out "run_context.json"
+  Remove-Item -LiteralPath $ctxPath -Force -ErrorAction SilentlyContinue
+  # The inner part (in the ticket) only launches Godot; the build, report and baseline comparison are done here.
   $inner = "& $(Quote $PSCommandPath) -InQueue -Label $(Quote $Label) -RunId $RunId -Resolution $Resolution -TimeoutMin $TimeoutMin -World $(Quote $worldInfo.dir) -WindowScale $WindowScale -Rounds $Rounds"
   if ($Quick) { $inner += " -Quick" }
   if ($Scenarios.Count -gt 0) { $inner += " -Scenarios " + (($Scenarios | ForEach-Object { Quote $_ }) -join ",") }
-  foreach ($sw in @("VsyncOn", "Stills", "FailOnRegression", "LiveSettings", "Build", "SkipBuild")) { if ((Get-Variable $sw).Value) { $inner += " -$sw" } }
-  if ($Baseline) { $inner += " -Baseline $(Quote $Baseline)" }
+  foreach ($sw in @("VsyncOn", "Stills", "LiveSettings")) { if ((Get-Variable $sw).Value) { $inner += " -$sw" } }
   if ($EngineArgs) { $inner += " -EngineArgs $(Quote $EngineArgs)" }
   if ($ScenarioFile) { $inner += " -ScenarioFile $(Quote $scenarioPath)" }
   if ($SettingsOverlay) { $inner += " -SettingsOverlay $(Quote $SettingsOverlay)" }
   # One queue ticket per run: gpu_queue finds tickets by label, so a shared label let a second bench match the first one's ticket,
   # run at once on the shared appdata_perf_bench profile and release the other run's ticket (2026-11-17).
   & (Join-Path $PSScriptRoot "gpu_queue.ps1") -Label "perf_bench_$($Label)_$RunId" -Wrap $inner
-  exit $LASTEXITCODE
+  $wrapExit = $LASTEXITCODE
+  # ---- the ticket is released: report, baseline deltas, stills comparison, prune
+  if (-not (Test-Path $ctxPath)) {
+    if ($wrapExit -eq 0) { Write-Host "$marker=FAIL the run left no run_context.json in $out"; exit 1 }
+    exit $wrapExit   # 9 user playing, 2 setup problem, 1 queue timeout; the inner part printed the reason
+  }
+  $rc = Read-JsonHash $ctxPath
+  $code = $rc.godot_exit
+  Write-Host "godot exit $code, output $out"
+  if (-not (Test-Path (Join-Path $out "driver_report.json"))) {
+    Write-Host "$marker=FAIL no driver_report.json (godot exit $code); see $out\console.log"
+    exit 1
+  }
+  $ctx = @{ label = $Label; run_id = $RunId; started = $rc.started; mode = $mode; args = @{ quick = [bool]$Quick; scenarios = $Scenarios; scenario_file = $ScenarioFile; settings_overlay = $SettingsOverlay; vsync_on = [bool]$VsyncOn; stills = [bool]$Stills; rounds = $Rounds; window_scale = $WindowScale; baseline = $Baseline; live_settings = [bool]$LiveSettings }
+    git = (Get-GitInfo); world_meta = $worldInfo.meta; settings_source = $rc.settings_source; settings = $rc.settings; resolution = $Resolution; godot_exit = $code }
+  $rep = Build-Report $out $ctx
+  if ($baseRun) {
+    Add-Baseline $rep (Join-Path $baseRun.FullName "report.json")
+    if ($Stills) { Add-StillsCompare $rep $out $baseRun.FullName }
+  }
+  Save-Report $rep $out
+  Write-Host "report: $out\report.md"
+  Get-Content -LiteralPath (Join-Path $out "report.md") | Select-Object -First 60 | ForEach-Object { Write-Host $_ }
+  $regressed = if ($rep.Contains("baseline")) { [int]$rep.baseline.counts.regressed } else { 0 }
+  if ($rep.Contains("baseline")) { Write-Host "BASELINE_DELTAS improved=$($rep.baseline.counts.improved) regressed=$regressed within_noise=$($rep.baseline.counts.within_noise)" }
+  & (Join-Path $PSScriptRoot "prune_test_output.ps1") -Apply -Quiet -Exclude "appdata_perf_bench", "perf_bench"
+  if ($rep.verdict -ne "PASS") { Write-Host "$marker=FAIL $($rep.verdict_reasons -join '; ')"; exit 1 }
+  if ($FailOnRegression -and $regressed -gt 0) { Write-Host "$marker=FAIL $regressed regressed metric(s) against baseline $Baseline (-FailOnRegression)"; exit 1 }
+  Write-Host "$marker=PASS"
+  exit 0
 }
 
-# ------------------------------------------------------------------ inside the queue
+# ------------------------------------------------------------------ inside the queue (GPU needed only from here): restore, launch, restore. Report building is the outer part's job.
 $worldInfo = Resolve-BenchWorld
 $exe = Join-Path $project "artifacts\engine-upgrade\Godot_v4.8-dev7_mono_win64\Godot_v4.8-dev7_mono_win64_console.exe"
-$monoTemp = Join-Path $project ".godot\mono\temp"
-$mode = if ($Quick) { "quick" } elseif ($Scenarios.Count -gt 0) { "scenarios: " + ($Scenarios -join ",") } else { "full" }
 $out = Join-Path $benchRoot "$Label\$RunId"
 New-Item -ItemType Directory -Force $out | Out-Null
-$baseRun = $null
-if ($Baseline) { $baseRun = Find-BaselineRun $Baseline; if (-not $baseRun) { Write-Host "$marker=FAIL no baseline run with a report.json under $benchRoot\$Baseline"; exit 2 } }
-& (Join-Path $PSScriptRoot "prune_test_output.ps1") -Apply -Quiet -Exclude "appdata_perf_bench", "perf_bench"
 if (Get-UserPlaying) { Write-Host "USER_PLAYING"; Write-Host "$marker=FAIL the user is playing; exit 9"; exit 9 }
 
 # ---- isolated profile (one reused profile): caches copied once, world and settings restored from the snapshot before every run
@@ -485,12 +588,17 @@ if ((-not (Test-Path $iso))) {
 $otherBench = @(Get-CimInstance Win32_Process -Filter "Name like 'Godot%'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*res://tools/perf_bench.gd*" })
 if ($otherBench.Count -gt 0) { Write-Host "$marker=FAIL another perf_bench Godot is still running (pid $($otherBench[0].ProcessId)) on the shared profile; not touching it"; exit 2 }
 $isoSlot = Join-Path $iso "worlds\slot_3"
-if (Test-Path $isoSlot) {
-  if ((Resolve-Path $isoSlot).Path -notlike "*\.godot\appdata_perf_bench\*") { throw "refusing: $isoSlot" }
-  Remove-Item -Recurse -Force $isoSlot
-}
+if ([System.IO.Path]::GetFullPath($isoSlot) -notlike "*\.godot\appdata_perf_bench\*") { throw "refusing: $isoSlot" }
+if (-not (Test-Path -LiteralPath (Join-Path $worldInfo.world "world.json"))) { Write-Host "$marker=FAIL the benchmark world $($worldInfo.world) has no world.json"; exit 2 }
 New-Item -ItemType Directory -Force (Join-Path $iso "worlds") | Out-Null
-Copy-Item -Recurse $worldInfo.world $isoSlot
+# Mirror the frozen world into the profile: only what the game changed is copied (the snapshot is the source and is never written).
+& robocopy $worldInfo.world $isoSlot /MIR /R:1 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+if ($LASTEXITCODE -ge 8) { Write-Host "$marker=FAIL robocopy of the world failed (exit $LASTEXITCODE)"; exit 2 }
+$srcStat = Get-ChildItem -LiteralPath $worldInfo.world -Recurse -File -Force | Measure-Object -Property Length -Sum
+$dstStat = Get-ChildItem -LiteralPath $isoSlot -Recurse -File -Force | Measure-Object -Property Length -Sum
+if ($srcStat.Count -ne $dstStat.Count -or $srcStat.Sum -ne $dstStat.Sum) {
+  Write-Host "$marker=FAIL world restore mismatch: snapshot $($srcStat.Count) files / $($srcStat.Sum) bytes, profile $($dstStat.Count) files / $($dstStat.Sum) bytes"; exit 2
+}
 Get-ChildItem $iso -File -Filter *.tres | Remove-Item -Force
 $settingsSource = ""
 if ($LiveSettings -or -not $worldInfo.settings -or -not (Test-Path $worldInfo.settings)) {
@@ -509,32 +617,8 @@ if ($SettingsOverlay) {
 }
 $settings = Get-SettingsValues $iso
 
-# ---- optimized assembly
+# ---- optimized assembly (built by the outer part)
 $slotDll = Join-Path $monoTemp "bin\Debug\$name.dll"; $slotPdb = Join-Path $monoTemp "bin\Debug\$name.pdb"
-$optDir = Join-Path $monoTemp "bin\OptRelease"
-$optDll = Join-Path $optDir "$name.dll"; $optPdb = Join-Path $optDir "$name.pdb"
-$stale = $true
-if (Test-Path $optDll) {
-  $built = (Get-Item $optDll).LastWriteTimeUtc
-  $newer = Get-ChildItem $project -Recurse -Include *.cs -File -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '\\(\.godot|artifacts|addons|\.git)\\' -and $_.LastWriteTimeUtc -gt $built } | Select-Object -First 1
-  $stale = [bool]$newer
-}
-if ($Build -or (-not $SkipBuild -and $stale)) {
-  $dotnetRoot = Join-Path $project "artifacts\engine-upgrade\dotnet"
-  $envNames = @('DOTNET_ROOT', 'DOTNET_ROOT_X64', 'PATH', 'DOTNET_CLI_HOME', 'NUGET_PACKAGES', 'NUGET_HTTP_CACHE_PATH', 'DOTNET_CLI_TELEMETRY_OPTOUT', 'DOTNET_GENERATE_ASPNET_CERTIFICATE', 'DOTNET_ADD_GLOBAL_TOOLS_TO_PATH')
-  $oldEnv = @{}; foreach ($n in $envNames) { $oldEnv[$n] = [Environment]::GetEnvironmentVariable($n, 'Process') }
-  try {
-    $env:DOTNET_ROOT = $dotnetRoot; $env:DOTNET_ROOT_X64 = $dotnetRoot; $env:PATH = "$dotnetRoot;$($oldEnv['PATH'])"
-    $env:DOTNET_CLI_HOME = Join-Path $project 'artifacts\engine-upgrade\dotnet-cli'
-    $env:NUGET_PACKAGES = Join-Path $project 'artifacts\engine-upgrade\nuget-packages'
-    $env:NUGET_HTTP_CACHE_PATH = Join-Path $project 'artifacts\engine-upgrade\nuget-http-cache'
-    $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'; $env:DOTNET_GENERATE_ASPNET_CERTIFICATE = 'false'; $env:DOTNET_ADD_GLOBAL_TOOLS_TO_PATH = 'false'
-    Write-Host "Building optimized C# into $optDir ..."
-    & (Join-Path $dotnetRoot 'dotnet.exe') build (Join-Path $project "$name.csproj") -c Debug -p:Optimize=true -p:NuGetAudit=false -v:minimal "-p:OutputPath=$optDir\" "-p:IntermediateOutputPath=$(Join-Path $monoTemp 'obj\OptRelease')\"
-    $buildExit = $LASTEXITCODE
-  } finally { foreach ($n in $envNames) { [Environment]::SetEnvironmentVariable($n, $oldEnv[$n], 'Process') } }
-  if ($buildExit -ne 0) { Write-Host "$marker=FAIL optimized C# build failed (exit $buildExit)"; exit 1 }
-}
 if (-not (Test-Path $optDll)) { Write-Host "$marker=FAIL no OptRelease build (run with -Build)"; exit 1 }
 
 $select = if ($Quick) { "quick" } elseif ($Scenarios.Count -gt 0) { $Scenarios -join "," } else { "all" }
@@ -575,26 +659,6 @@ try {
   } else { Write-Host "Debug slot was rebuilt by someone else during the run; left as is" }
   Remove-Item -Recurse -Force $savedDir -ErrorAction SilentlyContinue
 }
-Write-Host "godot exit $code, output $out"
-$rc = 1
-if (-not (Test-Path (Join-Path $out "driver_report.json"))) {
-  Write-Host "$marker=FAIL no driver_report.json (godot exit $code); see $out\console.log"
-  exit 1
-}
-$ctx = @{ label = $Label; run_id = $RunId; started = $started; mode = $mode; args = @{ quick = [bool]$Quick; scenarios = $Scenarios; scenario_file = $ScenarioFile; settings_overlay = $SettingsOverlay; vsync_on = [bool]$VsyncOn; stills = [bool]$Stills; rounds = $Rounds; window_scale = $WindowScale; baseline = $Baseline; live_settings = [bool]$LiveSettings }
-  git = (Get-GitInfo); world_meta = $worldInfo.meta; settings_source = $settingsSource; settings = $settings; resolution = $Resolution; godot_exit = $code }
-$rep = Build-Report $out $ctx
-if ($baseRun) {
-  Add-Baseline $rep (Join-Path $baseRun.FullName "report.json")
-  if ($Stills) { Add-StillsCompare $rep $out $baseRun.FullName }
-}
-Save-Report $rep $out
-Write-Host "report: $out\report.md"
-Get-Content -LiteralPath (Join-Path $out "report.md") | Select-Object -First 60 | ForEach-Object { Write-Host $_ }
-$regressed = if ($rep.Contains("baseline")) { [int]$rep.baseline.counts.regressed } else { 0 }
-if ($rep.Contains("baseline")) { Write-Host "BASELINE_DELTAS improved=$($rep.baseline.counts.improved) regressed=$regressed within_noise=$($rep.baseline.counts.within_noise)" }
-& (Join-Path $PSScriptRoot "prune_test_output.ps1") -Apply -Quiet -Exclude "appdata_perf_bench", "perf_bench"
-if ($rep.verdict -ne "PASS") { Write-Host "$marker=FAIL $($rep.verdict_reasons -join '; ')"; exit 1 }
-if ($FailOnRegression -and $regressed -gt 0) { Write-Host "$marker=FAIL $regressed regressed metric(s) against baseline $Baseline (-FailOnRegression)"; exit 1 }
-Write-Host "$marker=PASS"
+# What only this part knows; the outer part builds the report from it once the ticket is released.
+[ordered]@{ started = $started; godot_exit = $code; settings_source = $settingsSource; settings = $settings } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $out "run_context.json") -Encoding UTF8
 exit 0
