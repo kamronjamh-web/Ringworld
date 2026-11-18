@@ -8,7 +8,7 @@
 
 // x strata step m (the recipe's breaks_step_m), y strata seed. Published by RingGroundSurfaceGlobals.PublishWorld.
 global uniform vec4 ringworld_ground_world;
-// x rock start degrees, y strata contrast, z colour variation (T4-4b), w unused.
+// x rock start degrees, y strata contrast, z colour variation strength, w debug view (terrain_rock_material_gpu_test only; the game never sets it).
 global uniform vec4 ringworld_ground_look;
 
 const int GROUND_SURFACE_BIT = 2;
@@ -25,6 +25,11 @@ const float GROUND_SCREE_VEGETATED = 0.4;
 const float GROUND_STRATA_SUB_DIV = 8.0;
 const float GROUND_STRATA_SUB_RATIO = 0.5;
 const vec2 GROUND_STRATA_FADE_W = vec2(0.35, 0.9);
+const float GROUND_RELIEF_LATTICE_M = 32.0;
+const float GROUND_RELIEF_TAP_M = 64.0;
+const float GROUND_RELIEF_REF_M = 2.0;
+const vec2 GROUND_RELIEF_FADE_M = vec2(16000.0, 24000.0);
+const vec2 GROUND_DETAIL_NORMAL_FADE_M = vec2(40.0, 60.0);
 const vec3 GROUND_ROCK_TINT = vec3(0.92, 0.93, 0.96);
 const vec3 GROUND_SCREE_TINT = vec3(1.04, 1.02, 0.98);
 // Mean linear colour of materials/biomes/alpine_rock_albedo.png (T5 and the far rock tone read it).
@@ -89,5 +94,18 @@ float ring_ground_strata_factor(float h, float fw) {
 	float bed = ring_ground_band(h, fw, p, seed);
 	float sub = ring_ground_band(h, fw, p / GROUND_STRATA_SUB_DIV, seed ^ 40503u);
 	return (1.0 + c * bed) * (1.0 + c * GROUND_STRATA_SUB_RATIO * sub);
+}
+
+// D5: C64 (the 64 m convexity, metres; positive on a crest) to a value in (-1, 1).
+float ring_ground_relief(float c64) {
+	return c64 / (abs(c64) + GROUND_RELIEF_REF_M);
+}
+
+// D5: convex ground is paler and a little less saturated, hollows darker and greener; d is the distance to the camera (m). Applied to the dry albedo before wetness, grass coverage and the albedo scale.
+vec3 ring_ground_relief_colour(vec3 col, float relief, float rock, float d) {
+	float s = ringworld_ground_look.z * (1.0 - smoothstep(GROUND_RELIEF_FADE_M.x, GROUND_RELIEF_FADE_M.y, d)) * (1.0 - rock);
+	float lum = dot(col, vec3(0.2126, 0.7152, 0.0722));
+	col = mix(col, mix(col, vec3(lum), 0.25) * 1.12, s * max(relief, 0.0));
+	return mix(col, col * vec3(0.88, 0.94, 0.86), s * max(-relief, 0.0));
 }
 #endif

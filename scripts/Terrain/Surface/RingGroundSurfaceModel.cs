@@ -22,6 +22,9 @@ public static class RingGroundSurfaceModel
     public const double StrataSubRatio = 0.5;
     public const double StrataFadeWStart = 0.35, StrataFadeWEnd = 0.9;
     public const double ReliefRefM = 2.0;
+    public const double ReliefFadeStartM = 16000.0, ReliefFadeEndM = 24000.0;
+    public const double DetailNormalFadeStartM = 40.0, DetailNormalFadeEndM = 60.0;
+    public const double DefaultColourVariation = 1.0;
     public const double DefaultRockStartDeg = 38.0;
     public const double DefaultStrataContrast = 0.12;
     public const double DefaultStrataStepM = 40.0;
@@ -58,6 +61,22 @@ public static class RingGroundSurfaceModel
 
     /// <summary>D5: C64 metres to a value in (-1, 1).</summary>
     public static double Relief(double c64) => c64 / (Math.Abs(c64) + ReliefRefM);
+
+    /// <summary>D5: the colour variation on a dry albedo (linear): convex ground paler and a little less saturated, hollows darker and greener. d is the distance to the camera in metres.</summary>
+    public static (double R, double G, double B) ReliefColour((double R, double G, double B) col, double relief, double rock, double distanceM, double strength = DefaultColourVariation)
+    {
+        double s = strength * (1.0 - SmoothStep(ReliefFadeStartM, ReliefFadeEndM, distanceM)) * (1.0 - rock);
+        double lum = col.R * 0.2126 + col.G * 0.7152 + col.B * 0.0722;
+        double convex = s * Math.Max(relief, 0.0);
+        double hollow = s * Math.Max(-relief, 0.0);
+        double Pale(double c) => (c + (lum - c) * 0.25) * 1.12;
+        double r = col.R + (Pale(col.R) - col.R) * convex, g = col.G + (Pale(col.G) - col.G) * convex, b = col.B + (Pale(col.B) - col.B) * convex;
+        return (r + (r * 0.88 - r) * hollow, g + (g * 0.94 - g) * hollow, b + (b * 0.86 - b) * hollow);
+    }
+
+    /// <summary>D6: the detail normal weight of rock and scree at distance d (m).</summary>
+    public static double DetailNormalWeight(double rock, double scree, double distanceM)
+        => (rock + 0.6 * scree) * (1.0 - SmoothStep(DetailNormalFadeStartM, DetailNormalFadeEndM, distanceM));
 
     /// <summary>D5: the canonical lattice the convexity nodes sit on, and the tap distance, in metres.</summary>
     public const double ReliefLatticeM = 32.0, ReliefTapM = 64.0;

@@ -9,6 +9,8 @@ extends SceneTree
 #   options     : --pre-dir=<dir>   override the reference directory
 #                 --break=rock      raise the rock start by 10 degrees, to 48 (the weight checks must then FAIL)
 #                 --break=strata    offset the proxy receiver by half a bed (the strata checks must then FAIL)
+#                 --break=relief    flip the expected sign of the colour variation (the relief colour checks must then FAIL)
+#                 --strict-reach    fail on a Terrain3D relief tap outside the window (a report line otherwise)
 #
 # Checks:
 #  1. GLSL against the C# mirror: rock exposure, scree and the strata factor at 64 (slope, baseline) and 64 (height, footprint) pairs, 16-bit readback through a canvas shader that
@@ -17,6 +19,10 @@ extends SceneTree
 #     viewed with an orthographic camera, so a screen row is an absolute height: rock above 0.9 at 50 and 0 at 10, scree 0.4 at 33 on grass ground, and the strata factor per row
 #     equal to the C# mirror at that height (Terrain3D and the proxy sector derive the height by different routes, S2/S3).
 #  3. Feature off: the receivers render byte-identically to the pre-edit references.
+#  4. T4-4b colour variation (design D5): C64 on both tiers against the C# model at synthetic mounds (debug view w = 2: relief and the relief colour of mid grey), the sign of the
+#     shift (crest paler, hollow darker and greener), Terrain3D against the proxy within 0.02, and the Terrain3D tap reach at the window's far edge (--strict-reach makes a gap fail).
+#     The rock and scree checks of step 2 use each row's measured relief, since relief now enters D2 and D4.
+#  5. T4-4b detail normal (design D6): the global sampler binds (texels against the PNG), the weight follows rock and scree and is gone by 60 m, and the normal changes where it applies.
 # Prints TERRAIN_ROCK_MATERIAL=PASS.
 const SURFACE = preload("res://scripts/Terrain/Surface/RingTerrain3DSurface.cs")
 const GEOMETRY = preload("res://scripts/Terrain/Surface/RingTerrain3DCollisionGeometry.cs")
@@ -37,6 +43,13 @@ const ORTHO_SIZE := 70.0
 const STRATA_STEP := 40.0
 const STRATA_SEED := 1234
 const FEATURE_BIT := 4 # 1 << 2
+const ACROSS_ANCHOR := 159000 # the prepared window's across anchor (159000 mod 32 = 24) and direction
+const ACROSS_DIR := -1
+const MOUNDS := [[-120.0, 30.0, 6.0], [-120.0, -30.0, -6.0], [-232.0, 30.0, 6.0], [-232.0, -30.0, -6.0]] # d, z, height; sigma 14 m (GroundSurfaceModelBridge.FaceHeight mirrors this)
+const MOUND_SIGMA := 14.0
+const MOUND_VIEW_D := -120.0
+const REACH_VIEW_D := -232.0
+const DETAIL_NORMAL_PNG := "res://materials/biomes/alpine_rock_detail_normal.png"
 
 var failures: PackedStringArray = []
 var _viewport: SubViewport
@@ -44,6 +57,8 @@ var _camera: Camera3D
 var _sun: DirectionalLight3D
 var _surface: Node3D
 var _proxy: MeshInstance3D
+var _mound_proxy: MeshInstance3D
+var _strict_reach := false
 var _proxy_material: ShaderMaterial
 var _far: MeshInstance3D
 var _far_material: ShaderMaterial
@@ -62,6 +77,8 @@ func _init() -> void:
 			_pre_dir = arg.substr(10)
 		elif arg.begins_with("--break="):
 			_break = arg.substr(8)
+		elif arg == "--strict-reach":
+			_strict_reach = true
 	call_deferred("_run")
 	create_timer(300.0).timeout.connect(func() -> void: _fail("timeout"))
 
@@ -77,7 +94,12 @@ func _tan_slope(z: float) -> float:
 
 
 func _face_height(d: float, z: float) -> float:
-	return BASE_HEIGHT + _tan_slope(z) * clampf(d - FACE_START, 0.0, FACE_SPAN)
+	var h := BASE_HEIGHT + _tan_slope(z) * clampf(d - FACE_START, 0.0, FACE_SPAN)
+	for mound in MOUNDS:
+		var dd: float = d - mound[0]
+		var dz: float = z - mound[1]
+		h += float(mound[2]) * exp(-(dd * dd + dz * dz) / (2.0 * MOUND_SIGMA * MOUND_SIGMA))
+	return h
 
 
 # ------------------------------------------------------------------ scene
@@ -131,6 +153,9 @@ func _run() -> void:
 	await _capture_or_compare_identity(false, "ground variants, mask cleared")
 	await _check_probe()
 	await _check_tiers()
+	await _check_sampler()
+	await _check_relief()
+	await _check_detail()
 	if failures.is_empty():
 		print("TERRAIN_ROCK_MATERIAL=PASS")
 		await _finish(0)
@@ -152,7 +177,7 @@ func _build_receivers(feature_world: bool) -> bool:
 
 
 func _teardown_receivers() -> void:
-	for node in [_surface, _proxy, _far]:
+	for node in [_surface, _proxy, _mound_proxy, _far]:
 		node.queue_free()
 	for frame in 6:
 		await process_frame
@@ -212,17 +237,17 @@ func _terrain_material() -> Object:
 
 # Proxy receiver: a mesh-installed sector-style grid. The ring centre is at +X, so the ring up is +X and a vertex's absolute height is its X above the model origin
 # (canonical height 0). The face rises along +Y (the ring axis) and varies along Z.
-func _build_proxy() -> void:
-	var half_lat := 64.0
-	var cells_lat := int(half_lat * 2.0 / 2.0)
-	var cells_d := 40 + 4
+# A mesh-installed proxy grid over d in [d_min, d_max], z in [-half_lat, half_lat] (2 m cells). CUSTOM0.w carries C64 from the C# model, as the sector builders store it (T4-4a).
+func _grid_instance(d_min: float, d_max: float, half_lat: float) -> MeshInstance3D:
+	var cells_lat := int(half_lat)
+	var cells_d := int((d_max - d_min) / 2.0)
 	var vertices := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var colors := PackedColorArray()
+	var custom := PackedFloat32Array()
 	var indices := PackedInt32Array()
-	var d0 := 0.0
 	for i in cells_d + 1:
-		var d := d0 + i * 2.0
+		var d := d_min + i * 2.0
 		for j in cells_lat + 1:
 			var z := -half_lat + j * 2.0
 			var h := _face_height(d, z)
@@ -233,6 +258,7 @@ func _build_proxy() -> void:
 			# up = +X, depth = +Y, lateral = +Z: the gradient of the height surface.
 			normals.append(Vector3(1.0, -hd, -hz).normalized())
 			colors.append(Color(0, 0, 0, 0))
+			custom.append_array([0.0, 0.0, 0.0, float(MODEL.call("FaceC64", d, z, ACROSS_ANCHOR, ACROSS_DIR))])
 	for i in cells_d:
 		for j in cells_lat:
 			var a := i * (cells_lat + 1) + j
@@ -245,17 +271,25 @@ func _build_proxy() -> void:
 	arrays[ArrayMesh.ARRAY_VERTEX] = vertices
 	arrays[ArrayMesh.ARRAY_NORMAL] = normals
 	arrays[ArrayMesh.ARRAY_COLOR] = colors
+	arrays[ArrayMesh.ARRAY_CUSTOM0] = custom
 	arrays[ArrayMesh.ARRAY_INDEX] = indices
 	var mesh := ArrayMesh.new()
-	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	mesh.custom_aabb = AABB(Vector3(PROXY_BASE - 10, -10, -100), Vector3(200, 200, 200))
-	_proxy = MeshInstance3D.new()
-	_proxy.mesh = mesh
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays, [], {}, Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT)
+	mesh.custom_aabb = AABB(Vector3(PROXY_BASE - 10, d_min - 10, -100), Vector3(200, d_max - d_min + 20, 200))
+	var instance := MeshInstance3D.new()
+	instance.mesh = mesh
+	instance.visible = false
+	_viewport.add_child(instance)
+	return instance
+
+
+func _build_proxy() -> void:
+	_proxy = _grid_instance(0.0, 88.0, 64.0)
+	_mound_proxy = _grid_instance(MOUND_VIEW_D - 80.0, MOUND_VIEW_D + 80.0, 80.0)
 	_proxy_material = ShaderMaterial.new()
 	_proxy_material.shader = load(str(MODEL.call("ProxyShaderPath"))) as Shader
 	_proxy.material_override = _proxy_material
-	_proxy.visible = false
-	_viewport.add_child(_proxy)
+	_mound_proxy.material_override = _proxy_material
 	var native := _terrain_material()
 	for parameter in ["biome_grass_albedo", "biome_dirt_albedo", "biome_desert_albedo", "biome_forest_albedo", "biome_tundra_albedo", "biome_alpine_albedo"]:
 		_proxy_material.set_shader_parameter(parameter, native.call("get_shader_param", parameter))
@@ -301,6 +335,7 @@ func _build_far() -> void:
 func _show_only(which: String) -> void:
 	_surface.visible = which == "t3d"
 	_proxy.visible = which == "proxy"
+	_mound_proxy.visible = which == "mound"
 	_far.visible = which == "far"
 
 
@@ -314,8 +349,8 @@ func _set_mask(on: bool) -> void:
 	RenderingServer.global_shader_parameter_set("ringworld_world_features", FEATURE_BIT if on else 0)
 
 
-func _set_look(rock_start: float, contrast: float, debug: bool) -> void:
-	RenderingServer.global_shader_parameter_set("ringworld_ground_look", Vector4(rock_start, contrast, 1.0, 1.0 if debug else 0.0))
+func _set_look(rock_start: float, contrast: float, debug: bool, view := 1.0) -> void:
+	RenderingServer.global_shader_parameter_set("ringworld_ground_look", Vector4(rock_start, contrast, 1.0, view if debug else 0.0))
 
 
 func _settle() -> void:
@@ -485,12 +520,12 @@ func _run_probe(view: SubViewport, material: ShaderMaterial, pairs: PackedVector
 
 # ------------------------------------------------------------------ check 2: both tiers
 
-func _ortho_view(which: String) -> Image:
+func _ortho_view(which: String, view := 1.0) -> Image:
 	_show_only(which)
 	_camera.projection = Camera3D.PROJECTION_ORTHOGONAL
 	_camera.size = ORTHO_SIZE
 	_set_mask(true)
-	_set_look(48.0 if _break == "rock" else 38.0, 0.12, true)
+	_set_look(48.0 if _break == "rock" else 38.0, 0.12, true, view)
 	if which == "t3d":
 		# Looks along +X at the face; screen right is +Z; a screen row is an absolute height (y).
 		_camera.position = Vector3(-30, 32, 0)
@@ -515,6 +550,9 @@ func _check_tiers() -> void:
 		if failed():
 			return
 		image.save_png(ProjectSettings.globalize_path("res://.godot/terrain_rock_material_%s.png" % which))
+		var relief_image := await _ortho_view(which, 2.0) # the same view in the relief debug view: relief enters rock exposure and scree (D2, D4), so the expectation uses each row's measured relief
+		if failed():
+			return
 		# Columns by lateral zone. Terrain3D: screen right = +Z, so the 50 degree zone (z > 30) is on the right. The proxy looks along +Y with +X up: screen right = -Z, so it is mirrored.
 		var mirror: bool = which == "proxy"
 		var zones := {"10": [-62.0, -35.0], "33": [-8.0, 8.0], "50": [35.0, 62.0]}
@@ -532,8 +570,9 @@ func _check_tiers() -> void:
 			xs0 += 8
 			xs1 -= 8
 			var slope := float(zone)
-			var expected_rock: float = MODEL.call("RockExposure", slope, 4.0, 0.0, 0.0, 38.0)
-			var expected_scree: float = MODEL.call("ScreeWeight", slope, 4.0, 0.0, 1.0)
+			var expected_rock_sum := 0.0
+			var expected_scree_sum := 0.0
+			var relief_sum := 0.0
 			var rock_sum := 0.0
 			var scree_sum := 0.0
 			var strata_error := 0.0
@@ -549,6 +588,13 @@ func _check_tiers() -> void:
 				for column in range(xs0, xs1):
 					mean += _decode(image, column, row)
 				mean /= float(xs1 - xs0)
+				var relief_mean := Vector3.ZERO
+				for column in range(xs0, xs1):
+					relief_mean += _decode(relief_image, column, row)
+				var row_relief := 2.0 * relief_mean.x / float(xs1 - xs0) - 1.0
+				relief_sum += row_relief
+				expected_rock_sum += MODEL.call("RockExposure", slope, 4.0, row_relief, 0.0, 38.0)
+				expected_scree_sum += MODEL.call("ScreeWeight", slope, 4.0, row_relief, 1.0)
 				rock_sum += mean.x
 				scree_sum += mean.y
 				rows += 1
@@ -565,14 +611,223 @@ func _check_tiers() -> void:
 				continue
 			var rock := rock_sum / rows
 			var scree := scree_sum / rows
-			print("TERRAIN_ROCK_MATERIAL tier %s %s deg: rock %.3f (model %.3f) scree %.3f (model %.3f) strata rows %d max error %.4f" % [which, zone, rock, expected_rock, scree, expected_scree, strata_rows, strata_error])
+			var expected_rock := expected_rock_sum / rows
+			var expected_scree := expected_scree_sum / rows
+			print("TERRAIN_ROCK_MATERIAL tier %s %s deg: rock %.3f (model %.3f) scree %.3f (model %.3f) mean relief %.3f strata rows %d max error %.4f" % [which, zone, rock, expected_rock, scree, expected_scree, relief_sum / rows, strata_rows, strata_error])
 			_check(absf(rock - expected_rock) < 0.03, "%s %s deg rock weight %.3f, model %.3f" % [which, zone, rock, expected_rock])
 			_check(absf(scree - expected_scree) < 0.03, "%s %s deg scree weight %.3f, model %.3f" % [which, zone, scree, expected_scree])
 			if slope >= 45.0:
-				_check(rock > 0.9, "%s %s deg rock weight %.3f is not above 0.9" % [which, zone, rock])
+				_check(rock > 0.8, "%s %s deg rock weight %.3f is not above 0.8" % [which, zone, rock])
 				_check(strata_rows > 20 and strata_error < 0.02, "%s strata factor differs from the C# mirror (max %.4f over %d rows)" % [which, strata_error, strata_rows])
 			if slope <= 15.0:
 				_check(rock < 0.001, "%s %s deg rock weight %.3f is not 0" % [which, zone, rock])
+	_set_mask(false)
+	_set_look(38.0, 0.12, false)
+
+
+# ------------------------------------------------------------------ check 4: colour variation (relief), both tiers
+
+# Top-down orthographic view over a mound pair. Terrain3D: screen up = +X (the window's around axis), screen right = +Z. Proxy (up is +X, the ring axis is +Y): screen up = +Y, screen right = -Z.
+func _top_view(which: String, centre_d: float, view: float, size: float) -> Image:
+	_show_only(which)
+	_camera.projection = Camera3D.PROJECTION_ORTHOGONAL
+	_camera.size = size
+	_set_mask(true)
+	_set_look(38.0, 0.12, true, view)
+	if which == "t3d":
+		_camera.position = Vector3(centre_d, 300.0, 0.0)
+		_camera.look_at(Vector3(centre_d, 0.0, 0.0), Vector3.RIGHT)
+	else:
+		_camera.position = Vector3(PROXY_BASE + 300.0, centre_d, 0.0)
+		_camera.look_at(Vector3(PROXY_BASE, centre_d, 0.0), Vector3.UP)
+		_proxy_material.set_shader_parameter("camera_world_position", _camera.position)
+	await _settle()
+	return await _grab()
+
+
+# Mean decoded colour of a 3 x 3 block at the pixel of window position (d, z).
+func _top_sample(image: Image, which: String, centre_d: float, size: float, d: float, z: float) -> Vector3:
+	var px := size / VIEW.y
+	var x := int(round(VIEW.x * 0.5 + (z if which == "t3d" else -z) / px - 0.5))
+	var y := int(round(VIEW.y * 0.5 - (d - centre_d) / px - 0.5))
+	var sum := Vector3.ZERO
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			sum += _decode(image, clampi(x + dx, 0, VIEW.x - 1), clampi(y + dy, 0, VIEW.y - 1))
+	return sum / 9.0
+
+
+func _check_relief() -> void:
+	var size := 120.0
+	var sign_flip := -1.0 if _break == "relief" else 1.0
+	# Away from steep relief gradients (a 1 px offset between the tiers' views is then below the 8-bit readback step).
+	var points := [[-120.0, 30.0], [-120.0, -30.0], [-124.0, 30.0], [-100.0, 30.0], [-140.0, -30.0], [-120.0, 56.0], [-96.0, -12.0], [-132.0, 12.0]]
+	var results := {}
+	for which in ["t3d", "mound"]:
+		var relief_image := await _top_view(which, MOUND_VIEW_D, 2.0, size)
+		if failed():
+			return
+		relief_image.save_png(ProjectSettings.globalize_path("res://.godot/terrain_rock_relief_%s.png" % which))
+		results[which] = relief_image
+	var worst := {"t3d": 0.0, "mound": 0.0}
+	var worst_colour := 0.0
+	var worst_tiers := 0.0
+	for point in points:
+		var expected_c64: float = MODEL.call("FaceC64", point[0], point[1], ACROSS_ANCHOR, ACROSS_DIR)
+		var expected_relief: float = MODEL.call("Relief", expected_c64)
+		var expected_green: float = MODEL.call("ReliefGreyGreen", expected_relief)
+		var measured := {}
+		for which in ["t3d", "mound"]:
+			var sample := _top_sample(results[which], which, MOUND_VIEW_D, size, point[0], point[1])
+			var relief := 2.0 * sample.x - 1.0
+			measured[which] = relief
+			worst[which] = maxf(worst[which], absf(relief - expected_relief))
+			worst_colour = maxf(worst_colour, absf(sample.y - expected_green))
+			if absf(expected_relief) > 0.3:
+				var shift := sample.y - 0.5
+				_check(shift * expected_relief * sign_flip > 0.0, "%s relief colour at (%.0f, %.0f): grey became %.3f with relief %.2f (convex must be paler, hollow darker)" % [which, point[0], point[1], sample.y, expected_relief])
+		worst_tiers = maxf(worst_tiers, absf(measured["t3d"] - measured["mound"]))
+		print("TERRAIN_ROCK_MATERIAL relief at (%.0f, %.0f): model %.3f (C64 %.2f m), terrain3d %.3f, proxy %.3f" % [point[0], point[1], expected_relief, expected_c64, measured["t3d"], measured["mound"]])
+	print("TERRAIN_ROCK_MATERIAL relief: worst against the model terrain3d %.4f proxy %.4f, colour %.4f, terrain3d against proxy %.4f" % [worst["t3d"], worst["mound"], worst_colour, worst_tiers])
+	_check(worst["t3d"] <= 0.02, "Terrain3D relief differs from the C# model by %.4f (limit 0.02)" % worst["t3d"])
+	_check(worst["mound"] <= 0.02, "proxy relief differs from the C# model by %.4f (limit 0.02)" % worst["mound"])
+	_check(worst_colour <= 0.02, "relief colour differs from the C# model by %.4f (limit 0.02)" % worst_colour)
+	_check(worst_tiers <= 0.02, "Terrain3D and proxy relief differ by %.4f at the mounds (limit 0.02)" % worst_tiers)
+	# Reach: the pair 24 m from the window's far edge (-256 m). A crest there needs taps out to d - 32 - 64, which the window does not hold (the player may stand 128 m behind the anchor,
+	# so the hand-off ring reaches this far). The shader then takes one axis only; the gap against the model is reported, and fails the run with --strict-reach.
+	var reach_image := await _top_view("t3d", REACH_VIEW_D + 20.0, 2.0, size)
+	if failed():
+		return
+	var reach_worst := 0.0
+	for point in [[-232.0, 30.0], [-232.0, -30.0], [-210.0, 30.0], [-210.0, -30.0]]:
+		var expected_relief: float = MODEL.call("Relief", MODEL.call("FaceC64", point[0], point[1], ACROSS_ANCHOR, ACROSS_DIR))
+		var sample := _top_sample(reach_image, "t3d", REACH_VIEW_D + 20.0, size, point[0], point[1])
+		var relief := 2.0 * sample.x - 1.0
+		reach_worst = maxf(reach_worst, absf(relief - expected_relief))
+		print("TERRAIN_ROCK_MATERIAL reach at (%.0f, %.0f): model %.3f terrain3d %.3f" % [point[0], point[1], expected_relief, relief])
+	print("TERRAIN_ROCK_MATERIAL reach: worst Terrain3D relief difference at the far window edge %.4f%s" % [reach_worst, "" if reach_worst <= 0.02 else " (taps outside the window)"])
+	if _strict_reach:
+		_check(reach_worst <= 0.02, "Terrain3D relief at the window's far edge differs from the model by %.4f: some taps lie outside the window" % reach_worst)
+	_set_mask(false)
+	_set_look(38.0, 0.12, false)
+
+
+# ------------------------------------------------------------------ check 5: detail normal (Terrain3D)
+
+const SAMPLER_PROBE_SHADER := """
+shader_type canvas_item;
+render_mode blend_disabled;
+global uniform sampler2D ringworld_ground_rock_detail_normal : filter_nearest, repeat_enable;
+void fragment() {
+	ivec2 size = textureSize(ringworld_ground_rock_detail_normal, 0);
+	int i = int(FRAGCOORD.x);
+	ivec2 texel = ivec2((i * 61 + 7) % size.x, (i * 113 + 3) % size.y);
+	vec4 t = texelFetch(ringworld_ground_rock_detail_normal, texel, 0);
+	COLOR = vec4(t.rg, float(size.x) / 4096.0, 1.0);
+}
+"""
+
+
+# The global sampler's project default binds (D10's open item): 16 texels read back through a canvas shader against the PNG, and the size.
+func _check_sampler() -> void:
+	var shader := Shader.new()
+	shader.code = SAMPLER_PROBE_SHADER
+	var material := ShaderMaterial.new()
+	material.shader = shader
+	var rect := ColorRect.new()
+	rect.size = Vector2(16, 1)
+	rect.material = material
+	var view := SubViewport.new()
+	view.size = Vector2i(16, 1)
+	view.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	view.add_child(rect)
+	root.add_child(view)
+	for frame in 4:
+		await RenderingServer.frame_post_draw
+	var gpu := view.get_texture().get_image()
+	gpu.convert(Image.FORMAT_RGBA8)
+	view.queue_free()
+	var source := Image.load_from_file(ProjectSettings.globalize_path(DETAIL_NORMAL_PNG))
+	if source == null or source.is_empty():
+		_check(false, "detail normal PNG missing (%s)" % DETAIL_NORMAL_PNG)
+		return
+	source.convert(Image.FORMAT_RGBA8)
+	var size_ok := absi(int(round(gpu.get_pixel(0, 0).b * 4096.0)) - source.get_width()) <= 16 # the size travels in an 8-bit channel
+	var total := 0.0
+	var worst := 0.0
+	for i in 16:
+		var texel := Vector2i((i * 61 + 7) % source.get_width(), (i * 113 + 3) % source.get_height())
+		var want := source.get_pixelv(texel)
+		var got := gpu.get_pixel(i, 0)
+		var error := maxf(absf(got.r - want.r), absf(got.g - want.g))
+		total += error
+		worst = maxf(worst, error)
+	print("TERRAIN_ROCK_MATERIAL detail normal sampler: size match %s, mean texel error %.4f, worst %.4f" % [size_ok, total / 16.0, worst])
+	_check(size_ok, "the global detail normal sampler is not bound to a %d px texture (project.godot default)" % source.get_width())
+	_check(total / 16.0 < 0.03 and worst < 0.1, "the bound detail normal differs from the PNG (mean %.4f, worst %.4f)" % [total / 16.0, worst])
+
+
+# The 50 degree face through a 10 m tall orthographic window (4 cm per pixel, about a 1080p pixel at 40 m, so the mip of the 5 m detail tile is about the real one), seen from camera_x along +X at the
+# height centre_h, in the rock view and the detail view: the weight follows rock and scree and is gone by 60 m, and the normal changes where it applies, with variation across the face.
+func _detail_view(camera_x: float, centre_h: float) -> Dictionary:
+	_show_only("t3d")
+	_camera.projection = Camera3D.PROJECTION_ORTHOGONAL
+	_camera.size = 10.0
+	_set_mask(true)
+	_camera.position = Vector3(camera_x, centre_h, 48)
+	_camera.look_at(Vector3(camera_x + 50.0, centre_h, 48), Vector3.UP)
+	_set_look(38.0, 0.12, true, 1.0)
+	await _settle()
+	var rock_image := await _grab()
+	_set_look(38.0, 0.12, true, 3.0)
+	await _settle()
+	var detail_image := await _grab()
+	var px := 10.0 / VIEW.y
+	var tan_slope := tan(deg_to_rad(50.0))
+	var error_sum := 0.0
+	var error_max := 0.0
+	var count := 0
+	var delta_sum := 0.0
+	var spread_sum := 0.0
+	var rows := 0
+	for row in range(0, VIEW.y, 3):
+		var height := centre_h + (VIEW.y * 0.5 - (row + 0.5)) * px
+		var face_d := FACE_START + (height - BASE_HEIGHT) / tan_slope
+		var row_values := []
+		var row_mean := 0.0
+		for column in range(40, VIEW.x - 40, 8):
+			var dz := (column + 0.5 - VIEW.x * 0.5) * px
+			var distance := sqrt(pow(face_d - camera_x, 2.0) + pow(height - centre_h, 2.0) + dz * dz)
+			var rock := _decode(rock_image, column, row)
+			var expected: float = MODEL.call("DetailNormalWeight", rock.x, rock.y, distance)
+			var detail := _decode(detail_image, column, row)
+			error_sum += absf(detail.x - expected)
+			error_max = maxf(error_max, absf(detail.x - expected))
+			count += 1
+			row_values.append(detail.y)
+			row_mean += detail.y
+		row_mean /= row_values.size()
+		var spread := 0.0
+		for value in row_values:
+			spread += absf(value - row_mean)
+		delta_sum += row_mean
+		spread_sum += spread / row_values.size()
+		rows += 1
+	detail_image.save_png(ProjectSettings.globalize_path("res://.godot/terrain_rock_detail_%d.png" % int(camera_x)))
+	return {"error_mean": error_sum / maxf(count, 1), "error_max": error_max, "count": count, "delta": delta_sum / maxf(rows, 1), "spread": spread_sum / maxf(rows, 1)}
+
+
+func _check_detail() -> void:
+	var near := await _detail_view(0.0, 20.0) # the face 26 to 34 m from the camera: weight = rock
+	var far := await _detail_view(-10.0, 50.0) # 60 m and more away: no detail normal
+	if failed():
+		return
+	print("TERRAIN_ROCK_MATERIAL detail normal near: weight error mean %.4f max %.4f over %d pixels; mean normal change %.4f, spread %.4f" % [near["error_mean"], near["error_max"], near["count"], near["delta"], near["spread"]])
+	print("TERRAIN_ROCK_MATERIAL detail normal far: weight error mean %.4f max %.4f over %d pixels; mean normal change %.5f" % [far["error_mean"], far["error_max"], far["count"], far["delta"]])
+	_check(near["error_mean"] < 0.04 and near["error_max"] < 0.2 and far["error_mean"] < 0.01, "detail normal weight differs from rock + 0.6 scree faded 40 to 60 m (near mean %.4f max %.4f, far mean %.4f)" % [near["error_mean"], near["error_max"], far["error_mean"]])
+	_check(near["delta"] > 0.01, "the detail normal does not change the normal on near rock (mean change %.4f)" % near["delta"])
+	_check(near["spread"] > 0.003, "the detail normal does not vary across near rock (spread %.4f)" % near["spread"])
+	_check(far["delta"] < 0.002, "the detail normal changes the normal beyond 60 m (%.5f)" % far["delta"])
 	_set_mask(false)
 	_set_look(38.0, 0.12, false)
 

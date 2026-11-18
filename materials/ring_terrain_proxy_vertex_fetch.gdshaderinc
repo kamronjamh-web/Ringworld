@@ -43,7 +43,10 @@ vec3 proxy_vertex_table_decode_normal(uint packed_normal) {
 	return len > 0.0 ? v / len : vec3(0.0, 0.0, 1.0);
 }
 
-void proxy_vertex_table_apply(int vertex_id, inout vec3 vertex, inout vec3 normal, inout vec4 color, inout vec2 uv, inout vec2 uv2, inout vec3 chord) {
+// T4-4a: relief_m is the 64 m convexity C64 (metres) of a terrain lattice vertex, snorm16 in attr.z bits 16..31 (feature worlds, levels of 64 m and finer; 0 elsewhere and in generation 1), read from the attribute texel
+// this function already fetches. Skirt texels use those bits for their UV, so they report 0, as do water rows and the shadow caster (no attribute fetch).
+void proxy_vertex_table_apply_relief(int vertex_id, inout vec3 vertex, inout vec3 normal, inout vec4 color, inout vec2 uv, inout vec2 uv2, inout vec3 chord, out float relief_m) {
+	relief_m = 0.0;
 	if (proxy_slot < 0) return;
 	int width = textureSize(proxy_vertex_table_pos, 0).x;
 	int lattice = width * width;
@@ -66,6 +69,7 @@ void proxy_vertex_table_apply(int vertex_id, inout vec3 vertex, inout vec3 norma
 #endif
 	uvec4 attr = uvec4(0u);
 	if (need_attr) attr = floatBitsToUint(texelFetch(proxy_vertex_table_attr, texel, 0));
+	if (need_attr && !water_rows && !skirt) relief_m = proxy_vertex_table_snorm16(attr.z >> 16u) * 32.0;
 	vertex = pos_morph.xyz;
 	normal = proxy_vertex_table_decode_normal(attr.x);
 	color = vec4(float(attr.y & 0xFFu), float((attr.y >> 8u) & 0xFFu), float((attr.y >> 16u) & 0xFFu), float((attr.y >> 24u) & 0xFFu)) / 255.0;
@@ -85,4 +89,9 @@ void proxy_vertex_table_apply(int vertex_id, inout vec3 vertex, inout vec3 norma
 	}
 	// Water rows morph along the surface up vector (UV2.y = 1), never along the parent chord, so the ocean skips the third fetch.
 	chord = proxy_vertex_table_has_chord && !water_rows ? texelFetch(proxy_vertex_table_chord, texel, 0).xyz : vec3(0.0);
+}
+
+void proxy_vertex_table_apply(int vertex_id, inout vec3 vertex, inout vec3 normal, inout vec4 color, inout vec2 uv, inout vec2 uv2, inout vec3 chord) {
+	float relief_m;
+	proxy_vertex_table_apply_relief(vertex_id, vertex, normal, color, uv, uv2, chord, relief_m);
 }

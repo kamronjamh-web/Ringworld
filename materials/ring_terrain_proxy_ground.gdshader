@@ -99,6 +99,8 @@ varying float river_line_c;
 #ifdef RING_GROUND_SURFACE
 // T4 strata: absolute canonical height of this vertex (m).
 varying float ground_height;
+// T4 colour variation (D5): the 64 m convexity C64 (m) the sector builders stored for this vertex; 0 on levels coarser than 64 m.
+varying float ground_c64;
 #endif
 
 float sample_combined_cloud_shadow(vec3 sample_world_position, float day_factor) {
@@ -110,7 +112,8 @@ float sample_combined_cloud_shadow(vec3 sample_world_position, float day_factor)
 
 void vertex() {
 	vec3 proxy_chord = CUSTOM0.xyz;
-	if (proxy_vertex_table_enabled) proxy_vertex_table_apply(VERTEX_ID, VERTEX, NORMAL, COLOR, UV, UV2, proxy_chord);
+	float proxy_relief_m = 0.0;
+	if (proxy_vertex_table_enabled) proxy_vertex_table_apply_relief(VERTEX_ID, VERTEX, NORMAL, COLOR, UV, UV2, proxy_chord, proxy_relief_m);
 	proxy_coverage_uv = UV;
 	river_line_c = river_line_enabled && UV2.y < 0.5 ? UV2.y / 0.49 : 0.0;
 	vec3 original_world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -139,6 +142,9 @@ void vertex() {
 		vec3 ground_around_model = normalize(cross(normalize(ground_to_model * vec3(0.0, 1.0, 0.0)), ground_up_model));
 		float ground_around = dot(VERTEX, ground_around_model);
 		ground_height = dot(VERTEX, ground_up_model) - ground_around * ground_around / (2.0 * ground_radius);
+		// C64: slot sectors carry it in the vertex table (read with the attribute fetch of proxy_vertex_table_apply_relief), mesh sectors in CUSTOM0.w. Only levels of 64 m and finer store it (the baseline is twice the spacing), so coarser levels read 0.
+		ground_c64 = 0.0;
+		if (ground_slope_baseline_meters <= 128.5) ground_c64 = proxy_slot >= 0 ? proxy_relief_m : CUSTOM0.w;
 	}
 #endif
 	world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -191,6 +197,7 @@ void fragment() {
 	float strata_footprint = ground_on ? fwidth(ground_height) : 0.0;
 	float ground_rock = 0.0;
 	vec3 ground_debug = vec3(0.0);
+	float ground_relief = ground_on ? ring_ground_relief(ground_c64) : 0.0;
 #endif
 	if (ring_surface_aperture_discard(world_position)) discard;
 	if (coverage_atlas_rect.z > 0.0 && proxy_coverage_uv.x >= 0.0 && proxy_coverage_uv.y >= 0.0
@@ -262,8 +269,8 @@ void fragment() {
 			vec4 ground_weights = clamp(COLOR, 0.0, 1.0);
 			float ground_grass = max(0.0, 1.0 - ground_weights.r - ground_weights.g - ground_weights.b - ground_weights.a);
 			float slope_degrees = ring_ground_slope_deg(dot(world_normal, normalize(surface_up_world)));
-			ground_rock = ring_ground_rock_exposure(slope_degrees, ground_slope_baseline_meters, 0.0, ground_weights.g);
-			float ground_scree = ring_ground_scree(slope_degrees, ground_slope_baseline_meters, 0.0, ground_grass + ground_weights.g);
+			ground_rock = ring_ground_rock_exposure(slope_degrees, ground_slope_baseline_meters, ground_relief, ground_weights.g);
+			float ground_scree = ring_ground_scree(slope_degrees, ground_slope_baseline_meters, ground_relief, ground_grass + ground_weights.g);
 			grass_coverage_upward *= 1.0 - max(ground_rock, ground_scree);
 			float strata_factor = 1.0;
 			terrain_color = ground_surface_texture;
@@ -272,7 +279,10 @@ void fragment() {
 				vec3 alpine = sample_biome_triplanar(biome_alpine_albedo, texture_position, world_normal, blend);
 				terrain_color = mix(mix(ground_surface_texture, alpine * GROUND_SCREE_TINT, ground_scree), alpine * GROUND_ROCK_TINT * strata_factor, ground_rock);
 			}
+			// D5 colour variation on the dry albedo (before grass coverage, wetness and the albedo scale), from the interpolated C64.
+			terrain_color = ring_ground_relief_colour(terrain_color, ground_relief, ground_rock, distance_to_camera);
 			ground_debug = vec3(ground_rock, ground_scree, 0.5 * strata_factor);
+			if (ringworld_ground_look.w > 1.5) ground_debug = vec3(0.5 + 0.5 * ground_relief, ring_ground_relief_colour(vec3(0.5), ground_relief, 0.0, distance_to_camera).g, 0.0);
 		}
 #endif
 	}
@@ -342,7 +352,7 @@ void fragment() {
 	}
 #ifdef RING_GROUND_SURFACE
 	if (ground_on && ringworld_ground_look.w > 0.5) {
-		// Ground debug view (terrain_rock_material_gpu_test): EMISSION = rock weight, scree weight, strata factor / 2. Never set by the game.
+		// Ground debug views (terrain_rock_material_gpu_test), never set by the game. w = 1: EMISSION = rock, scree, strata factor / 2; w = 2: 0.5 + relief / 2, the relief colour of mid grey (g), 0.
 		ALBEDO = vec3(0.0);
 		EMISSION = ground_debug;
 		SPECULAR = 0.0;

@@ -353,6 +353,7 @@ public partial class RingTerrain3DSurface : Node3D
         SetMaterialParameter("ring_texture_anchor_around_meters", PositiveModulo(_frame.AnchorAroundMeters, 1000));
         SetMaterialParameter("ring_texture_anchor_across_meters", PositiveModulo(_frame.AnchorAcrossMeters, 1000));
         SetMaterialParameter("ring_across_direction", _frame.AcrossDirection);
+        ApplyGroundLatticeOffset();
         SetMaterialParameter("biome_texture_weights_enabled", _biomeSampler != null || _preparedBiomeWeights);
         SetMaterialParameter("biome_texture_scale", 0.20f);
         SetMaterialParameter("biome_grass_albedo", GD.Load<Texture2D>("res://materials/third_party/voxelgame/grass_albedo.png"));
@@ -442,7 +443,18 @@ public partial class RingTerrain3DSurface : Node3D
         SetMaterialParameter(RingTextureAnchorAroundMetersName, PositiveModulo(_frame.AnchorAroundMeters, 1000));
         SetMaterialParameter(RingTextureAnchorAcrossMetersName, PositiveModulo(_frame.AnchorAcrossMeters, 1000));
         SetMaterialParameter(RingAcrossDirectionName, _frame.AcrossDirection);
+        ApplyGroundLatticeOffset();
         ApplyAtmosphereMaterialParameters();
+    }
+
+    private static readonly StringName RingGroundLatticeOffsetName = "ring_ground_lattice_offset";
+
+    /// <summary>T4 colour variation (D5): the frame anchor modulo the 32 m relief lattice, so the ground variant's vertex stage finds the ring-wide lattice nodes. Only the ground variant has the uniform.</summary>
+    private void ApplyGroundLatticeOffset()
+    {
+        if (!RingGroundSurfaceVariants.WorldHasGroundSurface) return;
+        int lattice = (int)RingGroundSurfaceModel.ReliefLatticeM;
+        SetMaterialParameter(RingGroundLatticeOffsetName, new Vector2(PositiveModulo(_frame.AnchorAroundMeters, lattice), PositiveModulo(_frame.AnchorAcrossMeters, lattice)));
     }
 
     private void ApplyAtmosphereMaterialParameters(bool force = false)

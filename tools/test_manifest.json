@@ -6609,7 +6609,18 @@
         "render-core"
       ],
       "marker": "TERRAIN_ROCK_MATERIAL",
-      "expected_s": 20,
+      "expected_s": 45,
+      "timeout_s": 120
+    },
+    "ground_rock_detail_normal": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "GROUND_ROCK_DETAIL_NORMAL",
+      "expected_s": 10,
       "timeout_s": 60
     },
     "ground_surface_model_test": {

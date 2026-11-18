@@ -54,6 +54,20 @@ public partial class GroundSurfaceModelTest : RefCounted
         Check(failures, RingGroundSurfaceModel.ScreeWeight(33, 4, 0.5, 0) < 1e-12 && RingGroundSurfaceModel.ScreeWeight(33, 4, 0.05, 0) > 0.999, "convex ground does not lose scree between relief 0.1 and 0.5");
         Check(failures, RingGroundSurfaceModel.ScreeWeight(30, 4, 0, 0) > 0.999 && RingGroundSurfaceModel.ScreeWeight(28, 4, 0, 0) is > 0.2 and < 0.8, "scree ramp in");
         Check(failures, Math.Abs(RingGroundSurfaceModel.Relief(2) - 0.5) < 1e-12 && Math.Abs(RingGroundSurfaceModel.Relief(-2) + 0.5) < 1e-12 && RingGroundSurfaceModel.Relief(0) == 0, "relief mapping");
+        // D5 colour variation: convex paler and a little less saturated, hollow darker and greener, zero on rock and beyond 24 km, linear in the strength.
+        var grey = (R: 0.2, G: 0.3, B: 0.1);
+        var crest = RingGroundSurfaceModel.ReliefColour(grey, 1, 0, 100);
+        var hollow = RingGroundSurfaceModel.ReliefColour(grey, -1, 0, 100);
+        double Lum((double R, double G, double B) c) => c.R * 0.2126 + c.G * 0.7152 + c.B * 0.0722;
+        Check(failures, Lum(crest) > Lum(grey) * 1.05 && Lum(hollow) < Lum(grey) * 0.95, $"colour variation: crest {Lum(crest):F4} hollow {Lum(hollow):F4} against {Lum(grey):F4}");
+        Check(failures, crest.B / crest.G > grey.B / grey.G && hollow.G / hollow.R > grey.G / grey.R && hollow.B / hollow.G < grey.B / grey.G, "colour variation: a crest is not less saturated, or a hollow is not greener");
+        var none = RingGroundSurfaceModel.ReliefColour(grey, 1, 0, 30000);
+        Check(failures, none == grey && RingGroundSurfaceModel.ReliefColour(grey, 1, 1, 100) == grey && RingGroundSurfaceModel.ReliefColour(grey, 0, 0, 100) == grey, "colour variation does not vanish on rock, beyond 24 km and at relief 0");
+        var half = RingGroundSurfaceModel.ReliefColour(grey, 1, 0, 100, 0.5);
+        Check(failures, Math.Abs(half.G - (grey.G + crest.G) / 2) < 1e-12, "colour variation is not linear in the strength");
+        Check(failures, Math.Abs(Lum(crest) / Lum(grey) - 1.12) < 0.03 && Math.Abs(hollow.G / grey.G - 0.94) < 1e-9, "colour variation magnitude is not the designed 12 % at saturation");
+        Check(failures, Math.Abs(RingGroundSurfaceModel.DetailNormalWeight(1, 0, 30) - 1) < 1e-12 && RingGroundSurfaceModel.DetailNormalWeight(1, 1, 60) == 0 && Math.Abs(RingGroundSurfaceModel.DetailNormalWeight(0, 1, 10) - 0.6) < 1e-12
+            && RingGroundSurfaceModel.DetailNormalWeight(1, 0, 50) is > 0.3 and < 0.7, "detail normal weight (rock + 0.6 scree, full to 40 m, gone by 60 m)");
 
         // D3: tones are in [-1, 1] with mean 0; the box filter keeps the mean, is continuous across a boundary and returns the band mean from a footprint of 0.9 bands up.
         double toneSum = 0, toneMin = 1, toneMax = -1;

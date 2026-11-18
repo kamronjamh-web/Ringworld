@@ -70,3 +70,13 @@ meshes are adaptations of LOLIPOP's work and carry the same credit, with a
 `water_lap_loop.ogg`, `surf_break_loop.ogg`, `surf_far_loop.ogg`, `open_water_loop.ogg`, `stream_babble_loop.ogg`,
 `river_rush_loop.ogg`, `river_roar_loop.ogg`, `waterfall_loop.ogg` and `underwater_loop.ogg` are original synthesised
 work (tools/media/water_sfx_gen.py); no third-party material. Provenance and hashes: resources/audio/water/LICENSE.md.
+
+## Biome ground textures and the rock detail normal (materials/biomes)
+
+`materials/biomes/alpine_rock_albedo.png`, `desert_sand_albedo.png`, `forest_floor_albedo.png` and `tundra_ground_albedo.png` have been in the repository since the
+initial commit (`b1e0cdd`, 2026-09-23). **Origin unrecorded**: nobody on the project knows where they came from, so their licence is unknown. T8 replaces the rock texture.
+
+`materials/biomes/alpine_rock_detail_normal.png` (T4-4b) is a derivative of `alpine_rock_albedo.png`, so it carries the same unrecorded origin. It is generated in the repository,
+deterministically, by `tools/GroundRockDetailNormal.cs` (`tools/ground_rock_detail_normal.gd`): Lanczos resample to 1024 x 1024, luminance as height, features larger than about 0.5 m removed (blur radius 48 px), wrapped Sobel
+gradient scaled to an RMS slope of 0.30. Source SHA-256 `e61d1fe688017265afc8d132f518f5e4e45130b75a7b948e325abb8662b8322f`, output PNG SHA-256
+`6c9939910ae7ce6feb43a9dbf6b45df61f8c1e999fef7c5db11bfcada977f622` (decoded pixels `c5827e99acbd6e95505404d3a4d514771b289aff46255c0b040edac671d27625`).

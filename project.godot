@@ -83,6 +83,10 @@ ringworld_ground_look={
 "type": "vec4",
 "value": Vector4(38, 0.12, 1, 0)
 }
+ringworld_ground_rock_detail_normal={
+"type": "sampler2D",
+"value": "res://materials/biomes/alpine_rock_detail_normal.png"
+}
 ringworld_solar_visibility={
 "type": "float",
 "value": 1.0
