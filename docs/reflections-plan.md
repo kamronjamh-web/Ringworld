@@ -4,7 +4,7 @@ Lead: Fable 5.2. Approved by the user on 2026-11-17 ("make reflections both fast
 
 ## 0. Handoff
 
-State on 2026-11-18, night (overnight lead: `claude-lead`; this section is kept current as orders finish). On 2026-11-17 the author of this plan (Fable 5.2) handed over here. A fresh lead can continue from this section, section 10 (the current work list) and the four design files under `docs/work-orders/reflections/`. Sections 1 to 8 are the Phase A reasoning; where they differ from section 10, section 10 holds.
+State on 2026-11-18, morning (lead: `claude-lead`; this section is kept current as orders finish). On 2026-11-17 the author of this plan (Fable 5.2) handed over here. A fresh lead can continue from this section, section 10 (the current work list) and the four design files under `docs/work-orders/reflections/`. Sections 1 to 8 are the Phase A reasoning; where they differ from section 10, section 10 holds.
 
 ### 0.1 What is established
 
@@ -13,7 +13,7 @@ State on 2026-11-18, night (overnight lead: `claude-lead`; this section is kept 
 
 | Item | Cost |
 |---|---|
-| Sky radiance map update | **0.38 ms every frame**: two rebuilds of 0.19 ms each, in the far viewport and in the main view, caused by the fog flip between their Environments (R1-6a, 9.4; 9.2 measured only the Incremental half, 0.18) |
+| Sky radiance map update | Was **0.38 ms every frame**: two rebuilds of 0.19 ms each, in the far viewport and in the main view, caused by the fog flip between their Environments (R1-6a, 9.4; 9.2 measured only the Incremental half, 0.18). **Since R1-6d (9.5): one rebuild per frame, in the far viewport, about 0.19 ms**; the remaining one is caused by the sky material writes (R1-6b/c) |
 | Engine SSR at half size (what High runs) | 0.12 ms dry plains, 0.18 to 0.24 ms wet plains and forest, 0.21 ms Weather Lung, 0.28 ms save spot |
 | Engine SSR at full size | a further 0.17 to 0.32 ms where pixels trace |
 | Engine SSR steps 64 instead of 128 | -0.06 ms at the Weather Lung and the save spot, about -0.02 ms elsewhere; tolerance and fades: nothing |
@@ -49,25 +49,34 @@ State on 2026-11-18, night (overnight lead: `claude-lead`; this section is kept 
 | Sign-off sheet (interim R1-7) and model cost table | **Done 2026-11-18**: `.godot/audit_baseline/common/reflections/signoff_2026-11-18/` (two sheets, summary with the cost table and the user questions) | 0.5 |
 | R1-3 housekeeping | Not started | 10.4 |
 | R1-4 trace only where it shows (the wet-ground trial) | **Parked** with R1-1d (same files) | 10.4 |
-| R1-5a water march, R1-5c measurements | Designed, not started. After R1-2a | `docs/work-orders/reflections/R1-2-R1-5-design.md` |
-| R1-6 radiance cadence | Designed. **R1-6a done 2026-11-18 (9.4):** the map is rebuilt twice per frame (far and main, 0.19 ms each, 0.38 ms in all), and the main/far fog flip alone causes it. Next: R1-6d (fog flip) first, then R1-6b/c. **R1-6d staged** in `<scratchpad>/refl/r16d/` (`r16d.patch`, +15 lines in `day_side_atmosphere.gd`): while fog is off, the main fog values are set to those of an unconfigured `Environment` (the far Environment's), after every fog-on path has run, so water and caves are unchanged. Not in the tree, not run | `docs/work-orders/reflections/R1-6-design.md` |
+| R1-5a water march | **Done, in the tree, ready for commit 2026-11-18.** Horizon march at model 1 (`ring_water_ssr_horizon`, design 3.1 to 3.4); model 0 calls the old `ring_water_ssr` unchanged. Model 0 identity: SSIM 0.9996 to 0.99997 at coast, lifted coast, night arch, wet plains and Weather Lung dam, heatmaps show clouds, horizon band and edges only, nothing on water. New test variant `water_ssr_live_controls_model1_gpu_test` passes: the far marker 600 m away is hit (on-minus-off red 0.19 against a 0.04 threshold), SSR on/off response 0.0225 at model 1 against 0.00001 at model 0. The default `water_ssr_live_controls_gpu_test` still fails as before R1-5a ("response too small", 0.4). Reading taken: a rejected thickness bracket is a miss and does not fall through to the hit at infinity (design 3.1; keeps backdrop off thin trunks) | `materials/ring_ocean_proxy.gdshader` (+124/-2), `tools/water_reflection_model_contract_test.gd`, `tools/water_ssr_live_controls_gpu_test.gd` (additive `--reflection-model=1` path and the 600 m marker), new `tools/water_ssr_live_controls_model1_gpu_test.gd`, `tools/test_manifest.json` (one entry) |
+| R1-5c measurements | Not started. Next for the water (cost at a waterline, a lake from a cliff and a river; flicker movies). Use the fixed per-pass tool (0.7) | `docs/work-orders/reflections/R1-2-R1-5-design.md` |
+| R1-6 radiance cadence | Designed. **R1-6a done (9.4). R1-6d done, in the tree, ready for commit 2026-11-18 (9.5):** one rebuild per frame left, about 0.16 ms saved (0.13 to 0.19 depending on the method), no visible change. The staged `day_side_atmosphere.gd` patch was **not** used: it would have changed the cloud colour (the Sunshine driver samples the main Environment's `fog_light_color`, `use_environment_fog` 0.35) and failed the eclipse parity test. Instead the far Environment copies the main fog values (9.5). Next: R1-6b/c (the material writes; the design's decision 10.6 item 2 on global shader parameters is still open) | `docs/work-orders/reflections/R1-6-design.md`; files: new `scripts/Voxel/LOD/RingScaledFarViewport.SkyRadiance.cs`, `scripts/Voxel/LOD/RingScaledFarViewport.cs` (+1 line in `SyncCameraAndLighting`) |
 | R1-7 sign-off sheet, R1-8 cleanup | After the above | 10.4 |
 | R3a-0 cloud publication design | **Done**, including the capture hold and the main-view filter (its sections 2.5 and 2.6) | `docs/work-orders/reflections/R3a-design.md` |
-| R3a-1 publication | **Done, in the tree, reported ready for commit 2026-11-18.** `cloud_publish_identity_gpu_test` passes: C1 (native) and C2 (half, 2x2 interleave) give off == on == off-again, byte for byte, for the cloud colour image, the data image and the final frame; C3 (lightning glow published, gone from callback 6), C4 (capture hold) and C5 (another view) pass. Lead corrections over the staged code: the ramp runs on unscaled real time; the bridge keeps the gameplay frame arguments as doubles (as floats the radius never matched the effect's and every frame read as a jump); the test reads the bound RID and params from the bridge status (`global_shader_parameter_get` is editor-only at run time), holds time with `Engine.time_scale = 0`, discards one reset after warm-up and holds the wall-clock cloud-shadow crossfade off (design 4.2). Deviations: B7b un-holds on any camera change, so C4 checks "content kept while held; one complete march on a turn"; the "params never written while off" check became "params.x is 0 while off" (the publication is on from boot); no new manifest tag. Measured: `.b` of the data image is stored at full fp32 on the 4070 (max 172,196 m, 1,378 samples above 65,504, fp16-exact share 0.0001); readers keep the half-float-safe rules of 3.3 | same file |
-| R3a-2, R3a-3 | Designed, not started | same file |
+| R3a-1 publication | **Committed** (61063f0). `cloud_publish_identity_gpu_test` passes: C1 (native) and C2 (half, 2x2 interleave) give off == on == off-again, byte for byte, for the cloud colour image, the data image and the final frame; C3 (lightning glow published, gone from callback 6), C4 (capture hold) and C5 (another view) pass. Lead corrections over the staged code: the ramp runs on unscaled real time; the bridge keeps the gameplay frame arguments as doubles (as floats the radius never matched the effect's and every frame read as a jump); the test reads the bound RID and params from the bridge status (`global_shader_parameter_get` is editor-only at run time), holds time with `Engine.time_scale = 0`, discards one reset after warm-up and holds the wall-clock cloud-shadow crossfade off (design 4.2). Deviations: B7b un-holds on any camera change, so C4 checks "content kept while held; one complete march on a turn"; the "params never written while off" check became "params.x is 0 while off" (the publication is on from boot); no new manifest tag. Measured: `.b` of the data image is stored at full fp32 on the 4070 (max 172,196 m, 1,378 samples above 65,504, fp16-exact share 0.0001); readers keep the half-float-safe rules of 3.3 | same file |
+| R3a-2 include and parity test | **Written, in the tree, NOT yet run** (2026-11-18): new `materials/ring_cloud_reflection.gdshaderinc` (matches design 3.1/3.2/6.1 on review; no forward declarations, Godot has none; heaviest-tap tie rule for `opaque_limit`: highest weight x coverage, then weight, first wins), new `tools/cloud_reflection_include_gpu_test.gd`, one manifest entry (tag `clouds` only: `reflections` is not a manifest taxonomy tag). Its GPU run `.godot/test_runs/r3a2/20261118-101449` was queued; not committable until it passes with the residual bounds of design 6.2 | same file |
+| R3a-3 | Designed, not started | same file |
 | R2 (ring radiance map), R3 (far mirror), R4 (beams), R5 (reserve) | Not designed beyond sections 4 and 6 | — |
 
-No helper agent is running. No order was left half-applied in the tree (R3a-1 is complete in the tree, uncommitted until the coordinator commits it; R1-6d exists only in staging).
+No helper agent is running. No order was left half-applied in the tree: R1-6d and R1-5a are complete in the tree, uncommitted until the coordinator commits them (0.4).
 
-Next, one at a time: R1-6d (fog flip, worth about 0.19 ms; staged), then R1-5a, then R3a-2. The user decides the sign-off questions (`signoff_2026-11-18/README.md`). Parked: R1-1d and R1-4 (terrain/proxy shaders held by T4-4b).
+User decisions of 2026-11-18 (Q1 and Q2 accepted, Q3 studied first, R1-6d go): 10.6. The Q3 study and its proposal: 10.7, waiting for the user.
+
+Next, one at a time: R3a-2 (cloud sampling include), then R1-5c (march cost and look), then R1-6b/c once the primary agent decides 10.6 item 2. Parked: R1-1d and R1-4 (terrain/proxy shaders held by T4-4b), and the far-roughness change (10.7) until the user answers.
 
 **How model-0 identity is proven (2026-11-18).** Stills of one session are byte-comparable between models (capture mode). Across sessions (before/after a code change) they are not: clouds, tree crowns in wind and a thin band of distant terrain at the horizon differ by a few thousand pixels (SSIM 0.9999+), and a pose without them (night emitter) is byte-identical. So an order is identical at model 0 when the before/after heatmap shows only that noise and no structure on reflective surfaces (test spheres, wet ground, water, metal). Even within one session the repeat frame differs on the horizon band with models [0, 0] (diag runs), so that band is harness noise, not a model effect. A "before" assembly is built from a scratch copy of the C# sources with the order's hunks reverted and run through `perf_bench.ps1 -SkipBuild` after copying it into `bin\OptRelease` (old timestamp so the next bench rebuilds); the probe falls back to `env.reflected_light_source` when `RingReflectionModel` is not in the assembly. Shader-only orders need no such build: run the probe before the edit and after it.
 
 ### 0.4 What is uncommitted, and where
 
-Committed: the Phase A plan (97a1a74), the R0 tooling (b00b501), Phase B and the designs (83ebc6a), R1-0 (5418d13), R1-1-0 (2b73725), R1-1a (8b9dc4a), R1-1b (8c43bc2), R1-2a (59bd6f1), the bench tooling for the sign-off and R1-6a (0e53830: `ab_matrix` op `reflection_model`, Color arrays, the two scenario files), the plan with 9.4 (802e051). Uncommitted in the working tree of `terrain-vegetation-revamp`, by this lane:
-- **Docs:** `docs/reflections-plan.md` (this section).
-- **R3a-1:** `addons/SunshineClouds2/SunshineClouds.gd` (+172, additions only), `scripts/RingSunshineCloudBridge.cs` (+6/-1), new `scripts/RingSunshineCloudBridge.CloudReflection.cs`, new `tools/cloud_publish_identity_gpu_test.gd`, `project.godot` (five globals appended at the end of `[shader_globals]`, own hunk), and in `tools/test_manifest.json` the entry `cloud_publish_identity_gpu_test` (before `cloud_depth_weighting_gpu_test`).
+Committed: the Phase A plan (97a1a74), the R0 tooling (b00b501), Phase B and the designs (83ebc6a), R1-0 (5418d13), R1-1-0 (2b73725), R1-1a (8b9dc4a), R1-1b (8c43bc2), R1-2a (59bd6f1), the bench tooling for the sign-off and R1-6a (0e53830: `ab_matrix` op `reflection_model`, Color arrays, the two scenario files), the plan with 9.4 (802e051), R3a-1 (61063f0). Uncommitted in the working tree of `terrain-vegetation-revamp`, by this lane (other lanes have their own uncommitted terrain files in the tree, including one hunk in `RingScaledFarViewport.cs` near line 1201 that is not ours):
+- **Docs:** `docs/reflections-plan.md` (sections 0, 9.5, 10.6, 10.7).
+- **R1-6d:** new `scripts/Voxel/LOD/RingScaledFarViewport.SkyRadiance.cs`; in `scripts/Voxel/LOD/RingScaledFarViewport.cs` only the hunk that adds `SyncFarFogValuesToMain();` after `UpdateFarHubSunColor();` in `SyncCameraAndLighting`.
+- **R1-5a:** `materials/ring_ocean_proxy.gdshader` (three hunks), `tools/water_reflection_model_contract_test.gd`, `tools/water_ssr_live_controls_gpu_test.gd`, new `tools/water_ssr_live_controls_model1_gpu_test.gd`, and in `tools/test_manifest.json` the entry `water_ssr_live_controls_model1_gpu_test`.
+
+Tests for R1-6d (`.godot/test_runs/r16d/20261118-082549`): `-Files` of the two files (tag far-viewport) plus `-Tests eclipse_darkness_parity_test,underground_lighting_smoke_test,water_fft_swimming_smoke_test,reflection_environment_contract_test`: 27 selected, 23 pass, 1 fail, 2 known-fail, 1 fixed. Fail: `river_far_water_fraction_test` (head window; pre-existing, as for R1-2a). **Fixed:** `far_weather_refresh_smoke_test` now passes; `tools/test_known_failures.json` should drop it. The eclipse parity, underground lighting, water swimming (underwater optics self-test) and reflection contract tests pass.
+
+Tests for R1-5a (`.godot/test_runs/r1_5a/`): `-Files` selection (38): 33 pass, 5 fail, all pre-existing (`inland_water_sampler_test`, `river_far_water_fraction_test`, `water_ambience_capture_test`, `water_sound_sources_test`, `water_ssr_live_controls_gpu_test`); the water contract, `water_rendering_smoke_test` and `inland_water_render_gpu_test` pass. `water_ssr_live_controls_model1_gpu_test` passes (run `20261118-100533`).
 
 Tests for R1-2a (`.godot/test_runs/r1_2a/`):
 - `-Files` selection (37): 33 pass, 4 fail, none from R1-2a: `inland_water_sampler_test` (rivers cache version 13, want 12; as in 0.4 of R1-1), `water_ambience_capture_test` (loop lengths; same in `overnight_gate` 2026-11-16), `water_sound_sources_test` (CPU cost gate and shore distances; fails in many earlier runs), `river_far_water_fraction_test` (river head window; fails in many earlier runs). Every GPU test passed, including `inland_water_render_gpu_test` and `water_rendering_smoke_test`.
@@ -81,6 +90,9 @@ Tests for R1-2a (`.godot/test_runs/r1_2a/`):
 - `.godot/audit_baseline/common/reflections/r1_2/`: `r12a_identity_1.png` (R1-1 stills against R1-2a at model 0, coast, lifted coast, night arch, Weather Lung dam: clouds, crowns and the horizon band only) and `model_stills/` = the R1-2a state at model 0 and 1, all scenarios, with the driver report (run `.godot/perf_bench/refl_r12a/20261118_030258`): the "before" set for R1-5a.
 - `.godot/audit_baseline/common/reflections/r1_2/lake/`: lake 20792 area stills of the rivers world (seed 876374626), model 0 and 1 (`*_m1.png`), noon, clouds on; north-facing views show the river and the lake (the water mask confirms them), the south-facing `lake20792s_*` show a dry flat that is not water. Taken with a scratch subclass of `tools/river_site_capture.gd` (variant `m1` through `RingReflectionModel`), kept at `.godot/audit_baseline/common/reflections/scratch_tools/refl_lake_capture.gd` (not a tracked tool; `.godot` outside the kept folders is pruned, which deleted its first location).
 - `.godot/audit_baseline/common/reflections/signoff_2026-11-18/`: the two sign-off sheets, `README.md` (summary, cost table, user questions), the cost run's report and driver report (run `.godot/perf_bench/refl_model_cost/20261118_030855`).
+- `.godot/audit_baseline/common/reflections/r1_6d/`: before/after heatmaps (x8) of the night arch, dry plains with spheres, wet plains, lifted coast and emitter bore at model 1, the before/after spheres stills, both driver reports (cadence matrix and probes; runs `refl_r16d_before/20261118_081845`, `refl_r16d_after/20261118_082944`) and the scenario file `r16d_stills.json`.
+- `.godot/audit_baseline/common/reflections/r1_5a/`: model 0 heatmaps of R1-5a (runs `refl_r15a_before/20261118_085456`, `refl_r15a_after/20261118_090512`), model 1 before/after stills and sheets of the lifted coast, Weather Lung dam and wet plains.
+- `.godot/audit_baseline/common/reflections/q3_far_roughness/`: the Q3 study stills and sheets (10.7) and their index files; the scratch capture tool is `scratch_tools/refl_far_rough_capture.gd` with its runner copy `refl_far_rough_capture.ps1`; the study scripts (`mss.py`, `albedo.py`, `fit.py`) are copied beside the stills.
 - `.godot/perf_bench/reflections_b1/20261117_144547/`, `reflections_b3a/20261117_150117/`, `reflections_b3b/20261117_153047/`: reports, stills and heatmaps of the three runs. `.godot/perf_bench/refl_tooling_check/`: the quick run of 0.6.
 
 ### 0.6 Handover of the bench tooling to the test-speed lane (B2a)
@@ -102,6 +114,7 @@ Things to know when using it:
 
 ### 0.7 Other notes
 
+- **Per-pass rows (2026-11-18).** The test-speed lane found that the per-pass `gpu.*`, `cpu.*` and `worker.*` rows of perf_bench windows were understated before its span fix (event ring overflow: `gpu.*` 25 to 50 % low, `cpu.*`/`worker.*` 2 to 3.5 times low). `gpu_total`, wall and the `vp.*` viewport rows (engine viewport timers) were not affected. Every cost in this plan (9.1 to 9.5) is a `gpu_total` or `vp.*` delta, so none is affected. Future checks that read a per-pass row (for example `GPU.Clouds` in the R3a verification, and R1-5c) must use the fixed tool.
 - Engine source read: `godotengine/godot` `master` (4.8 beta). The main repository has no tag for 4.8-dev7, so the exact dev7 commit was not read.
 - Files other lanes hold: the terrain and proxy shaders (T4-4b, FR-1). `tools/perf_bench.ps1` belongs to the test-speed lane.
 
@@ -573,6 +586,31 @@ Consequences for R1-6:
 
 Evidence: `.godot/perf_bench/refl_r16a/20261118_034642/`; `driver_report.json` and `report.md` copied to `.godot/audit_baseline/common/reflections/r1_6a/` (kept by the prune).
 
+### 9.5 R1-6d: one radiance rebuild per frame (2026-11-18)
+
+**What changed.** The far Environment copies the main Environment's six fog values (density, light colour, light energy, sun scatter, aerial perspective, sky affect) every frame, in `RingScaledFarViewport.SyncCameraAndLighting`, which runs after `DaySideAtmosphere` has written them (tree order, the same route the far sun energy takes). `fog_enabled` is not copied. The main Environment is not touched.
+
+**Why not the staged patch** (main fog values set to the far defaults while fog is off): the main fog values are read while fog is off.
+- `SunshineCloudsDriver` copies `fog_light_color` of the main Environment into the cloud `sampled_environment_fog_color` every frame, and `sunshine_ring_local.tres` has `use_environment_fog = 0.35`, so the colour feeds the cloud ambient. At night the patch would have replaced (0.04, 0.07, 0.12) by (0.52, 0.55, 0.61): brighter clouds.
+- `eclipse_darkness_parity_test` compares those values with the pre-E2 script and would have failed.
+- This matches the design's escalation condition ("a fog value is read while fog is off").
+
+The far Environment has fog off and volumetric fog off, so the copied values are unused there; nothing reads them.
+
+**Cost** (same fixture as 9.4, `plains_eye`, noon, clocks held, 3 rounds; before = the tree without the change, after = with it, both on 2026-11-18):
+
+| | Before | After |
+|---|---|---|
+| Baseline total GPU (p50) | 8.56 ms | 8.43 ms |
+| Far viewport (vp, p50) | 1.345 ms | 1.345 ms |
+| Variant "fog match" (no flip) against baseline | -0.37 ms | -0.21 ms, the same as "frozen" alone (-0.21): the flip is gone |
+| Variant "frozen" (no sky material writes) against baseline | 0.00 | -0.21 ms (-0.19 in the far viewport): the one rebuild left, caused by the material writes |
+
+- Saving: about **0.16 ms** within each run (0.37 - 0.21), 0.13 ms between the two baselines (different builds; another lane's terrain changes were also in the after build), 0.19 ms by the per-rebuild cost of 9.4. Total GPU and `vp.*` rows only, so the per-pass tool fix of 0.7 does not touch these numbers.
+- The remaining rebuild now happens in the far viewport (rendered first); the main view reuses the map.
+
+**Look.** Probe stills before against after, models 0 and 1, dry plains with spheres, wet plains, lifted coast, forest, night arch, emitter bore: SSIM 0.9988 (night arch: clouds and the arch's terrain band) to 0.99995. Heatmaps show clouds, crowns, the horizon band and sparkle on the distant arch, the documented cross-session noise; the spheres and the wet ground differ in a few hundred scattered pixels (max 7 to 21 of 255), with no structure. Underwater and in caves the main fog is on, so the map is rebuilt in the main view with the main values every frame, exactly as before; the probe could not be placed underwater (two ocean candidates near `coast_eye` landed on land), so the underwater identity rests on that argument and on `water_fft_swimming_smoke_test` (underwater optics self-test) passing. Evidence: 0.5.
+
 ## 10. Revised orders after Phase B (2026-11-17)
 
 This section supersedes R1 of section 6 and adds R1-6 and R3a. It rests on the measurements of section 9 and on two Lead designs made the same day (receiver audit for R1-1; water composition and march for R1-2 and R1-5). User decisions of 2026-11-17: the water may change to a realistic look, with before/after stills for sign-off and nothing shipped before that; on High, reflections may cost at most +0.2 ms over today at any measured pose, and only where stills show a clear gain (more goes to Very High and above; cheaper is welcome); wet ground may be trialled with SSR on puddles and near ground only.
@@ -704,6 +742,12 @@ Order: R1-0 first (done, see section 0). Then R1-1a, R1-1b and R1-2a (disjoint f
 
 Decided: the Water tab rows Fresnel F0, Fresnel strength and SSR strength are removed at cleanup (user, 2026-11-17; see R1-8).
 
+Decided by the user on 2026-11-18 (the three sign-off questions below):
+- Q1: the trees/grass interim (no sky sheen until a canopy-visibility term exists) is **accepted**.
+- Q2: the metal sky-from-below interim, including the night emitter lighter by about 3 grey levels, is **accepted** without waiting for R2a.
+- Q3: far water reflecting less sky is **to be studied first**: far-water roughness and normal variance at distance (Toksvig, LEAN-style roughness from the wave slope variance as normals are filtered), what a physical result looks like, then a proposal with before/after stills. Study: 10.7.
+- R1-6d (fog values, about 0.19 ms): **go**.
+
 For the primary agent:
 1. Offering the user a reset of their water SSR overrides (32 steps, 8 refinements, 1,000 m) to the new High values once R1-5 exists.
 2. R1-6: sky inputs as global shader parameters (recommended by the design; touches four tests) or a snapshot-uniform fallback.
@@ -713,6 +757,57 @@ For the user, with the sign-off sheet:
 1. Trees and grass keep today's look (no sky sheen) until a canopy-visibility term exists. Accept as the interim?
 2. Metal undersides and shafts will show haze where ground should be until R2a. Accept as the interim, or hold the switch until R2a is in?
 3. Far water will reflect less sky toward the horizon than today's fixed blue. Accept the physical result, or study the far roughness?
+
+### 10.7 Q3 study: far-water roughness (2026-11-18)
+
+**Question.** At model 1, far lakes and rivers (and the far ocean) look dark: they reflect much less sky toward the horizon than today's fixed pale blue. Is that physical, and what should far water look like?
+
+**How far water is shaded today.** Beyond the FFT detail distance the near proxy blends to `far_water_roughness` = 0.46 (perceptual, alpha = r squared = 0.21), one constant for the ocean, lakes and rivers (`ring_ocean_proxy.gdshader` base roughness; `ring_ocean_global.gdshader` likewise). The engine turns roughness into a sky-reflection weight with the Karis analytic fit of the split-sum DFG (`prefiltered_dfg`): at grazing view (N.V 0.005 to 0.04) and F0 0.02 it gives E = 0.18. Today's model 0 instead mixes a fixed blue with a Schlick weight of up to 0.37.
+
+**Physics: roughness from filtered wave slopes.** When waves become smaller than a pixel, their normals are averaged away and must reappear as roughness (Toksvig 2005; LEAN mapping, Olano and Baker 2010; for the ocean specifically Bruneton, Neyret and Holzschuch 2010, who move the unresolved wave slope variance into the BRDF, geometry to normals to BRDF with distance). The rule: roughness squared at distance = micro roughness squared + the slope variance of the waves no longer resolved. Far away, every wave is unresolved, so the far roughness should equal the total mean square slope (mss) of the surface. With a Beckmann/Gaussian slope model, m = sqrt(mss), and Godot's alpha is about m (r = mss^(1/4)).
+- Open ocean, Cox and Munk (1954), clean surface: mss = 0.003 + 5.12e-3 U (U wind in m/s). U 2: 0.013; U 5: 0.029; U 8: 0.044; U 10: 0.054.
+- **Today's 0.46 corresponds to the ocean at about 8 m/s** (mss 0.044). That is a fresh breeze; plausible for open ocean, but it is applied to lakes and rivers too.
+- The game's own inland water is calmer: the wave profile scales heights to 0.24 (lakes) and 0.11 (rivers) of the ocean's. With the same wavelengths, slopes scale the same, so the slope variance scales by 0.058 and 0.012. Keeping Cox and Munk's 0.003 floor (capillary ripples), the far mss is about 0.0045 for lakes and 0.0033 for rivers. Consistency with the near look (LEAN) says far inland water must be much smoother than 0.46.
+- The game's FFT spectrum is not a usable source for the absolute mss: with the drawn-variance factor 8 (`WaterWaveSpectrum.DrawnVarianceFactor`) and overlapping cascades its nominal slope variance is 5 to 10 times Cox and Munk at the same wind, and the shaded normals are filtered by the geometry spacing (scratch `mss.py`). The wind the FFT follows is usable as the input to Cox and Munk.
+
+**Physics: how bright rough water is at grazing.** A Monte Carlo of the single-scatter microfacet integral (exact Fresnel for n = 1.333, height-correlated Smith masking; scratch `albedo.py`) for a uniform sky, N.V 0.005 to 0.04:
+
+| Surface | mss | Gaussian slopes (Cox and Munk) | GGX at the same mss | Godot (Karis fit, r = mss^(1/4)) | Godot r that gives the Gaussian value |
+|---|---|---|---|---|---|
+| calm water | 0.003 | 0.67 | 0.50 | 0.48 | 0.14 |
+| inland water, game profile | 0.0045 | 0.63 | 0.45 | 0.43 | 0.155 |
+| ocean 2 m/s | 0.013 | 0.52 | 0.33 | 0.31 | 0.215 |
+| ocean 5 m/s | 0.029 | 0.42 | 0.25 | 0.23 | 0.27 |
+| ocean 8 m/s (today's 0.46) | 0.044 | 0.36 | 0.21 | 0.18 | 0.305 |
+| ocean 10 m/s | 0.054 | 0.33 | 0.19 | 0.16 | 0.325 |
+| ocean 15 m/s | 0.080 | 0.28 | 0.15 | 0.12 | 0.36 |
+
+- **The engine reflects about half the sky that a real wind-roughened sea does at grazing**, at the same slope statistics: GGX's long tail masks more than Gaussian slopes do, and the Karis fit is a little lower again. The flat-water Fresnel at these angles is 0.83 to 0.99.
+- The Gaussian lobe reflects sky from 13 to 17 degrees above the horizon on average for the ocean (6 degrees for calm water), so even physically the distant sea is darker than the horizon sky: a visible horizon line on windy days, as in photographs. Calm inland water mirrors the low sky and is bright.
+- So the dark far lakes at model 1 are partly an artefact (the GGX/Karis grazing deficit) and partly a wrong input (an ocean roughness on lakes).
+
+**What a physical result looks like** (est., from the table): far ocean at 5 to 8 m/s reflects about 35 to 45 % of the sky seen 13 to 17 degrees up; far lakes and rivers about 60 to 65 % of the sky just above the horizon, nearly mirror-bright and sky-coloured, slightly blurred.
+
+**Stills** (`.godot/audit_baseline/common/reflections/q3_far_roughness/`; rivers world, seed 876374626, lake 20792, noon, clouds on, R1-5a and R1-6d in the tree, only the far roughness changed between the model 1 stills): `q3_crop_a150.png` (150 m up, pitch -5: the lake at the horizon and the far river), `q3_grid_a150.png` and `q3_grid_a400.png` (whole frames, 150 m and 400 m up). Mean display luminance of the lake pixels at 150 m:
+
+| Variant | Lake | Horizon sky above it |
+|---|---|---|
+| model 0, fixed blue | 0.33 | 0.48 |
+| model 1, far roughness 0.46 (today) | 0.09 | 0.48 |
+| model 1, 0.305 (ocean 8 m/s, matched) | 0.11 | 0.48 |
+| model 1, 0.155 (inland, matched) | 0.17 | 0.48 |
+
+- At 0.155 the far lake turns from dark teal to sky blue and shows the sky; it stays darker and more coloured than model 0's pale fixed blue, which is brighter than the physics allows for anything but a mirror.
+- The near river (within the FFT detail distance) does not change with the far roughness; its teal is the body colour at ocean_roughness 0.16 seen at 10 to 20 degrees. From 400 m the water is not at grazing (N.V about 0.1), so all variants differ less there.
+- Caveat on the stills: below the SSR roughness cutoff (0.37) the R1-5a march also runs on the water within the SSR camera distance (695 m); at 150 m up most lake pixels are beyond it.
+
+**Proposal (needs the user's sign-off; nothing is changed yet):**
+1. **Far roughness per water kind, from physics, at model 1 only.** Inland water (lakes and rivers): 0.155 (est.), from its own wave profile plus the capillary floor, matched to the Gaussian-slope albedo at grazing. Ocean: from the wind the FFT already follows, through Cox and Munk and the same match: r = 0.27 at 5 m/s, 0.305 at 8, 0.325 at 10, 0.36 at 15 (a small fitted curve; a constant 0.30 as the cheap first step). The matched roughness also narrows the reflected lobe a little more than physics does (sharper far reflections); at kilometres the pixel footprint hides that.
+2. **Implementation sketch:** one more uniform (inland far roughness) or a kind-dependent mix in the proxy shader where `far_water_roughness` is used, and a C# function in `RingWaterModel` that computes the ocean value from the FFT's smoothed wind; `ring_ocean_global.gdshader` takes the ocean value. No cost (est.).
+3. **The Water tab's "Far roughness" row:** retire it with the other R1-8 rows (the value then follows the wind), or keep it as a multiplier. A question for the user.
+4. Not proposed: brightening the far sky term by any factor beyond what a lower roughness gives (that would be a boost; ask the user first).
+
+User questions: (a) accept physically derived far roughness (inland 0.155, ocean from the wind) at model 1? (b) the "Far roughness" row: retire or keep as a multiplier?
 
 ## 11. Sources
 
@@ -749,3 +844,8 @@ Wet surfaces and racing:
 - S. Hargreaves, "MotoGP: road reflections": https://shawnhargreaves.com/blog/motogp-road-reflections.html
 - S. Lagarde, "Water drop" series, parts 2b and 3a/3b (dynamic rain, physically based wet surfaces); summary: https://www.fxguide.com/?p=43362
 - N. Tatarchuk, "Artist-Directable Real-Time Rain Rendering in City Environments", SIGGRAPH 2006: https://advances.realtimerendering.com/s2006/Chapter3-Artist-Directable_Real-Time_Rain_Rendering_in_City_Environments.pdf
+
+Far-water roughness (10.7):
+- E. Bruneton, F. Neyret, N. Holzschuch, "Real-time Realistic Ocean Lighting using Seamless Transitions from Geometry to BRDF", Computer Graphics Forum 29(2), Eurographics 2010: https://hal.archives-ouvertes.fr/inria-00443630v3
+- C. Cox, W. Munk, "Measurement of the Roughness of the Sea Surface from Photographs of the Sun's Glitter", JOSA 1954: https://data-ww3.ifremer.fr/BIB/Cox_Munk_JOSA1954.pdf ; formulas as summarised in the Ocean Optics Web Book: https://oceanopticsbook.info/view/surfaces/cox-munk-sea-surface-slope-statistics
+- M. Olano, D. Baker, "LEAN Mapping", I3D 2010; M. Toksvig, "Mipmapping Normal Maps", Journal of Graphics Tools 2005 (both cited from memory)

@@ -148,6 +148,8 @@ At a 0.4 % map step the ambient step is at most 0.14 %, and a reflected-sky step
 
 ### 4.5 The fog flip (order R1-6d; only if R1-6a shows a second rebuild per frame)
 
+**Superseded (2026-11-18, as built):** the direction is reversed. The main fog values are read while fog is off (the Sunshine driver samples `fog_light_color` for the cloud ambient; `eclipse_darkness_parity_test` compares them), so the main Environment is left alone and the far Environment, whose fog is off and unread, copies the main values every frame (`RingScaledFarViewport.SkyRadiance.cs`). Results: plan 9.5. The text below is the original design.
+
 While the main Environment's fog is off at the end of `_process`, its six fog values (density, colour, energy, sun scatter, aerial perspective, sky affect) are set to the same constants the far Environment is built with, written only on change. They are then equal in both Environments, and fog off makes them unused (`sky.glsl:282`, scene fog likewise).
 - The base values are computed as today into locals. `_apply_underwater_environment` and `_apply_underground_fog_coupling` lerp from those locals, not from the Environment's stored values. The fog-on image (water, caves, debug depth fog) is therefore unchanged.
 - `_publish_enclosed_cloud_fog` already ignores the values while fog is off.
