@@ -1117,6 +1117,19 @@
       "expected_s": 3,
       "timeout_s": 60
     },
+    "cloud_publish_identity_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "clouds",
+        "sunshine-compute"
+      ],
+      "world": "certified",
+      "marker": "CLOUD_PUBLISH_IDENTITY_GPU_TEST",
+      "expected_s": 45,
+      "timeout_s": 300
+    },
     "cloud_depth_weighting_gpu_test": {
       "kind": "test",
       "mode": "gpu-local",

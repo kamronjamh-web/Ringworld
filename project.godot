@@ -623,3 +623,23 @@ ring_atmosphere_to_sun={
 "type": "vec3",
 "value": Vector3(0, 1, 0)
 }
+ringworld_cloud_reflection_color={
+"type": "sampler2D",
+"value": ""
+}
+ringworld_cloud_reflection_data={
+"type": "sampler2D",
+"value": ""
+}
+ringworld_cloud_reflection_dir_to_clip={
+"type": "mat4",
+"value": Projection(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
+}
+ringworld_cloud_reflection_params={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+ringworld_cloud_reflection_params2={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}

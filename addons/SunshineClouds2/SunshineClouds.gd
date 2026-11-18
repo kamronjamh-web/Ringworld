@@ -636,6 +636,25 @@ var capture_hold_target : RID
 var capture_hold_size := Vector2i.ZERO
 var capture_hold_camera := Transform3D.IDENTITY
 var capture_hold_projection := Projection.IDENTITY
+
+# Cloud reflection publication (R3a). A CPU-only snapshot of view 0's finished colour and data images, recorded after every command of the
+# callback; it never changes what the callback records. Consumed from the render thread by RingSunshineCloudBridge.CloudReflection.cs.
+# Both dictionaries are replaced whole under the mutex and never mutated, so a reader may hold the reference after unlocking.
+# Content (RIDs, camera, matrix inputs, serial) is replaced only by a main-view callback that recorded a complete march (and fill), so a capture
+# hold keeps the last complete images. Liveness is refreshed by every main-view callback, held or not.
+var cloud_reflection_publication_enabled := true
+var _cloud_reflection_mutex := Mutex.new()
+var _cloud_reflection_content := {}
+var _cloud_reflection_liveness := {}
+var _cloud_reflection_content_overwritten := false
+var cloud_reflection_generation := 0
+var cloud_reflection_fallback_textures : Array[RID] = []
+var _last_callback_gameplay_frame := {}
+var _cloud_reflection_main_target := Vector2i.ZERO
+var _cloud_reflection_main_camera := Transform3D.IDENTITY
+var _cloud_reflection_main_view_known := false
+var last_other_view_frame := -1000
+var incomplete_content_publications := 0 # diagnostic: content replaced by a callback that was held (must stay 0)
 var last_msaa_mode := RenderingServer.ViewportMSAA.VIEWPORT_MSAA_DISABLED
 var msaa_mode := RenderingServer.ViewportMSAA.VIEWPORT_MSAA_DISABLED
 var diagnostic_last_callback_target := RID()
@@ -892,6 +911,150 @@ func get_cloud_backdrop_texture(view: int = 0) -> Texture2DRD:
 func invalidate_cloud_backdrop_texture_publication():
 	for view in range(cloud_backdrop_published_texture_wrappers.size()):
 		cloud_backdrop_published_texture_wrappers[view] = null
+	_clear_cloud_reflection_snapshot()
+
+# The bridge hands over the main view's target size and camera every _Process (main thread). The render callback compares itself with them.
+func set_cloud_reflection_main_view(target: Vector2i, camera: Transform3D) -> void:
+	_cloud_reflection_mutex.lock()
+	_cloud_reflection_main_target = target
+	_cloud_reflection_main_camera = Transform3D(camera.basis.orthonormalized(), camera.origin)
+	_cloud_reflection_main_view_known = target.x > 0 and target.y > 0
+	_cloud_reflection_mutex.unlock()
+
+# Dropped wherever the backdrop publication is dropped, so a snapshot never names a retired texture.
+func _clear_cloud_reflection_snapshot() -> void:
+	_cloud_reflection_mutex.lock()
+	_cloud_reflection_content = {}
+	_cloud_reflection_liveness = {}
+	_cloud_reflection_content_overwritten = false
+	_cloud_reflection_mutex.unlock()
+
+# Render thread, after the callback recorded every command. Only the main view publishes; any other view's march has just overwritten the shared
+# images, so it only marks them overwritten.
+func _record_cloud_reflection_snapshot(view_count: int, target: Vector2i, size: Vector2i, new_size: Vector2i, resscale: int,
+		camera: Transform3D, view_proj: Projection, complete: bool, held: bool) -> void:
+	if not cloud_reflection_publication_enabled:
+		return
+	var frames := Engine.get_frames_drawn()
+	var camera_z := camera.basis.orthonormalized().z
+	_cloud_reflection_mutex.lock()
+	var main_camera := _cloud_reflection_main_camera
+	var is_main := view_count == 1 and _cloud_reflection_main_view_known \
+		and target == _cloud_reflection_main_target \
+		and camera.origin.distance_to(main_camera.origin) <= 8.0 \
+		and camera_z.dot(main_camera.basis.z) >= 0.999
+	if not is_main:
+		_cloud_reflection_content_overwritten = true
+		last_other_view_frame = frames
+		_cloud_reflection_mutex.unlock()
+		return
+	_cloud_reflection_liveness = {
+		"frames_drawn": frames,
+		"menu": menu_temporal_sampling,
+		"diagnostic": diagnostic_raw_density_matte or diagnostic_depth_density_matte or diagnostic_menu_history_weights,
+	}
+	if complete and accumulation_textures.size() >= 7:
+		if held:
+			incomplete_content_publications += 1
+		# The unjittered projection: engine jitter lives only in z.x / z.y, and the accumulated image is centred (see update_matrices).
+		var unjittered := view_proj
+		unjittered.z = Vector4(0.0, 0.0, view_proj.z.z, view_proj.z.w)
+		_cloud_reflection_content_overwritten = false
+		_cloud_reflection_content = {
+			"serial": render_callback_serial,
+			"generation": cloud_reflection_generation,
+			"color": accumulation_textures[1],
+			"data": accumulation_textures[0],
+			"raster": new_size,
+			"internal": size,
+			"target": target,
+			"divisor": resscale,
+			"camera": camera,
+			"projection": unjittered,
+			"frame": _last_callback_gameplay_frame,
+			"jump_limit": maxf(4000.0, 2.0 * max_step_distance),
+			"enclosed": ring_enclosed_fog,
+			"min_step": min_step_distance,
+		}
+	_cloud_reflection_mutex.unlock()
+
+# Render thread (the bridge's callable). frame / around / across / radius are the gameplay frame the bridge gave set_gameplay_cloud_frame this
+# _Process; the snapshot camera is remapped into that frame with the same function the history uses. Checks 1, 4, 5 and 6 of the design's
+# valid rules are decided here; the bridge adds the rest (render off, stale liveness, far backdrop, toggle).
+func get_cloud_reflection_publication(frame: Transform3D, around: float, across: float, radius: float, has_frame: bool) -> Dictionary:
+	_cloud_reflection_mutex.lock()
+	var content: Dictionary = _cloud_reflection_content
+	var liveness: Dictionary = _cloud_reflection_liveness
+	var overwritten := _cloud_reflection_content_overwritten
+	var other_view_frame := last_other_view_frame
+	_cloud_reflection_mutex.unlock()
+	var result := {
+		"valid": false, "reason": "no_snapshot", "serial": 0, "generation": 0,
+		"color": RID(), "data": RID(),
+		"raster": Vector2i.ZERO, "target": Vector2i.ZERO, "divisor": 1,
+		"dir_to_clip": Projection.IDENTITY, "camera_origin": Vector3.ZERO,
+		"enclosed": Vector4.ZERO, "min_step": 0.0,
+		"frames_drawn": int(liveness.get("frames_drawn", -1000)),
+		"menu": bool(liveness.get("menu", false)), "diagnostic": bool(liveness.get("diagnostic", false)),
+		"content_overwritten": overwritten, "last_other_view_frame": other_view_frame,
+	}
+	var other_view := overwritten or Engine.get_frames_drawn() - other_view_frame <= 2
+	if content.is_empty():
+		# Another view's rebuild retires the generation and clears the snapshot; report that as the cause, not as a missing snapshot.
+		if other_view:
+			result.reason = "other_view"
+		return result
+	result.serial = int(content.serial)
+	result.generation = int(content.generation)
+	result.color = content.color
+	result.data = content.data
+	result.raster = content.raster
+	result.target = content.target
+	result.divisor = int(content.divisor)
+	result.enclosed = content.enclosed
+	result.min_step = float(content.min_step)
+	var current_frame := {"frame": frame, "around": around, "across": across, "radius": radius} if has_frame else {}
+	var remap := gameplay_frame_remap(current_frame, content.frame, content.camera, float(content.jump_limit))
+	var mapped_camera: Transform3D = remap.mapped_camera
+	result.camera_origin = mapped_camera.origin
+	result.dir_to_clip = (content.projection as Projection) * Projection(Transform3D(mapped_camera.basis.orthonormalized().inverse(), Vector3.ZERO))
+	var reason := ""
+	if other_view:
+		reason = "other_view"
+	elif bool(result.menu):
+		reason = "menu"
+	elif bool(result.diagnostic):
+		reason = "diagnostic"
+	elif bool(remap.has_contract) and not bool(remap.valid):
+		reason = "jump"
+	result.valid = reason == ""
+	result.reason = "ok" if reason == "" else reason
+	return result
+
+# Two 1 x 1 RGBA32F textures the bridge binds when nothing is published: colour (0, 0, 0, 0), data (0, 0, 0, -8) (sky). Created once, on the
+# render thread, outside the generation lifecycle; released in _notification. A Texture2DRD is never pointed at an invalid RID.
+func get_cloud_reflection_fallback_rids() -> Array:
+	if rd == null:
+		return []
+	if cloud_reflection_fallback_textures.size() != 2:
+		var format := RDTextureFormat.new()
+		format.format = RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT
+		format.width = 1
+		format.height = 1
+		format.usage_bits = RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT
+		var color_bytes := PackedByteArray()
+		color_bytes.resize(16)
+		var data_bytes := PackedByteArray()
+		data_bytes.resize(16)
+		data_bytes.encode_float(12, -8.0)
+		var color_rid := rd.texture_create(format, RDTextureView.new(), [color_bytes])
+		var data_rid := rd.texture_create(format, RDTextureView.new(), [data_bytes])
+		if not color_rid.is_valid() or not data_rid.is_valid():
+			if color_rid.is_valid(): rd.free_rid(color_rid)
+			if data_rid.is_valid(): rd.free_rid(data_rid)
+			return []
+		cloud_reflection_fallback_textures = [color_rid, data_rid]
+	return [cloud_reflection_fallback_textures[0], cloud_reflection_fallback_textures[1]]
 
 # Called from the main thread immediately before a whole-compositor refresh.
 # Dropping publication is deliberately non-destructive: receiver materials have
@@ -1383,6 +1546,7 @@ func _notification(what):
 	rids.append_array(strip_rids)
 	rids.append_array(general_data_buffers)
 	rids.append_array(accumulation_textures)
+	rids.append_array(cloud_reflection_fallback_textures)
 	rids.append_array(blit_screen_images)
 	rids.append_array(cloud_shadow_param_buffers)
 	rids.append_array(cloud_shadow_textures)
@@ -1479,6 +1643,7 @@ func _retire_current_generation():
 	cloud_shadow_published_texture_wrappers = [null, null]
 	cloud_backdrop_texture_wrappers.clear()
 	cloud_backdrop_published_texture_wrappers.clear()
+	_clear_cloud_reflection_snapshot()
 	cloud_shadow_resolutions = [Vector2i.ZERO, Vector2i.ZERO]
 	cloud_shadow_published_resolutions = [Vector2i.ZERO, Vector2i.ZERO]
 	for cascade in range(GPU_CLOUD_SHADOW_CASCADES):
@@ -1630,6 +1795,7 @@ func clear_compute(preserve_general_data_buffers: bool = false, retire_generatio
 			accumulation_textures.clear()
 		cloud_backdrop_texture_wrappers.clear()
 		cloud_backdrop_published_texture_wrappers.clear()
+		_clear_cloud_reflection_snapshot()
 
 		if blit_screen_images.size() > 0:
 			for item in blit_screen_images:
@@ -2268,6 +2434,7 @@ func _render_callback(effect_callback_type, render_data):
 				accumulation_textures.clear()
 				cloud_backdrop_texture_wrappers.clear()
 				cloud_backdrop_published_texture_wrappers.clear()
+				cloud_reflection_generation += 1
 				uniform_sets.clear()
 
 				color_images.clear()
@@ -2772,6 +2939,8 @@ func _render_callback(effect_callback_type, render_data):
 			var x_groups = ((size.x - 1) / 8 / resscale) + 1
 			var y_groups = ((size.y - 1) / 8 / resscale) + 1
 			
+			# Cloud reflection publication: set where this callback records the march (and the fill when interleaved), so a held callback stays false.
+			var complete_this_callback := false
 			for view in view_count:
 				var gpu_timestamp_scope_active := false
 				var gpu_timestamp_end_marker_for_scope := ""
@@ -2849,6 +3018,7 @@ func _render_callback(effect_callback_type, render_data):
 						rd.compute_list_end()
 						if interleave_stamped:
 							rd.capture_timestamp(gpu_timestamp_interleave_end_marker)
+					complete_this_callback = true
 
 				if gpu_timestamp_scope_active:
 					rd.capture_timestamp(gpu_timestamp_reconstruct_begin)
@@ -2887,6 +3057,7 @@ func _render_callback(effect_callback_type, render_data):
 				for view in view_count:
 					rd.texture_resolve_multisample(buffers.get_color_layer(view, true), buffers.get_color_layer(view, false))
 				for marker in deferred_msaa_end_markers: rd.capture_timestamp(marker)
+			_record_cloud_reflection_snapshot(view_count, buffers.get_target_size(), size, new_size, resscale, cameraTR, viewProj, complete_this_callback, holding)
 			publish_renderer_diagnostic_snapshot(size, new_size, view_count, resscale, msaa_mode)
 
 			if (!positionResetting && positionQuerying):
@@ -3075,6 +3246,7 @@ func update_matrices(camera_tr, view_proj, new_size: Vector2i):
 	temporal_history_last_continuity_multiplier = continuity_result.multiplier
 	var density_continuous: bool = not menu_temporal_sampling and not first_run and not ignore_accumilation and float(continuity_result.excess) <= 1.0
 	var current_gameplay_frame: Dictionary = gameplay_cloud_frame_snapshot
+	_last_callback_gameplay_frame = current_gameplay_frame
 	if general_data.size() != GENERAL_DATA_BUFFER_BYTES:
 		general_data.resize(GENERAL_DATA_BUFFER_BYTES)
 	

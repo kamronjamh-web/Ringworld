@@ -624,6 +624,7 @@ public partial class RingSunshineCloudBridge : Node
         CancelCloudShadowBuild();
         RingCloudShadowProjector.ReleaseTextures();
         ReleaseStormLight();
+        ReleaseCloudReflectionReceivers(force: true);
         _weather?.SetExternalLocalVolumetricCloudsState(false, false, EffectiveHandoffStartMeters, EffectiveHandoffEndMeters);
         _weather?.UnregisterManualWeather(SunshinePreviewWeatherOwnerKey);
         if (_clouds != null) _clouds.Set("enabled", false);
@@ -655,6 +656,7 @@ public partial class RingSunshineCloudBridge : Node
         _shadowProjectorEnabled = false;
         _gpuShadowReceiverRebuildPending = true;
         _scaledFarViewport?.ReleaseSunshineBackdropTexture();
+        ReleaseCloudReflectionReceivers(force: false);
     }
 
     public override void _Process(double delta)
@@ -676,6 +678,7 @@ public partial class RingSunshineCloudBridge : Node
         UpdateCameraLightingState(delta);
         PublishStormLight();
         UpdateMegastormHistoryFade(delta);
+        QueueCloudReflectionPublication(delta);
     }
 
     private void SyncGpuTimestampDiagnostics()
@@ -1335,7 +1338,9 @@ public partial class RingSunshineCloudBridge : Node
         UpdateAtmosphereProfile(preciseRadius);
         // This is deliberately a CPU-only, callback-paired contract. The
         // compositor snapshots it once when it uploads its existing UBO.
-        _clouds.Call(SetGameplayCloudFrameName, new Transform3D(new Basis(around, up, across), origin), viewer.AroundMeters, viewer.AcrossMeters, preciseRadius);
+        Transform3D gameplayCloudFrame = new(new Basis(around, up, across), origin);
+        _clouds.Call(SetGameplayCloudFrameName, gameplayCloudFrame, viewer.AroundMeters, viewer.AcrossMeters, preciseRadius);
+        RememberCloudReflectionFrame(gameplayCloudFrame, viewer.AroundMeters, viewer.AcrossMeters, preciseRadius);
     }
 
     /// <summary>
