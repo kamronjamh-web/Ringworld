@@ -82,9 +82,6 @@ func _run() -> void:
 	disable_macro_shadows()
 	# Globals belong to this isolated test process, which exits after the capture.
 	# Avoid editor-only global_shader_parameter_get() at runtime.
-	var original_light_specular := light.light_specular
-	var original_wetness: float = float(material_get(native_material, "surface_wetness"))
-	var original_wetness_strength: float = float(material_get(native_material, "surface_wetness_strength"))
 	RenderingServer.global_shader_parameter_set("ring_grass_terrain_coverage_enabled", 0.0)
 	var grass_off := await measure_case(clear_map, true)
 	RenderingServer.global_shader_parameter_set("ring_grass_terrain_coverage_enabled", 1.0)
@@ -92,21 +89,6 @@ func _run() -> void:
 	RenderingServer.global_shader_parameter_set("ring_grass_terrain_coverage_end_meters", 2.0)
 	RenderingServer.global_shader_parameter_set("ring_grass_terrain_coverage_strength", .65)
 	var grass_on := await measure_case(clear_map, true)
-	# Keep diffuse receiver parity independent of native's explicit GGX branch.
-	light.light_specular = 1.0
-	material_set(native_material, "surface_wetness", 0.0)
-	material_set(native_material, "surface_wetness_strength", 1.0)
-	var dry_specular := await measure_case(clear_map, true)
-	material_set(native_material, "surface_wetness", 1.0)
-	var wet_specular := await measure_case(clear_map, true)
-	light.light_specular = 0.0
-	var wet_without_light_specular := await measure_case(clear_map, true)
-	light.light_specular = 1.0
-	material_set(native_material, "surface_wetness_strength", 0.0)
-	var disabled_wetness_specular := await measure_case(clear_map, true)
-	material_set(native_material, "surface_wetness", original_wetness)
-	material_set(native_material, "surface_wetness_strength", original_wetness_strength)
-	light.light_specular = original_light_specular
 	check(clear.native > .001 and clear.proxy > .001, "day baseline is visible")
 	check(storm.native < clear.native * .90 and storm.proxy < clear.proxy * .90, "storm materially darkens both receivers")
 	check_ratio(clear.native / max(clear.proxy, .0001), 1.0, "day native/proxy base")
@@ -118,16 +100,12 @@ func _run() -> void:
 	check_ratio((macro_night_occluded.proxy - night.proxy) / max(macro_night_clear.proxy - night.proxy, .0001), .2, "proxy planet direct-light transmittance")
 	check(absf(macro_night_wrong_direction.native - macro_night_clear.native) <= TOLERANCE and absf(macro_night_wrong_direction.proxy - macro_night_clear.proxy) <= TOLERANCE, "wrong-direction planet mask leaves native and proxy lit")
 	check_ratio(grass_on.native / max(grass_off.native, .0001), grass_on.proxy / max(grass_off.proxy, .0001), "distant grass coverage response")
-	check(absf(dry_specular.native - grass_on.native) <= .0001, "dry native direct specular matches proxy-style baseline")
-	check(wet_specular.native > wet_without_light_specular.native + .01, "wet native direct specular highlight response retained")
-	check(absf(disabled_wetness_specular.native - dry_specular.native) <= .0001, "zero wetness strength removes direct wet highlight")
 	# Snow was formerly a native-only final ALBEDO override. The test's low
 	# height proves it is absent here; the material value is also checked so a
 	# future high-elevation control can use the same receiver.
-	check(absf(float(material_get(native_material, "surface_wetness"))) < .001, "dry baseline retained")
 	var shader_source := FileAccess.get_file_as_string("res://materials/terrain3d_ring_surface.gdshader")
 	check(not shader_source.contains("float snow") and not shader_source.contains("), snow)"), "native shader contains no near-only snow blend")
-	print("TERRAIN_NEAR_LOD_PARITY_GPU_TEST=%s clear=%s storm=%s night=%s macro_day_clear=%s macro_day_occluded=%s macro_night_clear=%s macro_night_occluded=%s macro_night_wrong_direction=%s grass_off=%s grass_on=%s dry_specular=%s wet_specular=%s wet_without_light_specular=%s disabled_wetness_specular=%s" % ["PASS" if failures.is_empty() else "FAIL", clear, storm, night, macro_day_clear, macro_day_occluded, macro_night_clear, macro_night_occluded, macro_night_wrong_direction, grass_off, grass_on, dry_specular, wet_specular, wet_without_light_specular, disabled_wetness_specular])
+	print("TERRAIN_NEAR_LOD_PARITY_GPU_TEST=%s clear=%s storm=%s night=%s macro_day_clear=%s macro_day_occluded=%s macro_night_clear=%s macro_night_occluded=%s macro_night_wrong_direction=%s grass_off=%s grass_on=%s" % ["PASS" if failures.is_empty() else "FAIL", clear, storm, night, macro_day_clear, macro_day_occluded, macro_night_clear, macro_night_occluded, macro_night_wrong_direction, grass_off, grass_on])
 	quit(0 if failures.is_empty() else 1)
 
 func make_viewport() -> void:

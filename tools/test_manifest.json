@@ -503,6 +503,18 @@
       "expected_s": 1800,
       "timeout_s": 3600
     },
+    "capture_determinism_probe": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "cloud-history",
+        "tooling-policy"
+      ],
+      "marker": "CAPTURE_DETERMINISM_PROBE",
+      "expected_s": 1200,
+      "timeout_s": 3000
+    },
     "tree_impostor_atlas_test": {
       "kind": "test",
       "mode": "headless",
@@ -6487,8 +6499,8 @@
         "terrain"
       ],
       "marker": "TERRAIN_NEAR_LOD_PARITY_GPU_TEST",
-      "expected_s": null,
-      "timeout_s": 300
+      "expected_s": 11,
+      "timeout_s": 60
     },
     "terrain_rock_material_gpu_test": {
       "kind": "test",
