@@ -49,7 +49,7 @@ Generation numbers are assigned when a phase freezes, in the order phases freeze
 | 7 | G2 | Swim the calm, fierce and torrent reaches and sign off before the rivers freeze. | — |
 | 8 | T4-1 | Rock texture: the existing alpine rock now, or wait for CC0 textures from T8? | **Answered 2026-11-17: wait for T8 rock textures** (keep the alpine texture meanwhile; the T4 freeze waits). |
 | 9 | T6 | Split cost gate: new classes at most 0.3 ms and 16 draws, canopy within +5 % of generation 1, ground cover and far canopy at most 0.05 ms each. May trees cost more if the look needs it? | The split as stated. |
-| 10 | T5-2 | Does the 24-draw gate count shadow draws, and may it be relaxed? | Asked after T5-2 measures. |
+| 10 | T5-2 | Does the 24-draw gate count shadow draws, and may it be relaxed? | **Answered 2026-11-18: 20 draws, counting the depth prepass, colour and both sun cascades (24 while a large POI widens the sun map to 4 cascades); the 24 gate is kept (T5 design B3).** |
 | 11 | all freezes | Freeze on 4070 numbers, or wait for the A1000 baseline? | The A1000 first. |
 | 12 | T7 | Plains slope ceiling: 10 or 12 degrees? | 10 degrees. |
 | 13 | T7 | Cliffs only raise land, so no coves? Dunes only on coastal strands? | Yes to both. |

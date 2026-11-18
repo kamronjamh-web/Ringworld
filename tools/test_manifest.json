@@ -6771,6 +6771,19 @@
       "expected_s": 5,
       "timeout_s": 60
     },
+    "habitat_field_grid_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation",
+        "terrain",
+        "landscape"
+      ],
+      "marker": "HABITAT_FIELD_GRID",
+      "expected_s": 20,
+      "timeout_s": 60
+    },
     "ground_relief_field_test": {
       "kind": "test",
       "mode": "headless",
