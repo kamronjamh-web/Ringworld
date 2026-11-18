@@ -7509,6 +7509,17 @@
       "expected_s": 1,
       "timeout_s": 60
     },
+    "water_reflection_model_contract_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "water"
+      ],
+      "marker": "WATER_REFLECTION_MODEL_CONTRACT",
+      "expected_s": 1,
+      "timeout_s": 30
+    },
     "water_ssr_live_controls_gpu_test": {
       "kind": "test",
       "mode": "gpu",

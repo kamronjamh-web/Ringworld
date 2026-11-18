@@ -35,6 +35,7 @@ instance uniform vec4 fft_distant_ocean_mask_rect = vec4(0.0, 0.0, 0.0, 0.0);
 #include "res://materials/ring_color_space.gdshaderinc"
 #include "res://materials/ring_atmosphere.gdshaderinc"
 #include "res://materials/ring_water_common.gdshaderinc"
+#include "res://materials/ring_sky_reflection.gdshaderinc"
 #include "res://materials/ring_wind_field.gdshaderinc"
 #include "res://materials/ring_water_depth.gdshaderinc"
 #include "res://materials/ring_water_fft.gdshaderinc"
@@ -616,30 +617,51 @@ void fragment() {
 	float storm_water_level = ring_storm_level(world_position);
 	float storm_water_fade = ring_storm_shadow_fade(storm_water_level);
 	float storm_ssr_keep = 1.0 - storm_water_fade * ringworld_storm_light.x * 0.95;
-	reflection_color *= mix(1.0, ring_storm_sky(storm_water_level), storm_water_fade);
-	float ssr_weight = clamp(ssr.a * water_ssr_strength, 0.0, 1.0) * storm_ssr_keep;
-	if (water_ssr_debug_mode == 1) grazing_color = vec3(ssr.a);
-	else if (water_ssr_debug_mode == 2) grazing_color = vec3(ssr.a > 0.001 ? 1.0 : 0.0);
-	else if (water_ssr_debug_mode == 3) grazing_color = vec3(ssr_step_ratio);
-	else {
-		reflection_color = mix(reflection_color, ssr.rgb, ssr_weight);
-		grazing_color = mix(optical_water, reflection_color, reflection_weight);
-	}
-	grazing_color = mix(grazing_color, foam_color, foam);
-	ALBEDO = grazing_color * haze.T;
-	// Foam is lit through ALBEDO like every other surface (sun, ambient, cloud shadow, storm light, haze). It used to add a self-light floor
-	// (0.16 x foam colour) that ignored the day factor, so foam glowed at night; removed.
-	EMISSION = ring_haze_inscatter(haze);
-	// The inland transmitted scene with the weight the mixes above give the optical water: (1 - reflection) x (1 - foam). Not under the SSR debug views.
-	if (inland_weight > 0.0 && water_ssr_debug_mode == 0)
-		EMISSION += inland_transmitted * (1.0 - reflection_weight) * (1.0 - foam) * haze.T;
-	ROUGHNESS = max(base_roughness, specular_aa_roughness);
-	// Physical haze also attenuates the environment reflection (SPECULAR scales the dielectric F0 of the sky/probe reflection);
-	// the scale is exactly 1 in Legacy. The SSR contribution is already inside grazing_color, hence ALBEDO * T.
 	float storm_reflection = ring_storm_ambient(storm_water_level); // storm light: the sky reflection and the ambient follow the storm level
-	// Storm light: a closed overcast has no sun to mirror, so the reflection also fades by the sun fade F(D) (the sun disc in the radiance map is a sharp glint otherwise).
-	SPECULAR = ring_water_dielectric_specular() * ocean_specular * ring_haze_specular_scale(haze) * storm_reflection
-		* mix(1.0, 0.02, storm_water_fade * ringworld_storm_light.x);
+	if (ringworld_reflection_model >= 0.5) {
+		float final_roughness = max(base_roughness, specular_aa_roughness);
+		float n_dot_v = clamp(dot(water_normal_view, VIEW), 1e-4, 1.0); // engine: clamp(dot(normal, view), 1e-4, 1)
+		float reflectance = ring_water_env_reflectance(final_roughness, n_dot_v);
+		float haze_k = ring_haze_specular_scale(haze) * ringworld_sky_reflection;
+		float hit_weight = clamp(ssr.a, 0.0, 1.0) * storm_ssr_keep; // the old strength, Fresnel and specular scales are ignored at model 1
+		vec3 body = mix(optical_water, foam_color, foam);
+		ALBEDO = body * (1.0 - reflectance) * haze.T;
+		EMISSION = ring_haze_inscatter(haze) * (1.0 - reflectance * hit_weight) + ssr.rgb * (reflectance * hit_weight);
+		if (inland_weight > 0.0)
+			EMISSION += inland_transmitted * (1.0 - reflectance) * (1.0 - foam) * haze.T;
+		ROUGHNESS = final_roughness;
+		// Sky term: f0 = 0.02 k (1 - a), f90 = k (1 - a): exactly linear (design 1, fact 4). Storm factors are in the radiance pass.
+		SPECULAR = RING_WATER_SPECULAR * sqrt(max(haze_k * (1.0 - hit_weight), 0.0));
+		if (water_ssr_debug_mode != 0) {
+			vec3 debug_value = water_ssr_debug_mode == 1 ? vec3(ssr.a)
+				: water_ssr_debug_mode == 2 ? vec3(ssr.a > 0.001 ? 1.0 : 0.0) : vec3(ssr_step_ratio);
+			ALBEDO = vec3(0.0); EMISSION = debug_value; SPECULAR = 0.0; // unlit at model 1
+		}
+	} else {
+		reflection_color *= mix(1.0, ring_storm_sky(storm_water_level), storm_water_fade);
+		float ssr_weight = clamp(ssr.a * water_ssr_strength, 0.0, 1.0) * storm_ssr_keep;
+		if (water_ssr_debug_mode == 1) grazing_color = vec3(ssr.a);
+		else if (water_ssr_debug_mode == 2) grazing_color = vec3(ssr.a > 0.001 ? 1.0 : 0.0);
+		else if (water_ssr_debug_mode == 3) grazing_color = vec3(ssr_step_ratio);
+		else {
+			reflection_color = mix(reflection_color, ssr.rgb, ssr_weight);
+			grazing_color = mix(optical_water, reflection_color, reflection_weight);
+		}
+		grazing_color = mix(grazing_color, foam_color, foam);
+		ALBEDO = grazing_color * haze.T;
+		// Foam is lit through ALBEDO like every other surface (sun, ambient, cloud shadow, storm light, haze). It used to add a self-light floor
+		// (0.16 x foam colour) that ignored the day factor, so foam glowed at night; removed.
+		EMISSION = ring_haze_inscatter(haze);
+		// The inland transmitted scene with the weight the mixes above give the optical water: (1 - reflection) x (1 - foam). Not under the SSR debug views.
+		if (inland_weight > 0.0 && water_ssr_debug_mode == 0)
+			EMISSION += inland_transmitted * (1.0 - reflection_weight) * (1.0 - foam) * haze.T;
+		ROUGHNESS = max(base_roughness, specular_aa_roughness);
+		// Physical haze also attenuates the environment reflection (SPECULAR scales the dielectric F0 of the sky/probe reflection);
+		// the scale is exactly 1 in Legacy. The SSR contribution is already inside grazing_color, hence ALBEDO * T.
+		// Storm light: a closed overcast has no sun to mirror, so the reflection also fades by the sun fade F(D) (the sun disc in the radiance map is a sharp glint otherwise).
+		SPECULAR = ring_water_dielectric_specular() * ocean_specular * ring_haze_specular_scale(haze) * storm_reflection
+			* mix(1.0, 0.02, storm_water_fade * ringworld_storm_light.x);
+	}
 	METALLIC = 0.0;
 	combined_cloud_shadow_occlusion = sample_combined_cloud_shadow(world_position, ring_day_factor);
 	AO = min(1.0 - combined_cloud_shadow_occlusion * 0.60, storm_reflection); // storm light: ambient follows the storm level

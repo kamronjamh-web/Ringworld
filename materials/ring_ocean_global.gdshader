@@ -27,6 +27,7 @@ uniform float ring_width_meters = 20000.0;
 #include "res://materials/ring_color_space.gdshaderinc"
 #include "res://materials/ring_atmosphere.gdshaderinc"
 #include "res://materials/ring_water_common.gdshaderinc"
+#include "res://materials/ring_reflection_model.gdshaderinc"
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
 #include "res://materials/ring_terrain_macro_shadow.gdshaderinc"
 #include "res://materials/ring_shadow_compose.gdshaderinc"
@@ -130,6 +131,12 @@ void fragment() {
 	// Storm light: a closed overcast has no sun to mirror, so the reflection also fades by the sun fade F(D) (the sun disc in the radiance map is a sharp glint otherwise).
 	SPECULAR = ring_water_dielectric_specular() * ocean_specular * ring_haze_specular_scale(haze) * storm_reflection
 		* mix(1.0, 0.02, ring_storm_shadow_fade(storm_water_level) * ringworld_storm_light.x);
+	if (ringworld_reflection_model >= 0.5) {
+		// Same reflection model as the near water (R1-2a): no fixed blue, physical F0, sky term through the engine.
+		float n_dot_v = clamp(dot(NORMAL, VIEW), 1e-4, 1.0);
+		ALBEDO = water_tint * (1.0 - ring_water_env_reflectance(ROUGHNESS, n_dot_v)) * haze.T;
+		SPECULAR = RING_WATER_SPECULAR * sqrt(ring_haze_specular_scale(haze));
+	}
 	METALLIC = 0.0;
 	combined_cloud_shadow_occlusion = sample_combined_cloud_shadow(world_position, ring_day_factor);
 	AO = min(1.0 - combined_cloud_shadow_occlusion * 0.60, storm_reflection); // storm light: ambient follows the storm level

@@ -47,3 +47,15 @@ float ring_water_dielectric_specular() {
 	// Godot maps SPECULAR=0.5 to approximately F0=0.04 for dielectrics.
 	return clamp((fresnel_f0 / 0.08) * fresnel_strength, 0.0, 1.0);
 }
+
+const float RING_WATER_F0_PHYSICAL = 0.02;
+const float RING_WATER_SPECULAR = 0.353553; // sqrt(0.02 / 0.16): Godot f0 = 0.16 x SPECULAR^2, f90 = clamp(50 f0) = 1
+// Karis 2014 fit of the split-sum DFG integral the engine's LUT holds (prefiltered_dfg), with f0 0.02 and f90 1.
+float ring_water_env_reflectance(float roughness, float n_dot_v) {
+	const vec4 c0 = vec4(-1.0, -0.0275, -0.572, 0.022);
+	const vec4 c1 = vec4(1.0, 0.0425, 1.04, -0.04);
+	vec4 q = roughness * c0 + c1;
+	float a004 = min(q.x * q.x, exp2(-9.28 * n_dot_v)) * q.x + q.y;
+	vec2 ab = vec2(-1.04, 1.04) * a004 + q.zw;
+	return clamp(RING_WATER_F0_PHYSICAL * ab.x + ab.y, 0.0, 1.0);
+}
