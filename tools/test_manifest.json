@@ -6796,6 +6796,18 @@
       "expected_s": 20,
       "timeout_s": 60
     },
+    "scatter_tile_determinism_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation",
+        "landscape"
+      ],
+      "marker": "SCATTER_TILE_DETERMINISM",
+      "expected_s": 30,
+      "timeout_s": 90
+    },
     "ground_relief_field_test": {
       "kind": "test",
       "mode": "headless",

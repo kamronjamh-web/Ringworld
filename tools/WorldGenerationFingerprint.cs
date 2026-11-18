@@ -4,7 +4,9 @@ using System.Globalization;
 using System.Linq;
 using System.Threading;
 using Godot;
+using RingworldTechDemo.Terrain.Generation;
 using RingworldTechDemo.Vegetation;
+using RingworldTechDemo.Vegetation.Scatter;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.LOD;
 using RingworldTechDemo.Voxel.Phase2;
@@ -63,6 +65,49 @@ public static class WorldGenerationFingerprint
             double across = Next() * Width;
             yield return (around, across);
         }
+    }
+
+    public static readonly string[] ScatterDressingPoses = { "steep_eye", "scree_eye" };
+    const string DressingFixture = "res://tools/fixtures/landscape_poses_dressing_s1337.json";
+
+    /// <summary>True when the spec's world (its generation's frozen features plus the review list) holds scatter.rocks.</summary>
+    public static bool ScatterEnabled(LandscapeWorld.Spec spec)
+        => WorldGenerationLedger.Production.FeatureSet(spec.Recipe.WorldGeneration, spec.Recipe.ReviewFeatures).Contains("scatter.rocks");
+
+    /// <summary>T5 design A9: the eight T0 tile poses plus steep_eye and scree_eye, built with the production layout (Circ / ceil(Circ / 30)), every row and all 16 cobble blocks, a clean edit snapshot.</summary>
+    public static void ComputeScatterSlot(LandscapeWorld.Spec spec, LandscapeWorld.Worker w, Dictionary<string, object?> row)
+    {
+        if (!ScatterEnabled(spec))
+        {
+            row["scatter"] = new Dictionary<string, object?> { ["count"] = 0, ["hash"] = "none" };
+            return;
+        }
+        RingScatterClassTable table = RingScatterClassTable.Production;
+        var poses = new List<LandscapePose>();
+        var t0 = LandscapePoseFinder.ReadFixture(ProjectSettings.GlobalizePath(LandscapePoseFinder.FixturePath));
+        foreach (string name in TilePoses) poses.Add(t0.Poses.First(p => p.Name == name));
+        var dressing = LandscapePoseFinder.ReadFixture(ProjectSettings.GlobalizePath(DressingFixture));
+        foreach (string name in ScatterDressingPoses) poses.Add(dressing.Poses.First(p => p.Name == name));
+        double aroundCell = Circ / Math.Ceiling(Circ / TreeCell);
+        var tiles = new List<object?>();
+        foreach (LandscapePose p in poses)
+        {
+            long ta = (long)Math.Floor(Math.Floor(p.Around / aroundCell) / TreeTileCells), tz = (long)Math.Floor(p.Across / (TreeCell * TreeTileCells));
+            var records = RingBiomeDecorationLayer.BuildScatterReviewTile(w.Sampler, ta, tz, LandscapeWorld.Seed, Circ, Width, table);
+            var h = new Fnv();
+            foreach (ScatterRecord r in records)
+            {
+                h.U64(r.Id); h.I64(r.AroundCm); h.I32(r.AcrossCm); h.F32(r.SurfaceHeight); h.I32(r.ClassId); h.I32(r.Mesh); h.F32(r.Size); h.F32(r.Yaw); h.U32(r.UpOct); h.U32(r.BaseTint);
+            }
+            tiles.Add(new Dictionary<string, object?> { ["pose"] = p.Name, ["tile_around"] = ta, ["tile_across"] = tz, ["count"] = records.Count, ["hash"] = Hex(h.Value) });
+        }
+        row["scatter"] = tiles;
+        row["scatter_params"] = new Dictionary<string, object?>
+        {
+            ["class_table_hash"] = Hex(table.Hash), ["algorithm_version"] = RingBiomeDecorationLayer.ScatterAlgorithmVersion,
+            ["rock_catalog_sha256"] = "none", // TODO(T5-6): the rock catalog manifest's artifact SHA-256
+            ["layout"] = "production"
+        };
     }
 
     public static Dictionary<string, object?> Compute(LandscapeWorld.Spec spec, LandscapeWorld.Worker w, LandscapePoseFinder.Fixture fixture, string fixturePath)
@@ -161,8 +206,8 @@ public static class WorldGenerationFingerprint
         }
         row["grass"] = grass;
 
-        // 5: reserved for T5
-        row["scatter"] = new Dictionary<string, object?> { ["count"] = 0, ["hash"] = "none" };
+        // 5: scatter (T5, design A9): generation-keyed. Without scatter.rocks the slot stays {count 0, hash none}.
+        ComputeScatterSlot(spec, w, row);
 
         // 6: tree catalog
         var ch = new Fnv();

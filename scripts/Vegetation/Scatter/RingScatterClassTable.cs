@@ -1,0 +1,214 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using RingworldTechDemo.Terrain.Surface;
+
+namespace RingworldTechDemo.Vegetation.Scatter;
+
+/// <summary>T5 design A5: which meshes, LOD bands and draws a class feeds. Append-only; never reorder or remove.</summary>
+public enum RingScatterRenderGroup : byte { Outcrops = 1, Boulders = 2, Cobbles = 3 }
+
+/// <summary>A5 response fields. Append-only. <c>NearestTreeM</c> is the distance to the nearest accepted tree root, capped at 50 m.</summary>
+public enum RingHabitatField : byte
+{
+    Slope, Relief8, Relief64, Wetness, RockExposure, Scree, SoilDepth, Canopy, Moisture, Temperature, ForestWeight, GrassWeight, HeightAboveChannel, NearestTreeM
+}
+
+public enum RingScatterAnchorKind : byte { Free, NearTrees }
+public enum RingScatterAlignment : byte { Upright, SlopeAligned, BeddingHorizontal, LyingAlongSlope }
+public enum RingScatterCollision : byte { None, ConvexHull, TriMesh, Capsule }
+public enum RingScatterFar : byte { None, RockSpeckle, CanopyTint }
+/// <summary>T6 appends Trees and Shrubs.</summary>
+public enum RingScatterMeshCatalog : byte { Rocks }
+/// <summary>Uniform picks a hashed mesh. BySize and ByField are reserved for T6 and behave as Uniform until that order pins them.</summary>
+public enum RingScatterVariantSelector : byte { Uniform, BySize, ByField }
+
+/// <summary>Out0 + (Out1 - Out0) smoothstep(In0, In1, value). Reversed edges (In0 greater than In1) are allowed.</summary>
+public readonly record struct RingScatterResponse(RingHabitatField Field, float In0, float In1, float Out0, float Out1);
+
+/// <summary>One term of the density sum: Weight times the product of its factors (no factors = a constant).</summary>
+public sealed record RingScatterTerm(float Weight, RingScatterResponse[] Factors);
+
+/// <summary>Reject within ClearanceM + SizeFactor x (size a + size b) / 2 of an accepted record of an earlier class.</summary>
+public readonly record struct RingScatterAvoid(ushort ClassId, float ClearanceM, float SizeFactor);
+
+public readonly record struct RingScatterAnchor(RingScatterAnchorKind Kind, int SpeciesMask, float MinM, float MaxM);
+
+/// <summary>One row of the class table (A5). Every column is part of <see cref="RingScatterClassTable.Hash"/>.</summary>
+public sealed record RingScatterClass
+{
+    public ushort Id { get; init; }
+    public string Key { get; init; } = "";
+    public int FeatureBit { get; init; } = RingHabitatFieldGrid.ScatterRocksBit;
+    public RingScatterRenderGroup RenderGroup { get; init; } = RingScatterRenderGroup.Boulders;
+    public float ReachM { get; init; } = 100f;
+    public float CellM { get; init; } = 8f;
+    public int CandidatesPerCell { get; init; } = 1;
+    public float BaseDensityPerHa { get; init; }
+    public RingScatterTerm[] Terms { get; init; } = Array.Empty<RingScatterTerm>();
+    public RingScatterResponse[] Multipliers { get; init; } = Array.Empty<RingScatterResponse>();
+    public RingScatterAnchor Anchor { get; init; } = new(RingScatterAnchorKind.Free, 0, 0f, 0f);
+    public float SpacingM { get; init; }
+    public float SpacingSizeFactor { get; init; }
+    public RingScatterAvoid[] Avoid { get; init; } = Array.Empty<RingScatterAvoid>();
+    public float TreeClearanceM { get; init; }
+    public float TreeClearanceSizeFactor { get; init; }
+    public float SizeMinM { get; init; } = 1f;
+    public float SizeMaxM { get; init; } = 1f;
+    public float SizeExponent { get; init; } = 1f;
+    public RingScatterMeshCatalog MeshCatalog { get; init; } = RingScatterMeshCatalog.Rocks;
+    public int MeshFirst { get; init; }
+    public int MeshCount { get; init; } = 1;
+    public RingScatterVariantSelector VariantSelector { get; init; } = RingScatterVariantSelector.Uniform;
+    public RingScatterAlignment Alignment { get; init; } = RingScatterAlignment.Upright;
+    public float AlignFactor { get; init; }
+    public float RandomTiltDeg { get; init; }
+    public float EmbedMin { get; init; }
+    public float EmbedMax { get; init; }
+    public RingScatterCollision Collision { get; init; } = RingScatterCollision.None;
+    public float CollisionMinSizeM { get; init; }
+    public float ShadowMinSizeM { get; init; } = float.PositiveInfinity;
+    public RingScatterFar Far { get; init; } = RingScatterFar.None;
+    public int ResidentCap { get; init; }
+    /// <summary>0 builds the whole tile; 60 builds per 60 m block (cobbles, A6).</summary>
+    public int BlockM { get; init; }
+
+    internal bool UsesField(RingHabitatField field)
+    {
+        foreach (RingScatterTerm term in Terms) foreach (RingScatterResponse r in term.Factors) if (r.Field == field) return true;
+        foreach (RingScatterResponse r in Multipliers) if (r.Field == field) return true;
+        return false;
+    }
+}
+
+/// <summary>
+/// T5 design A5: the append-only class table. Rows are built in order of ReachM descending, ties by Id; a row may avoid only rows built before it.
+/// <see cref="Production"/> holds no rows in T5-4 (T5-5 adds the rock rows); tests build their own tables with <see cref="CreateForTests"/>.
+/// </summary>
+public sealed class RingScatterClassTable
+{
+    public static RingScatterClassTable Production { get; } = new(Array.Empty<RingScatterClass>());
+
+    public static RingScatterClassTable CreateForTests(IEnumerable<RingScatterClass> rows) => new(rows);
+
+    public IReadOnlyList<RingScatterClass> Rows { get; }
+    /// <summary>Rows in build order: ReachM descending, then Id.</summary>
+    public IReadOnlyList<RingScatterClass> BuildOrder { get; }
+    public ulong Hash { get; }
+
+    private RingScatterClassTable(IEnumerable<RingScatterClass> rows)
+    {
+        Rows = Array.AsReadOnly(rows.ToArray());
+        BuildOrder = Array.AsReadOnly(Rows.OrderByDescending(r => r.ReachM).ThenBy(r => r.Id).ToArray());
+        Hash = ComputeHash(Rows);
+    }
+
+    public int BuildIndexOf(ushort id)
+    {
+        for (int i = 0; i < BuildOrder.Count; i++) if (BuildOrder[i].Id == id) return i;
+        return -1;
+    }
+
+    public RingScatterClass? Find(ushort id) => Rows.FirstOrDefault(r => r.Id == id);
+
+    private struct Fnv
+    {
+        public ulong H;
+        public void Byte(byte b) { H ^= b; H *= 0x100000001B3UL; }
+        public void U64(ulong v) { for (int i = 0; i < 8; i++) Byte((byte)(v >> (8 * i))); }
+        public void I32(int v) { uint u = (uint)v; for (int i = 0; i < 4; i++) Byte((byte)(u >> (8 * i))); }
+        public void F32(float v) => I32(BitConverter.SingleToInt32Bits(v));
+        public void F64(double v) => U64((ulong)BitConverter.DoubleToInt64Bits(v));
+        public void Str(string s) { I32(s.Length); foreach (char c in s) I32(c); }
+    }
+
+    private static void Mix(ref Fnv h, in RingScatterResponse r)
+    {
+        h.I32((int)r.Field); h.F32(r.In0); h.F32(r.In1); h.F32(r.Out0); h.F32(r.Out1);
+    }
+
+    private static ulong ComputeHash(IReadOnlyList<RingScatterClass> rows)
+    {
+        var h = new Fnv { H = 0xCBF29CE484222325UL };
+        // The ground model's constants behind RockExposure, ScreeWeight and Relief, and the grid's lattice constants: a change to any of them changes every habitat field.
+        h.F64(RingGroundSurfaceModel.RockRampDeg); h.F64(RingGroundSurfaceModel.ConvexShiftDeg); h.F64(RingGroundSurfaceModel.ForestShiftDeg);
+        h.F64(RingGroundSurfaceModel.SlopeRefBaselineM); h.F64(RingGroundSurfaceModel.SlopeBiasPerOctaveDeg); h.F64(RingGroundSurfaceModel.SlopeBiasMaxDeg);
+        h.F64(RingGroundSurfaceModel.DefaultRockStartDeg);
+        h.F64(RingGroundSurfaceModel.ScreeInStart); h.F64(RingGroundSurfaceModel.ScreeInEnd); h.F64(RingGroundSurfaceModel.ScreeOutStart); h.F64(RingGroundSurfaceModel.ScreeOutEnd);
+        h.F64(RingGroundSurfaceModel.ScreeConvexFadeStart); h.F64(RingGroundSurfaceModel.ScreeConvexFadeEnd); h.F64(RingGroundSurfaceModel.ScreeVegetated);
+        h.F64(RingGroundSurfaceModel.ReliefRefM);
+        h.F64(RingHabitatFieldGrid.FineM); h.F64(RingHabitatFieldGrid.CoarseM); h.F64(RingHabitatFieldGrid.HabitatFineSlopeDeg);
+        h.I32(rows.Count);
+        foreach (RingScatterClass r in rows.OrderBy(x => x.Id))
+        {
+            h.I32(r.Id); h.Str(r.Key); h.I32(r.FeatureBit); h.I32((int)r.RenderGroup); h.F32(r.ReachM); h.F32(r.CellM); h.I32(r.CandidatesPerCell); h.F32(r.BaseDensityPerHa);
+            h.I32(r.Terms.Length);
+            foreach (RingScatterTerm t in r.Terms) { h.F32(t.Weight); h.I32(t.Factors.Length); foreach (RingScatterResponse f in t.Factors) Mix(ref h, f); }
+            h.I32(r.Multipliers.Length);
+            foreach (RingScatterResponse m in r.Multipliers) Mix(ref h, m);
+            h.I32((int)r.Anchor.Kind); h.I32(r.Anchor.SpeciesMask); h.F32(r.Anchor.MinM); h.F32(r.Anchor.MaxM);
+            h.F32(r.SpacingM); h.F32(r.SpacingSizeFactor);
+            h.I32(r.Avoid.Length);
+            foreach (RingScatterAvoid a in r.Avoid) { h.I32(a.ClassId); h.F32(a.ClearanceM); h.F32(a.SizeFactor); }
+            h.F32(r.TreeClearanceM); h.F32(r.TreeClearanceSizeFactor); h.F32(r.SizeMinM); h.F32(r.SizeMaxM); h.F32(r.SizeExponent);
+            h.I32((int)r.MeshCatalog); h.I32(r.MeshFirst); h.I32(r.MeshCount); h.I32((int)r.VariantSelector);
+            h.I32((int)r.Alignment); h.F32(r.AlignFactor); h.F32(r.RandomTiltDeg); h.F32(r.EmbedMin); h.F32(r.EmbedMax);
+            h.I32((int)r.Collision); h.F32(r.CollisionMinSizeM); h.F32(r.ShadowMinSizeM); h.I32((int)r.Far); h.I32(r.ResidentCap); h.I32(r.BlockM);
+        }
+        return h.H;
+    }
+
+    /// <summary>Returns every violated rule; an empty list means the table is valid.</summary>
+    public IReadOnlyList<string> Validate()
+    {
+        var errors = new List<string>();
+        var ids = new HashSet<ushort>();
+        foreach (RingScatterClass r in Rows)
+        {
+            string n = $"row {r.Id} ({r.Key})";
+            if (r.Id < 1) errors.Add($"{n}: id must be at least 1");
+            if (!ids.Add(r.Id)) errors.Add($"{n}: duplicate id");
+            if (r.CellM != 8f && r.CellM != 16f && r.CellM != 32f && r.CellM != 64f) errors.Add($"{n}: CellM {r.CellM} is not 8, 16, 32 or 64");
+            if (r.CandidatesPerCell < 1 || r.CandidatesPerCell > 16) errors.Add($"{n}: CandidatesPerCell out of 1-16");
+            if (r.BlockM != 0 && r.BlockM != 60) errors.Add($"{n}: BlockM {r.BlockM} is not 0 or 60");
+            if (!Enum.IsDefined(r.RenderGroup)) errors.Add($"{n}: unknown render group");
+            if (!Enum.IsDefined(r.Alignment)) errors.Add($"{n}: unknown alignment");
+            if (!Enum.IsDefined(r.Collision)) errors.Add($"{n}: unknown collision");
+            if (!Enum.IsDefined(r.Far)) errors.Add($"{n}: unknown far mode");
+            if (!Enum.IsDefined(r.MeshCatalog)) errors.Add($"{n}: unknown mesh catalog");
+            if (!Enum.IsDefined(r.VariantSelector)) errors.Add($"{n}: unknown variant selector");
+            if (!Enum.IsDefined(r.Anchor.Kind)) errors.Add($"{n}: unknown anchor kind");
+            if (!(float.IsFinite(r.ReachM) && r.ReachM > 0f)) errors.Add($"{n}: ReachM must be finite and positive");
+            if (!(float.IsFinite(r.BaseDensityPerHa) && r.BaseDensityPerHa >= 0f)) errors.Add($"{n}: BaseDensityPerHa must be finite and not negative");
+            if (!(float.IsFinite(r.SizeMinM) && float.IsFinite(r.SizeMaxM) && r.SizeMinM > 0f && r.SizeMaxM >= r.SizeMinM)) errors.Add($"{n}: size range invalid");
+            if (!(float.IsFinite(r.SizeExponent) && r.SizeExponent > 0f)) errors.Add($"{n}: SizeExponent must be finite and positive");
+            if (!(float.IsFinite(r.SpacingM) && r.SpacingM >= 0f && float.IsFinite(r.SpacingSizeFactor) && r.SpacingSizeFactor >= 0f)) errors.Add($"{n}: spacing invalid");
+            if (!(float.IsFinite(r.TreeClearanceM) && r.TreeClearanceM >= 0f && float.IsFinite(r.TreeClearanceSizeFactor) && r.TreeClearanceSizeFactor >= 0f)) errors.Add($"{n}: tree clearance invalid");
+            if (r.MeshFirst < 0 || r.MeshCount < 1 || r.MeshFirst + r.MeshCount > ushort.MaxValue) errors.Add($"{n}: mesh range invalid");
+            foreach (RingScatterTerm t in r.Terms)
+            {
+                if (!float.IsFinite(t.Weight)) errors.Add($"{n}: non-finite term weight");
+                foreach (RingScatterResponse f in t.Factors) CheckResponse(errors, n, f);
+            }
+            foreach (RingScatterResponse m in r.Multipliers) CheckResponse(errors, n, m);
+        }
+        for (int i = 0; i < BuildOrder.Count; i++)
+        {
+            RingScatterClass r = BuildOrder[i];
+            foreach (RingScatterAvoid a in r.Avoid)
+            {
+                int at = BuildIndexOf(a.ClassId);
+                if (at < 0) errors.Add($"row {r.Id}: avoids unknown class {a.ClassId}");
+                else if (at >= i) errors.Add($"row {r.Id}: avoids class {a.ClassId}, which is not built earlier");
+                if (!(float.IsFinite(a.ClearanceM) && a.ClearanceM >= 0f && float.IsFinite(a.SizeFactor) && a.SizeFactor >= 0f)) errors.Add($"row {r.Id}: avoid values invalid");
+            }
+        }
+        return errors;
+    }
+
+    private static void CheckResponse(List<string> errors, string n, in RingScatterResponse r)
+    {
+        if (!Enum.IsDefined(r.Field)) errors.Add($"{n}: unknown response field");
+        if (!(float.IsFinite(r.In0) && float.IsFinite(r.In1) && float.IsFinite(r.Out0) && float.IsFinite(r.Out1)) || r.In0 == r.In1) errors.Add($"{n}: response values invalid");
+    }
+}

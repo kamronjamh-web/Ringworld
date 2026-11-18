@@ -548,6 +548,7 @@ public partial class RingBiomeDecorationLayer
 	private void CompleteTileStreamingCore()
 	{
 		if (!UsePersistentVegetationTiles || _grid?.TerrainSampler is not RingTerrainSampler sampler) return;
+		PumpScatter(sampler);
 		bool completedAny = false;
 		bool rebuildRequests = false;
 		_vegetationBuildKeyScratch.Clear();
@@ -586,6 +587,7 @@ public partial class RingBiomeDecorationLayer
 			// render window. It was already paid for and remains useful to the LRU.
 			result.Tile.LastUsed = ++_vegetationUseClock;
 			_vegetationTiles[key] = result.Tile;
+			ScatterTileResident(key, result.Tile);
 			if (_evictedVegetationKeys.Remove(key)) VegetationTilesReloadedAfterEviction++;
 			_vegetationTileGenerationEpoch++;
 			if (!result.DiskHit) VegetationTilesGenerated++;
@@ -718,6 +720,7 @@ public partial class RingBiomeDecorationLayer
 		}
 		foreach (VegetationTileKey key in affected)
 			if (_vegetationTiles.Remove(key)) VegetationTilesInvalidated++;
+		ScatterTilesInvalidated(affected);
 		if (affected.Count > 0) _vegetationRenderDirty = true;
 	}
 
@@ -752,11 +755,13 @@ public partial class RingBiomeDecorationLayer
         DisposeStartupResources();
 		ClearGpuTreeResidentSources("Disposed");
 		ShutdownVegetationJobs();
+		ShutdownScatter();
 	}
 
 	private void SuspendVegetationStreaming()
 	{
 		RequestCancelVegetationJobs();
+		_scatter?.CancelJobs();
 		_desiredVegetationTiles.Clear();
 		_keepVegetationTiles.Clear();
 		_visibleVegetationTiles.Clear();
@@ -801,6 +806,7 @@ public partial class RingBiomeDecorationLayer
 				if (_vegetationTiles.Count <= maximum && bytes <= maximumBytes) break;
 				bytes -= _vegetationTiles[victim].EstimatedBytes;
 				_vegetationTiles.Remove(victim);
+				ScatterTileEvicted(victim);
 				_evictedVegetationKeys.Add(victim);
 				VegetationTilesEvicted++;
 			}
