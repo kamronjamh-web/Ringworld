@@ -305,6 +305,9 @@ var _published_haze_lup_day: Vector3 = Vector3(-1.0, -1.0, -1.0)
 var _published_haze_lup_night: Vector3 = Vector3(-1.0, -1.0, -1.0)
 var _published_hub_weight: float = 0.0
 var _published_night_light_scale: float = 1.0
+# Share of the sky the camera's surroundings can see (underground sky access x not underwater); mirrored into the ringworld_sky_reflection global.
+var published_sky_reflection: float = 1.0
+var _sky_reflection_global: float = -1.0 # -1 = not written yet, so the first publish always writes
 @export var hub_sky_tint_color: Color = Color(0.85, 0.95, 1.0, 1.0)
 
 @export_group("Physical Haze")
@@ -572,6 +575,8 @@ func _process(delta: float) -> void:
 
 func _apply_underground_lighting(environment: Environment, sky_access: float, cave_weight: float = 0.0) -> void:
 	var access := clampf(sky_access, 0.0, 1.0)
+	# Reflections follow the same sky access as ambient_light_sky_contribution, which the engine does not apply to reflections.
+	_publish_sky_reflection(access * (1.0 - clampf(current_underwater_factor, 0.0, 1.0)))
 	var attributes := world_environment.camera_attributes as CameraAttributesPractical \
 		if world_environment != null else null
 	if access >= 0.999:
@@ -604,6 +609,9 @@ func _apply_underground_lighting(environment: Environment, sky_access: float, ca
 		if planet_light.light_energy <= 0.001:
 			planet_light.shadow_enabled = false
 	if attributes != null:
+		# These writes bypass _configure_eye_adaptation's write cache: drop it, so the surface values are written again
+		# once the camera is back under open sky (else a jump out of a cave keeps the cave exposure).
+		_eye_write_cache.clear()
 		# Disable adaptation in darkness, then tightly bound it through the
 		# opening transition instead of allowing a sudden jump to surface ISO.
 		var adaptation_access := smoothstep(0.15, 1.0, access)
@@ -1188,6 +1196,14 @@ func _viewer_atmosphere_frame(surface_up: Vector3) -> Dictionary:
 		"radial": viewer_radial,
 		"height": ring_radius - viewer_radial.length(),
 	}
+
+
+func _publish_sky_reflection(value: float) -> void:
+	published_sky_reflection = clampf(value, 0.0, 1.0)
+	if published_sky_reflection == _sky_reflection_global:
+		return
+	_sky_reflection_global = published_sky_reflection
+	RenderingServer.global_shader_parameter_set("ringworld_sky_reflection", published_sky_reflection)
 
 
 func _publish_night_light_scale(scale: float) -> void:

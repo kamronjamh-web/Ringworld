@@ -7110,6 +7110,18 @@
       "expected_s": 3,
       "timeout_s": 60
     },
+    "underground_lighting_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "voxel-caves"
+      ],
+      "world": "scene",
+      "marker": "UNDERGROUND_LIGHTING_PROPERTY_SMOKE_TEST",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
     "underground_mode_settings_smoke_test": {
       "kind": "test",
       "mode": "headless",

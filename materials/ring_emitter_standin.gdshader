@@ -35,6 +35,7 @@ uniform float width_energy_floor : hint_range(0.0, 1.0) = 0.35;
 #include "res://materials/ring_shadow_compose.gdshaderinc"
 #include "res://materials/ring_poi_lighting.gdshaderinc"
 #include "res://materials/ring_wetness.gdshaderinc"
+#include "res://materials/ring_sky_reflection.gdshaderinc"
 
 varying vec3 world_position;
 varying float ring_day_factor;
@@ -113,7 +114,9 @@ void fragment() {
 		ALBEDO *= wet_albedo;
 	}
 	ROUGHNESS = surface_roughness;
-	SPECULAR = surface_specular;
+	// Dielectric F0 scales with SPECULAR^2, so sqrt(mean T) attenuates it linearly by T; at model 0 the mix is exactly 1 (today's look).
+	SPECULAR = surface_specular * mix(1.0, sqrt(dot(haze.T, vec3(1.0 / 3.0))), ringworld_reflection_model);
+	RADIANCE = ring_sky_reflection_radiance(1.0);
 	float cloud_occlusion = sample_local_cloud_shadow(world_position) * ring_day_factor;
 	// Storm light. No light() here, so AO_LIGHT_AFFECT = 1 makes AO dim every light; the megastorm darkness K goes on the albedo side instead of into
 	// A (docs/megastorm-design.md 5.6), and A takes the ordinary level D = min(L, 1). K is exactly 1 for every ordinary storm.

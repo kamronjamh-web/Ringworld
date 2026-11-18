@@ -26,6 +26,7 @@ uniform float pilot_texture_scale : hint_range(0.01, 2.0) = 0.20;
 #include "res://materials/ring_terrain_grass_coverage.gdshaderinc"
 #include "res://materials/ring_surface_albedo_scale.gdshaderinc"
 #include "res://materials/ring_wetness.gdshaderinc"
+#include "res://materials/ring_sky_reflection.gdshaderinc"
 
 varying float ring_day_factor;
 varying vec3 world_position;
@@ -154,6 +155,7 @@ void fragment() {
 	local_cloud_shadow_occlusion = sample_local_cloud_shadow(world_position);
 	AO = min(1.0 - local_cloud_shadow_occlusion * ring_day_factor * 0.72, ring_storm_ambient(ring_storm_level(world_position))); // storm light
 	AO_LIGHT_AFFECT = 0.0;
+	RADIANCE = ring_sky_reflection_radiance(dot(haze.T, vec3(1.0 / 3.0)));
 	if (ring_shadow_debug_enabled()) {
 		// Shadow debug view: only the selected shadow term reaches the screen (see ring_shadow_compose.gdshaderinc).
 		ALBEDO = vec3(1.0);

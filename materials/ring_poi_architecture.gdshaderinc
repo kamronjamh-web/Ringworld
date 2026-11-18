@@ -20,6 +20,7 @@ instance uniform float poi_base_ao_height = 0.0;
 #include "res://materials/ring_shadow_compose.gdshaderinc"
 #include "res://materials/ring_poi_lighting.gdshaderinc"
 #include "res://materials/ring_wetness.gdshaderinc"
+#include "res://materials/ring_sky_reflection.gdshaderinc"
 
 // Ambient floor at the ground contact and the share of the direct sun that survives there (both rise to 1 at poi_base_ao_height).
 const float BASE_AO_MIN = 0.45;
@@ -86,6 +87,7 @@ void fragment() {
 	// Cloud shadow darkens the ambient here and the sun in light(); the base occlusion rides on the ambient too.
 	AO = min((1.0 - poi_cloud_occlusion * 0.72) * mix(BASE_AO_MIN, 1.0, base_visibility), ring_storm_ambient(ring_storm_level(poi_world_position))); // storm light
 	AO_LIGHT_AFFECT = 0.0;
+	RADIANCE = ring_sky_reflection_radiance(1.0); // haze is already in SPECULAR and ALBEDO above
 	if (ring_shadow_debug_enabled()) {
 		// Shadow debug view: only the selected shadow term reaches the screen (see ring_shadow_compose.gdshaderinc).
 		ALBEDO = vec3(1.0);

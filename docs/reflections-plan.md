@@ -39,12 +39,12 @@ State on 2026-11-18, night (overnight lead: `claude-lead`; this section is kept 
 | R0 tooling: scenario kinds `reflection_probe` and `ab_matrix`, two scenario files | **Committed** (b00b501) | `tools/perf_bench.gd` (+22/-3), `tools/perf_bench_reflection_probe.gd`, `tools/perf_bench_ab_matrix.gd`, `tools/fixtures/perf_bench_reflections.json`, `tools/fixtures/perf_bench_reflection_costs.json` |
 | B1, B3 (two runs) | **Done.** Results in 9.1 to 9.3 | evidence in 0.5 |
 | B2 (trace-mask overlay), B5 at a waterline and a lake, B6 "before" movies, B7 | Not done | — |
-| R1-0 switch, main reflected source, far pins | **Done, reported ready for commit 2026-11-18.** Model 0 identical to a pre-R1-0 assembly (0.5); far env Sky/Background at both models; tests pass | new `scripts/Voxel/LOD/RingReflectionModel.cs`, new `materials/ring_reflection_model.gdshaderinc`, `scripts/Voxel/LOD/RingFarViewportColorPipeline.cs` (+2), `scripts/Voxel/LOD/RingScaledFarViewport.cs` (+9/-2), `project.godot` (one global, own hunk), new `tools/ReflectionEnvironmentContractTest.cs`, new `tools/reflection_environment_contract_test.gd`, `tools/test_manifest.json` (one entry) |
-| R1-1-0 probe tooling (model 0/1 variants in capture mode, env report, more poses) | **Done, reported ready for commit 2026-11-18.** Exposure: frozen by capture mode (time scale 0) instead of AE off (option `exposure: manual` kept) | `tools/perf_bench_reflection_probe.gd`, `tools/fixtures/perf_bench_reflections.json` |
-| R1-1a holds (trees, grass cards) | Designed, not started | same file |
-| R1-1b sky visibility global, POI, construction, stand-ins, anchors, voxel terrain | Designed, not started | same file |
+| R1-0 switch, main reflected source, far pins | **Committed** (5418d13). Model 0 identical to a pre-R1-0 assembly (0.5); far env Sky/Background at both models; tests pass | new `scripts/Voxel/LOD/RingReflectionModel.cs`, new `materials/ring_reflection_model.gdshaderinc`, `scripts/Voxel/LOD/RingFarViewportColorPipeline.cs` (+2), `scripts/Voxel/LOD/RingScaledFarViewport.cs` (+9/-2), `project.godot` (one global, own hunk), new `tools/ReflectionEnvironmentContractTest.cs`, new `tools/reflection_environment_contract_test.gd`, `tools/test_manifest.json` (one entry) |
+| R1-1-0 probe tooling (model 0/1 variants in capture mode, env report, more poses) | **Committed** (2b73725). Exposure: frozen by capture mode (time scale 0) instead of AE off (option `exposure: manual` kept) | `tools/perf_bench_reflection_probe.gd`, `tools/fixtures/perf_bench_reflections.json` |
+| R1-1a holds (trees, grass cards) | **Done, reported ready for commit 2026-11-18.** Trees, impostors and grass cards identical between model 0 and 1 (heatmap) | `imported_tree.gdshader`, `imported_tree_impostor.gdshader`, `ring_grass_cards.gdshader` |
+| R1-1b sky visibility global, POI, construction, stand-ins, anchors, voxel terrain | **Done, reported ready for commit 2026-11-18.** Also fixes a pre-existing bug the newly registered test found: the underground exposure writes bypassed the eye-adaptation write cache, so a jump out of a cave kept the cave exposure (`day_side_atmosphere.gd`, one `_eye_write_cache.clear()`) | see 0.4 |
 | R1-1d terrain | Designed. **Parked** until T4-4b and FR-1 release the terrain and proxy shaders | same file |
-| R1-2a water composition, R1-2c stills | Designed, not started. Depends on R1-0 | `docs/work-orders/reflections/R1-2-R1-5-design.md` |
+| R1-2a water composition, R1-2c stills | **R1-2a written and reviewed in staging** (`<scratchpad>/refl/r12a/`, not in the tree: the merge gate was running); contract test passes headless against the copies; not yet compiled by Godot. Next: copy into the tree after the gate, GPU tests, probe | `docs/work-orders/reflections/R1-2-R1-5-design.md` |
 | R1-3 housekeeping | Not started | 10.4 |
 | R1-4 trace only where it shows (the wet-ground trial) | **Parked** with R1-1d (same files) | 10.4 |
 | R1-5a water march, R1-5c measurements | Designed, not started. After R1-2a | `docs/work-orders/reflections/R1-2-R1-5-design.md` |
@@ -56,7 +56,7 @@ State on 2026-11-18, night (overnight lead: `claude-lead`; this section is kept 
 
 No helper agent is running. No order was left half-applied in the tree.
 
-Next, one at a time: R1-1a, R1-1b, R1-2a (then R1-2c stills), R1-6a measurement, R3a-1. Parked: R1-1d and R1-4 (terrain/proxy shaders held by T4-4b).
+Next, one at a time: R1-2a into the tree (then R1-2c stills), R1-6a measurement, R3a-1. Parked: R1-1d and R1-4 (terrain/proxy shaders held by T4-4b).
 
 **How model-0 identity is proven (2026-11-18).** Stills of one session are byte-comparable between models (capture mode). Across sessions (before/after a code change) they are not: clouds, tree crowns in wind and a thin band of distant terrain at the horizon differ by a few thousand pixels (SSIM 0.9999+), and a pose without them (night emitter) is byte-identical. So an order is identical at model 0 when the before/after heatmap shows only that noise and no structure on reflective surfaces (test spheres, wet ground, water, metal). Even within one session the repeat frame differs on the horizon band with models [0, 0] (diag runs), so that band is harness noise, not a model effect. A "before" assembly is built from a scratch copy of the C# sources with the order's hunks reverted and run through `perf_bench.ps1 -SkipBuild` after copying it into `bin\OptRelease` (old timestamp so the next bench rebuilds); the probe falls back to `env.reflected_light_source` when `RingReflectionModel` is not in the assembly. Shader-only orders need no such build: run the probe before the edit and after it.
 
@@ -64,19 +64,20 @@ Next, one at a time: R1-1a, R1-1b, R1-2a (then R1-2c stills), R1-6a measurement,
 
 Committed: the Phase A plan (97a1a74), the R0 tooling (b00b501), Phase B and the designs (83ebc6a). Uncommitted in the working tree of `terrain-vegetation-revamp`, by this lane:
 - **Docs:** `docs/reflections-plan.md` (this section).
-- **R1-0:** `scripts/Voxel/LOD/RingReflectionModel.cs` (new), `materials/ring_reflection_model.gdshaderinc` (new), `scripts/Voxel/LOD/RingFarViewportColorPipeline.cs`, `scripts/Voxel/LOD/RingScaledFarViewport.cs`, `tools/ReflectionEnvironmentContractTest.cs` + `tools/reflection_environment_contract_test.gd` (new); hunks in `project.godot` and `tools/test_manifest.json` (below).
-- **R1-1-0:** `tools/perf_bench_reflection_probe.gd`, `tools/fixtures/perf_bench_reflections.json`.
+- **R1-1a:** `materials/imported_tree.gdshader`, `materials/imported_tree_impostor.gdshader`, `materials/ring_grass_cards.gdshader`.
+- **R1-1b:** `materials/ring_sky_reflection.gdshaderinc` (new), `materials/ring_poi_architecture.gdshaderinc`, `materials/ring_construction_surface.gdshader`, `materials/ring_emitter_standin.gdshader`, `materials/ring_scale_anchor.gdshader`, `materials/voxel_ring_terrain.gdshader`, `scripts/day_side_atmosphere.gd`, `tools/underground_environment_lighting_smoke_test.gd`, `tools/underground_lighting_smoke_test.gd` (new SceneTree wrapper: the runner launches `--script`, the existing test is a scene `Node`); `project.godot` hunk `ringworld_sky_reflection`; manifest entry `underground_lighting_smoke_test`.
 
 Shared files, to be staged hunk by hunk:
-- `project.godot`: only `ringworld_reflection_model` (after `ringworld_night_light_scale`) is this lane's; `ringworld_ground_rock_detail_normal` is T4-4b's.
-- `tools/test_manifest.json`: this lane's hunks are the entry `reflection_environment_contract_test` and two globs in the `render-core` tag (`scripts/**/RingReflectionModel*`, `materials/ring_reflection_model*`; without them the new files are unmapped once tracked). Every other hunk there is another lane's.
+- `project.godot`: `ringworld_sky_reflection` (after `ringworld_reflection_model`).
+- `tools/test_manifest.json`: the entry `underground_lighting_smoke_test`. Every other hunk there is another lane's.
 
-Tests for R1-0: first run (`.godot/test_runs/r1_0/`, 2026-11-17) 19 pass, 2 known-fail; rerun 2026-11-18: `reflection_environment_contract_test` and `cloud_haze_gameplay_test` pass (the earlier timeout and the one-off cloud failure did not recur). `river_far_water_fraction_test` fails on other lanes' runs too (river geometry; R1-0 touches nothing there). `validate_manifest.ps1` passes.
+Tests for R1-1a+b (`.godot/test_runs/r1_1ab/`): the `-Files` selection (198) gave 184 pass, 8 known-fail, 6 fail, none from these orders: `gpu_grass_integration_test` ("dense clump scheduler did not settle"; same failure in `overnight_gate` 2026-11-16), `inland_water_sampler_test` (rivers cache version 13, want 12), `terrain_generation_playable_smoke` and `terrain_generation_streaming_playable_test` (world generation), `terrain_rock_material_gpu_test` (Terrain3D, T4-4b's ground work), and the new `underground_lighting_smoke_test`, which then passed after the eye-cache fix. The named list (trees, grass cards, POI haze, emitter stand-in and bore, wet world, underground mode) passed 10/10.
 
 ### 0.5 Evidence
 
 - `.godot/audit_baseline/common/reflections/b1/` (kept by the prune): the B1 sheet and stills.
-- `.godot/audit_baseline/common/reflections/r1_0/`: `r10_identity_1.png`, `r10_identity_2.png` (pre-R1-0 assembly against R1-0 at model 0, and one model-1 pair; columns before | after | difference x8), both driver reports, and `model_stills/` = the R1-0 state at model 0 and 1 for all 13 probe scenarios (the "before" set for the next orders). Runs: `.godot/perf_bench/refl_r10_before/20261118_002141`, `refl_r10_after/20261118_003414`.
+- `.godot/audit_baseline/common/reflections/r1_0/`: `r10_identity_1.png`, `r10_identity_2.png` (pre-R1-0 assembly against R1-0 at model 0, and one model-1 pair; columns before | after | difference x8) and both driver reports (runs `.godot/perf_bench/refl_r10_before/20261118_002141`, `refl_r10_after/20261118_003414`).
+- `.godot/audit_baseline/common/reflections/r1_1/`: `r11_identity_1.png` (R1-0 against R1-1a+b at model 0: noise only), `r11_m0m1_1.png` (model 0 against 1 after R1-1a+b: trees and cards unchanged, POI metal and wet ground reflect the sky), and `model_stills/` = the R1-1a+b state at model 0 and 1, all 13 scenarios: the "before" set for R1-2a.
 - `.godot/perf_bench/reflections_b1/20261117_144547/`, `reflections_b3a/20261117_150117/`, `reflections_b3b/20261117_153047/`: reports, stills and heatmaps of the three runs. `.godot/perf_bench/refl_tooling_check/`: the quick run of 0.6.
 
 ### 0.6 Handover of the bench tooling to the test-speed lane (B2a)

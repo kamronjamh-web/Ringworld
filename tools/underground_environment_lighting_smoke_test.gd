@@ -70,6 +70,14 @@ func _ready() -> void:
 		_fail("sealed-cavity auto exposure remained enabled")
 	_assert_near(local_light.light_energy, 2.5, "local-light preservation")
 	_assert_near(emissive.emission_energy_multiplier, 3.0, "emissive preservation")
+	# Reflections R1-1b: the published sky reflection follows sky access and the underwater factor.
+	_assert_near(atmosphere.published_sky_reflection, 0.0, "sealed-roof sky reflection")
+	atmosphere._apply_underground_lighting(environment, 1.0)
+	_assert_near(atmosphere.published_sky_reflection, 1.0, "open-sky sky reflection")
+	atmosphere.current_underwater_factor = 0.5
+	atmosphere._apply_underground_lighting(environment, 1.0)
+	_assert_near(atmosphere.published_sky_reflection, 0.5, "half-underwater sky reflection")
+	atmosphere.current_underwater_factor = 0.0
 
 	# Cave fog coupling (deep caves only): weight 0 leaves surface fog alone; a fog-off baseline lerps from zero density and sky tint.
 	const CAVE_DENSITY := 0.0045

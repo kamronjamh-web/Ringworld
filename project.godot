@@ -199,6 +199,10 @@ ringworld_reflection_model={
 "type": "float",
 "value": 0.0
 }
+ringworld_sky_reflection={
+"type": "float",
+"value": 1.0
+}
 ring_conduit_phase={
 "type": "float",
 "value": 0.0

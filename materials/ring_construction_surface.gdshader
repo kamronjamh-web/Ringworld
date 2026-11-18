@@ -6,6 +6,7 @@ render_mode diffuse_burley, specular_schlick_ggx;
 uniform vec3 concrete_albedo : source_color = vec3(0.46, 0.46, 0.48);
 uniform float concrete_roughness : hint_range(0.0, 1.0) = 0.9;
 #include "res://materials/ring_wetness.gdshaderinc"
+#include "res://materials/ring_sky_reflection.gdshaderinc"
 
 varying vec3 construction_world;
 varying vec3 construction_wet_state; // (gloss, roughness, specular reflectance)
@@ -43,6 +44,7 @@ void fragment() {
 	SPECULAR = specular;
 	AO = ring_storm_ambient(construction_storm); // storm light: the ambient follows the storm level under the surface
 	AO_LIGHT_AFFECT = 0.0;
+	RADIANCE = ring_sky_reflection_radiance(1.0); // construction is near: no haze
 }
 
 void light() {
