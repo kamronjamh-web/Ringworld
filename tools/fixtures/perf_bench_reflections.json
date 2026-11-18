@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "note": "Scenario list for the reflections study (docs/reflections-plan.md 2.5, B1): reflection_probe scenarios take A/B stills (reflected_light_source as found vs sky, engine SSR forced on vs off, with and without two metallic test spheres) into <out>/reflection_probe/ and record the Environment/SSR configuration in driver_report.json under reflection_probes. Run: tools/perf_bench.ps1 -Label reflections_b1 -ScenarioFile tools/fixtures/perf_bench_reflections.json . Same schema as perf_bench_visible_opts.json; the stand scenario only keeps the runner's report non-empty. force_wet is [film, soak, standing, rain] for WetWorld.ForceUniform.",
+ "note": "Scenario list for the reflections study (docs/reflections-plan.md 2.5 / 10.2, B1 / R1-1-0): reflection_probe scenarios take byte-comparable stills of the reflection model switch (model 0 = main Environment reflects Background, 1 = Sky) into <out>/reflection_probe/<name>_m<model>_<ssr>[_spheres].png and record the Environment/model configuration in driver_report.json under reflection_probes (config, env, captures, repeat). Optional scenario keys: models [0,1], ssr [game|on|off] (game = WetWorld policy as the game runs it), spheres [false,true], exposure frozen|manual. Run: tools/perf_bench.ps1 -Label reflections_b1 -ScenarioFile tools/fixtures/perf_bench_reflections.json . Same schema as perf_bench_visible_opts.json; the stand scenario only keeps the runner's report non-empty. force_wet is [film, soak, standing, rain] for WetWorld.ForceUniform.",
  "defaults": {
   "window_s": 8,
   "rounds": 2,
@@ -81,6 +81,11 @@
    "poi": "emitter",
    "viewpoint": 0,
    "notes": "main emitter site, viewpoint 0"
+  },
+  "emitter_bore": {
+   "poi": "emitter",
+   "viewpoint": 1,
+   "notes": "main emitter site, viewpoint 1 (bore), as shadow_harness_common emitter_bore_noon"
   }
  },
  "scenarios": [
@@ -95,7 +100,11 @@
    "name": "refl_plains_dry",
    "kind": "reflection_probe",
    "pose": "plains_eye",
-   "pitch_deg": -12
+   "pitch_deg": -12,
+   "spheres": [
+    false,
+    true
+   ]
   },
   {
    "name": "refl_plains_wet",
@@ -123,7 +132,11 @@
   {
    "name": "refl_coast",
    "kind": "reflection_probe",
-   "pose": "coast_eye"
+   "pose": "coast_eye",
+   "spheres": [
+    false,
+    true
+   ]
   },
   {
    "name": "refl_coast_lift",
@@ -146,6 +159,47 @@
    "name": "refl_emitter_rim",
    "kind": "reflection_probe",
    "pose": "emitter_rim"
+  },
+  {
+   "name": "refl_forest",
+   "kind": "reflection_probe",
+   "pose": "forest_interior_eye"
+  },
+  {
+   "name": "refl_alt300_wet",
+   "kind": "reflection_probe",
+   "pose": "alt300_plains",
+   "force_wet": [
+    1.0,
+    1.0,
+    0.9,
+    0.0
+   ]
+  },
+  {
+   "name": "refl_night_arch",
+   "kind": "reflection_probe",
+   "pose": "plains_arch",
+   "time": {
+    "mode": "elevation",
+    "value": -30.0,
+    "rising": false
+   }
+  },
+  {
+   "name": "refl_night_emitter",
+   "kind": "reflection_probe",
+   "pose": "emitter_rim",
+   "time": {
+    "mode": "elevation",
+    "value": -30.0,
+    "rising": false
+   }
+  },
+  {
+   "name": "refl_emitter_bore",
+   "kind": "reflection_probe",
+   "pose": "emitter_bore"
   }
  ]
 }
