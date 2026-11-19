@@ -21,6 +21,7 @@ instance uniform float poi_base_ao_height = 0.0;
 #include "res://materials/ring_poi_lighting.gdshaderinc"
 #include "res://materials/ring_wetness.gdshaderinc"
 #include "res://materials/ring_sky_reflection.gdshaderinc"
+#include "res://materials/ring_canopy_shade.gdshaderinc"
 
 // Ambient floor at the ground contact and the share of the direct sun that survives there (both rise to 1 at poi_base_ao_height).
 const float BASE_AO_MIN = 0.45;
@@ -31,6 +32,7 @@ varying float poi_day;
 varying float poi_cloud_occlusion;
 varying float poi_base_direct;
 varying float poi_specular;
+varying vec2 poi_canopy; // forest lighting: (blocked, species factor), sampled per fragment in fragment() (POI triangles span km, a per-vertex tap would interpolate across the 500 m raster)
 varying float poi_height_rel; // height above the POI's ground anchor along local up (heightfield receiver h_rel); -1 = no anchor, no heightfield term
 
 void vertex() {
@@ -87,6 +89,11 @@ void fragment() {
 	// Cloud shadow darkens the ambient here and the sun in light(); the base occlusion rides on the ambient too.
 	AO = min((1.0 - poi_cloud_occlusion * 0.72) * mix(BASE_AO_MIN, 1.0, base_visibility), ring_storm_ambient(ring_storm_level(poi_world_position))); // storm light
 	AO_LIGHT_AFFECT = 0.0;
+	if (ring_canopy_shade_on()) {
+		// Forest lighting: sky hidden by the canopy above (a POI under trees: roofs above the crowns get nothing).
+		poi_canopy = ring_canopy_sample(poi_world_position);
+		AO *= ring_canopy_sky_visibility(poi_canopy);
+	}
 	RADIANCE = ring_sky_reflection_radiance(1.0); // haze is already in SPECULAR and ALBEDO above
 	if (ring_shadow_debug_enabled()) {
 		// Shadow debug view: only the selected shadow term reaches the screen (see ring_shadow_compose.gdshaderinc).
@@ -142,6 +149,11 @@ void light() {
 		// Primary sun only: the local-day gate and the base occlusion; the planet light and every other light stay ungated.
 		float visibility = sun_visibility * mix(1.0, direct * poi_base_direct, primary_sun);
 		DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * n_dot_l * visibility;
+		if (ring_canopy_shade_on() && primary_sun > 0.0) {
+			// Forest lighting: sunlight re-emitted by the canopy above (primary sun only; sun-map and contact terms out of the visibility).
+			DIFFUSE_LIGHT += ring_canopy_transmitted(LIGHT_COLOR, LIGHT, NORMAL, ring_canopy_up_view(VIEW_MATRIX), poi_canopy,
+				ring_canopy_above(terms, RING_SHADOW_DEFAULT) * mix(1.0, direct * poi_base_direct, primary_sun) * primary_sun);
+		}
 		vec3 f0 = mix(vec3(0.16 * poi_specular * poi_specular), ALBEDO, METALLIC);
 		// Storm light: the sun highlight fades with F like the terrain's (wet roof puddles kept a saturated sun disc on the residual sun).
 		SPECULAR_LIGHT += poi_ggx_specular(NORMAL, LIGHT, VIEW, ROUGHNESS, f0) * LIGHT_COLOR * visibility * SPECULAR_AMOUNT * ring_storm_specular_keep(terms.storm);

@@ -8,10 +8,10 @@ extends SceneTree
 ## Checks:
 ##   (a) off -> on -> off gives a byte-identical off frame (every variant, kind, case and yaw);
 ##   (b) backlit on > off for mesh, cards and quad; frontlit |on - off| / off < 2 %;
-##   (c) mesh against cards, per variant: the backlit increase (on - off) agrees within 15 %; ambient only: the crown occlusion ratios (on / off) agree within 10 %;
+##   (c) mesh against cards, per variant: the backlit increase (on - off) agrees within 10 % (FL-2c: mesh and impostor share one statistical crown model, so they agree by construction); ambient only: the crown occlusion ratios (on / off) agree within 10 %;
 ##   (d) physical bound: backlit-on mean <= frontlit-on mean (mesh, cards, quad).
 ## The quad is gated for (a), (b) and (d); its (c) numbers are printed only. Also printed: the mean linear foliage albedo per species.
-## Environment FOREST_LIGHTING_HEAD_DIR = a folder holding imported_tree.gdshader and imported_tree_impostor.gdshader as they were before FL-2 (git show HEAD:materials/...): after the checks the
+## Environment FOREST_LIGHTING_HEAD_DIR = a folder holding imported_tree.gdshader and imported_tree_impostor.gdshader as they were before FL-2 (git show 5457bb2~1:materials/...): after the checks the
 ## shaders are swapped for those and every off frame must equal the new shaders' off frame byte for byte (the byte-identity claim of the switch-off path).
 ## Stills: .godot/audit_baseline/common/forest-lighting/fl2/ (yaw 0, off and on per case, mesh, cards, quad, and one contact sheet).
 ## Run: tools/run_tests.ps1 -Tests forest_lighting_tree_gpu_test -Label fl2
@@ -35,7 +35,7 @@ const YAWS := [0.0, 90.0, 180.0, 270.0]
 const OFF := Vector4(0, 0, 0, 0)
 const ON := Vector4(1, 0, 0, 1) # translucency on, tree shadow distance 0 (analytic crown regime), canopy shade off, crown occlusion on
 const FRONT_TOLERANCE := 0.02
-const INCREASE_TOLERANCE := 0.15
+const INCREASE_TOLERANCE := 0.10
 const AMBIENT_TOLERANCE := 0.10
 const OUT := "res://.godot/audit_baseline/common/forest-lighting/fl2"
 const TILE := 192
@@ -75,6 +75,9 @@ func _run() -> void:
 	for s in 3:
 		var a: PackedFloat32Array = helper.call("GetFoliageAlbedoMean", VARIANTS[s])
 		print("FL2 foliage albedo %s (variant %d): mean linear r %.4f g %.4f b %.4f over alpha-covered texels (%.1f %% of texels), tint (%.3f, %.3f, %.3f)" % [SPECIES_NAMES[s], VARIANTS[s], a[0], a[1], a[2], a[3] * 100.0, a[4], a[5], a[6]])
+	for s in 3:
+		var lad_row: Vector4 = helper.call("GetHullRows", VARIANTS[s])[2]
+		print("FL2 leaf inclination weights %s (variant %d): classes 11.25/33.75/56.25/78.75 deg = (%.4f, %.4f, %.4f, %.4f)" % [SPECIES_NAMES[s], VARIANTS[s], lad_row.x, lad_row.y, lad_row.z, lad_row.w])
 	# Measurements: result[species][kind][case] = {"off": lum, "on": lum, "off_rgb", "on_rgb"} (means over the yaws).
 	var results := []
 	var identity_bad := 0
@@ -262,6 +265,7 @@ func _shot(kind: String, species: int, case_name: String, yaw_degrees: float) ->
 		var rows = helper.call("GetHullRows", variant)
 		mesh_instance.set_instance_shader_parameter("tree_crown_hull", rows[0])
 		mesh_instance.set_instance_shader_parameter("tree_crown_hull_extra", rows[1])
+		mesh_instance.set_instance_shader_parameter("tree_crown_lad", rows[2])
 	else:
 		var multi: MultiMesh = card_multi if kind == "card" else quad_multi
 		multi.set_instance_transform(0, placement)

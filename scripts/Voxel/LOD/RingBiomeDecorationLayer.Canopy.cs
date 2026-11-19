@@ -80,8 +80,9 @@ public partial class RingBiomeDecorationLayer
     {
         TreeCrownHull[] hulls = TreeCrownHullTable.Get();
         if (variant < 0 || variant >= hulls.Length) return;
-        TreeCrownHullTable.Pack(hulls[variant], out Vector4 hull, out Vector4 extra);
+        TreeCrownHullTable.Pack(hulls[variant], out Vector4 hull, out Vector4 extra, out Vector4 lad);
         renderer.SetInstanceShaderParameter("tree_crown_hull", hull);
         renderer.SetInstanceShaderParameter("tree_crown_hull_extra", extra);
+        renderer.SetInstanceShaderParameter("tree_crown_lad", lad);
     }
 }

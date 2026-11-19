@@ -21,6 +21,7 @@ render_mode cull_disabled, diffuse_lambert, specular_disabled, skip_vertex_trans
 #include "res://materials/ring_vegetation_haze.gdshaderinc"
 #include "res://materials/ring_vegetation_shadow.gdshaderinc"
 #include "res://materials/ring_wetness.gdshaderinc"
+#include "res://materials/ring_canopy_shade.gdshaderinc"
 
 uniform sampler2D grass_card_atlas : filter_linear_mipmap, repeat_disable;
 uniform float grass_card_alpha_cutoff = 0.5;
@@ -43,6 +44,9 @@ uniform float grass_card_normal_out = 0.45;
 uniform float grass_card_normal_face = 0.25;
 uniform float grass_card_backlight = 0.28;
 uniform float grass_card_normal_tip_start = 0.6; // height gradient where the normal reaches the full bend
+// Forest lighting FL-3b (translucency switch on): diffuse transmittance of a blade / reflectance, the leaf model of the trees (RING_LEAF_TRANSMISSION_SHAPE = the spectral shape).
+// Plan section 9 Q3: thin blades, T/R about 0.8. The off path keeps grass_card_backlight.
+const float GRASS_LEAF_TRANSMISSION_K = 0.8;
 
 varying vec3 v_base;
 varying vec3 v_tip;
@@ -59,6 +63,7 @@ varying vec4 v_modifier;
 varying vec3 v_ground_world;
 varying flat vec4 v_biome;
 varying float v_wet; // wet world, per vertex: darkening amount (cards only darken, they have no specular)
+varying vec2 v_canopy; // forest lighting: (blocked, species factor) at the card root, per vertex (ring_canopy_shade.gdshaderinc)
 varying flat vec4 v_ground_hs; // per-instance heightfield term of the card root: visibility, weight, unknown, valid (S7b)
 
 void vertex() {
@@ -145,6 +150,7 @@ void vertex() {
 	// Terrain-derived colour at the ground-projected vertex position (coarse mip: far / fallback path).
 	vec3 gp = root + offset_h;
 	v_ground_world = gp;
+	if (ring_canopy_shade_on()) v_canopy = ring_canopy_sample(gp);
 	vec2 canonical = grass_card_canonical_offset(gp, grass_gust_origin_world, grass_gust_around_world, grass_gust_across_world);
 	v_terrain_uv = grass_card_terrain_uv(canonical, grass_terrain_origin_uv, gp);
 	v_light.zw = grass_card_shadow_uv(canonical, grass_terrain_origin_uv);
@@ -195,8 +201,9 @@ void fragment() {
 	vec3 f = v_face_view * (dot(v_face_view, VIEW) >= 0.0 ? 1.0 : -1.0);
 	vec3 bent = v_up_view + v_u_view * (v_shape.x * grass_card_normal_out) + f * grass_card_normal_face;
 	NORMAL = normalize(mix(v_up_view, bent, smoothstep(0.0, max(grass_card_normal_tip_start, 0.01), m.g)));
-	BACKLIGHT = col * grass_card_backlight;
+	BACKLIGHT = ring_forest_translucency_on() ? vec3(GRASS_LEAF_TRANSMISSION_K) * RING_LEAF_TRANSMISSION_SHAPE : col * grass_card_backlight;
 	AO = min(1.0 - v_light.y * 0.72, ring_storm_ambient(ring_storm_level(v_ground_world))); // storm light
+	if (ring_canopy_shade_on()) AO *= ring_canopy_sky_visibility(v_canopy); // forest lighting: sky hidden by the canopy above
 	AO_LIGHT_AFFECT = 0.0;
 	if (ring_shadow_debug_enabled()) {
 		// Shadow debug view: only the selected shadow term reaches the screen (see ring_shadow_compose.gdshaderinc).
@@ -212,9 +219,27 @@ void fragment() {
 
 void light() {
 	float direct_visibility;
+	// The off path is the pre-forest-lighting call verbatim (FL-4: a call inside an if/else compiled to 1-2 LSB different pixels in the real world).
 	DIFFUSE_LIGHT += ring_terrain_direct_diffuse(NORMAL, LIGHT, ATTENUATION, LIGHT_IS_DIRECTIONAL, LIGHT_COLOR,
 		VIEW_MATRIX, v_light.x, v_light.y, v_light.zw, v_ground_world, ring_viewer_world_position, SCREEN_UV,
 		FRAGCOORD.xy, VIEWPORT_SIZE, INV_PROJECTION_MATRIX, RING_SHADOW_CONTACT_GRASS, v_ground_hs, direct_visibility);
-	// Diffuse translucency from the far side of the blade, scaled like the terrain's diffuse term.
-	DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * BACKLIGHT * max(dot(-NORMAL, LIGHT), 0.0) * direct_visibility;
+	if (ring_canopy_shade_on()) {
+		// Forest lighting: the same terms again through the overload that also returns the sun visibility above the canopy (result discarded), then the canopy's transmitted sunlight.
+		float canopy_above;
+		float direct_visibility_canopy;
+		ring_terrain_direct_diffuse(NORMAL, LIGHT, ATTENUATION, LIGHT_IS_DIRECTIONAL, LIGHT_COLOR,
+			VIEW_MATRIX, v_light.x, v_light.y, v_light.zw, v_ground_world, ring_viewer_world_position, SCREEN_UV,
+			FRAGCOORD.xy, VIEWPORT_SIZE, INV_PROJECTION_MATRIX, RING_SHADOW_CONTACT_GRASS, v_ground_hs, direct_visibility_canopy, canopy_above);
+		if (!ring_shadow_debug_enabled()) {
+			DIFFUSE_LIGHT += ring_canopy_transmitted(LIGHT_COLOR, LIGHT, NORMAL, ring_canopy_up_view(VIEW_MATRIX), v_canopy, canopy_above);
+		}
+	}
+	if (ring_forest_translucency_on()) {
+		// Leaf model of the trees (bi-Lambertian): the lobe follows the blade's face side toward the viewer, so the transmittance is k * s * albedo.
+		vec3 face = v_face_view * (dot(v_face_view, VIEW) >= 0.0 ? 1.0 : -1.0);
+		DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * BACKLIGHT * max(-dot(face, LIGHT), 0.0) * direct_visibility;
+	} else {
+		// Diffuse translucency from the far side of the blade, scaled like the terrain's diffuse term.
+		DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * BACKLIGHT * max(dot(-NORMAL, LIGHT), 0.0) * direct_visibility;
+	}
 }

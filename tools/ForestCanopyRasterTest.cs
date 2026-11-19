@@ -293,6 +293,10 @@ public partial class ForestCanopyRasterTest : RefCounted
         for (int i = 0; i < times.Length; i++) times[i] = _builder.Build(trees, AnchorA, AnchorB, Circumference, 3f).BuildMilliseconds;
         Array.Sort(times);
         GD.Print($"FOREST_CANOPY_BUILD trees=13000 median_ms={times[3]:F2} min_ms={times[0]:F2} max_ms={times[^1]:F2}");
-        Require(times[3] < 10.0, $"13,000 tree build median {times[3]:F2} ms >= 10 ms");
+        // The runner sets RINGWORLD_TEST_PARALLEL_LANES above 1 while headless tests share the CPU; the limit then gets 2.5x slack (as tools/RingWindQueryTest.cs).
+        double slack = int.TryParse(System.Environment.GetEnvironmentVariable("RINGWORLD_TEST_PARALLEL_LANES"), out int lanes) && lanes > 1 ? 2.5 : 1.0;
+        double limit = 10.0 * slack;
+        GD.Print($"FOREST_CANOPY_BUILD slack={slack:F1} limit_ms={limit:F1}");
+        Require(times[3] < limit, $"13,000 tree build median {times[3]:F2} ms >= {limit:F1} ms");
     }
 }

@@ -49,6 +49,7 @@ uniform sampler2D biome_alpine_albedo : source_color, filter_linear_mipmap_aniso
 #include "res://materials/ring_surface_albedo_scale.gdshaderinc"
 #include "res://materials/ring_surface_aperture.gdshaderinc"
 #include "res://materials/ring_wetness.gdshaderinc"
+#include "res://materials/ring_canopy_shade.gdshaderinc"
 // Enables the whole-ring far weather cloud shadow (ring_far_weather_shadow.gdshaderinc) beyond the Sunshine maps.
 uniform bool analytic_cloud_shadow_enabled = true;
 uniform float ring_width_meters = 20000.0;
@@ -82,6 +83,8 @@ varying float combined_cloud_shadow_occlusion;
 varying vec3 proxy_wet_specular_state;
 // The river line coverage c of this fragment (0 off the line).
 varying float river_line_c;
+// Forest lighting: (blocked, species factor), sampled per vertex (ring_canopy_shade.gdshaderinc).
+varying vec2 proxy_canopy;
 
 float sample_combined_cloud_shadow(vec3 sample_world_position, float day_factor) {
 	// The Sunshine projected maps own their footprint; the far weather shell
@@ -115,6 +118,7 @@ void vertex() {
 	vec3 surface_up = length(radial) > 0.0001 ? -normalize(radial) : vec3(-1.0, 0.0, 0.0);
 	ring_day_factor = ringworld_effective_solar_day(smoothstep(day_start_dot, day_full_dot, dot(surface_up, normalize(sun_direction))));
 	surface_up_world = surface_up;
+	if (ring_canopy_shade_on()) proxy_canopy = ring_canopy_sample(world_position);
 	if (proxy_vertex_table_enabled && proxy_vertex_collapse_enabled && proxy_slot >= 0 && coverage_atlas_rect.z > 0.0) {
 		// Slot sectors have no CPU triangle filter: a lattice vertex whose (up to four) incident quads are all covered
 		// by a finer level collapses onto the sector origin, so triangles whose three vertices all collapse are
@@ -253,6 +257,7 @@ void fragment() {
 	combined_cloud_shadow_occlusion = sample_combined_cloud_shadow(world_position, ring_day_factor);
 	AO = min(1.0 - combined_cloud_shadow_occlusion * 0.72, ring_storm_ambient(ring_storm_level(world_position))); // storm light
 	AO_LIGHT_AFFECT = 0.0;
+	if (ring_canopy_shade_on()) AO *= ring_canopy_sky_visibility(proxy_canopy); // forest lighting: sky hidden by the canopy above
 	if (river_line_enabled && river_line_c > 0.0) {
 		// River line glint (S11b): the sun lobe of ring_terrain_global scaled by the real coverage. River water is level, so the normal is the local zenith, not the coarse ground normal.
 		vec3 glint_sun = normalize((VIEW_MATRIX * vec4(sun_direction, 0.0)).xyz);
@@ -339,6 +344,11 @@ void light() {
 			* n_dot_l
 			* combined_visibility
 			* hemisphere_direct;
+		if (ring_canopy_shade_on() && primary_sun_weight > 0.0) {
+			// Forest lighting: sunlight re-emitted by the canopy above (primary sun only; sun-map and contact terms out of the visibility).
+			DIFFUSE_LIGHT += ring_canopy_transmitted(LIGHT_COLOR, LIGHT, NORMAL, normalize((VIEW_MATRIX * vec4(surface_up_world, 0.0)).xyz), proxy_canopy,
+				ring_canopy_above(terms, RING_SHADOW_DEFAULT) * hemisphere_direct * primary_sun_weight);
+		}
 		if (proxy_wet_specular_state.x > 0.0) {
 			SPECULAR_LIGHT += ring_wet_direct_specular(NORMAL, LIGHT, VIEW, proxy_wet_specular_state.y, proxy_wet_specular_state.z, proxy_wet_specular_state.x)
 				* LIGHT_COLOR * combined_visibility * hemisphere_direct * SPECULAR_AMOUNT * ring_storm_specular_keep(terms.storm); // storm light: no sun glint under an overcast

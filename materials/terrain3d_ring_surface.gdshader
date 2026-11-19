@@ -11,6 +11,7 @@ render_mode blend_mix,depth_draw_opaque,cull_back,diffuse_burley,specular_schlic
 #include "res://materials/ring_surface_albedo_scale.gdshaderinc"
 #include "res://materials/ring_terrain_surface_albedo.gdshaderinc"
 #include "res://materials/ring_terrain_lighting.gdshaderinc"
+#include "res://materials/ring_canopy_shade.gdshaderinc"
 #include "res://materials/ring_wetness.gdshaderinc"
 
 #define SKIP_PASS 0
@@ -71,6 +72,7 @@ varying float combined_cloud_shadow_occlusion;
 varying float terrain_specular_f0;
 varying float terrain_direct_specular_weight;
 varying vec2 terrain_shadow_uv;
+varying vec2 terrain_canopy; // forest lighting: (blocked, species factor), sampled per vertex (ring_canopy_shade.gdshaderinc)
 
 ivec3 get_index_coord(const vec2 uv, const int search) {
     vec2 r_uv = round(uv);
@@ -161,6 +163,7 @@ void vertex() {
             && distance(ring_viewer_world_position, v_vertex) > ring_handoff_distance_meters + 3.0 * scale + 32.0) {
         v_vertex.x = 0.0 / 0.0;
     }
+    if (ring_canopy_shade_on()) terrain_canopy = ring_canopy_sample(v_vertex);
     VERTEX = (VIEW_MATRIX * vec4(v_vertex, 1.0)).xyz;
 }
 
@@ -336,6 +339,7 @@ void fragment() {
             + UV.y / max(_vertex_density, 0.000001) * ring_across_direction / max(ring_width_meters, 1.0));
     AO = min(1.0 - combined_cloud_shadow_occlusion * .72, ring_storm_ambient(ring_storm_level(v_vertex))); // storm light: ambient follows the storm level under the surface
     AO_LIGHT_AFFECT = 0.0;
+    if (ring_canopy_shade_on()) AO *= ring_canopy_sky_visibility(terrain_canopy); // forest lighting: sky hidden by the canopy above
     if (ring_shadow_debug_enabled()) {
         // Shadow debug view: only the selected shadow term reaches the screen (see ring_shadow_compose.gdshaderinc).
         ALBEDO = vec3(1.0);
@@ -372,7 +376,17 @@ float terrain_schlick_fresnel(float u) {
 
 void light() {
     float direct_visibility;
-    DIFFUSE_LIGHT += ring_terrain_direct_diffuse(
+    if (ring_canopy_shade_on()) {
+        // Forest lighting: the variant that also returns the sun visibility above the canopy, then the canopy's transmitted sunlight (primary sun only: canopy_above carries the weight).
+        float canopy_above;
+        DIFFUSE_LIGHT += ring_terrain_direct_diffuse(
+            NORMAL, LIGHT, ATTENUATION, LIGHT_IS_DIRECTIONAL, LIGHT_COLOR, VIEW_MATRIX, ring_day_factor, combined_cloud_shadow_occlusion, terrain_shadow_uv,
+            v_vertex, ring_viewer_world_position, SCREEN_UV, FRAGCOORD.xy, VIEWPORT_SIZE, INV_PROJECTION_MATRIX, RING_SHADOW_DEFAULT, direct_visibility, canopy_above);
+        if (!ring_shadow_debug_enabled()) {
+            DIFFUSE_LIGHT += ring_canopy_transmitted(LIGHT_COLOR, LIGHT, NORMAL, ring_canopy_up_view(VIEW_MATRIX), terrain_canopy, canopy_above);
+        }
+    }
+    if (!ring_canopy_shade_on()) DIFFUSE_LIGHT += ring_terrain_direct_diffuse(
         NORMAL,
         LIGHT,
         ATTENUATION,

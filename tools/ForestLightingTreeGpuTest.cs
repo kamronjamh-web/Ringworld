@@ -7,15 +7,15 @@ namespace RingworldTechDemo.Tools;
 
 /// <summary>
 /// FL-2 (docs/forest-lighting-plan.md sections 3 and 4): C# side of forest_lighting_tree_gpu_test.gd. Hands the GDScript fixture the crown hull rows of a variant (the same table that feeds
-/// the mesh renderers' instance uniforms and the impostor's variant_parameters rows 8 and 9) and the mean linear foliage albedo of a variant's alpha-covered texels.
+/// the mesh renderers' instance uniforms and the impostor's variant_parameters rows 8 to 10) and the mean linear foliage albedo of a variant's alpha-covered texels.
 /// </summary>
 public partial class ForestLightingTreeGpuTest : RefCounted
 {
-    /// <summary>[hull row, extra row] of the variant as the shaders read them.</summary>
+    /// <summary>[hull row, extra row, lad row] of the variant as the shaders read them.</summary>
     public Vector4[] GetHullRows(int variant)
     {
-        TreeCrownHullTable.Pack(TreeCrownHullTable.Get()[variant], out Vector4 hull, out Vector4 extra);
-        return new[] { hull, extra };
+        TreeCrownHullTable.Pack(TreeCrownHullTable.Get()[variant], out Vector4 hull, out Vector4 extra, out Vector4 lad);
+        return new[] { hull, extra, lad };
     }
 
     /// <summary>The variant's species name (maple, fir or pine).</summary>

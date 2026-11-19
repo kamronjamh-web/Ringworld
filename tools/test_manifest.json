@@ -3078,6 +3078,32 @@
       "expected_s": 3,
       "timeout_s": 120
     },
+    "forest_canopy_shade_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation",
+        "terrain",
+        "poi",
+        "forest-lighting"
+      ],
+      "marker": "FOREST_CANOPY_SHADE_GPU_TEST",
+      "expected_s": 60,
+      "timeout_s": 600
+    },
+    "forest_grass_shade_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation",
+        "forest-lighting"
+      ],
+      "marker": "FOREST_GRASS_SHADE_GPU_TEST",
+      "expected_s": 60,
+      "timeout_s": 600
+    },
     "forest_lighting_tree_gpu_test": {
       "kind": "test",
       "mode": "gpu",
@@ -8201,6 +8227,21 @@
       "profile": "own-runner",
       "runner": "tools/tree_visibility_run.ps1",
       "user_args": "-Test frustum_identity"
+    },
+    "forest_lighting_identity_world_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "forest-lighting",
+        "vegetation"
+      ],
+      "marker": "FOREST_LIGHTING_IDENTITY_WORLD",
+      "expected_s": 1500,
+      "timeout_s": 3600,
+      "profile": "own-runner",
+      "runner": "tools/tree_visibility_run.ps1",
+      "user_args": "-Test forest_lighting_identity -Label fl4"
     },
     "tree_frustum_blob_probe": {
       "kind": "test",

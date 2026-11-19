@@ -45,10 +45,12 @@ uniform bool simplified_tree_shading = false;
 #include "res://materials/ring_local_wind.gdshaderinc"
 #include "res://materials/ring_wetness.gdshaderinc"
 #include "res://materials/ring_forest_lighting.gdshaderinc"
+#include "res://materials/ring_canopy_shade.gdshaderinc"
 
 // Forest lighting: the crown hull of this renderer's variant (one variant per renderer), see ring_forest_lighting.gdshaderinc. Unset = no crown terms, no translucency.
 instance uniform vec4 tree_crown_hull = vec4(0.0);
 instance uniform vec4 tree_crown_hull_extra = vec4(0.0);
+instance uniform vec4 tree_crown_lad = vec4(0.0); // leaf area fractions of the 4 inclination classes (see the include)
 
 varying float tree_cloud_occlusion;
 varying float tree_day_factor;
@@ -60,10 +62,10 @@ varying vec2 tree_wet_state; // wet world, per vertex: (darkening amount, gloss)
 varying float tree_highlight_roughness; // wet world: the direct highlight keeps the full wet gloss (ROUGHNESS may be held at the SSR floor)
 varying flat float tree_dither_coverage;
 varying flat float tree_dither_seed;
-varying float tree_crown_ao; // foliage, crown occlusion on: exp(-kappa * exit distance to the sky), else 1
-varying float tree_crown_sun; // translucency on: crown transmittance towards the primary sun at the vertex, else 1
-varying flat float tree_crown_k; // translucency on, foliage, valid hull: k_species, else 0
-varying vec3 tree_geo_normal; // written in fragment() for light(): the geometric leaf normal facing the viewer (view space)
+varying vec3 tree_model_position; // forest lighting switches on: the vertex in model (normalized tree) space, after wind
+varying float tree_leaf_transmit; // written in fragment() for light(): k_species * facing * crown transmittance towards the primary sun (0 = no translucency); one varying because the shader is at the 32-varying limit. Bark below the crown base (no translucency) reuses it for the canopy shade: blocked * species factor (FL-3a)
+varying flat vec3 tree_model_light; // forest lighting switches on: the unit direction to the sun in model space (vertex(): MODEL_MATRIX in fragment() lacks the MultiMesh instance transform)
+varying flat vec3 tree_model_camera; // forest lighting switches on: the camera in model space
 
 float tree_dither_noise(vec2 pixel, float seed) {
 	return fract(sin(dot(pixel + vec2(seed * 17.0, seed * 43.0), vec2(12.9898, 78.233))) * 43758.5453);
@@ -92,17 +94,10 @@ void vertex() {
 		if (length(TANGENT) > .0001) TANGENT = normalize(jacobian * TANGENT);
 		if (length(BINORMAL) > .0001) BINORMAL = normalize(jacobian * BINORMAL);
 	}
-	tree_crown_ao = 1.0;
-	tree_crown_sun = 1.0;
-	tree_crown_k = 0.0;
-	if (use_alpha_cutout && (ring_forest_translucency_on() || ring_forest_crown_on()) && ring_crown_valid(tree_crown_hull_extra)) {
-		// VERTEX: the wind-deformed vertex in model space (normalized tree space, uniform scale).
-		if (ring_forest_crown_on()) tree_crown_ao = ring_crown_sky_visibility(VERTEX, tree_crown_hull, tree_crown_hull_extra);
-		if (ring_forest_translucency_on()) {
-			tree_crown_k = tree_crown_hull_extra.z;
-			vec3 light_model = normalize(transpose(mat3(MODEL_MATRIX)) * sun_direction);
-			tree_crown_sun = ring_crown_sun_transmittance(VERTEX, light_model, tree_crown_hull, tree_crown_hull_extra);
-		}
+	if (ring_forest_translucency_on() || ring_forest_crown_on() || ring_canopy_shade_on()) {
+		tree_model_position = VERTEX; // the wind-deformed vertex in model space (normalized tree space, uniform scale)
+		tree_model_camera = ring_crown_model_point(MODEL_MATRIX, ring_atmosphere_camera_world_position);
+		tree_model_light = normalize(transpose(mat3(MODEL_MATRIX)) * sun_direction);
 	}
 	vec3 world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	RingVegetationShadowInstance shadow_instance = ring_vegetation_shadow_instance(RING_VEGETATION_SHADOW_TREES, INSTANCE_ID);
@@ -165,10 +160,29 @@ void fragment() {
 	if (use_alpha_cutout) ROUGHNESS = ring_wet_ssr_roughness(ROUGHNESS, dry_roughness);
 	AO = min(1.0 - tree_cloud_occlusion * tree_day_factor * .72, ring_storm_ambient(ring_storm_level(tree_world_position))); // storm light
 	AO_LIGHT_AFFECT = 0.0;
-	if (ring_forest_crown_on() && use_alpha_cutout) AO *= tree_crown_ao;
-	if (ring_forest_translucency_on() && use_alpha_cutout && tree_crown_k > 0.0) {
-		vec3 geometric_normal = normalize(cross(dFdx(VERTEX), dFdy(VERTEX)));
-		tree_geo_normal = dot(geometric_normal, VIEW) >= 0.0 ? geometric_normal : -geometric_normal;
+	if (ring_forest_translucency_on() || ring_forest_crown_on()) {
+		// Forest lighting: the statistical crown model shared with the impostor (docs/forest-lighting-plan.md sections 3 and 4): first leaf on the view ray, the variant's leaf inclination distribution.
+		// Crown sky occlusion applies to foliage and to bark at or above the crown base (branches inside the crown see the same sky; the impostor's gate); translucency to foliage only.
+		tree_leaf_transmit = 0.0; // every fragment while a switch is on (light() reads it; no hull = no translucency)
+		if (ring_crown_valid(tree_crown_hull_extra) && (use_alpha_cutout || (ring_forest_crown_on() && tree_model_position.y >= tree_crown_hull.x - tree_crown_hull.z))) {
+			float analytic_weight = ring_forest_analytic_weight(distance(tree_world_position, ring_atmosphere_camera_world_position));
+			float crown_sky, crown_sun;
+			ring_crown_first_leaf_terms(tree_model_camera, tree_model_position, tree_model_light, tree_crown_hull, tree_crown_hull_extra, use_alpha_cutout && ring_forest_translucency_on() && analytic_weight > 0.0, crown_sky, crown_sun);
+			if (ring_forest_crown_on()) AO *= crown_sky;
+			if (use_alpha_cutout && ring_forest_translucency_on()) {
+				tree_leaf_transmit = tree_crown_hull_extra.z * (ring_leaf_lad_facing(tree_model_light, normalize(tree_model_camera - tree_model_position), vec3(0.0, 1.0, 0.0), tree_crown_lad)) * mix(1.0, crown_sun, analytic_weight);
+			}
+		}
+	}
+	if (ring_canopy_shade_on() && !use_alpha_cutout) {
+		// Forest lighting FL-3a: bark below the crown base sits under the stand's canopy (the raster); at or above the base the tree's own crown occlusion (2c) applies instead and the raster
+		// would count that crown twice. Foliage never samples the raster. Without a valid hull the raster applies to the whole trunk. The transmitted factor reaches light() in tree_leaf_transmit.
+		tree_leaf_transmit = 0.0;
+		if (!ring_crown_valid(tree_crown_hull_extra) || tree_model_position.y < tree_crown_hull.x - tree_crown_hull.z) {
+			vec2 canopy = ring_canopy_sample(tree_world_position);
+			AO *= ring_canopy_sky_visibility(canopy);
+			tree_leaf_transmit = canopy.x * canopy.y;
+		}
 	}
 	// Reflections R1-1a hold: the sky term stays black as before the sky source; crown interiors and trunks cannot see the sky and there is no crown-visibility term yet (docs/work-orders/reflections/R1-1-design.md). SSR on wet bark is unaffected.
 	RADIANCE = vec4(0.0, 0.0, 0.0, 1.0);
@@ -204,11 +218,14 @@ void light() {
 	} else {
 		float visibility = sun_visibility * mix(1.0, direct, primary_sun);
 		DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * n_dot_l * visibility;
-		if (ring_forest_translucency_on() && use_alpha_cutout && tree_crown_k > 0.0) {
-			// Leaf translucency: sunlight transmitted to the viewer's side of the leaf (docs/forest-lighting-plan.md section 3). Godot multiplies by ALBEDO afterwards.
-			float analytic_weight = ring_forest_analytic_weight(distance(tree_world_position, ring_atmosphere_camera_world_position));
-			DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * (tree_crown_k * RING_LEAF_TRANSMISSION_SHAPE) * max(-dot(tree_geo_normal, LIGHT), 0.0) * visibility
-				* mix(1.0, tree_crown_sun, analytic_weight * primary_sun);
+		if (ring_canopy_shade_on() && !use_alpha_cutout && tree_leaf_transmit > 0.0 && primary_sun > 0.0) {
+			// Forest lighting FL-3a: sunlight re-emitted by the canopy above, bark under the stand (tree_leaf_transmit = blocked * species factor); above = cloud and storm only (geometry 1).
+			DIFFUSE_LIGHT += ring_canopy_transmitted(LIGHT_COLOR, LIGHT, NORMAL, ring_canopy_up_view(VIEW_MATRIX), vec2(tree_leaf_transmit, 1.0),
+				ring_canopy_above(terms, RING_SHADOW_COMBINE_PRODUCT) * mix(1.0, direct, primary_sun) * primary_sun);
+		}
+		if (ring_forest_translucency_on() && use_alpha_cutout && tree_leaf_transmit > 0.0) {
+			// Leaf translucency: sunlight transmitted to the viewer's side of the leaf, primary sun only (docs/forest-lighting-plan.md section 3). Godot multiplies by ALBEDO afterwards.
+			DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * (tree_leaf_transmit * RING_LEAF_TRANSMISSION_SHAPE) * visibility * primary_sun;
 		}
 		if (!simplified_tree_shading) {
 			vec3 half_vector = normalize(LIGHT + VIEW);

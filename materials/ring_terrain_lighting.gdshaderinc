@@ -208,3 +208,185 @@ vec3 ring_terrain_direct_diffuse(
 	return ring_terrain_direct_diffuse(normal, light, attenuation, is_directional, light_color, view_matrix, day_factor, cloud_occlusion, shadow_uv, world, viewer,
 		screen_uv, frag_coord, viewport_size, inv_projection, contact_flags, vec4(0.0), direct_visibility);
 }
+
+// Forest lighting FL-3a (docs/forest-lighting-plan.md section 5): additive variants that also return `canopy_above`, the primary sun's visibility with the sun-map (geometry)
+// and contact terms left out (cloud, terrain/macro, height shadow and storm kept) times the hemisphere direct factor and the primary-sun weight; 0 for any other light and in the
+// shadow debug view. The functions above are untouched. Same body as ring_terrain_direct_visibility above plus the canopy_above lines.
+float ring_terrain_direct_visibility(
+		vec3 normal,
+		vec3 light,
+		float attenuation,
+		bool is_directional,
+		mat4 view_matrix,
+		float day_factor,
+		float cloud_occlusion,
+		vec2 shadow_uv,
+		vec3 world,
+		vec3 viewer,
+		vec2 screen_uv,
+		vec2 frag_coord,
+		vec2 viewport_size,
+		mat4 inv_projection,
+		uint contact_flags,
+		vec4 instance_height,
+		out float canopy_above) {
+	canopy_above = 0.0;
+	float readable_shadow = max(attenuation, shadow_floor);
+	vec3 sun_direction_view = normalize((view_matrix * vec4(sun_direction, 0.0)).xyz);
+	float primary_sun_weight = is_directional
+		? smoothstep(0.90, 0.995, dot(normalize(light), sun_direction_view))
+		: 0.0;
+	float primary_planet_weight = is_directional
+		? terrain_planet_directional_light_weight(light, view_matrix)
+		: 0.0;
+	float sun_hemisphere_direct = mix(
+		night_direct_light_factor,
+		day_direct_light_factor,
+		day_factor);
+	float hemisphere_direct = mix(1.0, sun_hemisphere_direct, primary_sun_weight);
+	// Terrain height-shadow clipmap (S5): while it is active it replaces the sun macro term where it has data and also brings the eclipse-hub term
+	// to this path; otherwise the previous behaviour (no hub term here) is unchanged. S7a: the same for the planet light when the front layer is a planet layer.
+	bool height_active = is_directional && primary_sun_weight > 0.0 && ring_height_shadow_active();
+	float planet_height_weight = is_directional && ring_height_shadow_planet_active()
+		? ring_height_shadow_light_weight(light, view_matrix) * (1.0 - clamp(ringworld_hub_light_weight, 0.0, 1.0) * primary_sun_weight)
+		: 0.0;
+	bool height_planet = planet_height_weight > 0.0;
+	RingHeightShadow height_shadow = ring_height_shadow_none();
+	if (height_active || height_planet) {
+		// S7b: a grass card carries the heightfield term of its root (per-instance atlas); everything else samples per fragment.
+		if (instance_height.w > 0.5) {
+			height_shadow = RingHeightShadow(instance_height.x, instance_height.y, instance_height.z);
+		} else {
+			height_shadow = ring_height_shadow_sample(
+				world,
+				0.0,
+				ring_height_shadow_slope_tan(transpose(mat3(view_matrix)) * normal),
+				distance(world, viewer));
+		}
+	}
+	float terrain_shadow = is_directional
+		? ring_macro_terrain_occlusion(
+			sample_terrain_macro_shadow_uv(shadow_uv, world, viewer) * (height_active ? ring_height_shadow_macro_scale(height_shadow) : 1.0),
+			sample_terrain_planet_shadow_uv(shadow_uv, world, viewer) * (height_planet ? ring_height_shadow_macro_scale(height_shadow) : 1.0),
+			primary_sun_weight,
+			primary_planet_weight,
+			day_factor,
+			height_active ? ringworld_hub_light_weight : 0.0)
+		: 0.0;
+	RingShadowTerms terms = ring_shadow_terms(
+		world,
+		screen_uv,
+		readable_shadow,
+		is_directional ? cloud_occlusion : 0.0,
+		terrain_shadow,
+		RING_SHADOW_DEFAULT);
+	terms.storm = is_directional ? terms.storm : 0.0; // storm light fades the sun only, never a point or spot light
+	terms.contact = ring_contact_visibility(frag_coord, viewport_size, inv_projection, primary_sun_weight, contact_flags);
+	if (height_active) {
+		terms.height = ring_height_shadow_term(height_shadow, primary_sun_weight, day_factor, ringworld_hub_light_weight, shadow_floor);
+	} else if (height_planet) {
+		terms.height = ring_height_shadow_planet_term(height_shadow, planet_height_weight, shadow_floor);
+	}
+	float combined_visibility = ring_shadow_sun_visibility(terms, RING_SHADOW_DEFAULT);
+	if (is_directional && !ring_shadow_debug_enabled()) {
+		// Forest lighting FL-3a: sun visibility above the canopy (sun-map and contact terms out), with the primary-sun weight and the hemisphere direct factor folded in.
+		RingShadowTerms above_terms = terms;
+		above_terms.geometry = 1.0;
+		above_terms.contact = 1.0;
+		canopy_above = ring_shadow_sun_visibility(above_terms, RING_SHADOW_DEFAULT) * hemisphere_direct * primary_sun_weight;
+	}
+	if (ring_shadow_debug_enabled()) {
+		return (primary_sun_weight > 0.5 || (ring_height_shadow_enabled() && planet_height_weight > 0.5)) ? ring_shadow_debug_value(terms, combined_visibility) : 0.0;
+	}
+	return combined_visibility * hemisphere_direct;
+}
+
+vec3 ring_terrain_direct_diffuse(
+		vec3 normal,
+		vec3 light,
+		float attenuation,
+		bool is_directional,
+		vec3 light_color,
+		mat4 view_matrix,
+		float day_factor,
+		float cloud_occlusion,
+		vec2 shadow_uv,
+		vec3 world,
+		vec3 viewer,
+		vec2 screen_uv,
+		vec2 frag_coord,
+		vec2 viewport_size,
+		mat4 inv_projection,
+		uint contact_flags,
+		out float direct_visibility,
+		out float canopy_above) {
+	float n_dot_l = max(dot(normal, light), 0.0);
+	direct_visibility = ring_terrain_direct_visibility(
+		normal,
+		light,
+		attenuation,
+		is_directional,
+		view_matrix,
+		day_factor,
+		cloud_occlusion,
+		shadow_uv,
+		world,
+		viewer,
+		screen_uv,
+		frag_coord,
+		viewport_size,
+		inv_projection,
+		contact_flags,
+		vec4(0.0),
+		canopy_above);
+	if (ring_shadow_debug_enabled()) {
+		return vec3(direct_visibility);
+	}
+	return (light_color / PI) * n_dot_l * direct_visibility;
+}
+
+// Forest lighting FL-3b: the canopy_above variant for the grass cards, which pass the per-instance heightfield term (instance_height).
+vec3 ring_terrain_direct_diffuse(
+		vec3 normal,
+		vec3 light,
+		float attenuation,
+		bool is_directional,
+		vec3 light_color,
+		mat4 view_matrix,
+		float day_factor,
+		float cloud_occlusion,
+		vec2 shadow_uv,
+		vec3 world,
+		vec3 viewer,
+		vec2 screen_uv,
+		vec2 frag_coord,
+		vec2 viewport_size,
+		mat4 inv_projection,
+		uint contact_flags,
+		vec4 instance_height,
+		out float direct_visibility,
+		out float canopy_above) {
+	float n_dot_l = max(dot(normal, light), 0.0);
+	direct_visibility = ring_terrain_direct_visibility(
+		normal,
+		light,
+		attenuation,
+		is_directional,
+		view_matrix,
+		day_factor,
+		cloud_occlusion,
+		shadow_uv,
+		world,
+		viewer,
+		screen_uv,
+		frag_coord,
+		viewport_size,
+		inv_projection,
+		contact_flags,
+		instance_height,
+		canopy_above);
+	if (ring_shadow_debug_enabled()) {
+		return vec3(direct_visibility);
+	}
+	return (light_color / PI) * n_dot_l * direct_visibility;
+}

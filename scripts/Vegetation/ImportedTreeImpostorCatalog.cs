@@ -22,8 +22,8 @@ public sealed class ImportedTreeImpostorCatalog
     public IReadOnlyList<FarQuadTop> FarQuadTops { get; }
     /// <summary>12 vertices per tree: the camera-facing quad (vertices 0 to 5) and the horizontal card (6 to 11).</summary>
     public const int FarQuadVertexCount = 12;
-    /// <summary>Rows 0 to 7 as before; row 8 = crown hull (centre y, horizontal semi-axis, vertical semi-axis, kappa), row 9 = (centre x, centre z, k_species, 1 = valid), see TreeCrownHullTable.Pack.</summary>
-    public const int ParameterRowCount = 10;
+    /// <summary>Rows 0 to 7 as before; row 8 = crown hull (centre y, horizontal semi-axis, vertical semi-axis, kappa), row 9 = (centre x, centre z, k_species, 1 = valid), row 10 = leaf inclination class weights, see TreeCrownHullTable.Pack.</summary>
+    public const int ParameterRowCount = 11;
     /// <summary>The alpha cutoff each variant's material authored (used while there is no calibration).</summary>
     public IReadOnlyList<float> DefaultCutoffs { get; }
     /// <summary>Hash of everything the calibration depends on: the variant count and the base level of the card albedo atlas (the bake's, or the pack's pictures resized), never its mips or cutoffs; a calibration made for another value is stale.</summary>
@@ -542,9 +542,10 @@ public sealed class ImportedTreeImpostorCatalog
             image.SetPixel(i, 5, new Color(top.ULow, top.VLow, top.UHigh, top.VHigh));
             image.SetPixel(i, 6, new Color(top.P00.X, top.P00.Y, top.P10.X, top.P10.Y));
             image.SetPixel(i, 7, new Color(top.P01.X, top.P01.Y, top.Y, top.FrameCode));
-            TreeCrownHullTable.Pack(hulls[i], out Vector4 hullRow, out Vector4 hullExtra);
+            TreeCrownHullTable.Pack(hulls[i], out Vector4 hullRow, out Vector4 hullExtra, out Vector4 hullLad);
             image.SetPixel(i, 8, new Color(hullRow.X, hullRow.Y, hullRow.Z, hullRow.W));
             image.SetPixel(i, 9, new Color(hullExtra.X, hullExtra.Y, hullExtra.Z, hullExtra.W));
+            image.SetPixel(i, 10, new Color(hullLad.X, hullLad.Y, hullLad.Z, hullLad.W));
         }
         return ImageTexture.CreateFromImage(image);
     }

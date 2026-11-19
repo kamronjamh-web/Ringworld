@@ -21,7 +21,7 @@
   Do not run two copies at once (one shared profile).
 #>
 param(
-  [ValidateSet("oracle", "frustum_identity", "cull_verify", "blob_probe", "cadence")][string]$Test = "oracle",
+  [ValidateSet("oracle", "frustum_identity", "cull_verify", "blob_probe", "cadence", "forest_lighting_identity")][string]$Test = "oracle",
   [string]$Label = "occl-v",
   [string]$ScriptArgs = "",
   [string]$Resolution = "1600x900",
@@ -42,9 +42,10 @@ $spec = @{
   cull_verify      = @{ Script = "tree_cull_verify_sweep.gd";          Marker = "TREE_CULL_VERIFY_SWEEP";  Needs = "TreeCullVerify" }
   cadence          = @{ Script = "tree_cadence_probe.gd";               Marker = "TREE_CADENCE";            Needs = $null }
   blob_probe       = @{ Script = "tree_frustum_blob_probe.gd";         Marker = "TREE_FRUSTUM_BLOB";       Needs = "TreeFrustumCulling" }
+  forest_lighting_identity = @{ Script = "forest_lighting_identity_world_gpu_test.gd"; Marker = "FOREST_LIGHTING_IDENTITY_WORLD"; Needs = $null }
 }[$Test]
 $marker = $spec.Marker
-$allScripts = @("tree_visibility_oracle.gd", "tree_frustum_identity_gpu_test.gd", "tree_cull_verify_sweep.gd", "tree_cadence_probe.gd", "tree_frustum_blob_probe.gd")
+$allScripts = @("tree_visibility_oracle.gd", "tree_frustum_identity_gpu_test.gd", "tree_cull_verify_sweep.gd", "tree_cadence_probe.gd", "tree_frustum_blob_probe.gd", "forest_lighting_identity_world_gpu_test.gd")
 function Quote([string]$s) { return "'" + $s.Replace("'", "''") + "'" }
 # The sweeps count one frame at a time (readback), so simulate a fixed 33 ms per frame whatever the readback costs.
 if ($Test -eq "cull_verify" -and -not $EngineArgs) { $EngineArgs = "--fixed-fps 30" }
@@ -83,7 +84,7 @@ if (-not $InQueue) {
     $(if ($ScriptArgs) { " -ScriptArgs $(Quote $ScriptArgs)" } else { "" }) + $(if ($EngineArgs) { " -EngineArgs $(Quote $EngineArgs)" } else { "" })
   # One ticket per run: gpu_queue finds tickets by label, so a shared label let a second run match the first one's ticket.
   # frustum_identity, cull_verify and blob_probe check correctness or pictures and may share the GPU; oracle and cadence time things and stay exclusive.
-  $qClass = if ($Test -in @("frustum_identity", "cull_verify", "blob_probe")) { "shared" } else { "exclusive" }
+  $qClass = if ($Test -in @("frustum_identity", "cull_verify", "blob_probe", "forest_lighting_identity")) { "shared" } else { "exclusive" }
   & (Join-Path $PSScriptRoot "gpu_queue.ps1") -Label "tree_vis_$($Label)_$RunId" -Class $qClass -Wrap $inner
   exit $LASTEXITCODE
 }
