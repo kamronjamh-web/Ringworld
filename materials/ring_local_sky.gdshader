@@ -13,6 +13,10 @@ global uniform vec4 ringworld_sky_live8;
 
 // Written whenever the sky radiance map should refresh (any material write dirties it); never read for its value.
 uniform float radiance_epoch = 0.0;
+// Ground bounce (linear radiance of the sunlit ground, Godot ambient units = rho * (E_dir * sin(elevation) + sky)), published by
+// day_side_atmosphere.gd. The radiance-map pass shows it below the local horizon, so every ambient-lit surface that faces down or sideways
+// receives the light reflected by the ground instead of a black floor. The visible sky never shows it (geometry covers the lower half).
+uniform vec3 ground_bounce_radiance = vec3(0.0);
 
 // Camera altitude above the nominal floor in metres (Physical haze model; the Legacy path derives it from camera_radial_ratio).
 uniform float ring_half_width_ratio = 0.002;
@@ -262,6 +266,12 @@ void sky() {
 		float planet_mask = 0.0;
 		vec3 planet_color = render_planet(view_direction, to_sun, planet_mask);
 		color = mix(color, planet_color, planet_mask);
+	}
+	if (AT_CUBEMAP_PASS) {
+		// Ground bounce: below the horizon the radiance map sees the ground (which hides the space, the giant and a set sun), lit by the
+		// published bounce radiance; the haze composite below then adds the air between the viewer and the ground (T, in-scatter).
+		float below_horizon = 1.0 - smoothstep(-0.03, 0.0, dot(view_direction, up));
+		color = mix(color, ground_bounce_radiance, below_horizon);
 	}
 
 	vec3 axis = normalize(ring_axis_direction);

@@ -3031,6 +3031,30 @@
       "expected_s": 7,
       "timeout_s": 60
     },
+    "ambient_ground_bounce_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "atmosphere-haze",
+        "celestial"
+      ],
+      "marker": "AMBIENT_GROUND_BOUNCE",
+      "expected_s": 5,
+      "timeout_s": 60
+    },
+    "ambient_balance_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "atmosphere-haze",
+        "landscape"
+      ],
+      "marker": "AMBIENT_BALANCE_GPU",
+      "expected_s": 150,
+      "timeout_s": 600
+    },
     "height_shadow_budget_test": {
       "kind": "test",
       "mode": "gpu",

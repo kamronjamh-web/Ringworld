@@ -47,7 +47,13 @@ extends Node
 @export var night_ambient_color: Color = Color(0.34, 0.40, 0.52, 1.0)
 @export var day_ambient_energy: float = 0.35
 @export var night_ambient_energy: float = 0.30
-@export_range(0.0, 1.0, 0.01) var ambient_sky_contribution: float = 0.35
+# 1.0 (ambient lead F1, 2026-11-19): in clear weather surfaces take the sky radiance map (the physical sky plus the ground bounce below
+# the horizon) at full weight; the ambient colour and energy above only blend in under storms, underground and underwater. Was 0.35, which
+# replaced 65 % of the sky with a direction-free constant and diluted any lower-hemisphere light.
+@export_range(0.0, 1.0, 0.01) var ambient_sky_contribution: float = 1.0
+# Ground bounce in the sky radiance map (ring_local_sky.gdshader ground_bounce_radiance); the ground albedo is haze_ground_albedo (the
+# Atmosphere tab's Ground albedo), the same value the haze multi-scatter assumes. Debug / A-B switch only, not a menu row.
+@export var ground_bounce_enabled: bool = true
 
 @export_group("Underground lighting")
 @export var underground_ambient_color: Color = Color(0.002, 0.003, 0.006, 1.0)
@@ -554,13 +560,13 @@ func _process(delta: float) -> void:
 	environment.ambient_light_color = space_ambient_color.lerp(surface_ambient_color, current_atmosphere_factor)
 	environment.ambient_light_energy = lerpf(space_ambient_energy, surface_ambient_energy, current_atmosphere_factor)
 	_publish_haze_lighting(surface_up, to_sun)
-	# A contribution of 1.0 makes Godot ignore the explicit ambient color and
-	# energy above. Blend a restrained sky irradiance term with those controls
-	# so the visible sun disk and bright horizon do not flatten every shadow.
+	# Godot's ambient is (1 - c) * colour * energy + c * radiance map (the sky part is not scaled by the energy; measured, ambient lead
+	# 2026-11-19). c = 1 in clear weather: the physical sky plus the ground bounce. Storms lower c toward the storm ambient colour.
 	environment.ambient_light_sky_contribution = clampf(
 		ambient_sky_contribution * lerpf(1.0, storm_sky_contribution_scale, cloud_storm_factor),
 		0.0,
 		1.0)
+	_publish_ground_bounce()
 	var camera_underwater := player.has_meta("ring_camera_underwater") \
 		and bool(player.get_meta("ring_camera_underwater", false))
 	var underwater_depth := maxf(0.0, float(player.get_meta("ring_water_depth_meters", 0.0)))
@@ -2042,3 +2048,36 @@ func _underground_cave_fog_density() -> float:
 
 func _underground_cave_fog_weight() -> float:
 	return clampf(float(_underground_mode_value("CaveFogWeight", 0.0)), 0.0, 1.0)
+
+
+# ------------------------------------------------------------------ ground bounce (ambient lead F1, 2026-11-19)
+
+## Ground bounce radiance in Godot ambient units (what a white surface facing straight down receives from a Lambertian ground):
+## albedo * (E_dir * max(sin elevation, 0) * sun_visibility + sky_up * sky_visibility) * access. E_dir is the directional light's linear colour
+## times energy (a white Lambert card under it reads E_dir * cos), sky_up the sky radiance on an upward surface. Zero at night (sin <= 0 and
+## sky_visibility = day factor 0), at eclipse totality (the light energy and the day factor are 0), under a closed storm (the cloud sun
+## visibility and the storm ambient go to 0) and underground (access 0). Static so tools/ambient_ground_bounce_test.gd can check it headless.
+static func ground_bounce_radiance(albedo: float, direct_rgb: Vector3, sun_sin_elevation: float, sky_up: Vector3,
+		sun_visibility: float, sky_visibility: float, access: float) -> Vector3:
+	var direct := direct_rgb * maxf(sun_sin_elevation, 0.0) * clampf(sun_visibility, 0.0, 1.0)
+	var sky := sky_up * clampf(sky_visibility, 0.0, 1.0)
+	return (direct + sky) * maxf(albedo, 0.0) * clampf(access, 0.0, 1.0)
+
+
+var published_ground_bounce: Vector3 = Vector3.ZERO
+
+
+func _publish_ground_bounce() -> void:
+	if ring_sky_material == null or sun_light == null:
+		return
+	var bounce := Vector3.ZERO
+	if ground_bounce_enabled:
+		var light := sun_light.light_color.srgb_to_linear()
+		var direct_rgb := Vector3(light.r, light.g, light.b) * maxf(sun_light.light_energy, 0.0)
+		var sin_elevation := _get_surface_up().dot(sun_light.global_transform.basis.z.normalized())
+		var storm := clampf(current_storm_ambient, 0.0, 1.0)
+		bounce = ground_bounce_radiance(haze_ground_albedo, direct_rgb, sin_elevation, _haze_lup_day,
+				current_air_cloud_sun_visibility * storm, clampf(current_day_factor, 0.0, 1.0) * current_cloud_ambient_transmittance * storm,
+				_get_underground_sky_access())
+	published_ground_bounce = bounce
+	_set_sky_param(&"ground_bounce_radiance", bounce)
