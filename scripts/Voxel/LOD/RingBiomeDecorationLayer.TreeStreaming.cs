@@ -587,7 +587,7 @@ public partial class RingBiomeDecorationLayer
 			// render window. It was already paid for and remains useful to the LRU.
 			result.Tile.LastUsed = ++_vegetationUseClock;
 			_vegetationTiles[key] = result.Tile;
-			ScatterTileResident(key, result.Tile);
+			ScatterTileResident(key, result.Tile, result.Milliseconds, result.DiskHit);
 			if (_evictedVegetationKeys.Remove(key)) VegetationTilesReloadedAfterEviction++;
 			_vegetationTileGenerationEpoch++;
 			if (!result.DiskHit) VegetationTilesGenerated++;

@@ -79,6 +79,9 @@ uniform bool proxy_vertex_collapse_enabled = false;
 #ifdef RING_GROUND_SURFACE
 // T4 ground surface: the distance (m) over which this level's vertex normals are differenced (2 x the lattice spacing; RingTerrainProxySector sets it). The rock rule adds a slope bias for coarse levels.
 uniform float ground_slope_baseline_meters = 4.0;
+// T5-9 far speckle: the world feature bit of scatter.rocks (the ledger's bit 4) and the pattern's cell size (m).
+const int SCATTER_ROCKS_BIT = 4;
+const float SPECKLE_CELL_M = 4.0;
 #endif
 instance uniform vec4 coverage_atlas_rect = vec4(0.0, 0.0, 0.0, 0.0);
 // After coverage_atlas_rect on purpose: instance uniforms without an explicit index are numbered in declaration order, and the
@@ -198,6 +201,12 @@ void fragment() {
 	float ground_rock = 0.0;
 	vec3 ground_debug = vec3(0.0);
 	float ground_relief = ground_on ? ring_ground_relief(ground_c64) : 0.0;
+	// T5-9 far speckle (design B8): canonical 4 m cells from the world-anchored wet plane, and their footprint in cells, taken here in uniform control flow (the branch is on global uniforms).
+	bool speckle_on = ground_on && ring_world_has(SCATTER_ROCKS_BIT);
+	vec2 speckle_cell = vec2(0.0);
+	if (speckle_on) speckle_cell = ring_wet_plane(world_position) * (1.0 / SPECKLE_CELL_M);
+	vec2 speckle_cell_width = fwidth(speckle_cell);
+	float speckle_footprint = max(speckle_cell_width.x, speckle_cell_width.y);
 #endif
 	if (ring_surface_aperture_discard(world_position)) discard;
 	if (coverage_atlas_rect.z > 0.0 && proxy_coverage_uv.x >= 0.0 && proxy_coverage_uv.y >= 0.0
@@ -281,6 +290,21 @@ void fragment() {
 			}
 			// D5 colour variation on the dry albedo (before grass coverage, wetness and the albedo scale), from the interpolated C64.
 			terrain_color = ring_ground_relief_colour(terrain_color, ground_relief, ground_rock, distance_to_camera);
+			if (speckle_on) {
+				// T5-9 far speckle (B8): where boulder meshes end (540 m x the scatter distance scale k, ringworld_ground_world.w) the rock and scree weight reads as dark 4 m cells. A cell is a boulder with
+				// probability 0.25 w and a boulder cell is 25 % darker. The mean term (0.0625 w) applies everywhere; the deviation from it fades out as the cells shrink below a pixel (F, T4 D3), so the
+				// field converges to its mean tone. No time input: the pattern cannot animate. The plane is modulo 16384 m = 4096 cells, so the cell index wraps there and is the same on both sides of it.
+				float speckle_k = max(ringworld_ground_world.w, 0.01);
+				float speckle_w = max(ground_scree, 0.6 * ground_rock) * clamp(ringworld_ground_world.z, 0.0, 1.0) * smoothstep(540.0 * speckle_k, 600.0 * speckle_k, distance_to_camera);
+				if (speckle_w > 0.0) {
+					uint cell_x = uint(int(floor(speckle_cell.x))) & 4095u;
+					uint cell_y = uint(int(floor(speckle_cell.y))) & 4095u;
+					uint cell_hash = ring_ground_pcg(cell_x ^ ring_ground_pcg(cell_y ^ (uint(ringworld_ground_world.y) * 2654435761u)));
+					float boulder = float(cell_hash >> 8u) * (1.0 / 16777216.0) < 0.25 * speckle_w ? 1.0 : 0.0;
+					float speckle_contrast = 1.0 - smoothstep(0.35, 0.9, speckle_footprint);
+					terrain_color *= 1.0 - 0.0625 * speckle_w - 0.25 * (boulder - 0.25 * speckle_w) * speckle_contrast;
+				}
+			}
 			ground_debug = vec3(ground_rock, ground_scree, 0.5 * strata_factor);
 			if (ringworld_ground_look.w > 1.5) ground_debug = vec3(0.5 + 0.5 * ground_relief, ring_ground_relief_colour(vec3(0.5), ground_relief, 0.0, distance_to_camera).g, 0.0);
 		}

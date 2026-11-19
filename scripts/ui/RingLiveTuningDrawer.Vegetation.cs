@@ -18,6 +18,7 @@ public partial class RingLiveTuningDrawer
     private SpinBox? _treeStreamingBudget;
     private SpinBox? _treeCullingMovementThreshold, _treeCullingMaximumInterval;
     private SpinBox? _treeNearFadeStart, _treeNearFadeEnd, _treeBillboardFadeStart, _treeBillboardFadeEnd, _treeQuadStart, _treeMidFadeStart, _treeMidFadeEnd, _treeMidBatchTileSpan;
+    private SpinBox? _rockDensity, _scatterDistanceScale;
     private Label? _treeStreamingStatus;
     private double _vegetationSaveDelay, _vegetationRetryDelay, _vegetationRefreshDelay;
     private string? _vegetationDefaultsPathOverride;
@@ -95,6 +96,7 @@ public partial class RingLiveTuningDrawer
 		_vegetation.TreeSunShadowSettleHoldSeconds = _vegetationDefaults.TreeSunShadowSettleHoldSeconds;
 		_vegetation.TreeSunShadowDistanceMeters = _vegetationDefaults.TreeSunShadowDistanceMeters;
 		_vegetation.MaximumTreeSunShadowBatches = _vegetationDefaults.MaximumTreeSunShadowBatches;
+        _vegetation.ApplyScatterSettings(_vegetationDefaults.RockDensity, _vegetationDefaults.ScatterDistanceScale, _vegetationDefaults.ScatterCapScale);
     }
 
     private void ProcessVegetationTuning(double delta)
@@ -164,6 +166,8 @@ public partial class RingLiveTuningDrawer
         RefreshVegetationSpin(_treeMidFadeStart, _vegetationDefaults.TreeMidDetailFadeStartMeters, available);
         RefreshVegetationSpin(_treeMidFadeEnd, _vegetationDefaults.TreeMidDetailFadeEndMeters, available);
         RefreshVegetationSpin(_treeMidBatchTileSpan, _vegetationDefaults.MidTreeBatchTileSpan, available);
+        RefreshVegetationSpin(_rockDensity, _vegetationDefaults.RockDensity, available);
+        RefreshVegetationSpin(_scatterDistanceScale, _vegetationDefaults.ScatterDistanceScale, available);
         if (_treeStreamingStatus != null)
             _treeStreamingStatus.Text = _vegetation == null ? "Tree streaming is unavailable."
                 : _vegetation.TreePreparationPending ? $"Preparation pending. Last slice: {_vegetation.LastTreePreparationMilliseconds:F2} ms."
@@ -238,6 +242,9 @@ public partial class RingLiveTuningDrawer
         VBoxContainer materials = TuningMenuUi.CreateSection(tab, "Distant tree rendering");
         _treeSimplifyDistantMaterials = new CheckButton { Name = "SimplifyDistantTreeMaterials", Text = "Simplify distant tree materials", TooltipText = "Reduces shading work for distant trees while keeping their color, cutout, and wind.", ButtonPressed = _vegetationDefaults.SimplifyDistantTreeMaterials, Disabled = _vegetation == null };
         _treeSimplifyDistantMaterials.Toggled += value => SetVegetationValue("SimplifyDistantTreeMaterials", value); materials.AddChild(_treeSimplifyDistantMaterials);
+        VBoxContainer scatter = TuningMenuUi.CreateSection(tab, "Scatter");
+        _rockDensity = AddVegetationSpin(scatter, "RockDensity", "Rock density", 0, 1, .05, _vegetationDefaults.RockDensity, "Applies in worlds with rocks");
+        _scatterDistanceScale = AddVegetationSpin(scatter, "ScatterDistanceScale", "Scatter distance scale", .5, 1.5, .05, _vegetationDefaults.ScatterDistanceScale, "Applies in worlds with rocks");
         VBoxContainer budgets = TuningMenuUi.CreateSection(tab, "Budgets");
         budgets.AddChild(new Label { Text = "Lower root and batch limits save memory but can reduce visible forest coverage. Nearby collision trees retain priority.",
             AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted });

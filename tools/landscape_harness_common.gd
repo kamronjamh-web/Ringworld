@@ -32,6 +32,7 @@ const PREF_FILES := [
 	["InstallWindDefaults", "gameplay_wind_defaults.tres"],
 ]
 const MEDIUM_PRESET := 1 # RingTerrainLodCoordinator.QualityPreset.Medium
+const HIGH_PRESET := 2 # RingTerrainLodCoordinator.QualityPreset.High (T5-10 `--preset=high`, the T4-6 review preset)
 const CLEAR_PRECIPITATION_MAX := 0.02
 const MAJOR_FRONT := 3 # WeatherSystemKind in scripts/RingVolumetricCloudLayer.cs:32
 
@@ -422,8 +423,11 @@ static func apply_preset(tree: SceneTree, game: Node) -> Dictionary:
 	if requested == "medium":
 		graphics.call("ApplyPreset", MEDIUM_PRESET, true, false)
 		await COMMON.wait_builds_idle(tree, game, 300.0)
+	elif requested == "high":
+		graphics.call("ApplyPreset", HIGH_PRESET, true, false)
+		await COMMON.wait_builds_idle(tree, game, 300.0)
 	elif requested != "keep":
-		return {"error": "unknown --preset=%s (medium|keep)" % requested}
+		return {"error": "unknown --preset=%s (medium|high|keep)" % requested}
 	var style := int(grass.get("GrassRenderStyle")) if grass != null else -1
 	var result := {"requested": requested, "preset": str(graphics.get("CurrentPresetName")), "grass_render_style": style, "grass_render_style_name": "Cards" if style == 1 else ("Blades" if style == 0 else "unknown")}
 	if style != 1 and not COMMON.has_flag("--allow-blades"):

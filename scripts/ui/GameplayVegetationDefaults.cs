@@ -51,6 +51,11 @@ public sealed class GameplayVegetationDefaults
     public float TreeStreamingBudgetMilliseconds => (float)Get("TreeStreamingBudgetMilliseconds", DefaultTreeStreamingBudgetMilliseconds).AsDouble();
     public float TreeCullingMovementThresholdMeters => (float)Get("TreeCullingMovementThresholdMeters", .5f).AsDouble();
     public float TreeCullingMaximumIntervalSeconds => (float)Get("TreeCullingMaximumIntervalSeconds", .1f).AsDouble();
+    // T5 design B9: rock scatter. Neither changes placement, so neither enters a scatter cache key.
+    public float RockDensity => (float)Get("RockDensity", RingGraphicsQualityController.PresetScatter(Preset).Density).AsDouble();
+    public float ScatterDistanceScale => (float)Get("ScatterDistanceScale", RingGraphicsQualityController.PresetScatter(Preset).DistanceScale).AsDouble();
+    /// <summary>The preset's cap scale for the per-LOD scatter budgets (no key, no menu row).</summary>
+    public float ScatterCapScale => RingGraphicsQualityController.PresetScatter(Preset).CapScale;
     public void Load()
     {
         Settings = new();
@@ -116,6 +121,12 @@ public sealed class GameplayVegetationDefaults
             double floatMin = key == "TreeStreamingBudgetMilliseconds" ? .25 : 0;
 			clean = Math.Clamp(value.AsDouble(), floatMin, floatMax); return true;
 		}
+        if (key is "RockDensity" or "ScatterDistanceScale")
+        {
+            if (value.VariantType is not (Variant.Type.Int or Variant.Type.Float) || !double.IsFinite(value.AsDouble())) return false;
+            clean = key == "RockDensity" ? Math.Clamp(value.AsDouble(), 0, 1) : Math.Clamp(value.AsDouble(), 0.5, 1.5);
+            return true;
+        }
         if (key == "MidTreeBatchTileSpan")
         {
             if (value.VariantType is not (Variant.Type.Int or Variant.Type.Float) || !double.IsFinite(value.AsDouble())) return false;

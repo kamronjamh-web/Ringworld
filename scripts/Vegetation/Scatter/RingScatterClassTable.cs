@@ -87,7 +87,10 @@ public sealed record RingScatterClass
 /// </summary>
 public sealed class RingScatterClassTable
 {
-    public static RingScatterClassTable Production { get; } = new(ProductionRows());
+    private static readonly RingScatterClassTable ProductionTable = new(ProductionRows());
+    /// <summary>TEST ONLY (T5-10, tools/ScatterDebugBridge.cs): a table swapped in by the landscape harness before the streamer is created (`--scatter-a5-density`). Null in every normal run.</summary>
+    internal static RingScatterClassTable? DebugOverride { get; set; }
+    public static RingScatterClassTable Production => DebugOverride ?? ProductionTable;
 
     private static RingScatterResponse R(RingHabitatField f, float in0, float in1, float out0 = 0f, float out1 = 1f) => new(f, in0, in1, out0, out1);
 

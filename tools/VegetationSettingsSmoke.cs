@@ -1,5 +1,6 @@
 using System;
 using Godot;
+using RingworldTechDemo.Terrain.Surface;
 using RingworldTechDemo.UI;
 using RingworldTechDemo.Voxel.LOD;
 
@@ -67,6 +68,49 @@ public partial class VegetationSettingsSmoke : Node
         finally { render.Free(); }
         if (!GameplayVegetationDefaults.TryValidate("MidTreeBatchTileSpan", 99, out Variant tileSpan) || tileSpan.AsInt64() != 4) throw new InvalidOperationException("mid-tree batch span was not clamped");
         if (!GameplayVegetationDefaults.TryValidate("MidTreeBatchTileSpan", -1, out tileSpan) || tileSpan.AsInt64() != 1) throw new InvalidOperationException("mid-tree batch span low range was not clamped");
+        // T5-9 rock scatter keys: clamp, nonfinite, preset fallbacks, save round trip, apply.
+        if (!GameplayVegetationDefaults.TryValidate("RockDensity", 7, out Variant density) || !Mathf.IsEqualApprox((float)density.AsDouble(), 1)) throw new InvalidOperationException("rock density high range was not clamped to 1");
+        if (!GameplayVegetationDefaults.TryValidate("RockDensity", -3, out density) || !Mathf.IsEqualApprox((float)density.AsDouble(), 0)) throw new InvalidOperationException("rock density low range was not clamped to 0");
+        if (GameplayVegetationDefaults.TryValidate("RockDensity", double.NaN, out _) || GameplayVegetationDefaults.TryValidate("RockDensity", "bad", out _)) throw new InvalidOperationException("invalid rock density accepted");
+        if (!GameplayVegetationDefaults.TryValidate("ScatterDistanceScale", 9, out Variant scale) || !Mathf.IsEqualApprox((float)scale.AsDouble(), 1.5f)) throw new InvalidOperationException("scatter distance scale high range was not clamped to 1.5");
+        if (!GameplayVegetationDefaults.TryValidate("ScatterDistanceScale", 0.1, out scale) || !Mathf.IsEqualApprox((float)scale.AsDouble(), 0.5f)) throw new InvalidOperationException("scatter distance scale low range was not clamped to 0.5");
+        if (GameplayVegetationDefaults.TryValidate("ScatterDistanceScale", double.PositiveInfinity, out _)) throw new InvalidOperationException("nonfinite scatter distance scale accepted");
+        var scatter = new GameplayVegetationDefaults(path); scatter.Load();
+        (RingTerrainLodCoordinator.QualityPreset Preset, float Density, float Scale, float Cap)[] presets =
+        {
+            (RingTerrainLodCoordinator.QualityPreset.Low, 0.6f, 0.6f, 0.5f), (RingTerrainLodCoordinator.QualityPreset.Medium, 0.8f, 0.8f, 0.75f), (RingTerrainLodCoordinator.QualityPreset.High, 1f, 1f, 1f),
+            (RingTerrainLodCoordinator.QualityPreset.VeryHigh, 1f, 1f, 1f), (RingTerrainLodCoordinator.QualityPreset.UltraVideo, 1f, 1.25f, 1.5f), (RingTerrainLodCoordinator.QualityPreset.Cinematic5090, 1f, 1.25f, 1.5f),
+        };
+        foreach (var row in presets)
+        {
+            scatter.Preset = row.Preset;
+            if (!Mathf.IsEqualApprox(scatter.RockDensity, row.Density) || !Mathf.IsEqualApprox(scatter.ScatterDistanceScale, row.Scale) || !Mathf.IsEqualApprox(scatter.ScatterCapScale, row.Cap))
+                throw new InvalidOperationException($"rock scatter defaults did not follow the {row.Preset} preset");
+        }
+        scatter.Preset = RingTerrainLodCoordinator.QualityPreset.Low;
+        scatter.Set("RockDensity", 0.35); scatter.Set("ScatterDistanceScale", 1.4);
+        if (!Mathf.IsEqualApprox(scatter.RockDensity, 0.35f) || !Mathf.IsEqualApprox(scatter.ScatterDistanceScale, 1.4f) || !Mathf.IsEqualApprox(scatter.ScatterCapScale, 0.5f)) throw new InvalidOperationException("rock scatter overrides did not win over the preset (the cap scale always follows it)");
+        if (!scatter.Save()) throw new InvalidOperationException("rock scatter settings did not save");
+        var scatterBack = new GameplayVegetationDefaults(path) { Preset = RingTerrainLodCoordinator.QualityPreset.UltraVideo }; scatterBack.Load();
+        if (!Mathf.IsEqualApprox(scatterBack.RockDensity, 0.35f) || !Mathf.IsEqualApprox(scatterBack.ScatterDistanceScale, 1.4f)) throw new InvalidOperationException("rock scatter settings did not round-trip");
+        scatterBack.Reset(); scatterBack.Save();
+        var layer = new RingBiomeDecorationLayer();
+        try
+        {
+            if (!Mathf.IsEqualApprox(layer.ScatterRockDensity, 1) || !Mathf.IsEqualApprox(layer.ScatterDistanceScale, 1) || !Mathf.IsEqualApprox(layer.ScatterCapScale, 1)) throw new InvalidOperationException("decoration layer scatter defaults differ from the High preset");
+            layer.ApplyScatterSettings(0.35f, 1.4f, 0.5f);
+            if (!Mathf.IsEqualApprox(layer.ScatterRockDensity, 0.35f) || !Mathf.IsEqualApprox(layer.ScatterDistanceScale, 1.4f) || !Mathf.IsEqualApprox(layer.ScatterCapScale, 0.5f)) throw new InvalidOperationException("scatter settings were not applied to the decoration layer");
+        }
+        finally { layer.Free(); }
+        // The shader global: z density and w distance scale, x and y kept from the last world publish; a world publish clears the look again (worlds without the bit never set it).
+        RingGroundSurfaceGlobals.PublishWorld(null);
+        Vector4 plain = RingGroundSurfaceGlobals.Published;
+        if (plain.Z != 0 || plain.W != 0) throw new InvalidOperationException("a world publish did not leave the scatter look at 0");
+        RingGroundSurfaceGlobals.PublishScatterLook(0.6f, 0.75f);
+        Vector4 lookValue = RingGroundSurfaceGlobals.Published;
+        if (lookValue.X != plain.X || lookValue.Y != plain.Y || !Mathf.IsEqualApprox(lookValue.Z, 0.6f) || !Mathf.IsEqualApprox(lookValue.W, 0.75f)) throw new InvalidOperationException("the scatter look did not reach the ground world global (z density, w distance scale)");
+        RingGroundSurfaceGlobals.PublishWorld(null);
+        if (RingGroundSurfaceGlobals.Published != plain) throw new InvalidOperationException("a world publish did not restore (x, y, 0, 0)");
         var invalidPath = new GameplayVegetationDefaults("res://"); invalidPath.Set("UseGpuCulling", false);
         if (invalidPath.Save() || invalidPath.LastError.Length == 0) throw new InvalidOperationException("invalid vegetation save path did not fail safely");
     }

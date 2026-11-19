@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Godot;
 using RingworldTechDemo.Terrain.Generation;
+using RingworldTechDemo.Terrain.Surface;
 using RingworldTechDemo.Vegetation;
 using RingworldTechDemo.Vegetation.Scatter;
 using RingworldTechDemo.Voxel.Core;
@@ -17,8 +18,20 @@ public partial class RingBiomeDecorationLayer
 {
 	internal const int MaximumScatterJobsInFlight = 2;
 
-	/// <summary>Multiplies every row's reach (T5-9 wires the setting).</summary>
+	/// <summary>Multiplies every row's reach: the streamer's due radii, the layer's bands and the far speckle's start (T5-9, the Vegetation tab's "Scatter distance scale"). Never changes placement.</summary>
 	internal float ScatterDistanceScale { get; set; } = 1f;
+	/// <summary>The rank gate of every rock batch and the far speckle's density (the Vegetation tab's "Rock density"); applies at the next cull, no rebuild.</summary>
+	internal float ScatterRockDensity { get; set; } = 1f;
+	/// <summary>Scales the per-LOD scatter budgets (the graphics preset's cap scale; no menu row).</summary>
+	internal float ScatterCapScale { get; set; } = 1f;
+
+	/// <summary>The vegetation settings apply (T5-9). Stored here and read by the next scatter pump; in a world without scatter.rocks nothing reads them and no global is written.</summary>
+	internal void ApplyScatterSettings(float rockDensity, float distanceScale, float capScale)
+	{
+		ScatterRockDensity = rockDensity;
+		ScatterDistanceScale = distanceScale;
+		ScatterCapScale = capScale;
+	}
 
 	private ScatterStreamer? _scatter;
 	private RingScatterLayer? _scatterLayer;
@@ -40,12 +53,15 @@ public partial class RingBiomeDecorationLayer
 
 	// ------------------------------------------------------------------ one-line hook bodies (TreeStreaming.cs calls these)
 
-	private void ScatterTileResident(VegetationTileKey key, VegetationTile tile)
+	/// <summary>TEST ONLY (T5-10, tools/ScatterDebugBridge.cs): record per-tile build times (the tree tile's own build ms and the scatter stage ms) in the streamer. Off in every normal run.</summary>
+	internal static bool ScatterTileTiming { get; set; }
+
+	private void ScatterTileResident(VegetationTileKey key, VegetationTile tile, double treeMs = -1.0, bool treeDiskHit = true)
 	{
 		if (_scatter == null) return;
 		var ids = new List<ulong>(tile.Trees.Count);
 		foreach (CachedTree tree in tile.Trees) ids.Add(tree.Id);
-		_scatter.OnTreeTileResident(new ScatterTileKey(key.Around, key.Across), ids);
+		_scatter.OnTreeTileResident(new ScatterTileKey(key.Around, key.Across), ids, treeMs, treeDiskHit);
 	}
 
 	private void ScatterTileEvicted(VegetationTileKey key) => _scatter?.OnTreeTileEvicted(new ScatterTileKey(key.Around, key.Across));
@@ -95,6 +111,9 @@ public partial class RingBiomeDecorationLayer
 		}
 		RingCanonicalPosition focus = _explorer.CanonicalPosition;
 		float height = (float)(focus.VerticalMeters - PresentationSurfaceHeight(_scatterEdits, sampler, focus.AroundMeters, focus.AcrossMeters));
+		// The look settings (T5-9): only worlds with scatter.rocks reach here, so everywhere else the ground world global stays (x, y, 0, 0).
+		if (_scatterLayer != null) { _scatterLayer.RockDensity = ScatterRockDensity; _scatterLayer.CapScale = ScatterCapScale; }
+		RingGroundSurfaceGlobals.PublishScatterLook(ScatterRockDensity, ScatterDistanceScale);
 		_scatter.DistanceScale = ScatterDistanceScale;
 		_scatter.Pump(focus.AroundMeters, focus.AcrossMeters, height, _scatterEdits, _scatterEdits.Version);
 	}
@@ -123,6 +142,7 @@ public partial class RingBiomeDecorationLayer
 			RingAcrossWidthMeters = () => _grid?.RingAcrossWidthMeters ?? 0.0,
 			DistanceScale = () => ScatterDistanceScale,
 			Sun = () => { ResolveTreeSunLight(); return _treeSunLight; },
+			Altitude = () => _explorer?.CurrentAltitudeAboveTerrainMeters ?? 0f,
 		}
 	};
 
@@ -201,6 +221,19 @@ public partial class RingBiomeDecorationLayer
 		public int DiskLoads { get; private set; }
 		public int DiskWrites { get; private set; }
 		public int TilesKnown => _tiles.Count;
+		/// <summary>Tiles still due for work after the latest pump (0 once everything in reach is built); -1 before the first pump.</summary>
+		public int DueRemaining { get; private set; } = -1;
+
+		/// <summary>T5-10 debug record of one tile: the tree tile's own build ms (-1 when unknown or a disk hit) and the scatter stage worker ms (including the habitat grid), summed over its jobs.</summary>
+		internal sealed class TileTiming
+		{
+			public double TreeMs = -1; public bool TreeDiskHit;
+			public double OMs, BMs, CMs;
+			public int Jobs, ScatterDiskLoads;
+			/// <summary>One entry per cobble job: its worker ms and the number of 60 m blocks it built.</summary>
+			public readonly List<(double Ms, int Blocks)> CJobs = new();
+		}
+		internal readonly Dictionary<ScatterTileKey, TileTiming> Timings = new();
 
 		public ScatterStreamer(ScatterBuildContext ctx, RingTerrainSampler templateCopy, ScatterDiskConfig? disk, WorldGenerationLedger ledger, Func<bool>? diskEnabled = null,
 			Func<ScatterTileKey, RingLodSurfaceEditSnapshot, bool>? touchesEditedColumns = null)
@@ -219,9 +252,10 @@ public partial class RingBiomeDecorationLayer
 
 		// ------------------------------------------------------------------ tree tile hooks
 
-		public void OnTreeTileResident(ScatterTileKey key, IEnumerable<ulong> treeIds)
+		public void OnTreeTileResident(ScatterTileKey key, IEnumerable<ulong> treeIds, double treeMs = -1.0, bool treeDiskHit = true)
 		{
 			if (_shutdown) return;
+			if (ScatterTileTiming) Timings[key] = new TileTiming { TreeMs = treeDiskHit ? -1.0 : treeMs, TreeDiskHit = treeDiskHit };
 			bool had = _tiles.TryGetValue(key, out ScatterTileState? old);
 			var state = new ScatterTileState { Trees = new ScatterTreeSet(treeIds), EditVersion = _version };
 			state.Bytes = BytesOf(state);
@@ -263,7 +297,7 @@ public partial class RingBiomeDecorationLayer
 			}
 			Install(editVersion);
 			DropOutOfRange(focusAround, focusAcross);
-			if (_jobs.Count >= MaxJobs) return;
+			if (_jobs.Count >= MaxJobs) { DueRemaining = -1; return; }
 			var due = new List<(double Distance, ScatterTileKey Key, ScatterTileState State, int Rows, int Mask)>();
 			foreach ((ScatterTileKey key, ScatterTileState state) in _tiles)
 			{
@@ -272,11 +306,14 @@ public partial class RingBiomeDecorationLayer
 				if (rows > state.BuiltRows || (mask & ~state.CobbleBlockMask) != 0) due.Add((TileDistance(key, focusAround, focusAcross), key, state, rows, mask));
 			}
 			due.Sort((a, b) => a.Distance != b.Distance ? a.Distance.CompareTo(b.Distance) : a.Key.Around != b.Key.Around ? a.Key.Around.CompareTo(b.Key.Around) : a.Key.Across.CompareTo(b.Key.Across));
+			int startedNow = 0;
 			foreach (var item in due)
 			{
 				if (_jobs.Count >= MaxJobs) break;
 				StartJob(item.Key, item.State, item.Rows, item.Mask, edits, editVersion);
+				startedNow++;
 			}
+			DueRemaining = due.Count - startedNow;
 		}
 
 		private void Install(ulong currentVersion)
@@ -304,6 +341,12 @@ public partial class RingBiomeDecorationLayer
 				job.State.CobbleBlockMask = result.BlockMask;
 				job.State.EditVersion = job.Version;
 				job.State.Bytes = BytesOf(job.State);
+				if (ScatterTileTiming && Timings.TryGetValue(key, out TileTiming? timing))
+				{
+					timing.OMs += result.OMs; timing.BMs += result.BMs; timing.CMs += result.CMs; timing.Jobs++;
+					if (result.CBlocks > 0) timing.CJobs.Add((result.CMs, result.CBlocks));
+					if (result.DiskLoaded) timing.ScatterDiskLoads++;
+				}
 				if (result.DiskLoaded) DiskLoads++;
 				if (result.DiskWritten) DiskWrites++;
 				RecordEpoch++;

@@ -82,7 +82,7 @@ public partial class RingBiomeDecorationLayer
 			return keep;
 		}
 
-		private sealed record JobResult(List<ScatterRecord> Records, int BuiltRows, ushort BlockMask, bool DiskLoaded, bool DiskWritten, bool Failed);
+		private sealed record JobResult(List<ScatterRecord> Records, int BuiltRows, ushort BlockMask, bool DiskLoaded, bool DiskWritten, bool Failed, double OMs = 0, double BMs = 0, double CMs = 0, int CBlocks = 0);
 
 		private sealed class StreamJob
 		{
@@ -136,6 +136,7 @@ public partial class RingBiomeDecorationLayer
 				for (int r = 0; r < newBuilt; r++) if (order[r].BlockM > 0) anyBlockRow = true;
 				ushort newMask = anyBlockRow ? (ushort)(mask | dueMask) : mask;
 				bool builtAny = false;
+				double oMs = 0, bMs = 0, cMs = 0; int cBlocks = 0;
 				if (newBuilt > built || newMask != mask)
 				{
 					using RingTerrainSampler sampler = _template.CreateIndependentCopy();
@@ -150,7 +151,10 @@ public partial class RingBiomeDecorationLayer
 							blocks = r >= built ? newMask : newMask & ~mask;
 							if (blocks == 0) continue;
 						}
+						long rowStart = System.Diagnostics.Stopwatch.GetTimestamp();
 						ScatterRowsResult result = BuildScatterRows(ctx, sampler, key, trees, records, r, r + 1, blocks);
+						double rowMs = System.Diagnostics.Stopwatch.GetElapsedTime(rowStart).TotalMilliseconds; // T5-10: the whole call, habitat grid included
+						if (row.BlockM > 0) { cMs += rowMs; cBlocks += System.Numerics.BitOperations.PopCount((uint)blocks); } else if (row.ReachM >= 2000f) oMs += rowMs; else bMs += rowMs;
 						records.AddRange(result.Records);
 						builtAny = true;
 					}
@@ -161,7 +165,7 @@ public partial class RingBiomeDecorationLayer
 				bool wrote = false;
 				if (diskWritable && builtAny && !token.IsCancellationRequested)
 					wrote = RingScatterTileFile.TryWrite(path, _disk!.Root, _disk.BudgetBytes, _disk.MinimumFreeBytes, key.Around, key.Across, table, new ScatterTileData(newBuilt, newMask, records));
-				return new JobResult(records, newBuilt, newMask, diskLoaded, wrote, false);
+				return new JobResult(records, newBuilt, newMask, diskLoaded, wrote, false, oMs, bMs, cMs, cBlocks);
 			}
 			catch (Exception)
 			{

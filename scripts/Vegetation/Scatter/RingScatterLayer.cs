@@ -22,6 +22,8 @@ internal sealed class ScatterLayerHost
     public Func<double> RingAcrossWidthMeters = () => 0.0;
     public Func<float> DistanceScale = () => 1f;
     public Func<DirectionalLight3D?> Sun = () => null;
+    /// <summary>The explorer's altitude above the terrain under it (colliders only: the reach logic of the trunk pool).</summary>
+    public Func<float> Altitude = () => 0f;
     /// <summary>Null: the Terrain3D surface is looked up the way the grass layer does it ("../Terrain3DGameplay").</summary>
     public Func<RingTerrain3DSurface?>? Surface { get; set; }
 }
@@ -158,9 +160,14 @@ internal sealed partial class RingScatterLayer : Node3D
 
     // ------------------------------------------------------------------ frame
 
+    /// <summary>Test hook: false runs the collider pool only (no GPU compute, no renderers), for headless tests.</summary>
+    internal bool RenderingEnabled { get; set; } = true;
+
     public override void _Process(double delta)
     {
-        if (_failed || Host == null) return;
+        if (Host == null) return;
+        UpdateColliders(); // gameplay: independent of the compute and the camera
+        if (_failed || !RenderingEnabled) return;
         if (!EnsureCompute()) return;
         UpdateSurface();
         RingLodGeometrySnapshot? geometry = Host.Geometry();
@@ -259,8 +266,7 @@ internal sealed partial class RingScatterLayer : Node3D
     {
         var watch = Stopwatch.StartNew();
         RingLodGeometrySnapshot g = live.CenteredAt(anchorAround, anchorAcross);
-        double radius = g.RingRadiusMeters, circumference = g.CircumferenceMeters;
-        Basis grid = g.GridGlobalTransform.Basis;
+        double circumference = g.CircumferenceMeters;
         RingScatterClassTable table = RingScatterClassTable.Production;
         var classes = new Dictionary<ushort, RingScatterClass>();
         foreach (RingScatterClass row in table.Rows) classes[row.Id] = row;
@@ -312,20 +318,8 @@ internal sealed partial class RingScatterLayer : Node3D
             ScatterRecord rec = records[i];
             RingScatterClass cls = classes[rec.ClassId];
             double around = rec.AroundCm * .01, across = rec.AcrossCm * .01;
-            Vector3 position = g.CanonicalToWorld(around, rec.SurfaceHeight, across);
-            double wrapped = around % circumference; if (wrapped < 0) wrapped += circumference;
-            double angle = wrapped / radius, sa = Math.Sin(angle), ca = Math.Cos(angle);
-            (double ux, double uy, double uz) = ScatterRecord.DecodeUpOct(rec.UpOct);
-            // Local ring frame at the record: tangent (-sin, 0, cos), up (-cos, 0, -sin), across (0, 1, 0); up_oct is (around, up, across) in it.
-            Vector3 up = (grid * new Vector3((float)(-ux * sa - uy * ca), (float)uz, (float)(ux * ca - uy * sa))).Normalized();
-            Vector3 tangent = grid * new Vector3((float)-sa, 0f, (float)ca);
-            Vector3 x = tangent - up * tangent.Dot(up);
-            x = x.LengthSquared() > 1e-8f ? x.Normalized() : up.Cross(Vector3.Up).Normalized();
-            var basis = new Basis(up, rec.Yaw) * new Basis(x, up, x.Cross(up));
-            basis = basis.Scaled(new Vector3(rec.Size, rec.Size, rec.Size));
-            // Embed: the meshes' base sits DesignEmbed (of the size) below the ground contact; this record wants e, so move it by the difference along its up (deeper = down).
-            double e = cls.EmbedMin + (cls.EmbedMax - cls.EmbedMin) * EmbedHash(rec.Id);
-            position += up * (float)((DesignEmbed[group] - e) * rec.Size);
+            (Basis rotation, Vector3 position) = RecordPose(rec, cls, group, g);
+            Basis basis = rotation.Scaled(new Vector3(rec.Size, rec.Size, rec.Size));
             (float r, float gr, float b) = ScatterRecord.UnpackBaseTint(rec.BaseTint);
             int tint = ((int)MathF.Round(r * 63f) << 12) | ((int)MathF.Round(gr * 63f) << 6) | (int)MathF.Round(b * 63f);
             int variant = Math.Clamp(rec.Mesh - cls.MeshFirst, 0, 31);
@@ -351,6 +345,31 @@ internal sealed partial class RingScatterLayer : Node3D
                 build.Bounds[group] = new Aabb(minimum[group], maximum[group] - minimum[group]).Grow(maxSize[group] * unitRadius[group] + 2f);
         build.BuildMs = watch.Elapsed.TotalMilliseconds;
         return build;
+    }
+
+    /// <summary>
+    /// The one place a record becomes a pose: the rotation (up from UpOct, yaw about it; no scale) and the position (surface point plus the embed shift along up), in the frame of <paramref name="g"/>.
+    /// The renderer's source rows (<see cref="BuildSources"/>, which scales the rotation by the record's size) and the collider pool (RingScatterLayer.Colliders.cs, which never scales a body) both call it, so they cannot drift apart.
+    /// </summary>
+    internal static (Basis Rotation, Vector3 Position) RecordPose(in ScatterRecord rec, RingScatterClass cls, int group, in RingLodGeometrySnapshot g)
+    {
+        double radius = g.RingRadiusMeters, circumference = g.CircumferenceMeters;
+        Basis grid = g.GridGlobalTransform.Basis;
+        double around = rec.AroundCm * .01, across = rec.AcrossCm * .01;
+        Vector3 position = g.CanonicalToWorld(around, rec.SurfaceHeight, across);
+        double wrapped = around % circumference; if (wrapped < 0) wrapped += circumference;
+        double angle = wrapped / radius, sa = Math.Sin(angle), ca = Math.Cos(angle);
+        (double ux, double uy, double uz) = ScatterRecord.DecodeUpOct(rec.UpOct);
+        // Local ring frame at the record: tangent (-sin, 0, cos), up (-cos, 0, -sin), across (0, 1, 0); up_oct is (around, up, across) in it.
+        Vector3 up = (grid * new Vector3((float)(-ux * sa - uy * ca), (float)uz, (float)(ux * ca - uy * sa))).Normalized();
+        Vector3 tangent = grid * new Vector3((float)-sa, 0f, (float)ca);
+        Vector3 x = tangent - up * tangent.Dot(up);
+        x = x.LengthSquared() > 1e-8f ? x.Normalized() : up.Cross(Vector3.Up).Normalized();
+        var basis = new Basis(up, rec.Yaw) * new Basis(x, up, x.Cross(up));
+        // Embed: the meshes' base sits DesignEmbed (of the size) below the ground contact; this record wants e, so move it by the difference along its up (deeper = down).
+        double e = cls.EmbedMin + (cls.EmbedMax - cls.EmbedMin) * EmbedHash(rec.Id);
+        position += up * (float)((DesignEmbed[group] - e) * rec.Size);
+        return (basis, position);
     }
 
     private static int GroupIndex(RingScatterRenderGroup group) => group switch
@@ -389,8 +408,10 @@ internal sealed partial class RingScatterLayer : Node3D
         PromotePending();
     }
 
-    private static Transform3D AnchorTransform(in RingLodGeometrySnapshot geometry, SourceBuild build)
-        => new(Basis.Identity, geometry.CanonicalToWorld(build.AnchorAround, 0.0, build.AnchorAcross));
+    private static Transform3D AnchorTransform(in RingLodGeometrySnapshot geometry, SourceBuild build) => AnchorTransform(geometry, build.AnchorAround, build.AnchorAcross);
+
+    private static Transform3D AnchorTransform(in RingLodGeometrySnapshot geometry, long anchorAround, long anchorAcross)
+        => new(Basis.Identity, geometry.CanonicalToWorld(anchorAround, 0.0, anchorAcross));
 
     private void CreateOutput(OutputSet set, int group, int lod, bool caster)
     {

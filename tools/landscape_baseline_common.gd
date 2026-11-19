@@ -14,15 +14,17 @@ const TIMING := preload("res://tools/LandscapeTimingBridge.cs")
 const PASS_EFFECT := preload("res://tools/landscape_pass_timestamp_effect.gd")
 const TREE_VIS := preload("res://tools/tree_visibility_world.gd")
 const FEATURE_AB := preload("res://tools/LandscapeFeatureAbBridge.cs")
+const SCATTER_DEBUG := preload("res://tools/ScatterDebugBridge.cs")
 const COMMON := H.COMMON
 const WARMUP_FRAMES := 60
 const SETTLE_S := 1.0
 const REFERENCE_SET := ["plains_eye__noon", "hills_eye__sun_8_set", "forest_edge_eye__noon", "coast_eye__noon", "hills_2km__noon"]
 const COST_EXTRA := [["hills_eye", "sun_8_set"], ["forest_edge_eye", "sun_8_set"]]
-const CASES := ["baseline", "near_terrain_hidden", "far_terrain_hidden", "trees_hidden", "grass_hidden", "baseline_repeat"]
-const HIDE_CLASSES := ["near_terrain_hidden", "far_terrain_hidden", "trees_hidden", "grass_hidden"]
+## T5-10: scatter_hidden hides every renderer and shadow caster under the node named "ScatterLayer" (a sibling of the decoration layer). In a world without the layer it changes nothing and reads "(no change)".
+const CASES := ["baseline", "near_terrain_hidden", "far_terrain_hidden", "trees_hidden", "grass_hidden", "scatter_hidden", "baseline_repeat"]
+const HIDE_CLASSES := ["near_terrain_hidden", "far_terrain_hidden", "trees_hidden", "grass_hidden", "scatter_hidden"]
 const MARKERS := ["GPU.TreeCulling", "GPU.GrassCulling", "GPU.Vegetation", "GPU.ProxyHeights", "GPU.HeightShadow", "GPU.WaterFft"]
-const FILL_SCOPES := ["Trees build", "Trees disk load", "Grass build"]
+const FILL_SCOPES := ["Trees build", "Trees disk load", "Grass build", "Scatter build O", "Scatter build B", "Scatter build C", "Habitat grid"]
 ## TR-1 (docs/work-orders/terrain-vegetation/TR.md): tree LOD slot cases. A slot case hides that slot's main-pass renderers only (its shadow casters stay); tree_shadows_off
 ## removes the tree shadow casters only. A "@rs50" suffix measures the same case at 50 % 3D render scale (fill test).
 const TREE_LOD_CASES := ["baseline", "trees_hidden", "tree_slot0_hidden", "tree_slot1_hidden", "tree_slot2_hidden", "tree_slot3_hidden", "tree_slot4_hidden", "tree_shadows_off", "baseline_repeat"]
@@ -90,6 +92,14 @@ static func setup(tree: SceneTree, marker: String, weather_pose_report := "t0") 
 		tree.root.size = Vector2i(int(res[0]), int(res[1]))
 	var machine: Dictionary = COMMON.machine_info()
 	print("%s %s adapter=%s (%s)" % [marker, machine["label"], machine["adapter"], "4070, non-authoritative" if not bool(machine["authoritative"]) else "A1000, authoritative if P0/35W"])
+	# T5-10 debug switches (tools/ScatterDebugBridge.cs), set before the world boots because the scatter streamer is created during boot: per-tile build timing (always on, a few bytes per tile)
+	# and `--scatter-a5-density` (the design-A5 boulder weights, for the density comparison stills).
+	var scatter_debug: RefCounted = SCATTER_DEBUG.new()
+	scatter_debug.call("EnableTileTiming", true)
+	var a5_density := harness_flag("--scatter-a5-density")
+	scatter_debug.call("UseA5Density", a5_density)
+	if a5_density:
+		print("%s scatter A5 density: boulder term weights %s" % [marker, str(scatter_debug.call("BoulderWeights"))])
 	var booted: Dictionary = await H.boot(tree, marker)
 	if booted.is_empty():
 		return {}
@@ -136,6 +146,8 @@ static func setup(tree: SceneTree, marker: String, weather_pose_report := "t0") 
 		"explorer": explorer, "surface": surface, "grass": grass, "trees": trees, "scaled_far": scaled_far, "sun": sun, "preset": preset, "weather": weather, "ok": true}
 	ctx["ground_model"] = null if str(booted["world_tag"]).is_empty() else booted["world_bridge"]
 	ctx["record"] = _common_record(ctx)
+	if a5_density:
+		ctx["record"]["scatter_a5_density"] = true
 	if H.seed != H.PINNED_SEED:
 		ctx["record"]["seed"] = H.seed
 		ctx["record"]["explicit_poses"] = explicit.get("poses", [])
@@ -325,6 +337,10 @@ static func run_look(ctx: Dictionary) -> Dictionary:
 		for pose in t0_poses():
 			for time_name in times:
 				var info: Dictionary = await H.go_pose(tree, ctx["game"], pose, time_name, ctx["ground_model"])
+				# T5-10: the scatter jobs and source rebuild follow the tree tiles; wait for them before the still (no-op without scatter.rocks).
+				if not info.has("error") and bool((ctx["trees"] as Node).get("HasScatterStreamer")):
+					info["scatter_idle"] = await wait_scatter_idle(ctx, 180.0)
+					await COMMON.settle(tree, 2.0)
 				if first and not info.has("error"):
 					await _disable_auto_exposure(ctx)
 					first = false
@@ -351,6 +367,8 @@ static func run_look(ctx: Dictionary) -> Dictionary:
 						total += float(row["mean_luma"]) * float(row["share"])
 						weight += float(row["share"])
 				var mean_luma := total / maxf(weight, 0.000001)
+				if bool((ctx["trees"] as Node).get("HasScatterStreamer")):
+					view["scatter"] = await scatter_snapshot(ctx)
 				var idle := bool(info.get("streaming_idle", false)) and bool(info.get("streaming_idle_after", false))
 				view.merge({"size": [w, h], "depth_available": not (shot["depth"] as Dictionary).is_empty(), "band_table": table, "adjacent_steps": BANDS.adjacent_steps(table),
 					"non_empty_bands": BANDS.non_empty_bands(table), "mean_luma": mean_luma, "sun_elevation_deg": info.get("sun_elevation_deg", NAN), "streaming_idle": idle})
@@ -396,6 +414,12 @@ static func _all_nodes(node: Node) -> Array[Node]:
 	return result
 
 
+## The scatter layer node ("ScatterLayer", a sibling of the decoration layer), or null in a world without scatter.rocks.
+static func _scatter_layer(ctx: Dictionary) -> Node:
+	var parent: Node = (ctx["trees"] as Node).get_parent()
+	return parent.get_node_or_null("ScatterLayer") if parent != null else null
+
+
 static func _geometry_nodes(owner: Node) -> Array:
 	var result: Array = []
 	for node in _all_nodes(owner):
@@ -432,6 +456,10 @@ static func capture_original_state(ctx: Dictionary) -> Dictionary:
 	state["grass_layers"] = _layers(state["grass_geometry"])
 	state["tree_geometry"] = _geometry_nodes(ctx["trees"])
 	state["tree_layers"] = _layers(state["tree_geometry"])
+	# T5-10: the scatter layer is a sibling of the decoration layer (never a descendant, so it is not counted as tree geometry).
+	var scatter_layer := _scatter_layer(ctx)
+	state["scatter_geometry"] = _geometry_nodes(scatter_layer) if scatter_layer != null else []
+	state["scatter_layers"] = _layers(state["scatter_geometry"])
 	# TR-1: the GPU tree outputs are named GpuTree_<around>_<across>_<variant>_L<slot>; a shadow proxy is the child <output name>_ShadowLod<n> (RingBiomeDecorationLayer.GpuShadows.cs).
 	var slot_pattern := RegEx.create_from_string("GpuTree_.*_L(\\d)")
 	# The layer's own map (tools/RingBiomeDecorationLayer.TreeBudgetProbe.cs) wins over the names: an output recreated while its predecessor is still in the tree
@@ -480,7 +508,7 @@ static func _case_parts(label: String) -> Array:
 static func _known_case(base: String) -> bool:
 	if base in EXTRA_CASES:
 		return true
-	if base in ["baseline", "baseline_repeat", "near_terrain_hidden", "far_terrain_hidden", "trees_hidden", "grass_hidden", "tree_shadows_off"]:
+	if base in ["baseline", "baseline_repeat", "near_terrain_hidden", "far_terrain_hidden", "trees_hidden", "grass_hidden", "scatter_hidden", "tree_shadows_off"]:
 		return true
 	return base.begins_with("tree_slot") and base.ends_with("_hidden") and base.trim_prefix("tree_slot").trim_suffix("_hidden").is_valid_int()
 
@@ -548,7 +576,7 @@ static func restore_state(state: Dictionary) -> void:
 		state["grass_root"].visible = state["grass_visible"]
 	if is_instance_valid(state["trees_root"]):
 		state["trees_root"].visible = state["trees_visible"]
-	for key in [["grass_geometry", "grass_layers"], ["tree_geometry", "tree_layers"]]:
+	for key in [["grass_geometry", "grass_layers"], ["tree_geometry", "tree_layers"], ["scatter_geometry", "scatter_layers"]]:
 		var nodes: Array = state[key[0]]
 		for index in nodes.size():
 			if is_instance_valid(nodes[index]):
@@ -585,6 +613,10 @@ static func apply_case(state: Dictionary, label: String) -> bool:
 				node.visible = false
 		"grass_hidden":
 			for node in state["grass_geometry"]:
+				if is_instance_valid(node):
+					node.layers = 0
+		"scatter_hidden":
+			for node in state["scatter_geometry"]:
 				if is_instance_valid(node):
 					node.layers = 0
 		_:
@@ -625,6 +657,10 @@ static func verify_case(state: Dictionary, full_label: String) -> String:
 		var node: Node = state["grass_geometry"][index]
 		if is_instance_valid(node) and node.layers != (0 if label == "grass_hidden" else int(state["grass_layers"][index])):
 			return "grass render layer was not applied for " + label
+	for index in state["scatter_geometry"].size():
+		var node: Node = state["scatter_geometry"][index]
+		if is_instance_valid(node) and node.layers != (0 if label in ["scatter_hidden", "scatter_off"] else int(state["scatter_layers"][index])):
+			return "scatter render layer was not applied for " + label
 	for index in state["tree_geometry"].size():
 		var node: Variant = state["tree_geometry"][index]
 		if not is_instance_valid(node):
@@ -652,7 +688,8 @@ static func verify_case(state: Dictionary, full_label: String) -> String:
 ## on state["extra_undo"]; restore_state runs the undos. TEST ONLY.
 ## T4.md C3: a 4070 feature delta above this at any pose is flagged to the primary (the A1000 numbers are the authoritative ones).
 const FEATURE_AB_FLAG_MS := 0.1
-const EXTRA_CASES := ["feature_off", "clouds_off", "cloud_shadow_gen_off", "sun_map_off", "hs_receivers_off", "water_hidden", "ui_hidden", "clocks_running", "far_viewport_off", "env_post_off", "env_ssao_off", "env_ssr_off", "atlas_4096", "atlas_8192", "atlas_16384"]
+## T5-10: scatter_off = scatter_hidden plus the layer's _Process stopped (no cull request, so no compute dispatch); (scatter_hidden delta) - (scatter_off delta) is the layer's per-frame compute and CPU-side cost.
+const EXTRA_CASES := ["feature_off", "scatter_off", "clouds_off", "cloud_shadow_gen_off", "sun_map_off", "hs_receivers_off", "water_hidden", "ui_hidden", "clocks_running", "far_viewport_off", "env_post_off", "env_ssao_off", "env_ssr_off", "atlas_4096", "atlas_8192", "atlas_16384"]
 const ENV_POST_FLAGS := ["glow_enabled", "ssao_enabled", "ssil_enabled", "ssr_enabled", "sdfgi_enabled", "volumetric_fog_enabled", "adjustment_enabled"]
 
 
@@ -673,6 +710,18 @@ static func _apply_extra(state: Dictionary, base: String) -> bool:
 			state["feature_off_mask"] = cleared
 			undo.append(func() -> void:
 				hook.call("Restore"))
+		"scatter_off":
+			var layer := _scatter_layer({"trees": state["trees_root"]})
+			if layer == null:
+				return false
+			for node in state["scatter_geometry"]:
+				if is_instance_valid(node):
+					node.layers = 0
+			var previous_mode: int = layer.process_mode
+			layer.process_mode = Node.PROCESS_MODE_DISABLED
+			undo.append(func() -> void:
+				if is_instance_valid(layer):
+					layer.process_mode = previous_mode as Node.ProcessMode)
 		"clouds_off", "cloud_shadow_gen_off":
 			var bridge := game.get_node_or_null("SunshineCloudBridge")
 			if bridge == null:
@@ -839,6 +888,93 @@ static func _viewports(ctx: Dictionary) -> void:
 	ctx["all_rids"] = rids
 	ctx["far_rid"] = far_rid
 	ctx["viewport_count"] = rids.size()
+
+
+## T5-10: waits (up to `timeout_s`) for the scatter streamer to have no job and nothing due, 30 stable frames in a row. True at once in a world without scatter.rocks.
+static func wait_scatter_idle(ctx: Dictionary, timeout_s: float) -> bool:
+	var trees: Node = ctx["trees"]
+	if not bool(trees.get("HasScatterStreamer")):
+		return true
+	var tree: SceneTree = ctx["tree"]
+	var stable := 0
+	var deadline := Time.get_ticks_msec() + int(timeout_s * 1000.0)
+	while Time.get_ticks_msec() < deadline:
+		await tree.process_frame
+		stable = stable + 1 if bool(trees.get("ScatterIdle")) else 0
+		if stable >= 30:
+			return true
+	return false
+
+
+## T5-10: resident record counts per class, the scatter compute's bytes and the layer's drawn instance counts per output (readback of each batch's camera list); {} without scatter.rocks.
+static func scatter_snapshot(ctx: Dictionary) -> Dictionary:
+	var trees: Node = ctx["trees"]
+	if not bool(trees.get("HasScatterStreamer")):
+		return {}
+	var out := {"resident": JSON.parse_string(str(trees.call("ScatterResidentJson")))}
+	var layer := _scatter_layer(ctx)
+	if layer != null:
+		out["compute"] = JSON.parse_string(str(layer.call("ComputeBytesJson")))
+		layer.call("DrawnProbeBegin")
+		var text := ""
+		for i in 180:
+			text = str(layer.call("DrawnProbeTake"))
+			if text != "":
+				break
+			await (ctx["tree"] as SceneTree).process_frame
+		out["drawn"] = JSON.parse_string(text) if text != "" else null
+	return out
+
+
+## T5-10: the per-tile build-time pairs of the tiles built since the last reset (tools/RingBiomeDecorationLayer.ScatterProbe.cs).
+static func scatter_tile_rows(ctx: Dictionary) -> Array:
+	var trees: Node = ctx["trees"]
+	if not bool(trees.get("HasScatterStreamer")):
+		return []
+	var parsed: Variant = JSON.parse_string(str(trees.call("ScatterTileTimingJson")))
+	return parsed if parsed is Array else []
+
+
+static func _percentile(values: Array, fraction: float) -> float:
+	if values.is_empty():
+		return NAN
+	var sorted := values.duplicate()
+	sorted.sort()
+	return float(sorted[mini(sorted.size() - 1, int(floor(fraction * float(sorted.size()))))])
+
+
+## Gate numbers of one pose's tile rows (design A3 "Measurement"): over tiles that got stage B and have a real tree build, (Trees + O + B) / Trees; Trees build median and p95 over every tile with a real build;
+## O, B and C worker ms; C per 60 m block over cobble jobs. ms include the habitat grid.
+static func scatter_build_summary(rows: Array) -> Dictionary:
+	var trees: Array = []
+	var ratios: Array = []
+	var o_all: Array = []
+	var b_all: Array = []
+	var b_extra: Array = []
+	var c_blocks: Array = []
+	var c_jobs := 0
+	var o_tiles := 0
+	for row in rows:
+		var tree_ms := float(row["tree_ms"])
+		if tree_ms > 0.0:
+			trees.append(tree_ms)
+		if float(row["o_ms"]) > 0.0:
+			o_all.append(float(row["o_ms"]))
+			o_tiles += 1
+		if float(row["b_ms"]) > 0.0:
+			b_all.append(float(row["b_ms"]))
+			if tree_ms > 0.0:
+				ratios.append((tree_ms + float(row["o_ms"]) + float(row["b_ms"])) / tree_ms)
+				b_extra.append(float(row["o_ms"]) + float(row["b_ms"]))
+		for job in row.get("c_jobs", []):
+			c_jobs += 1
+			c_blocks.append(float(job[0]) / maxf(1.0, float(job[1])))
+	return {"tiles": rows.size(), "trees_n": trees.size(), "trees_median_ms": _median(trees) if not trees.is_empty() else NAN, "trees_p95_ms": _percentile(trees, 0.95),
+		"stage_b_tiles": b_all.size(), "stage_b_with_tree": ratios.size(), "ratio_median": _median(ratios) if not ratios.is_empty() else NAN, "ratio_p95": _percentile(ratios, 0.95),
+		"ratio_max": (ratios.max() if not ratios.is_empty() else NAN), "ob_extra_median_ms": _median(b_extra) if not b_extra.is_empty() else NAN, "ob_extra_p95_ms": _percentile(b_extra, 0.95),
+		"o_tiles": o_tiles, "o_median_ms": _median(o_all) if not o_all.is_empty() else NAN, "o_p95_ms": _percentile(o_all, 0.95),
+		"b_median_ms": _median(b_all) if not b_all.is_empty() else NAN, "b_p95_ms": _percentile(b_all, 0.95),
+		"c_jobs": c_jobs, "c_block_median_ms": _median(c_blocks) if not c_blocks.is_empty() else NAN, "c_block_p95_ms": _percentile(c_blocks, 0.95)}
 
 
 static func _fill_summary(cpu: Dictionary) -> Dictionary:
@@ -1051,8 +1187,12 @@ static func run_cost(ctx: Dictionary) -> Dictionary:
 		var sampler := Callable(timing, "Sample")
 		tree.process_frame.connect(sampler)
 		var fill_start := Time.get_ticks_msec()
+		if bool((ctx["trees"] as Node).get("HasScatterStreamer")):
+			(ctx["trees"] as Node).call("ScatterTileTimingReset")
 		var info: Dictionary = await H.go_pose(tree, ctx["game"], pose, time_name, ctx["ground_model"])
 		var fill_wall_s := (Time.get_ticks_msec() - fill_start) / 1000.0
+		# T5-10: scatter jobs run after the tree tiles; keep sampling until they are done (no-op without scatter.rocks).
+		var scatter_idle := await wait_scatter_idle(ctx, 240.0)
 		tree.process_frame.disconnect(sampler)
 		var weather := H.weather_at(ctx["game"], float(pose["around_m"]), float(pose["across_m"]))
 		var record := {"key": key, "pose": pose["name"], "time": time_name, "go_pose": info, "weather": weather}
@@ -1064,6 +1204,13 @@ static func run_cost(ctx: Dictionary) -> Dictionary:
 		var cpu_window: Dictionary = timing.call("CpuWindow")
 		var fill := {"wall_s_incl_settle": fill_wall_s, "scopes": _fill_summary(cpu_window), "dropped": cpu_window.get("_meta", {})}
 		record.merge({"sun_elevation_deg": info.get("sun_elevation_deg", NAN), "fill": fill, "workload": _workload(ctx), "windows": [], "hide_effect": {}})
+		if bool((ctx["trees"] as Node).get("HasScatterStreamer")):
+			await COMMON.settle(tree, 1.0)
+			var tile_rows := scatter_tile_rows(ctx)
+			record["scatter_idle_after_fill"] = scatter_idle
+			record["scatter_tiles"] = tile_rows
+			record["scatter_build"] = scatter_build_summary(tile_rows)
+			record["scatter"] = await scatter_snapshot(ctx)
 		var state := capture_original_state(ctx)
 		if results.is_empty():
 			record["far_mesh_names"] = state["far_mesh_names"] # evidence for which meshes count as far terrain (first pose only)
@@ -1071,7 +1218,7 @@ static func run_cost(ctx: Dictionary) -> Dictionary:
 			for child in (ctx["game"] as Node).get_children():
 				children.append("%s:%s:%s" % [child.name, child.get_class(), (child.get_script() as Script).resource_path.get_file() if child.get_script() != null else "-"])
 			record["game_children"] = children
-		record["geometry_nodes"] = {"near_terrain": state["near_nodes"].size(), "far_terrain": state["far_nodes"].size(), "trees": state["tree_geometry"].size(), "grass": state["grass_geometry"].size()}
+		record["geometry_nodes"] = {"near_terrain": state["near_nodes"].size(), "far_terrain": state["far_nodes"].size(), "trees": state["tree_geometry"].size(), "grass": state["grass_geometry"].size(), "scatter": state["scatter_geometry"].size()}
 		print("%s %s fill %.1f s, scopes %s, nodes %s" % [marker, key, fill_wall_s, JSON.stringify(fill["scopes"]), JSON.stringify(record["geometry_nodes"])])
 		# 2./3. cases
 		for round_index in rounds:
@@ -1097,6 +1244,9 @@ static func run_cost(ctx: Dictionary) -> Dictionary:
 				windows_total += 1
 		restore_state(state)
 		record["derived"] = _derive(record["windows"], cases)
+		# T5-10: with no scatter layer in the world there is nothing to hide; primitive-count jitter between windows must not read as a change ("(no change)").
+		if (state["scatter_geometry"] as Array).is_empty() and record["derived"]["classes"].has("scatter_hidden"):
+			record["derived"]["classes"]["scatter_hidden"]["changed_submissions"] = false
 		record["extra_state"] = {"water_hidden_count": state.get("water_hidden_count", -1), "ui_hidden_count": state.get("ui_hidden_count", -1), "env_post_before": state.get("env_post_before", {})}
 		results.append(record)
 		print("%s %s derived %s" % [marker, key, JSON.stringify(record["derived"]["summary_line"])])
@@ -1129,11 +1279,17 @@ static func run_cost(ctx: Dictionary) -> Dictionary:
 	var valid_share := float(valid) / maxf(1.0, float(counted))
 	# a hide class that changed no submissions at ANY pose is a harness/design problem (escalation condition)
 	var class_effect := {}
+	var scatter_nodes_total := 0
+	for record in results:
+		scatter_nodes_total += int(record.get("geometry_nodes", {}).get("scatter", 0))
 	for label in HIDE_CLASSES:
 		class_effect[label] = 0
 		for record in results:
 			if record.has("derived") and bool(record["derived"]["classes"][label]["changed_submissions"]):
 				class_effect[label] = int(class_effect[label]) + 1
+		# scatter_hidden has nothing to hide in a world without the scatter layer: that is "(no change)", not a failure.
+		if label == "scatter_hidden" and scatter_nodes_total == 0:
+			continue
 		if int(class_effect[label]) == 0 and not results.is_empty():
 			failures.append("hide class %s changed no draw or primitive count at any pose (escalate: hide path unreachable)" % label)
 	var status := "PASS"
@@ -1261,8 +1417,8 @@ static func _cost_markdown(report: Dictionary) -> String:
 	lines.append("")
 	lines.append("## Hide deltas on the root viewport (ms = baseline minus hidden, median of window medians; compare with the noise floor above)")
 	lines.append("")
-	lines.append("| pose | time | near terrain | far terrain | trees | grass | draws: near / far / trees / grass | primitives: near / far / trees / grass |")
-	lines.append("|---|---|---|---|---|---|---|---|")
+	lines.append("| pose | time | near terrain | far terrain | trees | grass | scatter | draws: near / far / trees / grass / scatter | primitives: near / far / trees / grass / scatter |")
+	lines.append("|---|---|---|---|---|---|---|---|---|")
 	for record in report["pose_times"]:
 		if not record.has("derived"):
 			continue
@@ -1274,7 +1430,7 @@ static func _cost_markdown(report: Dictionary) -> String:
 			cells.append(_f(float(c[label]["root_gpu_delta_ms"])) + ("" if bool(c[label]["changed_submissions"]) else " (no change)"))
 			draw_cells.append(_f(float(c[label]["draw_delta"]), 0))
 			prim_cells.append(_f(float(c[label]["primitive_delta"]), 0))
-		lines.append("| %s | %s | %s | %s | %s | %s | %s | %s |" % [record["pose"], record["time"], cells[0], cells[1], cells[2], cells[3], " / ".join(draw_cells), " / ".join(prim_cells)])
+		lines.append("| %s | %s | %s | %s | %s | %s | %s | %s | %s |" % [record["pose"], record["time"], cells[0], cells[1], cells[2], cells[3], cells[4], " / ".join(draw_cells), " / ".join(prim_cells)])
 	lines.append("")
 	if report.has("feature_ab"):
 		var ab: Dictionary = report["feature_ab"]
@@ -1296,14 +1452,14 @@ static func _cost_markdown(report: Dictionary) -> String:
 		lines.append("")
 	lines.append("## Far viewport GPU delta (ms)")
 	lines.append("")
-	lines.append("| pose | time | near terrain | far terrain | trees | grass |")
-	lines.append("|---|---|---|---|---|---|")
+	lines.append("| pose | time | near terrain | far terrain | trees | grass | scatter |")
+	lines.append("|---|---|---|---|---|---|---|")
 	for record in report["pose_times"]:
 		if not record.has("derived"):
 			continue
 		var c2: Dictionary = record["derived"]["classes"]
-		lines.append("| %s | %s | %s | %s | %s | %s |" % [record["pose"], record["time"], _f(float(c2["near_terrain_hidden"]["far_gpu_delta_ms"])), _f(float(c2["far_terrain_hidden"]["far_gpu_delta_ms"])),
-			_f(float(c2["trees_hidden"]["far_gpu_delta_ms"])), _f(float(c2["grass_hidden"]["far_gpu_delta_ms"]))])
+		lines.append("| %s | %s | %s | %s | %s | %s | %s |" % [record["pose"], record["time"], _f(float(c2["near_terrain_hidden"]["far_gpu_delta_ms"])), _f(float(c2["far_terrain_hidden"]["far_gpu_delta_ms"])),
+			_f(float(c2["trees_hidden"]["far_gpu_delta_ms"])), _f(float(c2["grass_hidden"]["far_gpu_delta_ms"])), _f(float(c2["scatter_hidden"]["far_gpu_delta_ms"]))])
 	lines.append("")
 	lines.append("## GPU compute and bracket markers (median ms over baseline windows; n = windows with samples; a marker absent here did not run in the window, which is not zero)")
 	lines.append("")
@@ -1321,8 +1477,8 @@ static func _cost_markdown(report: Dictionary) -> String:
 	lines.append("")
 	lines.append("## Fill (CPU worker scopes from the teleport until builds were idle; wall time includes the 0.2 s teleport wait and the 2 s settle of go_pose)")
 	lines.append("")
-	lines.append("| pose | time | wall s | Trees build n / med / p95 / sum ms | Trees disk load n / med / p95 / sum ms | Grass build n / med / p95 / sum ms |")
-	lines.append("|---|---|---|---|---|---|")
+	lines.append("| pose | time | wall s | Trees build n / med / p95 / sum ms | Trees disk load n / med / p95 / sum ms | Grass build n / med / p95 / sum ms | Scatter build O | Scatter build B | Scatter build C | Habitat grid |")
+	lines.append("|---|---|---|---|---|---|---|---|---|---|")
 	for record in report["pose_times"]:
 		if not record.has("fill"):
 			continue
@@ -1332,6 +1488,23 @@ static func _cost_markdown(report: Dictionary) -> String:
 			cells3.append("%d / %s / %s / %s" % [int(s["count"]), _f(float(s["median_ms"])), _f(float(s["p95_ms"])), _f(float(s["sum_ms"]), 0)])
 		lines.append("| %s | %s | %s | %s |" % [record["pose"], record["time"], _f(float(record["fill"]["wall_s_incl_settle"]), 1), " | ".join(cells3)])
 	lines.append("")
+	var any_scatter := false
+	for record in report["pose_times"]:
+		if record.has("scatter_build"):
+			any_scatter = true
+	if any_scatter:
+		lines.append("## Scatter build per tile (T5-10; the tile's own Trees build ms against its scatter worker ms, habitat grid included; tree disk cache must be off for real builds)")
+		lines.append("")
+		lines.append("| pose | time | tiles | Trees n / med / p95 | stage B tiles | (Trees+O+B)/Trees med / p95 / max | O+B extra med / p95 ms | O tiles / med / p95 ms | B med / p95 ms | C jobs | C per block med / p95 ms |")
+		lines.append("|---|---|---|---|---|---|---|---|---|---|---|")
+		for record in report["pose_times"]:
+			if not record.has("scatter_build"):
+				continue
+			var b: Dictionary = record["scatter_build"]
+			lines.append("| %s | %s | %d | %d / %s / %s | %d | %s / %s / %s | %s / %s | %d / %s / %s | %s / %s | %d | %s / %s |" % [record["pose"], record["time"], int(b["tiles"]), int(b["trees_n"]), _f(float(b["trees_median_ms"])), _f(float(b["trees_p95_ms"])),
+				int(b["stage_b_with_tree"]), _f(float(b["ratio_median"])), _f(float(b["ratio_p95"])), _f(float(b["ratio_max"])), _f(float(b["ob_extra_median_ms"])), _f(float(b["ob_extra_p95_ms"])),
+				int(b["o_tiles"]), _f(float(b["o_median_ms"])), _f(float(b["o_p95_ms"])), _f(float(b["b_median_ms"])), _f(float(b["b_p95_ms"])), int(b["c_jobs"]), _f(float(b["c_block_median_ms"])), _f(float(b["c_block_p95_ms"]))])
+		lines.append("")
 	lines.append("## Workload at the pose (after the fill)")
 	lines.append("")
 	lines.append("| pose | time | tree records | GPU tree roots | tree batches | grass instances | grass batches | hideable nodes: near / far / trees / grass |")
@@ -2275,5 +2448,156 @@ static func run_tr8_shadow(ctx: Dictionary) -> Dictionary:
 	_apply_tree_settings(trees, prepared["original"])
 	record["status"] = "PASS"
 	_save_json(out_dir.path_join("tr8_shadow.json"), record)
+	print("%s output: %s" % [marker, out_dir])
+	return record
+
+
+# ------------------------------------------------------------------ T5-9 far speckle fly-out (docs/work-orders/terrain-vegetation/T5.md, T5-9)
+
+## `--t5-flyout`: a camera pull-back and rise from 300 m to 5 km above the ground over 300 frames (altitude on an exponential ramp, 1.5 m back along the heading per metre risen), looking at a
+## point 600 m ahead of `--pose=` (default breaks_300m) on the ground. One teleport per captured frame, a short settle after each (streaming keeps up as far as it can); the same path is
+## flown with and without `scatter.rocks` by booting the review worlds `--review-features=ground.surface,scatter.rocks` and `--review-features=ground.surface`. `--t5-label=<name>` names the
+## frame folder. Frames: <out>/<label>/frame%08d.png (run flicker and sheet on the folder, then delete it). Test-only.
+static func run_t5_flyout(ctx: Dictionary) -> Dictionary:
+	var tree: SceneTree = ctx["tree"]
+	var marker: String = ctx["marker"]
+	var game: Node = ctx["game"]
+	var world: RefCounted = ctx["booted"]["world_bridge"]
+	var pose := H.pose_by_name(COMMON.arg_value("--pose=", "breaks_300m"))
+	if pose.is_empty():
+		return {"status": "FAIL", "failure": "pose missing from the fixture"}
+	var label := harness_arg("--t5-label=", "run")
+	var out_dir := H.transient_dir("t5_flyout", ctx["booted"]["world_tag"]).path_join(label)
+	DirAccess.make_dir_recursive_absolute(out_dir)
+	var info: Dictionary = await H.go_pose(tree, game, pose, "noon", ctx["ground_model"])
+	if info.has("error"):
+		return {"status": "FAIL", "failure": str(info["error"])}
+	await _disable_auto_exposure(ctx)
+	for node in _all_nodes(game):
+		if node is CanvasLayer and (node.name == "TerrainMinimap" or (node.get_script() != null and "RingPresentationHud" in (node.get_script() as Script).resource_path)):
+			(node as CanvasLayer).visible = false
+	var yaw := float(pose["yaw_deg"])
+	var fwd_a := cos(deg_to_rad(yaw))
+	var fwd_z := sin(deg_to_rad(yaw))
+	var around := float(pose["around_m"])
+	var across := float(pose["across_m"])
+	var ground := float(world.call("GroundHeight", around, across))
+	var target_a := around + fwd_a * 600.0
+	var target_z := across + fwd_z * 600.0
+	var target_y := float(world.call("GroundHeight", target_a, target_z))
+	var frames := 300
+	var ratio := pow(5000.0 / 300.0, 1.0 / float(frames - 1))
+	var rows: Array = []
+	for step in frames:
+		var altitude := 300.0 * pow(ratio, step)
+		var back := 1.5 * (altitude - 300.0)
+		var cam_a := around - fwd_a * back
+		var cam_z := across - fwd_z * back
+		var vertical := ground + altitude
+		var pitch := rad_to_deg(atan2(target_y - vertical, back + 600.0))
+		_teleport_to(ctx, cam_a, cam_z, vertical, yaw, pitch)
+		if step == 0:
+			await COMMON.wait_builds_idle(tree, game, 240.0)
+			await COMMON.settle(tree, 2.0)
+			_teleport_to(ctx, cam_a, cam_z, vertical, yaw, pitch)
+		await COMMON.settle(tree, 0.15)
+		await COMMON.wait_builds_idle(tree, game, 1.5, 4)
+		await RenderingServer.frame_post_draw
+		await RenderingServer.frame_post_draw
+		tree.root.get_texture().get_image().save_png(out_dir.path_join("frame%08d.png" % step))
+		rows.append({"frame": step, "altitude_m": altitude, "back_m": back, "pitch_deg": pitch})
+	var record: Dictionary = (ctx["record"] as Dictionary).duplicate(true)
+	record.merge({"marker": marker, "tool": "landscape_lod_switch_capture --t5-flyout", "output": out_dir, "label": label, "pose": pose["name"], "frames": rows, "status": "PASS"}, true)
+	_save_json(out_dir.path_join("t5_flyout.json"), record)
+	print("%s output: %s" % [marker, out_dir])
+	return record
+
+
+# ------------------------------------------------------------------ T5-10 scout: tors and outcrops on rocky ground
+
+## `--t5-scout` (landscape_lod_switch_capture.gd), `--poses=` names the search poses: at each, waits for the scatter streamer, then lists outcrops (class 1) within `--t5-radius=` m (default 450) with the habitat
+## grid's rock exposure and slope at each (tors = exposure under 0.3, outcrops on rock = exposure over 0.8), the resident counts per class, and for the best few of each kind eight camera spots 60-120 m
+## away (ground height there, yaw to the rock, pitch). Writes t5_scout.json and prints the picks. Test-only.
+static func run_t5_scout(ctx: Dictionary) -> Dictionary:
+	var tree: SceneTree = ctx["tree"]
+	var marker: String = ctx["marker"]
+	var game: Node = ctx["game"]
+	var world: RefCounted = ctx["booted"]["world_bridge"]
+	var radius := float(harness_arg("--t5-radius=", "450"))
+	var out_dir := H.transient_dir("t5_scout", ctx["booted"]["world_tag"])
+	DirAccess.make_dir_recursive_absolute(out_dir)
+	var results: Array = []
+	for pose in t0_poses():
+		var info: Dictionary = await H.go_pose(tree, game, pose, "noon", ctx["ground_model"])
+		if info.has("error"):
+			return {"status": "FAIL", "failure": str(info["error"])}
+		await wait_scatter_idle(ctx, 240.0)
+		await COMMON.settle(tree, 1.0)
+		var around := float(pose["around_m"])
+		var across := float(pose["across_m"])
+		var rows: Variant = JSON.parse_string(str((ctx["trees"] as Node).call("ScatterRecordsNearJson", around, across, radius, 1)))
+		var resident: Variant = JSON.parse_string(str((ctx["trees"] as Node).call("ScatterResidentJson")))
+		var picks := {"tors": [], "rocky": []}
+		for kind in ["tors", "rocky"]:
+			var candidates: Array = []
+			for row in rows:
+				if float(row["size"]) < 8.0:
+					continue
+				var e := float(row["exposure"])
+				if (kind == "tors" and e < 0.3) or (kind == "rocky" and e > 0.8):
+					candidates.append(row)
+			candidates.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return float(a["size"]) > float(b["size"]))
+			for row in candidates.slice(0, 4):
+				var spots: Array = []
+				for k in 8:
+					var heading := deg_to_rad(45.0 * k)
+					var cam_a := float(row["a"]) + cos(heading) * 90.0
+					var cam_z := float(row["z"]) + sin(heading) * 90.0
+					var cam_ground := float(world.call("GroundHeight", cam_a, cam_z))
+					var yaw := rad_to_deg(atan2(float(row["z"]) - cam_z, float(row["a"]) - cam_a))
+					var rock_mid := float(row["y"]) + float(row["size"]) * 0.4
+					var lift := 6.0
+					var pitch := rad_to_deg(atan2(rock_mid - (cam_ground + lift), 90.0))
+					spots.append({"around": cam_a, "across": cam_z, "ground": cam_ground, "lift": lift, "yaw": yaw, "pitch": pitch})
+				picks[kind].append({"rock": row, "spots": spots})
+		# boulders at a slope foot (slope under 25 degrees, size 1.5 m or more, most neighbours within 20 m) and cobbles (most neighbours within 8 m): camera spots at eye height
+		for kind in ["boulders_foot", "cobbles"]:
+			var class_id := 2 if kind == "boulders_foot" else 3
+			var near: Variant = JSON.parse_string(str((ctx["trees"] as Node).call("ScatterRecordsNearJson", around, across, 200.0, class_id)))
+			var reach := 20.0 if kind == "boulders_foot" else 8.0
+			var scored: Array = []
+			for row in near:
+				if kind == "boulders_foot" and (float(row["slope"]) > 25.0 or float(row["size"]) < 1.5):
+					continue
+				var neighbours := 0
+				for other in near:
+					if absf(float(other["a"]) - float(row["a"])) <= reach and absf(float(other["z"]) - float(row["z"])) <= reach:
+						neighbours += 1
+				scored.append({"row": row, "neighbours": neighbours})
+			scored.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a["neighbours"]) > int(b["neighbours"]))
+			var spot_distance := 40.0 if kind == "boulders_foot" else 14.0
+			picks[kind] = []
+			for entry in scored.slice(0, 3):
+				var row: Dictionary = entry["row"]
+				var spots: Array = []
+				for k in 8:
+					var heading := deg_to_rad(45.0 * k)
+					var cam_a := float(row["a"]) + cos(heading) * spot_distance
+					var cam_z := float(row["z"]) + sin(heading) * spot_distance
+					var cam_ground := float(world.call("GroundHeight", cam_a, cam_z))
+					var yaw := rad_to_deg(atan2(float(row["z"]) - cam_z, float(row["a"]) - cam_a))
+					var lift := 1.7
+					var pitch := rad_to_deg(atan2(float(row["y"]) - (cam_ground + lift), spot_distance))
+					spots.append({"around": cam_a, "across": cam_z, "ground": cam_ground, "lift": lift, "yaw": yaw, "pitch": pitch})
+				picks[kind].append({"rock": row, "neighbours": int(entry["neighbours"]), "spots": spots})
+		results.append({"pose": pose["name"], "outcrops_in_radius": rows.size(), "resident": resident, "picks": picks})
+		print("%s scout %s: outcrops within %.0f m: %d, resident %s" % [marker, pose["name"], radius, rows.size(), JSON.stringify(resident)])
+		for kind in ["tors", "rocky", "boulders_foot", "cobbles"]:
+			for pick in picks[kind]:
+				var r: Dictionary = pick["rock"]
+				print("%s   %s: id %s size %.1f at (%.1f, %.1f) y %.1f exposure %.2f slope %.1f" % [marker, kind, str(r["id"]), float(r["size"]), float(r["a"]), float(r["z"]), float(r["y"]), float(r["exposure"]), float(r["slope"])])
+	var record: Dictionary = (ctx["record"] as Dictionary).duplicate(true)
+	record.merge({"marker": marker, "tool": "landscape_lod_switch_capture --t5-scout", "output": out_dir, "scout": results, "status": "PASS"}, true)
+	_save_json(out_dir.path_join("t5_scout.json"), record)
 	print("%s output: %s" % [marker, out_dir])
 	return record

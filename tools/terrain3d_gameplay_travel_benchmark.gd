@@ -7,6 +7,7 @@ const GAME := preload("res://scenes/VoxelRingIntegrationTest.tscn")
 const SURFACE_RECIPE := preload("res://scripts/Terrain/Generation/terrain_generation_recipe.gd")
 const TERRAIN_GENERATION_SAMPLER := preload("res://scripts/Terrain/Generation/TerrainGenerationSampler.cs")
 const RUNTIME_FRAME_DIAGNOSTICS := preload("res://tools/RuntimeFrameDiagnostics.cs")
+const GENERATION_PIN := preload("res://tools/world_generation_pin.gd")
 const CERTIFIED_CIRCUMFERENCE_METERS := 31415936.0
 var fixture := ""
 var frames: Array[float] = []
@@ -207,7 +208,16 @@ func run() -> void:
 	game.queue_free(); await ticks(2); quit(0)
 
 func create_game() -> Node:
-	var launcher := LAUNCHER.instantiate(); root.add_child(launcher); await ticks(2)
+	# T5-10: `--generation=N [--review-features=a,b]` pins the world generation before the launcher reads it (tools/world_generation_pin.gd, as the landscape harness does); no flag, no pin.
+	var pinned_generation := arg_optional_int("--generation=")
+	if pinned_generation >= 0:
+		var review := ""
+		for value in OS.get_cmdline_user_args():
+			if value.begins_with("--review-features="): review = value.trim_prefix("--review-features=")
+		GENERATION_PIN.pin(pinned_generation, review)
+	var launcher := LAUNCHER.instantiate(); root.add_child(launcher)
+	if pinned_generation >= 0: GENERATION_PIN.unpin()
+	await ticks(2)
 	launcher.call("_on_certified_preset_pressed")
 	var select: OptionButton = launcher.get("terrain_backend_selector")
 	if select == null: fail("missing launcher backend selector"); return null

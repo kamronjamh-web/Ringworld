@@ -645,7 +645,7 @@ public partial class ScatterHazeShadowGpuTest : Node
         var outputs = layer.OutputInfo();
         Check(outputs.Count(o => !o.Caster) == 8 && outputs.Count(o => o.Caster) == 2, "layer: expected 8 camera outputs and 2 caster outputs");
         Check(layer.SourceBuilds == 1 && layer.AnchorRebuilds == 0, $"layer: {layer.SourceBuilds} builds and {layer.AnchorRebuilds} anchor rebuilds before any move");
-        Check(layer.GetParent() == _vp && layer.GetChildren().OfType<Node3D>().All(n => n.Name.ToString().StartsWith("ScatterSet")), "layer: renderers are not under the layer's sets");
+        Check(layer.GetParent() == _vp && layer.GetChildren().OfType<Node3D>().All(n => n.Name.ToString().StartsWith("ScatterSet") || n.Name == "ScatterColliders"), "layer: renderers are not under the layer's sets");
 
         // Expected counts from the records and the B5 table (independent of the layer's own table).
         Vector3 camera = CameraAt(focus);

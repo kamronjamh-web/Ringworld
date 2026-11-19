@@ -284,6 +284,21 @@ public partial class RingGraphicsQualityController : Node
         _ => (25.0f, 40.0f, 300.0f, 350.0f, 480.0f, 900.0f, 130.0f, 150.0f),
     };
 
+    /// <summary>
+    /// The preset's rock scatter scaling (T5 design B9): the rock density gate (never above 1, so the menu can only thin the designed density), the scatter distance scale and the cap scale of the
+    /// per-LOD budgets (no menu row). Every preset is named; Very High equals High.
+    /// </summary>
+    public static (float Density, float DistanceScale, float CapScale) PresetScatter(RingTerrainLodCoordinator.QualityPreset preset) => preset switch
+    {
+        RingTerrainLodCoordinator.QualityPreset.Low => (0.6f, 0.6f, 0.5f),
+        RingTerrainLodCoordinator.QualityPreset.Medium => (0.8f, 0.8f, 0.75f),
+        RingTerrainLodCoordinator.QualityPreset.High => (1.0f, 1.0f, 1.0f),
+        RingTerrainLodCoordinator.QualityPreset.VeryHigh => (1.0f, 1.0f, 1.0f),
+        RingTerrainLodCoordinator.QualityPreset.UltraVideo => (1.0f, 1.25f, 1.5f),
+        RingTerrainLodCoordinator.QualityPreset.Cinematic5090 => (1.0f, 1.25f, 1.5f),
+        _ => (1.0f, 1.0f, 1.0f),
+    };
+
     /// <summary>Raised at the end of every preset application so drawer-owned sparse defaults can re-resolve their preset fallbacks.</summary>
     public event System.Action<RingTerrainLodCoordinator.QualityPreset>? PresetApplied;
 

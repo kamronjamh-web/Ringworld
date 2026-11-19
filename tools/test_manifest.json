@@ -6956,6 +6956,17 @@
       "expected_s": 30,
       "timeout_s": 90
     },
+    "scatter_collision_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "SCATTER_COLLISION",
+      "expected_s": 20,
+      "timeout_s": 60
+    },
     "ground_relief_field_test": {
       "kind": "test",
       "mode": "headless",

@@ -6,6 +6,8 @@ extends SceneTree
 #                 Feature-off reference images of the Terrain3D receiver, a mesh-installed proxy receiver and a ring_terrain_global receiver, taken BEFORE any shader edit
 #                 (T4 design D7), under .godot/audit_baseline/rtx4070/t4/pre/ (the pruner keeps audit_baseline). The check mode compares against them byte for byte
 #                 with the feature bit cleared, when they exist.
+#   capture-ground : godot --path . --script tools/terrain_rock_material_gpu_test.gd -- --capture-ground
+#                 T5-9: the same three receivers in a ground.surface world without scatter.rocks (mask 4), saved as rock_ground_*.png beside the pre-edit references. Taken BEFORE the far speckle edit.
 #   options     : --pre-dir=<dir>   override the reference directory
 #                 --break=rock      raise the rock start by 10 degrees, to 48 (the weight checks must then FAIL)
 #                 --break=strata    offset the proxy receiver by half a bed (the strata checks must then FAIL)
@@ -18,7 +20,9 @@ extends SceneTree
 #  2. Both near tiers, through the ground debug view (ringworld_ground_look.w = 1: EMISSION = rock, scree, strata factor / 2), on a 10 degree, a 33 degree and a 50 degree face
 #     viewed with an orthographic camera, so a screen row is an absolute height: rock above 0.9 at 50 and 0 at 10, scree 0.4 at 33 on grass ground, and the strata factor per row
 #     equal to the C# mirror at that height (Terrain3D and the proxy sector derive the height by different routes, S2/S3).
-#  3. Feature off: the receivers render byte-identically to the pre-edit references.
+#  3. Feature off: the receivers render byte-identically to the pre-edit references. T5-9: a world with ground.surface and WITHOUT scatter.rocks (the far speckle's bit 4) also renders
+#     byte-identically to the reference taken before the speckle edit (rock_ground_*.png, --capture-ground); with the bit on but density 0 the proxy is unchanged too, and with the
+#     bit and a density the proxy (camera moved past 540 m through its uniform) changes (_check_speckle_gate).
 #  4. T4-4b colour variation (design D5): C64 on both tiers against the C# model at synthetic mounds (debug view w = 2: relief and the relief colour of mid grey), the sign of the
 #     shift (crest paler, hollow darker and greener), Terrain3D against the proxy within 0.02, and the Terrain3D tap reach at the window's far edge (--strict-reach makes a gap fail).
 #     The rock and scree checks of step 2 use each row's measured relief, since relief now enters D2 and D4.
@@ -66,6 +70,8 @@ var _far: MeshInstance3D
 var _far_material: ShaderMaterial
 var _pre_dir := DEFAULT_PRE_DIR
 var _capture_pre := false
+var _capture_ground := false
+var _uniform_camera_offset := Vector3.ZERO # moves the proxy's camera_world_position uniform (the shader's distance) without moving the camera
 var _break := ""
 var _finished := false
 var MODEL: RefCounted
@@ -75,6 +81,8 @@ func _init() -> void:
 	for arg in OS.get_cmdline_user_args():
 		if arg == "--capture-pre":
 			_capture_pre = true
+		elif arg == "--capture-ground":
+			_capture_ground = true
 		elif arg.begins_with("--pre-dir="):
 			_pre_dir = arg.substr(10)
 		elif arg.begins_with("--break="):
@@ -152,7 +160,14 @@ func _run() -> void:
 	await _teardown_receivers()
 	if not await _build_receivers(true):
 		return
+	if _capture_ground:
+		await _capture_or_compare_identity(true, "", FEATURE_BIT, "rock_ground_%s.png")
+		print("TERRAIN_ROCK_MATERIAL=CAPTURED ground dir=%s" % _pre_dir)
+		await _finish(0)
+		return
 	await _capture_or_compare_identity(false, "ground variants, mask cleared")
+	await _capture_or_compare_identity(false, "ground.surface without scatter.rocks", FEATURE_BIT, "rock_ground_%s.png")
+	await _check_speckle_gate()
 	await _check_probe()
 	await _check_tiers()
 	await _check_sampler()
@@ -369,6 +384,10 @@ func _set_mask(on: bool) -> void:
 	RenderingServer.global_shader_parameter_set("ringworld_world_features", FEATURE_BIT if on else 0)
 
 
+func _set_mask_bits(bits: int) -> void:
+	RenderingServer.global_shader_parameter_set("ringworld_world_features", bits)
+
+
 func _set_look(rock_start: float, contrast: float, debug: bool, view := 1.0) -> void:
 	RenderingServer.global_shader_parameter_set("ringworld_ground_look", Vector4(rock_start, contrast, 1.0, view if debug else 0.0))
 
@@ -410,7 +429,7 @@ func _lit_view(which: String) -> Image:
 	elif which == "proxy":
 		_camera.position = Vector3(PROXY_BASE + 22, -30, 0)
 		_camera.look_at(Vector3(PROXY_BASE + 30, 40, 0), Vector3.RIGHT)
-		_proxy_material.set_shader_parameter("camera_world_position", _camera.position)
+		_proxy_material.set_shader_parameter("camera_world_position", _camera.position + _uniform_camera_offset)
 	else:
 		_camera.position = Vector3(PROXY_BASE + 60, -60, 0)
 		_camera.look_at(Vector3(PROXY_BASE, 0, 0), Vector3.RIGHT)
@@ -419,9 +438,9 @@ func _lit_view(which: String) -> Image:
 	return await _grab()
 
 
-func _capture_or_compare_identity(capture: bool, label: String) -> void:
+func _capture_or_compare_identity(capture: bool, label: String, mask := 0, file_pattern := "rock_pre_%s.png") -> void:
 	_set_look(38.0, 0.12, false)
-	_set_mask(false)
+	_set_mask_bits(mask)
 	var dir_abs := ProjectSettings.globalize_path(_pre_dir)
 	if capture:
 		DirAccess.make_dir_recursive_absolute(dir_abs)
@@ -430,7 +449,7 @@ func _capture_or_compare_identity(capture: bool, label: String) -> void:
 		var image := await _lit_view(which)
 		if failed():
 			return
-		var path := dir_abs.path_join("rock_pre_%s.png" % which)
+		var path := dir_abs.path_join(file_pattern % which)
 		if capture:
 			image.save_png(path)
 			continue
@@ -444,6 +463,33 @@ func _capture_or_compare_identity(capture: bool, label: String) -> void:
 		print("TERRAIN_ROCK_MATERIAL identity %s (%s): differing pixels %d" % [which, label, differing])
 		_check(differing == 0, "%s: %s receiver differs from the pre-edit capture in %d pixels" % [label, which, differing])
 	_set_mask(false)
+
+
+# T5-9 far speckle gate (design B8): the speckle needs bit 4 (scatter.rocks), a density (ringworld_ground_world.z) and a camera distance past 540 m (here set through the proxy's
+# camera uniform, 700 m along the ring axis). Bit 4 clear, or density 0: the proxy is byte-identical; both set: it changes.
+func _speckle_view(mask: int, density: float) -> Image:
+	_set_mask_bits(mask)
+	RenderingServer.global_shader_parameter_set("ringworld_ground_world", Vector4(STRATA_STEP, STRATA_SEED, density, 1.0))
+	_uniform_camera_offset = Vector3(0, 700, 0)
+	var image := await _lit_view("proxy")
+	_uniform_camera_offset = Vector3.ZERO
+	return image
+
+
+func _check_speckle_gate() -> void:
+	const SCATTER_BIT := 16 # 1 << 4
+	var off_density := await _speckle_view(FEATURE_BIT | SCATTER_BIT, 0.0)
+	var on := await _speckle_view(FEATURE_BIT | SCATTER_BIT, 1.0)
+	var bit_clear := await _speckle_view(FEATURE_BIT, 1.0)
+	RenderingServer.global_shader_parameter_set("ringworld_ground_world", Vector4(STRATA_STEP, STRATA_SEED, 0, 0))
+	_set_mask_bits(0)
+	if failed():
+		return
+	var clear_diff := _count_differences(bit_clear, off_density)
+	var density_diff := _count_differences(on, off_density)
+	print("TERRAIN_ROCK_MATERIAL speckle gate: bit clear vs density 0 differ in %d pixels; density 1 vs 0 differ in %d pixels" % [clear_diff, density_diff])
+	_check(clear_diff == 0, "the far speckle changes the proxy with scatter.rocks clear (%d pixels)" % clear_diff)
+	_check(density_diff > 200, "the far speckle does not show on the proxy with scatter.rocks, density 1 and the camera 700 m away (%d pixels differ)" % density_diff)
 
 
 func _count_differences(a: Image, b: Image) -> int:
