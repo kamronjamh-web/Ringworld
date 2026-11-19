@@ -20,6 +20,11 @@ Keep the two agent sets in sync: when a role's instructions change, update both 
 
 Until the user revokes this instruction, the primary agent acts as lead planner and reviewer. Delegate nontrivial implementation work to the Implementer role for your runtime (see table). Use the Lead role first when the correct change is not already obvious, and escalate to the Deep role only when the problem is unusually difficult, ambiguous, or unresolved. The primary agent must personally review all edits and run relevant tests before reporting completion. If your runtime's mapped model for a role is unavailable, report that limitation instead of silently substituting a different model.
 
+**Subagents report once, and do not idle while waiting.** Each time a subagent ends its turn while its own background work (a test run, capture, perf bench or child agent) is still running, the primary agent is woken. Instead:
+- Wait in the foreground. Poll the run with blocking calls of up to 10 minutes each (for example a loop that checks `results.md`, the run log or `gpu_queue.ps1 -Status`) until it finishes, then carry on.
+- Do not end your turn until the step is done or you are blocked. Then send one full report.
+- This applies to waiting on the GPU queue, too.
+
 ## Tools
 
 - **ffmpeg** (installed via `winget install Gyan.FFmpeg`) for reviewing visual behaviour that frame-time and state checks cannot see: transitions, crossfades, pops, flashes, black frames, HUD flicker. Use `tools/media/ffmpeg_tools.ps1`, which finds ffmpeg even in shells opened before the install:
