@@ -107,6 +107,59 @@ RingCloudSample ring_cloud_reflection_sample(vec3 dir_world) {
 	return ring_cloud_reflection_sample_uv(u.xy, u.z);
 }
 
+// Colour and coverage only: the same four taps, weights, NaN rules and enclosed fog as ring_cloud_reflection_sample_uv, without the distance and the
+// opaque limit (distance = RING_CLOUD_FAR, distance_weight = 0, opaque_limit = RING_CLOUD_FAR). The data image is read only while the enclosed fog is on
+// (params2.y > 0). For readers that composite without placing the cloud (the model 1 water march, R3a-3a): half the fetches of the full sample.
+RingCloudSample ring_cloud_reflection_sample_color_uv(vec2 uv, float in_front) {
+	RingCloudSample r;
+	r.premul = vec3(0.0);
+	r.coverage = 0.0;
+	r.distance = RING_CLOUD_FAR;
+	r.distance_weight = 0.0;
+	r.opaque_limit = RING_CLOUD_FAR;
+	r.valid = 0.0;
+	float inside = step(0.0, uv.x) * step(0.0, uv.y) * step(uv.x, 1.0) * step(uv.y, 1.0);
+	float edge = smoothstep(0.0, RING_CLOUD_EDGE, min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y)));
+	float valid = ringworld_cloud_reflection_params.x * in_front * inside * edge;
+	if (!(valid > 0.0)) {
+		return r;
+	}
+	bool enclosed_fog = ringworld_cloud_reflection_params2.y > 0.0;
+	ivec2 size = textureSize(ringworld_cloud_reflection_color, 0);
+	vec2 t = uv * vec2(size) - 0.5;
+	vec2 i0f = floor(t);
+	vec2 f = t - i0f;
+	ivec2 i0 = ivec2(i0f);
+	ivec2 hi = size - ivec2(1);
+	vec3 premul = vec3(0.0);
+	float coverage = 0.0;
+	for (int k = 0; k < 4; k++) {
+		ivec2 off = ivec2(k % 2, k / 2);
+		float w = (off.x == 0 ? 1.0 - f.x : f.x) * (off.y == 0 ? 1.0 - f.y : f.y);
+		ivec2 p = clamp(i0 + off, ivec2(0), hi);
+		vec4 c = texelFetch(ringworld_cloud_reflection_color, p, 0);
+		bool bad = isnan(c.a) || isinf(c.a) || any(isnan(c.rgb)) || any(isinf(c.rgb));
+		float fog = 1.0;
+		if (enclosed_fog) {
+			float b = texelFetch(ringworld_cloud_reflection_data, p, 0).b;
+			float b_fog = !(isnan(b) || isinf(b)) ? max(b, 0.0) : RING_CLOUD_FAR;
+			fog = 1.0 - ringworld_cloud_reflection_params2.y * (1.0 - exp(-ringworld_cloud_reflection_params2.x * b_fog));
+		}
+		float a = bad ? 0.0 : clamp(c.a, 0.0, 1.0) * fog;
+		premul += w * a * (bad ? vec3(0.0) : c.rgb);
+		coverage += w * a;
+	}
+	r.premul = premul;
+	r.coverage = clamp(coverage, 0.0, 1.0);
+	r.valid = valid;
+	return r;
+}
+
+RingCloudSample ring_cloud_reflection_sample_color(vec3 dir_world) {
+	vec3 u = ring_cloud_reflection_uv(dir_world);
+	return ring_cloud_reflection_sample_color_uv(u.xy, u.z);
+}
+
 // One refinement: places the cloud at its distance from the reflecting point.
 // origin = reflecting point (world), camera = CAMERA_POSITION_WORLD (passed in, keeps the function pure).
 RingCloudSample ring_cloud_reflection_sample_placed(vec3 origin, vec3 dir_world, vec3 camera) {

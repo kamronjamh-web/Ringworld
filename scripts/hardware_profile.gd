@@ -25,9 +25,7 @@ func _ready() -> void:
 	ProjectSettings.set_setting(
 		"rendering/environment/screen_space_reflection/half_size",
 		not desktop)
-	ProjectSettings.set_setting(
-		"rendering/environment/screen_space_reflection/roughness_quality",
-		2 if desktop else 1)
+	# (R1-3) No roughness_quality write: the Godot 4.8 SSR does not read it (docs/reflections-plan.md 2.6, D9).
 	ProjectSettings.set_setting(
 		"rendering/lights_and_shadows/directional_shadow/soft_shadow_filter_quality",
 		2 if desktop else 0)

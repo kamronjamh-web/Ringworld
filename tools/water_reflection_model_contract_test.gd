@@ -30,7 +30,7 @@ func _init() -> void:
 		print("WATER_REFLECTION_MODEL_CONTRACT=FAIL")
 		quit(1)
 		return
-	print("WATER_REFLECTION_MODEL_CONTRACT=PASS proxy_branch,global_branch,physical_f0,model0_verbatim,no_radiance,horizon_march")
+	print("WATER_REFLECTION_MODEL_CONTRACT=PASS proxy_branch,global_branch,physical_f0,model0_verbatim,no_radiance,horizon_march,cloud_consumption")
 	quit()
 
 func _check_appearance(appearance: String) -> void:
@@ -124,6 +124,19 @@ func _check_horizon_march(proxy: String) -> void:
 	var gate := proxy.rfind("if (ringworld_reflection_model >= 0.5)", model1_call)
 	_check(gate >= 0 and model1_call - gate < 80 and proxy.find("else", model1_call) > 0 and proxy.find("else", model1_call) < model0_call, "march call must sit under the model gate with an else for the old call")
 	_check(proxy.find("vec3(ssr_hit_kind)") >= 0, "model 1 debug mode 2 must show ssr_hit_kind")
+	# R3a-3a: the model 1 march consumes the published cloud image; the far viewport shaders do not.
+	_check(proxy.find('#include "res://materials/ring_cloud_reflection.gdshaderinc"') >= 0, "proxy must include ring_cloud_reflection.gdshaderinc")
+	# One colour-only sample for both hit kinds, not placed by the cloud distance (placement stepped mirrored cloud edges and cost a second sample).
+	_check(body.find("ring_cloud_reflection_sample_color(") >= 0, "horizon march must call ring_cloud_reflection_sample_color(")
+	_check(body.find("ring_cloud_reflection_near_fade(") >= 0, "horizon march must apply ring_cloud_reflection_near_fade( on geometry hits")
+	_check(body.find("ring_cloud_reflection_sample_placed(") < 0 and body.find("ring_cloud_reflection_sample(") < 0, "horizon march must not take the full or placed sample")
+	_check(proxy.find("mix(storm_ssr_keep, 1.0, ssr_cloud_valid)") >= 0, "model 1 hit weight must lift the storm fade where the cloud image is valid")
+	var global_text := FileAccess.get_file_as_string(GLOBAL_PATH)
+	_check(global_text.find("ring_cloud_reflection.gdshaderinc") < 0, "ring_ocean_global must not include the cloud reflection include")
+	for file_name in DirAccess.get_files_at("res://materials"):
+		if file_name.ends_with(".gdshader") and file_name.to_lower().find("far") >= 0:
+			var far_text := FileAccess.get_file_as_string("res://materials/" + file_name)
+			_check(far_text.find("ring_cloud_reflection.gdshaderinc") < 0, file_name + " must not include the cloud reflection include")
 
 func _check_global(global: String) -> void:
 	# The global shader also renders in the far viewport: model include only, no camera-sky gate.

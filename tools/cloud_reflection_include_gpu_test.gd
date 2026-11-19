@@ -3,7 +3,7 @@ extends SceneTree
 ## R3a-2 of docs/work-orders/reflections/R3a-design.md (section 6.2): parity test of materials/ring_cloud_reflection.gdshaderinc.
 ## Renders a canvas_item shader that includes the file into a float SubViewport with synthetic globals (nearest RGBAF images, known matrices) and
 ## compares with double-precision GDScript references: the reprojection round trip (march ray -> include uv -> its own texel), the direction to uv
-## maths, the four-tap filter, behind/edge validity and the placement refinement. Run windowed Vulkan (not --headless):
+## maths, the four-tap filter (and the colour-only sample against it), behind/edge validity and the placement refinement. Run windowed Vulkan (not --headless):
 ##   godot --path . --script res://tools/cloud_reflection_include_gpu_test.gd
 ## Prints CLOUD_REFLECTION_INCLUDE_GPU_TEST=PASS.
 
@@ -57,8 +57,10 @@ void fragment() {
 			s = ring_cloud_reflection_sample_uv(q0.xy, q0.z);
 		} else if (q0.w < 1.5) {
 			s = ring_cloud_reflection_sample(q0.xyz);
-		} else {
+		} else if (q0.w < 2.5) {
 			s = ring_cloud_reflection_sample_placed(origin, q0.xyz, camera);
+		} else {
+			s = ring_cloud_reflection_sample_color_uv(q0.xy, q0.z);
 		}
 		if (c == 0) {
 			COLOR = vec4(s.premul, s.coverage);
@@ -455,6 +457,9 @@ func _case_filter() -> bool:
 		var qs: Array = []
 		for f in fractions:
 			qs.append({"kind": 0, "v": Vector3((f + 0.5) / 2.0, 0.25, 1.0)})
+		# R3a-3a: the colour-only sample at the same points (queries n..2n-1) must match the full sample's colour, coverage and valid exactly.
+		for f in fractions:
+			qs.append({"kind": 3, "v": Vector3((f + 0.5) / 2.0, 0.25, 1.0)})
 		_set_table(_query_table(qs))
 		var img := await _render(Vector2i(4 * qs.size(), 4))
 		var case_ok := true
@@ -470,6 +475,11 @@ func _case_filter() -> bool:
 				if not _rel_ok(g, float(want_v), 1e-3) and absf(g - float(want_v)) > 1e-3:
 					_note("MISMATCH %s @%.2f explicit %s: got %s want %s" % [cs.name, fractions[i], field, str(g), str(want_v)])
 					case_ok = false
+			var col_only := _query_result(img, fractions.size() + i)
+			if col_only.premul != got.premul or col_only.coverage != got.coverage or col_only.valid != got.valid or col_only.distance < FAR or col_only.distance_weight != 0.0 or col_only.opaque < FAR:
+				_note("MISMATCH %s @%.2f colour-only sample: premul %s cov %s valid %s dist %s w %s op %s; full premul %s cov %s valid %s" % [cs.name, fractions[i],
+					str(col_only.premul), str(col_only.coverage), str(col_only.valid), str(col_only.distance), str(col_only.distance_weight), str(col_only.opaque), str(got.premul), str(got.coverage), str(got.valid)])
+				case_ok = false
 			parts.append("f%.2f dist %s w %.3f cov %.3f op %s" % [fractions[i], "FAR" if got.distance >= FAR else "%.2f" % got.distance, got.distance_weight, got.coverage, "FAR" if got.opaque >= FAR else "%.2f" % got.opaque])
 		_note("filter %s: %s -> %s" % [cs.name, " | ".join(parts), "ok" if case_ok else "FAIL"])
 		ok = ok and case_ok

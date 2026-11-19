@@ -342,6 +342,20 @@ const STORM_SUN_OCCLUSION := 0.85
 @export_range(0.0, 1.0, 0.01) var haze_storm_strength: float = 1.0
 var current_haze_storm: float = 0.0
 
+# R1-6f (docs/reflections-plan.md 9.8): the engine compares the six Environment fog values every frame, even with fog off, and rebuilds the
+# shared Sky radiance map when they change (0.19 ms per frame in twilight). While the main depth fog is off they are held at Godot's defaults;
+# the blended values stay available through get_blended_fog_values() and the cloud ambience meta below. Debug / A-B switch, not a menu row.
+@export var hold_fog_values_while_off: bool = true
+const CLOUD_AMBIENCE_FOG_META := &"ring_cloud_ambience_fog_light_color"
+var _blended_fog: Dictionary = {}
+var _fog_hold_ready: bool = false
+var _hold_fog_density: float = 0.0
+var _hold_fog_light_color: Color = Color.WHITE
+var _hold_fog_light_energy: float = 1.0
+var _hold_fog_aerial_perspective: float = 0.0
+var _hold_fog_sky_affect: float = 0.0
+var _hold_fog_sun_scatter: float = 0.0
+
 
 func _ready() -> void:
 	_publish_solar_visibility(1.0)
@@ -580,6 +594,47 @@ func _process(delta: float) -> void:
 		surface_up,
 		to_sun,
 		current_giant_direction)
+	_publish_and_hold_fog(environment)
+
+
+# Records the final blended fog values (tests, cloud ambience), then holds the Environment's six values constant while its fog is off (R1-6f).
+func _publish_and_hold_fog(environment: Environment) -> void:
+	_blended_fog = {
+		"density": environment.fog_density,
+		"light_color": environment.fog_light_color,
+		"light_energy": environment.fog_light_energy,
+		"aerial_perspective": environment.fog_aerial_perspective,
+		"sky_affect": environment.fog_sky_affect,
+		"sun_scatter": environment.fog_sun_scatter,
+	}
+	environment.set_meta(CLOUD_AMBIENCE_FOG_META, environment.fog_light_color)
+	if not hold_fog_values_while_off or environment.fog_enabled:
+		return
+	if not _fog_hold_ready:
+		var defaults := Environment.new()
+		_hold_fog_density = defaults.fog_density
+		_hold_fog_light_color = defaults.fog_light_color
+		_hold_fog_light_energy = defaults.fog_light_energy
+		_hold_fog_aerial_perspective = defaults.fog_aerial_perspective
+		_hold_fog_sky_affect = defaults.fog_sky_affect
+		_hold_fog_sun_scatter = defaults.fog_sun_scatter
+		_fog_hold_ready = true
+	if environment.fog_density != _hold_fog_density:
+		environment.fog_density = _hold_fog_density
+	if environment.fog_light_color != _hold_fog_light_color:
+		environment.fog_light_color = _hold_fog_light_color
+	if environment.fog_light_energy != _hold_fog_light_energy:
+		environment.fog_light_energy = _hold_fog_light_energy
+	if environment.fog_aerial_perspective != _hold_fog_aerial_perspective:
+		environment.fog_aerial_perspective = _hold_fog_aerial_perspective
+	if environment.fog_sky_affect != _hold_fog_sky_affect:
+		environment.fog_sky_affect = _hold_fog_sky_affect
+	if environment.fog_sun_scatter != _hold_fog_sun_scatter:
+		environment.fog_sun_scatter = _hold_fog_sun_scatter
+
+
+func get_blended_fog_values() -> Dictionary:
+	return _blended_fog.duplicate()
 
 
 func _apply_underground_lighting(environment: Environment, sky_access: float, cave_weight: float = 0.0) -> void:

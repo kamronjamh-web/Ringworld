@@ -36,6 +36,7 @@ instance uniform vec4 fft_distant_ocean_mask_rect = vec4(0.0, 0.0, 0.0, 0.0);
 #include "res://materials/ring_atmosphere.gdshaderinc"
 #include "res://materials/ring_water_common.gdshaderinc"
 #include "res://materials/ring_sky_reflection.gdshaderinc"
+#include "res://materials/ring_cloud_reflection.gdshaderinc"
 #include "res://materials/ring_wind_field.gdshaderinc"
 #include "res://materials/ring_water_depth.gdshaderinc"
 #include "res://materials/ring_water_fft.gdshaderinc"
@@ -176,9 +177,10 @@ float ring_water_view_depth_zw(vec2 uv, mat4 inverse_projection) {
 // Model 1 march (reflections design 3.1 to 3.4): screen-uniform and perspective-correct, from the surface to the horizon. uv(s) = mix(uv0, uv1, s)
 // and 1/z(s) = mix(1/z0, 0, s), so z(s) = z0 / (1 - s) for any projection. Returns rgb and a confidence; hit_kind is 1 for geometry, 0.5 for a hit
 // at infinity (a backdrop pixel at the vanishing point), 0 for a miss.
-vec4 ring_water_ssr_horizon(vec3 surface_view, vec3 ray_direction, vec3 up_view, float eye_height, float roughness, mat4 projection, mat4 inverse_projection, vec2 viewport_px, out float step_ratio, out float hit_kind) {
+vec4 ring_water_ssr_horizon(vec3 surface_view, vec3 ray_direction, vec3 up_view, float eye_height, float roughness, mat4 projection, mat4 inverse_projection, vec2 viewport_px, mat4 inv_view, out float step_ratio, out float hit_kind, out float cloud_valid) {
 	step_ratio = 0.0;
 	hit_kind = 0.0;
+	cloud_valid = 0.0;
 	if (!water_ssr_enabled || roughness >= water_ssr_roughness_cutoff)
 		return vec4(0.0);
 	float camera_distance = length(surface_view);
@@ -264,24 +266,41 @@ vec4 ring_water_ssr_horizon(vec3 surface_view, vec3 ray_direction, vec3 up_view,
 	}
 	float camera_confidence = 1.0 - smoothstep(0.8 * water_ssr_camera_distance, water_ssr_camera_distance, camera_distance);
 	float roughness_confidence = 1.0 - smoothstep(water_ssr_roughness_cutoff * 0.55, water_ssr_roughness_cutoff, roughness);
+	bool horizon_hit = !hit && reaches_horizon && ring_water_view_depth_zw(uv1, inverse_projection) < 0.0;
+	if (!hit && !horizon_hit) return vec4(0.0);
+	vec2 source_uv = hit ? hit_uv : uv1;
+	float edge = min(min(source_uv.x, source_uv.y), min(1.0 - source_uv.x, 1.0 - source_uv.y));
+	float confidence = smoothstep(0.0, water_ssr_edge_fade, edge) * camera_confidence * roughness_confidence;
 	if (hit) {
-		float edge = min(min(hit_uv.x, hit_uv.y), min(1.0 - hit_uv.x, 1.0 - hit_uv.y));
-		float edge_confidence = smoothstep(0.0, water_ssr_edge_fade, edge);
 		hit_kind = 1.0;
-		return vec4(textureLod(water_screen_texture, hit_uv, roughness * 4.0).rgb, edge_confidence * camera_confidence * roughness_confidence * hit_confidence);
-	}
-	// Hit at infinity: no accepted hit (a rejected bracket does not count, R1-5d) and the vanishing point lands on a backdrop pixel (raw depth 0). The up-guard keeps downward-facing facets out
-	// (their vanishing point lands on water pixels) and the height-guard fades it out for a high camera (the backdrop parallax grows with height).
-	if (reaches_horizon && ring_water_view_depth_zw(uv1, inverse_projection) < 0.0) {
-		float edge = min(min(uv1.x, uv1.y), min(1.0 - uv1.x, 1.0 - uv1.y));
-		float edge_confidence = smoothstep(0.0, water_ssr_edge_fade, edge);
-		float up_guard = smoothstep(0.001, 0.004, dot(ray_direction, up_view));
-		float height_guard = 1.0 - smoothstep(50.0, 150.0, eye_height);
-		step_ratio = 1.0;
+		confidence *= hit_confidence;
+	} else {
+		// Hit at infinity: no accepted hit (a rejected bracket does not count, R1-5d) and the vanishing point lands on a backdrop pixel (raw depth 0). The
+		// up-guard keeps downward-facing facets out (their vanishing point lands on water pixels) and the height-guard fades it out for a high camera (the
+		// backdrop parallax grows with height).
 		hit_kind = 0.5;
-		return vec4(textureLod(water_screen_texture, uv1, roughness * 4.0).rgb, edge_confidence * camera_confidence * roughness_confidence * up_guard * height_guard);
+		step_ratio = 1.0;
+		confidence *= smoothstep(0.001, 0.004, dot(ray_direction, up_view)) * (1.0 - smoothstep(50.0, 150.0, eye_height));
 	}
-	return vec4(0.0);
+	vec3 source_rgb = textureLod(water_screen_texture, source_uv, roughness * 4.0).rgb;
+	// R3a-3a: the published cloud image over the screen colour (Sunshine composites after the water). One colour-only sample for both hit kinds, so a warp
+	// never pays for two branches: a geometry hit along the camera ray through hit_uv (no depth fetch; the near fade from the view depth at the hit),
+	// a hit at infinity along the reflected ray. The cloud is not placed by its distance (ring_cloud_reflection_sample_placed): under overcast at a lake
+	// waterline that moved the sample by about six cloud texels and switches on and off with the distance weight (a step on mirrored cloud edges), and it
+	// cost a second, dependent sample (0.04 to 0.12 ms). Parallax at a high camera is left to the height guard.
+	vec3 cloud_dir_view = ray_direction;
+	float near_fade = 1.0;
+	if (hit) {
+		vec4 hit_ray = inverse_projection * vec4(hit_uv * 2.0 - 1.0, 1.0, 1.0);
+		cloud_dir_view = normalize(hit_ray.xyz / hit_ray.w);
+		near_fade = ring_cloud_reflection_near_fade(max(ring_water_view_depth_zw(hit_uv, inverse_projection), 0.0) / max(-cloud_dir_view.z, 1e-4));
+	}
+	vec3 cloud_dir_world = normalize(mat3(inv_view) * cloud_dir_view);
+	RingCloudSample cloud = ring_cloud_reflection_sample_color(cloud_dir_world);
+	cloud.coverage *= near_fade;
+	cloud.premul *= near_fade;
+	cloud_valid = cloud.valid;
+	return vec4(ring_cloud_reflection_composite(source_rgb, cloud), confidence);
 }
 // Enables the whole-ring far weather cloud shadow (ring_far_weather_shadow.gdshaderinc) beyond the Sunshine maps.
 uniform bool analytic_cloud_shadow_enabled = true;
@@ -734,13 +753,14 @@ void fragment() {
 	base_roughness = clamp(base_roughness + 0.08 * rain_matte * smoothstep(30.0, 50.0, distance_to_camera) + 0.15 * hail_chop, 0.02, 1.0);
 	float ssr_step_ratio;
 	float ssr_hit_kind = 0.0;
+	float ssr_cloud_valid = 0.0;
 	vec4 ssr;
 	vec3 ssr_origin = VERTEX + water_normal_view * water_ssr_ray_bias;
 	if (ringworld_reflection_model >= 0.5)
 		ssr = ring_water_ssr_horizon(ssr_origin, normalize(reflect(normalize(ssr_origin), water_normal_view)),
 			normalize((VIEW_MATRIX * vec4(smooth_water_normal_world, 0.0)).xyz),
 			dot(camera_world_position - world_position, smooth_water_normal_world),
-			base_roughness, PROJECTION_MATRIX, INV_PROJECTION_MATRIX, VIEWPORT_SIZE, ssr_step_ratio, ssr_hit_kind);
+			base_roughness, PROJECTION_MATRIX, INV_PROJECTION_MATRIX, VIEWPORT_SIZE, INV_VIEW_MATRIX, ssr_step_ratio, ssr_hit_kind, ssr_cloud_valid);
 	else
 		ssr = ring_water_ssr(ssr_origin, water_normal_view, base_roughness, PROJECTION_MATRIX, INV_PROJECTION_MATRIX, ssr_step_ratio);
 	// Storm light: Sunshine composites AFTER the water, so the screen-space reflection sees the clear sky (sun halo and all) behind a closed storm and
@@ -755,7 +775,8 @@ void fragment() {
 		float n_dot_v = clamp(dot(water_normal_view, VIEW), 1e-4, 1.0); // engine: clamp(dot(normal, view), 1e-4, 1)
 		float reflectance = ring_water_env_reflectance(final_roughness, n_dot_v);
 		float haze_k = ring_haze_specular_scale(haze) * ringworld_sky_reflection;
-		float hit_weight = clamp(ssr.a, 0.0, 1.0) * storm_ssr_keep; // the old strength, Fresnel and specular scales are ignored at model 1
+		float hit_weight = clamp(ssr.a, 0.0, 1.0) * mix(storm_ssr_keep, 1.0, ssr_cloud_valid); // the old strength, Fresnel and specular scales are ignored at model 1; R3a-3a: the storm fade (which hid
+		// the clear sky behind a closed storm) is lifted where the cloud image is composited over the hit
 		vec3 body = mix(optical_water, foam_color, foam);
 		ALBEDO = body * (1.0 - reflectance) * haze.T;
 		EMISSION = ring_haze_inscatter(haze) * (1.0 - reflectance * hit_weight) + ssr.rgb * (reflectance * hit_weight);

@@ -114,7 +114,8 @@ func _process(delta : float):
 			clouds_resource.wind_direction = wind_direction
 			
 			if clouds_resource.use_environment_fog > 0.0 and ambience_sample_environment != null:
-				clouds_resource.sampled_environment_fog_color = ambience_sample_environment.fog_light_color
+				# R1-6f: the host may hold the Environment's fog values constant while fog is off and publish the blended colour as meta.
+				clouds_resource.sampled_environment_fog_color = ambience_sample_environment.get_meta(&"ring_cloud_ambience_fog_light_color", ambience_sample_environment.fog_light_color)
 				#clouds_resource.cloud_ambient_color = ambience_sample_environment.fog_light_color
 			
 			if (tracked_directional_lights.size() * 2.0 != clouds_resource.directional_lights_data.size() \

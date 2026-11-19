@@ -73,14 +73,29 @@ func _sample(clock: Node, atmosphere: Node, t: float) -> Dictionary:
 	var sun := _world.get_node("StarLight") as DirectionalLight3D
 	var planet := _world.get_node_or_null("PlanetLight") as DirectionalLight3D
 	var sky := atmosphere.get("ring_sky_material") as ShaderMaterial
-	var out := {
-		"ambient_color": env.ambient_light_color,
-		"ambient_energy": env.ambient_light_energy,
-		"ambient_sky_contribution": env.ambient_light_sky_contribution,
+	# R1-6f: the current script holds the Environment fog values while fog is off; its blended values come from get_blended_fog_values().
+	var fog := {
 		"fog_light_color": env.fog_light_color,
 		"fog_light_energy": env.fog_light_energy,
 		"fog_density": env.fog_density,
 		"fog_sky_affect": env.fog_sky_affect,
+	}
+	if atmosphere.has_method("get_blended_fog_values"):
+		var blended: Dictionary = atmosphere.call("get_blended_fog_values")
+		fog = {
+			"fog_light_color": blended.get("light_color"),
+			"fog_light_energy": blended.get("light_energy"),
+			"fog_density": blended.get("density"),
+			"fog_sky_affect": blended.get("sky_affect"),
+		}
+	var out := {
+		"ambient_color": env.ambient_light_color,
+		"ambient_energy": env.ambient_light_energy,
+		"ambient_sky_contribution": env.ambient_light_sky_contribution,
+		"fog_light_color": fog["fog_light_color"],
+		"fog_light_energy": fog["fog_light_energy"],
+		"fog_density": fog["fog_density"],
+		"fog_sky_affect": fog["fog_sky_affect"],
 		"sun_energy": sun.light_energy,
 		"sun_color": sun.light_color,
 		"day_factor": float(atmosphere.get("current_day_factor")),

@@ -1881,9 +1881,7 @@ func _configure_game(game: Node, requested_radius_m: float) -> void:
 	star_light.set("directional_shadow_split_3", 0.28)
 	star_light.set("directional_shadow_fade_start", 0.88)
 	star_light.set("directional_shadow_blend_splits", true)
-	var world_environment := game.get_node("WorldEnvironment") as WorldEnvironment
-	if world_environment != null and world_environment.environment != null:
-		world_environment.environment.ssr_max_steps = 128 if desktop_mid_high else 96
+	# (R1-3) SSR steps have one writer: the graphics preset (RingGraphicsQualityController), which applies after this configure step.
 
 	var global_lod := game.get_node("GlobalTerrainLod3")
 	if "--certification-benchmark" in OS.get_cmdline_user_args():
