@@ -14,6 +14,7 @@ global uniform vec4 ringworld_sky_live7;
 global uniform vec4 ringworld_sky_live9;
 global uniform vec4 ringworld_sky_live10;
 global uniform vec4 ringworld_sky_live11;
+global uniform vec4 ringworld_sky_live12;
 
 #define local_surface_up (ringworld_sky_live0.xyz)
 #define camera_radial_ratio (ringworld_sky_live0.w)
@@ -41,3 +42,4 @@ global uniform vec4 ringworld_sky_live11;
 #define planet_enabled (ringworld_sky_live11.y > 0.5)
 #define day_start_dot (ringworld_sky_live11.z)
 #define day_full_dot (ringworld_sky_live11.w)
+#define ground_bounce_radiance (ringworld_sky_live12.xyz)

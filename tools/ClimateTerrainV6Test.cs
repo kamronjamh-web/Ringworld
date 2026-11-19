@@ -427,7 +427,13 @@ public partial class ClimateTerrainV6Test : RefCounted
     {
         string path = ProjectSettings.GlobalizePath("res://scripts/Voxel/LOD/RingBiomeDecorationLayer.TreeStreaming.cs");
         string text = File.ReadAllText(path);
-        if (!text.Contains("|es1") || !text.Contains("sampler.ClimateMachines != null ? \"|cm1\"")) failures.Add("tree disk-cache key does not carry the climate identity (|cm1)");
+        // T6-3 (2c6ce9d) moved the key string into RingBiomeDecorationLayer.VegetationIdentityDefinition, so check the
+        // helper's output directly and that the tree path passes the sampler's climate machines into it.
+        string with = RingworldTechDemo.Voxel.LOD.RingBiomeDecorationLayer.VegetationIdentityDefinition(5, 1337, 1UL, 2UL, true, true, false, 0);
+        string without = RingworldTechDemo.Voxel.LOD.RingBiomeDecorationLayer.VegetationIdentityDefinition(5, 1337, 1UL, 2UL, true, false, false, 0);
+        if (!with.Contains("|es1") || !with.Contains("|cm1") || without.Contains("|cm1")
+            || !text.Contains("VegetationIdentityDefinition(") || !text.Contains("sampler.ClimateMachines != null, sampler.WeatherLung != null"))
+            failures.Add("tree disk-cache key does not carry the climate identity (|cm1)");
     }
 
     // ---- throughput --------------------------------------------------------------------------------------------

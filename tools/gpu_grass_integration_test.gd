@@ -21,7 +21,9 @@ func _process(_delta: float) -> bool:
 			push_error("GPU_GRASS_INTEGRATION=" + result)
 			quit(1)
 		return true
-	if frames > 900:
+	# Frames alone are no clock: with VSync off (override.cfg, display asleep) 900 frames pass in under a second while the tile builds
+	# run on the worker pool. Time out on frames and wall time together, inside the manifest's 60 s.
+	if frames > 900 and Time.get_ticks_msec() > 45000:
 		push_error("GPU_GRASS_INTEGRATION=FAIL timeout")
 		quit(1)
 	return false

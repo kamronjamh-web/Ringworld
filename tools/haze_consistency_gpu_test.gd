@@ -348,7 +348,7 @@ func _uniforms_to_globals(source: String, material: ShaderMaterial) -> String:
 		out += (glsl_type + " " + name + (" = " + literal if not literal.is_empty() else "") + ";\n")
 	return out
 
-## Same packing as DaySideAtmosphere._SKY_LIVE_LAYOUT (ringworld_sky_live0..11); names the material does not hold keep the project default.
+## Same packing as DaySideAtmosphere._SKY_LIVE_LAYOUT (ringworld_sky_live0..12); names the material does not hold keep the project default.
 const SKY_LIVE_LAYOUT: Array = [
 	[&"local_surface_up", &"camera_radial_ratio"],
 	[&"ring_axis_direction", &"camera_across_ratio"],
@@ -362,9 +362,10 @@ const SKY_LIVE_LAYOUT: Array = [
 	[&"giant_direction", &"planet_angular_radius_degrees"],
 	[&"hub_in_scatter", &"eclipse_coverage", &"starfield_rotation_radians", &"gas_giant_spin_radians"],
 	[&"planet_haze_enabled", &"planet_enabled", &"day_start_dot", &"day_full_dot"],
+	[&"ground_bounce_radiance"],
 ]
 
-## The real sky render reads the packed globals, so a live input written here is also published to ringworld_sky_live0..11.
+## The real sky render reads the packed globals, so a live input written here is also published to ringworld_sky_live0..12.
 func _set_sky_input(input_name: String, value: Variant) -> void:
 	_sky_material.set_shader_parameter(input_name, value)
 	for index in SKY_LIVE_LAYOUT.size():
@@ -377,7 +378,7 @@ func _sky_live_vec4(global_name: String, material: ShaderMaterial) -> Variant:
 	var slot := 0
 	for input_name: StringName in SKY_LIVE_LAYOUT[index]:
 		var written: Variant = material.get_shader_parameter(input_name)
-		var width := 3 if (written is Vector3 or (written == null and input_name in [&"local_surface_up", &"ring_axis_direction", &"sun_direction", &"sun_color", &"sky_top_color", &"sky_horizon_color", &"hub_direction", &"hub_color", &"ring_atmosphere_planet_direction", &"giant_direction"])) else 1
+		var width := 3 if (written is Vector3 or (written == null and input_name in [&"local_surface_up", &"ring_axis_direction", &"sun_direction", &"sun_color", &"sky_top_color", &"sky_horizon_color", &"hub_direction", &"hub_color", &"ring_atmosphere_planet_direction", &"giant_direction", &"ground_bounce_radiance"])) else 1
 		if written != null:
 			var comps: Array[float] = []
 			if written is Vector3:

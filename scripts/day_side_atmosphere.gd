@@ -1384,7 +1384,7 @@ func _exit_tree() -> void:
 	_publish_hub_light(0.0, 0.0)
 
 
-# Sky inputs that change from frame to frame live in global shader parameters (ringworld_sky_live0..11), not in the sky material:
+# Sky inputs that change from frame to frame live in global shader parameters (ringworld_sky_live0..12), not in the sky material:
 # a global write does not dirty the sky radiance map, a material write does. materials/ring_local_sky_live.gdshaderinc unpacks them.
 # Each row is one vec4 (Vector3 names take three components, floats and bools one, bools as 0.0/1.0).
 const _SKY_LIVE_LAYOUT: Array = [
@@ -1400,6 +1400,7 @@ const _SKY_LIVE_LAYOUT: Array = [
 	[&"giant_direction", &"planet_angular_radius_degrees"],
 	[&"hub_in_scatter", &"eclipse_coverage", &"starfield_rotation_radians", &"gas_giant_spin_radians"],
 	[&"planet_haze_enabled", &"planet_enabled", &"day_start_dot", &"day_full_dot"],
+	[&"ground_bounce_radiance"],
 ]
 # Debug only (no menu row, not persisted): values applied over the computed live inputs by the packer.
 var _sky_live_overrides: Dictionary = {}
@@ -1444,6 +1445,7 @@ func _pack_sky_live_inputs(live: Dictionary) -> void:
 				components.append(1.0 if value else 0.0)
 			else:
 				components.append(float(value))
+		components.resize(4) # a row with fewer than four components (ground_bounce_radiance) pads with zeros
 		var packed := Vector4(components[0], components[1], components[2], components[3])
 		if _sky_live_cache[index] is Vector4 and _sky_live_cache[index] == packed:
 			continue
@@ -1577,6 +1579,8 @@ func _update_sky(
 	_set_sky_param("planet_haze_scattering_energy", planet_haze_scattering_energy)
 	var giant_visible_phase := clampf((1.0 - giant_direction.normalized().dot(to_sun.normalized())) * 0.5, 0.0, 1.0)
 	live[&"planet_haze_enabled"] = visual_giant_enabled and planet_light_enabled and giant_visible_phase > 0.05
+	# Computed by _publish_ground_bounce earlier this frame. A live input like sun_color: the cadence refreshes the radiance map.
+	live[&"ground_bounce_radiance"] = published_ground_bounce
 	_set_sky_param("planet_haze_horizon_start_dot", planet_light_horizon_fade_start_dot)
 	_set_sky_param("planet_haze_horizon_full_dot", planet_light_horizon_full_dot)
 	_set_sky_param("planet_haze_twilight_end_day_factor", planet_light_twilight_end_day_factor)
@@ -2099,5 +2103,6 @@ func _publish_ground_bounce() -> void:
 		bounce = ground_bounce_radiance(haze_ground_albedo, direct_rgb, sin_elevation, _haze_lup_day,
 				current_air_cloud_sun_visibility * storm, clampf(current_day_factor, 0.0, 1.0) * current_cloud_ambient_transmittance * storm,
 				_get_underground_sky_access())
+	# Published to the sky through the live inputs (_update_sky packs it into ringworld_sky_live12), not as a material uniform: it changes
+	# every frame with the sun, and a material write would dirty the radiance map on every frame (sky_material_write_invariant_test).
 	published_ground_bounce = bounce
-	_set_sky_param(&"ground_bounce_radiance", bounce)

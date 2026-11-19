@@ -60,7 +60,10 @@ public partial class RiverRecipeFieldsTest : RefCounted
         var gen1 = TerrainGenerationParameters.WorldDefault(1, 1337);
         var rivers = TerrainGenerationParameters.WorldDefault(1, 1337, Review);
         Require(rivers.HasRivers && rivers.ReviewFeatures.SequenceEqual(Review) && rivers.DefinitionHash != gen1.DefinitionHash, "review recipe flags or hash differ");
-        Require(WorldRecipeFields.Specs.Select(s => s.Name).SequenceEqual(RiverFields), "river field order differs");
+        // Other features append their own fields after the river block (T6-3 forest_stand_age_contrast), so check the
+        // water.rivers fields: they must be the first specs, in this permanent order.
+        Require(WorldRecipeFields.Specs.Take(RiverFields.Length).Select(s => s.Name).SequenceEqual(RiverFields)
+            && WorldRecipeFields.Specs.Where(s => s.FeatureId == "water.rivers").Select(s => s.Name).SequenceEqual(RiverFields), "river field order differs");
         Require(rivers.CanonicalJson.EndsWith(",\"river_density\":1,\"lake_abundance\":0.5,\"river_valley_width\":1,\"channel_depth\":1,\"meander_strength\":1,\"river_ferocity\":1}", StringComparison.Ordinal),
             "river field defaults or canonical order differ");
         Require(TerrainGenerationParameters.FromJson(rivers.CanonicalJson).CanonicalJson == rivers.CanonicalJson, "river recipe JSON round trip differs");

@@ -307,6 +307,10 @@ ringworld_sky_live11={
 "type": "vec4",
 "value": Vector4(1, 1, -0.2, 0.35)
 }
+ringworld_sky_live12={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
 ringworld_sky_reflection={
 "type": "float",
 "value": 1.0

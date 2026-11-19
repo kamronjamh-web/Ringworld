@@ -290,6 +290,28 @@
       "machines": [
         "desktop_mid_high"
       ]
+    },
+    "water_ambience_capture_test": {
+      "status": "known-fail",
+      "match": "WATER_AMBIENCE_CAPTURE=FAIL loops: lap is 42 s, expected 40 s",
+      "evidence": "Sound project (docs/work-orders/sound/README.md), not terrain/vegetation: dfba759 (2026-11-14, T3R-10c revision) replaced the synthesised loops with Stable Audio Open takes trimmed to 42 s, but the T3R-10c length table in tools/WaterAmbienceCaptureTest.cs (lap 40 s, babble 32 s, ...) was not updated. Last PASS water10d 2026-11-14 01:19; fails identically since overnight_gate 2026-11-16 and on every branch run since (pre-playtest 20261119-093225). Fix belongs to SFX-1: update the table to the shipped loop lengths.",
+      "since": "2026-11-14"
+    },
+    "river_far_water_fraction_test": {
+      "status": "known-fail",
+      "match": "RIVER_FAR_WATER_FRACTION=FAIL head window at 8 m holds 585 m2 against the channel area 528 m2 \\(5 %\\)",
+      "evidence": "Pre-existing, not 2026-11-19 work: identical numbers (stem 139, 585 vs 528 m2, +10.8 %) in every run since c2c_gate 2026-11-13 22:16, after T2R-22/T2R-23 (b5c0fdb, 7272662) reshaped the strip graph; t2r21 runs that day had 2500 vs 2429 m2 (+2.9 %). The T2R-21 head window now lands on a narrow head where the 8 m reference is ~8 lattice cells, so one cell is ~12 %. Needs a river-owner decision: pick a head stem at least two spacings wide or an absolute per-cell allowance at 8 m.",
+      "since": "2026-11-13"
+    },
+    "cloud_haze_gameplay_test": {
+      "status": "flaky",
+      "match": "CLOUD_HAZE_GAMEPLAY_TEST=FAIL same-haze repeat changed cloud alpha unexpectedly",
+      "retries": 0,
+      "evidence": "Pre-existing, not 2026-11-19 work: the same-haze determinism control (mean alpha delta of two identical haze-off captures, limit 0.012) sits at the limit. Failed r1_0 2026-11-17 19:11, r3a1 and flip_shared_a/b 2026-11-18 (before 6e33109), passed merge_tvr_final and flip_alone; 2026-11-19 pre-playtest 0.01233 and triage 20261119-101718 0.01264 (259k cloud pixels, rgb delta 0.0049). Something in the frozen capture is still not deterministic (interleave phase or a clock not frozen by freeze_cloud_sampling); needs a cloud-owner look, the limit was not relaxed.",
+      "since": "2026-11-17",
+      "machines": [
+        "desktop_mid_high"
+      ]
     }
   }
 }

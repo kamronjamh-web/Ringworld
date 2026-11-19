@@ -53,8 +53,11 @@ func _init() -> void:
 	atmosphere.free()
 	# Sky shader: the uniform exists and is only used by the radiance-map pass.
 	var code := FileAccess.get_file_as_string(SKY_SHADER_PATH)
-	if code.find("uniform vec3 ground_bounce_radiance") < 0:
-		_fail("ring_local_sky.gdshader does not declare ground_bounce_radiance")
+	# A live input (ringworld_sky_live12, ring_local_sky_live.gdshaderinc), not a material uniform: writing a material uniform every frame dirties
+	# the sky radiance map outside the cadence (sky_material_write_invariant_test).
+	var live_code := FileAccess.get_file_as_string("res://materials/ring_local_sky_live.gdshaderinc")
+	if live_code.find("#define ground_bounce_radiance (ringworld_sky_live12.xyz)") < 0 or code.find("uniform vec3 ground_bounce_radiance") >= 0:
+		_fail("ground_bounce_radiance is not the ringworld_sky_live12 live input")
 	var gate := code.find("if (AT_CUBEMAP_PASS) {")
 	var use := code.find("ground_bounce_radiance, below_horizon")
 	if gate < 0 or use < 0 or use < gate or use - gate > 600:

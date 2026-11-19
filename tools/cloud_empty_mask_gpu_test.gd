@@ -52,6 +52,10 @@ func _run() -> void:
 		clouds.diagnostic_depth_density_matte = false
 		clouds.accumulation_decay = 0.0
 		clouds.compute_shader = counter
+		# The counter replaces the march pass's output_data store with fetch counts. The full-march reject-resolve pass (6e33109,
+		# cloud_reject_resolve) rewrites output_data of history-rejected pixels with the resolved march data afterwards, which would
+		# overwrite those counts; the parity snapshots above keep it on, the fixture counts are taken with it off.
+		clouds.cloud_reject_resolve = false
 		clouds.skip_empty_cloud_mask_samples = false
 		clouds.refresh_compute()
 		await _draws(6)
@@ -60,6 +64,7 @@ func _run() -> void:
 		clouds.refresh_compute()
 		await _draws(6)
 		var on := await _read_cloud_output(0)
+		clouds.cloud_reject_resolve = true
 		if failed: return
 		var counts := _check_counts(off, on)
 		if failed: return

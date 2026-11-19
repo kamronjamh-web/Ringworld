@@ -16,7 +16,8 @@ uniform float radiance_epoch = 0.0;
 // Ground bounce (linear radiance of the sunlit ground, Godot ambient units = rho * (E_dir * sin(elevation) + sky)), published by
 // day_side_atmosphere.gd. The radiance-map pass shows it below the local horizon, so every ambient-lit surface that faces down or sideways
 // receives the light reflected by the ground instead of a black floor. The visible sky never shows it (geometry covers the lower half).
-uniform vec3 ground_bounce_radiance = vec3(0.0);
+// It changes every frame with the sun, so it is a live input (ringworld_sky_live12.xyz, ring_local_sky_live.gdshaderinc), not a material
+// uniform: a material write dirties the radiance map, and the sky radiance cadence must stay the only thing that refreshes it.
 
 // Camera altitude above the nominal floor in metres (Physical haze model; the Legacy path derives it from camera_radial_ratio).
 uniform float ring_half_width_ratio = 0.002;

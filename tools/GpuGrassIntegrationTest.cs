@@ -323,9 +323,16 @@ public partial class GpuGrassIntegrationTest : Node
         finally { layer.QueueFree(); await Frames(2); }
     }
 
+    // Tile builds run on the worker pool, so settling is bounded by wall time as well as frames: in a shared GPU group with other Godot
+    // processes, or with VSync off (override.cfg), 240 frames pass in under 0.5 s (2 ms frames) before one CPU build lands (intermittent
+    // since 2026-11-16).
+    private const double SettleMinimumSeconds = 15.0;
+    private static bool SettleExpired(int frame, ulong startMs) => frame >= 240 && (Time.GetTicksMsec() - startMs) / 1000.0 >= SettleMinimumSeconds;
+
     private async Task Settle()
     {
-        for (int i = 0; i < 240; i++)
+        ulong startMs = Time.GetTicksMsec();
+        for (int i = 0; !SettleExpired(i, startMs); i++)
         {
             await StepFrames(1);
             if (_layer.PendingGrassTileBuildCount == 0 && _layer.PendingGrassUploadCount == 0
@@ -335,7 +342,8 @@ public partial class GpuGrassIntegrationTest : Node
     }
     private async Task Settle(RingStandingGrassLayer layer)
     {
-        for (int i = 0; i < 240; i++)
+        ulong startMs = Time.GetTicksMsec();
+        for (int i = 0; !SettleExpired(i, startMs); i++)
         {
             layer.StepForTests(_sampler, _edits, _focus, _geometry);
             await Frames(1);
