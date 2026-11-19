@@ -280,6 +280,16 @@
       "machines": [
         "desktop_mid_high"
       ]
+    },
+    "tree_frustum_identity_gpu_test": {
+      "status": "flaky",
+      "match": "TREE_FRUSTUM_IDENTITY=FAIL",
+      "retries": 0,
+      "evidence": "2026-11-18 T5-7b: failed 3 of 3 runs on different cases each time (forest_interior/plains, plains yaw0 6 px, forest_edge yaw315 cloudmove 87 px). Not T5 (no scatter layer in its world). Not forest lighting: FL-4 proved switch-off byte identity on the real world (forest_interior/forest_edge), and the same real-world harness is nondeterministic at save_spot (1-22 px between identical captures). Harness nondeterminism; needs a determinism fix before it can gate.",
+      "since": "2026-11-18",
+      "machines": [
+        "desktop_mid_high"
+      ]
     }
   }
 }
