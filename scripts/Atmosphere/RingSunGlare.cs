@@ -33,7 +33,7 @@ public partial class RingSunGlare : Node
     public static float Strength { get; private set; } = 1.0f;
     /// <summary>"Lens flare" setting, 0 to 1 (persisted; ghosts and starburst are not drawn yet).</summary>
     public static float LensFlare { get; private set; }
-    /// <summary>Debug only, never persisted and never in the menu: multiplies the displayed sun radiance in the draw (comparison stills). 1 = physical.</summary>
+    /// <summary>Fixed source gain on the displayed sun radiance in the draw (never persisted, not in the menu). 30 = the soft halo the user chose 2026-11-18; the drawn sun is only ~10x the sky beside it, so 1 (physical) shows no glare. Tests may override it.</summary>
     public static float GlareSourceGain { get; set; } = 1.0f;
     public static void SetSettings(float glare, float lensFlare)
     {

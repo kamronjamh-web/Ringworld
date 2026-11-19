@@ -385,6 +385,7 @@ Total new GPU while active: est. 0.5 to 0.9 ms (fog plus flare); 0 to 0.1 ms in 
 - (c) Character fog: driven by weather AND location, and terrain-aware: it pools in valleys and hollows and follows the ground, near water, and so on. Cost of 0.4-0.8 ms while active is accepted on High and above. Medium and Low get a reduced version or none.
 - Start NF-0 and LF-0 now.
 - Open questions not asked yet (defaults: the recommendations in each section): flare calibration, whether the hub false sun and lightning flare, ordering of V4 against near shafts, and near-only against visible from ridges.
+- **Later answers (2026-11-18, after LF-1 and NF-1):** glare ships with a fixed source gain of 30 (soft halo; `RingSunGlare.GlareSourceGain` default), not 1. Near fog runs on High and above only: **Medium gets no near fog** (overrides the NF-1 preset that gave Medium a reduced grid). Coastal advection fog stays out of the first version.
 
 ## Spike results (2026-11-18)
 
