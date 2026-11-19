@@ -110,6 +110,76 @@ public static class WorldGenerationFingerprint
         };
     }
 
+    /// <summary>The <c>catalog</c> field: the 30 base variants (index, species, name, sizes, per-LOD surface and vertex counts). Its definition never changes (A6a); it hashes ImportedTreeCatalog.Load() only.</summary>
+    public static Dictionary<string, object?> ComputeCatalogField(IReadOnlyList<ImportedTreeVariant> catalog)
+    {
+        var ch = new Fnv();
+        foreach (ImportedTreeVariant v in catalog)
+        {
+            ch.I32(v.Index); ch.I32((int)v.Species);
+            foreach (char c in v.Name) ch.U32(c);
+            ch.F32(v.HeightMeters); ch.F32(v.WidthMeters); ch.F32(v.TrunkRadiusMeters);
+            foreach (Mesh lod in v.Lods)
+            {
+                int surfaces = lod.GetSurfaceCount();
+                ch.I32(surfaces);
+                for (int s = 0; s < surfaces; s++)
+                    ch.I32(lod is ArrayMesh am ? am.SurfaceGetArrayLen(s) : lod.SurfaceGetArrays(s)[(int)Mesh.ArrayType.Vertex].AsVector3Array().Length);
+            }
+        }
+        return new Dictionary<string, object?> { ["version"] = ImportedTreeCatalog.CatalogVersion, ["variant_count"] = catalog.Count, ["hash"] = Hex(ch.Value) };
+    }
+
+
+    static void HashMeshes(Fnv h, IEnumerable<Mesh?> lods)
+    {
+        foreach (Mesh? lod in lods)
+        {
+            if (lod == null) { h.I32(-1); continue; }
+            int surfaces = lod.GetSurfaceCount();
+            h.I32(surfaces);
+            for (int s = 0; s < surfaces; s++)
+                h.I32(lod is ArrayMesh am ? am.SurfaceGetArrayLen(s) : lod.SurfaceGetArrays(s)[(int)Mesh.ArrayType.Vertex].AsVector3Array().Length);
+        }
+    }
+
+    /// <summary>
+    /// T6 design A6a: the rows of <c>table.RowsEnabled(featureSet)</c> with index 30 or more, in index order: the row's fields, its meshes from the owning catalog (per LOD slot: surface count and vertex count
+    /// per surface, as the <c>catalog</c> field does; -1 for an unused slot, -2 when the owning catalog holds no mesh for the row) and each owning catalog's version. {count 0, hash none} when no appended row is enabled.
+    /// The derived catalog is loaded only when a row needs it, so generation 1 never touches it. Main thread only.
+    /// </summary>
+    public static Dictionary<string, object?> ComputeCatalogAppended(IReadOnlySet<string> featureSet, TreeSourceTable table)
+    {
+        ImportedTreeSourceRow[] rows = table.RowsEnabled(featureSet).Where(r => r.Index >= ImportedTreeCatalog.VariantCount).OrderBy(r => r.Index).ToArray();
+        if (rows.Length == 0) return new Dictionary<string, object?> { ["count"] = 0, ["hash"] = "none" };
+        var h = new Fnv();
+        var versions = new SortedDictionary<int, string>();
+        foreach (ImportedTreeSourceRow r in rows)
+        {
+            h.I32(r.Index); h.I32((int)r.Species); h.I32((int)r.Form); h.I32((int)r.SizeClass); h.I32(r.AgeRank); h.I32((int)r.Role); h.I32((int)r.Catalog); h.I32(r.SourceBaseVariant);
+            foreach (char c in r.EnablingFeature ?? "") h.U32(c);
+            h.U32(0);
+            switch (r.Catalog)
+            {
+                case TreeSourceCatalog.T6Derived:
+                    versions[(int)r.Catalog] = $"{r.Catalog}={DerivedTreeCatalog.CatalogVersion}";
+                    DerivedTreeForm? form = DerivedTreeCatalog.Load().FirstOrDefault(f => f.Index == r.Index);
+                    if (form == null) h.I32(-2); else HashMeshes(h, form.Lods);
+                    break;
+                case TreeSourceCatalog.LolipopBase:
+                    versions[(int)r.Catalog] = $"{r.Catalog}={ImportedTreeCatalog.CatalogVersion}";
+                    IReadOnlyList<ImportedTreeVariant> baseCatalog = ImportedTreeCatalog.Load();
+                    if (r.Index < baseCatalog.Count) HashMeshes(h, baseCatalog[r.Index].Lods); else h.I32(-2);
+                    break;
+                default:
+                    versions[(int)r.Catalog] = $"{r.Catalog}=0";
+                    h.I32(-2);
+                    break;
+            }
+        }
+        return new Dictionary<string, object?> { ["count"] = rows.Length, ["catalog_versions"] = string.Join(",", versions.Values), ["hash"] = Hex(h.Value) };
+    }
+
     public static Dictionary<string, object?> Compute(LandscapeWorld.Spec spec, LandscapeWorld.Worker w, LandscapePoseFinder.Fixture fixture, string fixturePath)
     {
         // The tree catalog is not thread safe: load it here, on the main thread, before any tile builds.
@@ -210,21 +280,9 @@ public static class WorldGenerationFingerprint
         ComputeScatterSlot(spec, w, row);
 
         // 6: tree catalog
-        var ch = new Fnv();
-        foreach (ImportedTreeVariant v in catalog)
-        {
-            ch.I32(v.Index); ch.I32((int)v.Species);
-            foreach (char c in v.Name) ch.U32(c);
-            ch.F32(v.HeightMeters); ch.F32(v.WidthMeters); ch.F32(v.TrunkRadiusMeters);
-            foreach (Mesh lod in v.Lods)
-            {
-                int surfaces = lod.GetSurfaceCount();
-                ch.I32(surfaces);
-                for (int s = 0; s < surfaces; s++)
-                    ch.I32(lod is ArrayMesh am ? am.SurfaceGetArrayLen(s) : lod.SurfaceGetArrays(s)[(int)Mesh.ArrayType.Vertex].AsVector3Array().Length);
-            }
-        }
-        row["catalog"] = new Dictionary<string, object?> { ["version"] = ImportedTreeCatalog.CatalogVersion, ["variant_count"] = catalog.Count, ["hash"] = Hex(ch.Value) };
+        row["catalog"] = ComputeCatalogField(catalog);
+        // 7: appended catalog entries (T6 design A6a): rows of this generation's feature set with index 30 or more; the `catalog` field above keeps its definition for good.
+        row["catalog_appended"] = ComputeCatalogAppended(WorldGenerationLedger.Production.FeatureSet(spec.Recipe.WorldGeneration, spec.Recipe.ReviewFeatures), ImportedTreeSourceTable.Production);
         return row;
     }
 }

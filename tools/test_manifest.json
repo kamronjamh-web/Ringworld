@@ -604,6 +604,29 @@
       "expected_s": 160,
       "timeout_s": 600
     },
+    "prepare_derived_tree_assets": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "PREPARE_DERIVED_TREE_ASSETS",
+      "expected_s": 30,
+      "timeout_s": 300
+    },
+    "tree_catalog_append_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation",
+        "landscape"
+      ],
+      "marker": "TREE_CATALOG_APPEND",
+      "expected_s": 20,
+      "timeout_s": 60
+    },
     "prepare_tree_leaf_mips": {
       "kind": "tool",
       "mode": "headless",
@@ -2221,6 +2244,18 @@
       "marker_fix": "none",
       "expected_s": null,
       "timeout_s": 300
+    },
+    "forest_structure_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation",
+        "landscape"
+      ],
+      "marker": "FOREST_STRUCTURE",
+      "expected_s": 45,
+      "timeout_s": 150
     },
     "forest_region_preview_test": {
       "kind": "test",

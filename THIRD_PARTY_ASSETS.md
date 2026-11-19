@@ -65,6 +65,8 @@ adaptation, and the shared far impostor built from the authored LOD3 card
 meshes are adaptations of LOLIPOP's work and carry the same credit, with a
 "modified" note. The supplied source files themselves are unmodified.
 
+The derived forms for dead wood (`resources/trees/prepared/lolipop_derived_catalog.res`, indices 30-42, built by `tools/prepare_derived_tree_assets.gd` from the prepared catalog) are also adaptations of LOLIPOP's work and carry the same credit, with a "modified" note: the snags use the bark surface only (foliage removed); the fallen trees and stumps are clipped from the bark surface, capped and re-oriented (logs lie along +X); and the far snag and log poles are generated geometry textured from the same bark texture.
+
 ## Water loops (resources/audio/water)
 
 `water_lap_loop.ogg`, `surf_break_loop.ogg`, `surf_far_loop.ogg`, `open_water_loop.ogg`, `stream_babble_loop.ogg`,

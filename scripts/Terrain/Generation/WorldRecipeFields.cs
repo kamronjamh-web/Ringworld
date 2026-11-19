@@ -20,6 +20,8 @@ public static class WorldRecipeFields
         new("channel_depth", "water.rivers", RecipeFieldKind.Float, 1, 0.5, 2),
         new("meander_strength", "water.rivers", RecipeFieldKind.Float, 1, 0, 2),
         new("river_ferocity", "water.rivers", RecipeFieldKind.Float, 1, 0.6, 1.5),
+        // vegetation.forest_structure (open; T6 design A2)
+        new("forest_stand_age_contrast", "vegetation.forest_structure", RecipeFieldKind.Float, 1, 0, 1.5),
     };
 }
 

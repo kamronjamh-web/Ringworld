@@ -134,6 +134,12 @@ public partial class WorldGenerationFingerprintTest : RefCounted
         var actual = new SortedDictionary<string, string>(StringComparer.Ordinal);
         Flatten("", stored, expected);
         Flatten("", now, actual);
+        // A frozen row captured before T6-5 has no catalog_appended key: it means "none" (A6a), so the golden JSON is never edited.
+        if (!expected.Keys.Any(key => key.StartsWith("catalog_appended", StringComparison.Ordinal)))
+        {
+            expected["catalog_appended.count"] = "0";
+            expected["catalog_appended.hash"] = "none";
+        }
         fields = actual.Keys.Count(key => !excluded.Contains(key));
         var differences = new List<string>();
         foreach (string key in expected.Keys.Union(actual.Keys).OrderBy(key => key, StringComparer.Ordinal))

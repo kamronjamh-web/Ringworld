@@ -13,6 +13,7 @@ using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Phase2;
 using RingworldTechDemo.Voxel.Phase3;
 using RingworldTechDemo.Vegetation;
+using RingworldTechDemo.Vegetation.Scatter;
 
 namespace RingworldTechDemo.Voxel.LOD;
 
@@ -483,6 +484,7 @@ public partial class RingBiomeDecorationLayer
 			bool allowDisk = EnableVegetationDiskCache
 				&& !_vegetationDiskCacheDisabledByCommandLine
 				&& VegetationDiskCacheBudgetMiB > 0
+				&& !ForestStructureDiskCacheBlocked(sampler.WorldFeatureMask)
 				&& !TileTouchesEditedColumns(key, edits, layout);
 			var request = new TileBuildRequest(
 				key,
@@ -661,12 +663,11 @@ public partial class RingBiomeDecorationLayer
 		// The identity is a pure function of these inputs, so it is computed once per distinct tuple.
 		int generator = sampler.TerrainGeneratorVersion, seed = sampler.Seed;
 		ulong definitionHash = sampler.TerrainDefinitionHash;
-		int features = (sampler.EmitterSites != null ? 1 : 0) | (sampler.ClimateMachines != null ? 2 : 0) | (sampler.WeatherLung != null ? 4 : 0);
+		int features = (sampler.EmitterSites != null ? 1 : 0) | (sampler.ClimateMachines != null ? 2 : 0) | (sampler.WeatherLung != null ? 4 : 0) | (ForestStructureMask(sampler.WorldFeatureMask) ? 8 : 0);
 		if (_vegetationIdentity is null || _vegetationIdentitySettings != settings || _vegetationIdentityGenerator != generator || _vegetationIdentitySeed != seed
 			|| _vegetationIdentityDefinition != definitionHash || _vegetationIdentityFeatures != features || _vegetationIdentityRoot != budgetRoot)
 		{
-			string definition = FormattableString.Invariant(
-				$"v{VegetationDiskCacheVersion}|g{generator}|seed{seed}|h{definitionHash:X16}|s{settings:X16}{(sampler.EmitterSites != null ? "|es1" : "")}{(sampler.ClimateMachines != null ? "|cm1" : "")}{(sampler.WeatherLung != null ? "|wl1" : "")}");
+			string definition = VegetationIdentityDefinition(generator, seed, definitionHash, settings, sampler.EmitterSites != null, sampler.ClimateMachines != null, sampler.WeatherLung != null, sampler.WorldFeatureMask);
 			byte[] digest = SHA256.HashData(Encoding.UTF8.GetBytes(definition));
 			_vegetationIdentity = Convert.ToHexString(digest.AsSpan(0, 12));
 			_vegetationIdentityDirectory = Path.Combine(budgetRoot, "vegetation", _vegetationIdentity);
@@ -1160,7 +1161,7 @@ public partial class RingBiomeDecorationLayer
 		if (request.AllowDiskCache)
 		{
 			using var loadScope = RingPerformanceTelemetry.MeasureCpu("Trees disk load", worker: true);
-			if (TryLoadVegetationTile(request.DiskPath, request.Key, request.EditVersion, out VegetationTile? cached))
+			if (TryLoadVegetationTile(request.DiskPath, request.Key, request.EditVersion, out VegetationTile? cached, request.Sampler.WorldFeatureMask))
 			{
 				RingGeneratedLodCacheBudget.Touch(request.DiskPath);
 				return new TileBuildResult(request.Key, cached, timer.Elapsed.TotalMilliseconds, false, true, false);
@@ -1177,6 +1178,9 @@ public partial class RingBiomeDecorationLayer
 			? new ForestRegionSampler(request.Seed, (long)Math.Ceiling(request.CircumferenceMeters), (int)Math.Ceiling(request.RingWidth))
 			: null;
 		var spacingEvaluations = new Dictionary<ulong, ForestCandidateEvaluation>();
+		// T6 forest structure (bit 6): null with the bit off, so every branch below keeps the generation 1 path.
+		ForestStructureSampler? structure = ForestStructureActive(request) ? ForestStructureFor(request) : null;
+		RingHabitatFieldGrid? habitatGrid = null;
 		for (long z = startZ; z < startZ + request.TileCells; z++) for (long x = startX; x < endX; x++)
 		{
 			if (request.Cancellation.IsCancellationRequested) return new TileBuildResult(request.Key, null, timer.Elapsed.TotalMilliseconds, true, false, false);
@@ -1202,7 +1206,7 @@ public partial class RingBiomeDecorationLayer
 					? forestRegions!.Sample(canonicalAround, candidateAcross, sample, slopeDegrees)
 					: default;
 				float chance = request.UseRegionalForest
-					? regional.Density
+					? structure != null ? StructuredChanceBase(structure, canonicalAround, candidateAcross, sample, regional) : regional.Density
 					: sample.Biome == TerrainBiomeId.Forest ? request.ForestChance : request.GrasslandChance;
 				if (Hash01(x, z, request.Seed, salt + 2) >= ApplyGroveDensity(chance, request.GroveDensity, x, z, request.Seed)) continue;
 				ulong spacingId = StableTreeId(x, z, request.Seed, candidate);
@@ -1213,12 +1217,22 @@ public partial class RingBiomeDecorationLayer
 					float spacingSurface = PresentationSurfaceHeight(request.Edits, sampler, canonicalAround, candidateAcross);
 					spacingEvaluations[spacingId] = IsSurfaceWater(request.Edits, sampler, sample, spacingSurface)
 						? default
-						: new ForestCandidateEvaluation(true, spacingId, x, z, candidate, canonicalAround, candidateAcross, sample, spacingSurface, regional, ApplyGroveDensity(regional.Density, request.GroveDensity, x, z, request.Seed));
+						: new ForestCandidateEvaluation(true, spacingId, x, z, candidate, canonicalAround, candidateAcross, sample, spacingSurface, regional, ApplyGroveDensity(structure != null ? chance : regional.Density, request.GroveDensity, x, z, request.Seed));
 				}
 				if (request.UseRegionalForest && !WinsForestSpacingCompetition(request, forestRegions!, x, z, candidate, canonicalAround, candidateAcross, sample, regional, maximumCanonicalAround, spacingEvaluations)) continue;
-				TreeSpecies species = request.UseRegionalForest ? SelectForestSpecies(regional, Hash01(x, z, request.Seed, salt + 3)) : TreeSpecies.Maple;
-				int variant = SelectForestVariant(species, Hash01(x, z, request.Seed, salt + 4));
-				float scale = .85f + .30f * Hash01(x, z, request.Seed, salt + 6);
+				TreeSpecies species; int variant; float scale;
+				if (structure != null)
+				{
+					species = SelectStructuredSpecies(request, ref habitatGrid, sampler, canonicalAround, candidateAcross, sample, slopeDegrees, regional, Hash01(x, z, request.Seed, salt + 3));
+					variant = SelectStructuredVariant(species, structure.EffectiveAge(canonicalAround, candidateAcross, regional, sample.Temperature), Hash01(x, z, request.Seed, salt + 8), Hash01(x, z, request.Seed, salt + 4));
+					scale = .92f + .16f * Hash01(x, z, request.Seed, salt + 6);
+				}
+				else
+				{
+					species = request.UseRegionalForest ? SelectForestSpecies(regional, Hash01(x, z, request.Seed, salt + 3)) : TreeSpecies.Maple;
+					variant = SelectForestVariant(species, Hash01(x, z, request.Seed, salt + 4));
+					scale = .85f + .30f * Hash01(x, z, request.Seed, salt + 6);
+				}
 				float height = request.UseRegionalForest ? request.VariantHeights[variant] * scale : 5f + 9f * Hash01(x, z, request.Seed, salt + 3);
 				float width = request.UseRegionalForest ? request.VariantWidths[variant] * scale : height * (.20f + .14f * Hash01(x, z, request.Seed, salt + 4));
 				float yaw = Hash01(x, z, request.Seed, salt + 5) * Mathf.Tau;
@@ -1247,7 +1261,10 @@ public partial class RingBiomeDecorationLayer
 		long cellX, long cellZ, int candidate, long around, int across, in TerrainSample sample,
 		in ForestRegionSample regional, long maximumCanonicalAround, Dictionary<ulong, ForestCandidateEvaluation> cache)
 	{
-		float radius = ForestLocalSpacingMeters(sample.Moisture, regional.Density);
+		ForestStructureSampler? structure = ForestStructureActive(request) ? ForestStructureFor(request) : null;
+		float radius = structure != null ? StructuredSpacingMeters(structure, around, across, sample, regional) : ForestLocalSpacingMeters(sample.Moisture, regional.Density);
+		// Nine metres is the global maximum local radius (11.7 m when structured): reject before terrain, edit, and climate work for the overwhelming majority of halo peers.
+		double maximumRadiusSquared = structure != null ? (double)ForestStructureSampler.MaximumSpacingMeters * ForestStructureSampler.MaximumSpacingMeters : 81.0;
 		ulong id = StableTreeId(cellX, cellZ, request.Seed, candidate);
 		for (long z = cellZ - 1; z <= cellZ + 1; z++) for (long x = cellX - 1; x <= cellX + 1; x++)
 		for (int peer = 0; peer < request.Candidates; peer++)
@@ -1261,16 +1278,16 @@ public partial class RingBiomeDecorationLayer
 			if (predictedDa > request.CircumferenceMeters * .5) predictedDa -= request.CircumferenceMeters;
 			else if (predictedDa < -request.CircumferenceMeters * .5) predictedDa += request.CircumferenceMeters;
 			double predictedDz = predictedAcross - across;
-			// Nine metres is the global maximum local radius: reject before terrain,
-			// edit, and climate work for the overwhelming majority of halo peers.
-			if (predictedDa * predictedDa + predictedDz * predictedDz >= 81.0) continue;
+			if (predictedDa * predictedDa + predictedDz * predictedDz >= maximumRadiusSquared) continue;
 			ForestCandidateEvaluation peerEvaluation = EvaluateSpacingCandidate(request, regions, peerCell, z, peer, maximumCanonicalAround, cache);
 			if (!peerEvaluation.Viable) continue;
 			double da = peerEvaluation.Around - around;
 			if (da > request.CircumferenceMeters * .5) da -= request.CircumferenceMeters;
 			else if (da < -request.CircumferenceMeters * .5) da += request.CircumferenceMeters;
 			double dz = peerEvaluation.Across - across;
-			float required = Mathf.Max(radius, ForestLocalSpacingMeters(peerEvaluation.Terrain.Moisture, peerEvaluation.Regional.Density));
+			float required = Mathf.Max(radius, structure != null
+				? StructuredSpacingMeters(structure, peerEvaluation.Around, peerEvaluation.Across, peerEvaluation.Terrain, peerEvaluation.Regional)
+				: ForestLocalSpacingMeters(peerEvaluation.Terrain.Moisture, peerEvaluation.Regional.Density));
 			if (da * da + dz * dz >= required * required) continue;
 			if (peerEvaluation.Id < id) return false;
 		}
@@ -1293,7 +1310,8 @@ public partial class RingBiomeDecorationLayer
 		float slope = EstimateSlopeDegrees(request.Sampler, request.Edits, around, across);
 		if (slope > request.MaximumSlope) return cache[id] = default;
 		ForestRegionSample regional = regions.Sample(around, across, terrain, slope);
-		float chance = ApplyGroveDensity(regional.Density, request.GroveDensity, cellX, cellZ, request.Seed);
+		ForestStructureSampler? structure = ForestStructureActive(request) ? ForestStructureFor(request) : null;
+		float chance = ApplyGroveDensity(structure != null ? StructuredChanceBase(structure, around, across, terrain, regional) : regional.Density, request.GroveDensity, cellX, cellZ, request.Seed);
 		if (Hash01(cellX, cellZ, request.Seed, salt + 2) >= chance) return cache[id] = default;
 		return cache[id] = new ForestCandidateEvaluation(true, id, cellX, cellZ, candidate, around, across, terrain, surface, regional, chance);
 	}
@@ -1346,7 +1364,14 @@ public partial class RingBiomeDecorationLayer
 		return first + Mathf.Clamp((int)(random * count), 0, count - 1);
 	}
 
-	private static bool TryLoadVegetationTile(string path, VegetationTileKey expectedKey, ulong version, out VegetationTile? tile)
+	private static bool LiteralVariantRangeAccepts(TreeSpecies species, int variant)
+		=> variant >= 0
+			&& variant < ImportedTreeCatalog.VariantCount
+			&& !(species == TreeSpecies.Maple && variant > 11)
+			&& !(species == TreeSpecies.Fir && (variant < 12 || variant > 14))
+			&& !(species == TreeSpecies.Pine && variant < 15);
+
+	private static bool TryLoadVegetationTile(string path, VegetationTileKey expectedKey, ulong version, out VegetationTile? tile, int worldFeatureMask = 0)
 	{
 		tile = null; if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return false;
 		try
@@ -1357,6 +1382,9 @@ public partial class RingBiomeDecorationLayer
 				|| reader.ReadInt64() != expectedKey.Around
 				|| reader.ReadInt64() != expectedKey.Across) return false;
 			int count = reader.ReadInt32(); if (count < 0 || count > MaximumTreesPerVegetationTile) return false;
+			// T6 A6a: a world with bit 6 validates against the source table (derived indices are never canopy; T8's species will be); every other world keeps the literal generation 1 ranges.
+			bool structured = ForestStructureMask(worldFeatureMask);
+			IReadOnlySet<string>? structuredFeatures = structured ? FeatureSetOfMask(worldFeatureMask) : null;
 			var trees = new List<CachedTree>(count);
 			for (int i = 0; i < count; i++)
 			{
@@ -1382,11 +1410,7 @@ public partial class RingBiomeDecorationLayer
 					|| tree.Rank < 0.0f
 					|| tree.Rank > 1.0f
 					|| !Enum.IsDefined(tree.Species)
-					|| tree.Variant < 0
-					|| tree.Variant >= ImportedTreeCatalog.VariantCount
-					|| (tree.Species == TreeSpecies.Maple && tree.Variant > 11)
-					|| (tree.Species == TreeSpecies.Fir && (tree.Variant < 12 || tree.Variant > 14))
-					|| (tree.Species == TreeSpecies.Pine && tree.Variant < 15)) return false;
+					|| !(structured ? ImportedTreeSourceTable.IsCanopySelectable(tree.Variant, tree.Species, structuredFeatures!) : LiteralVariantRangeAccepts(tree.Species, tree.Variant))) return false;
 				trees.Add(tree);
 			}
 			tile = new VegetationTile { Key = expectedKey, Trees = trees, EditVersion = version }; return true;

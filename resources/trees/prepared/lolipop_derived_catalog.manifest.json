@@ -1,0 +1,388 @@
+{
+  "schema_version": 1,
+  "tool_version": 1,
+  "catalog_version": 1,
+  "form_count": 13,
+  "engine_identity": "4.8-dev7 (official)|c971f93e7",
+  "base_catalog_artifact_sha256": "24FCAB9192BAB5359C41270630F606CADE6926D4C7E9A823BBC233ADA03BE16D",
+  "artifact_path": "resources/trees/prepared/lolipop_derived_catalog.res",
+  "artifact_sha256": "66CB31301AA05F03C5A8176EBF058612EABD39B9A4C0E25E556EF33EDE89F951",
+  "total_bytes": 1946642,
+  "forms": [
+    {
+      "index": 30,
+      "form": "Snag",
+      "source_variant": 6,
+      "length_m": 12.615,
+      "trunk_radius_m": 0.4076,
+      "lods": [
+        {
+          "lod": "0",
+          "source_hash": "20600B285E0B9FF2F6161D4BE8B96E0F3DA085C32AA428589732879F062E5599",
+          "mesh_hash": "E31B48DE7E76A1BF8364E4EDC3B0FC91C3DAFE7DE3D3F3BE32DD1570EBC7FF8D",
+          "triangles": 7389
+        },
+        {
+          "lod": "1",
+          "source_hash": "DABC62548EE6160B0996F24F474577B55F3463BF0B8A3F74A4B14933782D42AB",
+          "mesh_hash": "B39F75FE07BBF1CD655390BD1AAB19426182C03563BA31B0EC08F4E5D2156C53",
+          "triangles": 2992
+        },
+        {
+          "lod": "2",
+          "source_hash": "A259DC6C9663609015F50CBD59665CBEA48C707766289D8E0F8B2E064ADFDFA9",
+          "mesh_hash": "1B36F432BCAAC5CEF3AD17F05B890F916E1DEB630590679673259F7B28BC6A66",
+          "triangles": 822
+        },
+        {
+          "lod": "F",
+          "source_hash": "20600B285E0B9FF2F6161D4BE8B96E0F3DA085C32AA428589732879F062E5599",
+          "mesh_hash": "AF0A4C8C751A49DE65657B94D83B8EAC90D26BF3054C23AE86ECDAA3AC49BEC6",
+          "triangles": 68
+        }
+      ]
+    },
+    {
+      "index": 31,
+      "form": "Snag",
+      "source_variant": 7,
+      "length_m": 13.503,
+      "trunk_radius_m": 0.3444,
+      "lods": [
+        {
+          "lod": "0",
+          "source_hash": "0763F7E8FFDEA48DD46BF86E0177C7885991291DA6A3A850F3EBA83B70DF7970",
+          "mesh_hash": "B1EAB13D66FE61B909DF44DAF62658B9760578E638AE92E3B94F701B8CDF17F4",
+          "triangles": 3321
+        },
+        {
+          "lod": "1",
+          "source_hash": "BCED057ED5B4868E8829FB3BC22A5B57A648179BA7768EC91AEC187B58019B45",
+          "mesh_hash": "5B3152F0DA4DC3764C65A1FEA7B9FB242F32306F376DC6CAEBD51409EFFEEA6C",
+          "triangles": 2126
+        },
+        {
+          "lod": "2",
+          "source_hash": "D52217111C00C5718BCA4C0ABF9F186DE66FD1AB45EB2E1B810D2033DCF5A862",
+          "mesh_hash": "149720B0013ADEA0528EA0B0BC7DC0648CD3221781B2B7D105683BA97DB9DA93",
+          "triangles": 654
+        },
+        {
+          "lod": "F",
+          "source_hash": "0763F7E8FFDEA48DD46BF86E0177C7885991291DA6A3A850F3EBA83B70DF7970",
+          "mesh_hash": "7AE6884CC71D9F8C76FB2D6269BE4988253CDD5BE8CD070A917470D13E83ABBC",
+          "triangles": 68
+        }
+      ]
+    },
+    {
+      "index": 32,
+      "form": "Snag",
+      "source_variant": 3,
+      "length_m": 20.7841,
+      "trunk_radius_m": 0.6902,
+      "lods": [
+        {
+          "lod": "0",
+          "source_hash": "37FA2B64D17372CEC2A5A3FBBED279ACB29440EFD6E313C44A857F0D26BE0AC2",
+          "mesh_hash": "93F20519E92F796C000FAF62065318E186B35FB755C48C9AED0DA3E487284EF6",
+          "triangles": 7032
+        },
+        {
+          "lod": "1",
+          "source_hash": "48CA1C9B4148106819BE30A8B36474A36558DB2A050C8CD9279BE6CFC0819FA7",
+          "mesh_hash": "ED0D3AFC3A8AB870BCA6303405256D3AF7E0EBC0949D65FD66F18137F9EFD96A",
+          "triangles": 3982
+        },
+        {
+          "lod": "2",
+          "source_hash": "EF39F5A740E0B66C4A030BA371DB7DCB048E1FAAACB68E2C1271172CEC8AE1A6",
+          "mesh_hash": "467C817354989804DFB50B854F3C640D80282D7C31F7E5EA1D4CCDBE218D0034",
+          "triangles": 1130
+        },
+        {
+          "lod": "F",
+          "source_hash": "37FA2B64D17372CEC2A5A3FBBED279ACB29440EFD6E313C44A857F0D26BE0AC2",
+          "mesh_hash": "2DA253A60A22E5E2588797CEB77B9623914F9E9BB2BB8D3E6C5C6AB8558521CC",
+          "triangles": 68
+        }
+      ]
+    },
+    {
+      "index": 33,
+      "form": "Snag",
+      "source_variant": 15,
+      "length_m": 16.8874,
+      "trunk_radius_m": 0.2093,
+      "lods": [
+        {
+          "lod": "0",
+          "source_hash": "A8120DB5FAFB38E26AD36357D86890A2C54B8EE905B84BCC32A15C7B08571D55",
+          "mesh_hash": "E7C5A3B8403F246CDBFF24E08EF8454375C9DD41D8AC44CB4D964241D715D3A7",
+          "triangles": 1890
+        },
+        {
+          "lod": "1",
+          "source_hash": "EE8E46F57EF695E23877606DAA4DBFAEA0AB22417A662EE35AA40BD19ED8D35E",
+          "mesh_hash": "791B5C9C69541B9A0028A3DCB36B376827C4785171BA3B3E8242666DAAF3D533",
+          "triangles": 1207
+        },
+        {
+          "lod": "2",
+          "source_hash": "58218FF07C87C3B499B70643EAF539299B5455E42EAF80A4571589BE23EBE3D7",
+          "mesh_hash": "3A5DF75E8DC1B027FC5C1D42633574F5CC45B5B6E0FC3A873490F15763F1DEEB",
+          "triangles": 814
+        },
+        {
+          "lod": "F",
+          "source_hash": "A8120DB5FAFB38E26AD36357D86890A2C54B8EE905B84BCC32A15C7B08571D55",
+          "mesh_hash": "4444E30CE9857771D7778B7D02E6652CA34275E625DE65AE723D0F0FFE65BC00",
+          "triangles": 68
+        }
+      ]
+    },
+    {
+      "index": 34,
+      "form": "Snag",
+      "source_variant": 18,
+      "length_m": 31.8138,
+      "trunk_radius_m": 0.4342,
+      "lods": [
+        {
+          "lod": "0",
+          "source_hash": "8993FA2A3606F094B6642E00F430910E2F28C80D6B7B10F8D0A415D8EFA2AF94",
+          "mesh_hash": "8BCC847F35BA0AC7C4BCE625B2130ECDB8C50E6F3175046BA7529E8CC57130D3",
+          "triangles": 4675
+        },
+        {
+          "lod": "1",
+          "source_hash": "0133FFB4CD7A4D35DD55A58F36C47E897852F9163AEC0C3E5739BCC67A0790FA",
+          "mesh_hash": "B232132F7CE597CB4F4F4D9F7D4B6EFE0140F9317FA1347D554CDB530E68F0D1",
+          "triangles": 2653
+        },
+        {
+          "lod": "2",
+          "source_hash": "B744B5E8C90A36A6F0948671C7511413A5A4C3D4A028367AABCD8414AFC6C339",
+          "mesh_hash": "9D552E3A35D6B3F7591D00C582E666AB781A9C151884D6A890E33D2D276C13FF",
+          "triangles": 1649
+        },
+        {
+          "lod": "F",
+          "source_hash": "8993FA2A3606F094B6642E00F430910E2F28C80D6B7B10F8D0A415D8EFA2AF94",
+          "mesh_hash": "3C755236161697DEF0F54E52F085B7BF896B4B92F49941960EDE24807325B164",
+          "triangles": 68
+        }
+      ]
+    },
+    {
+      "index": 35,
+      "form": "Snag",
+      "source_variant": 12,
+      "length_m": 9.293,
+      "trunk_radius_m": 0.1322,
+      "lods": [
+        {
+          "lod": "0",
+          "source_hash": "3BBB92D3BC0DE21AE59C02281B52CF8781CEF9C17BBFCA33C0FFBA8347244553",
+          "mesh_hash": "DCE0B998EAC15A66621193F3CCE80B0B758CBE661C85D1B651E85448E801DCB8",
+          "triangles": 6873
+        },
+        {
+          "lod": "1",
+          "source_hash": "A196B3E478E222A9C423EA7DC912A6929C4DD659A08B383A7C31344FF36D41C4",
+          "mesh_hash": "1657FC2B8A708E560A214949432C1B1AFDB9C89241F5E09B260077AB493137F0",
+          "triangles": 2487
+        },
+        {
+          "lod": "2",
+          "source_hash": "FBCC8B4A0684705C50FDE09AAB18EC6EDA3F52D98C43999C54F46158D2B94AC4",
+          "mesh_hash": "64E077555543FF8DC8B8F6FEAA9C4E840DB9166917A55C0B059DDBD09BBD3782",
+          "triangles": 702
+        },
+        {
+          "lod": "F",
+          "source_hash": "3BBB92D3BC0DE21AE59C02281B52CF8781CEF9C17BBFCA33C0FFBA8347244553",
+          "mesh_hash": "A4BF0DCDC127062306E32270EA37097E82D1C97D82DDEC9B45932B657D4BAB00",
+          "triangles": 68
+        }
+      ]
+    },
+    {
+      "index": 36,
+      "form": "FallenTree",
+      "source_variant": 6,
+      "length_m": 6.9383,
+      "trunk_radius_m": 0.4076,
+      "lods": [
+        {
+          "lod": "0",
+          "source_hash": "DABC62548EE6160B0996F24F474577B55F3463BF0B8A3F74A4B14933782D42AB",
+          "mesh_hash": "2EA842EFC70203305FD33BC9D42547F7D5C972112DB99BEB803C47E5C9912DBA",
+          "triangles": 372
+        },
+        {
+          "lod": "1",
+          "source_hash": "A259DC6C9663609015F50CBD59665CBEA48C707766289D8E0F8B2E064ADFDFA9",
+          "mesh_hash": "FC5EADA7BC0716CD97D441185F1158FB049130716C091AFF149CB3DFE027A9EC",
+          "triangles": 140
+        },
+        {
+          "lod": "2",
+          "source_hash": "A259DC6C9663609015F50CBD59665CBEA48C707766289D8E0F8B2E064ADFDFA9",
+          "mesh_hash": "FC5EADA7BC0716CD97D441185F1158FB049130716C091AFF149CB3DFE027A9EC",
+          "triangles": 140
+        },
+        {
+          "lod": "F",
+          "source_hash": "20600B285E0B9FF2F6161D4BE8B96E0F3DA085C32AA428589732879F062E5599",
+          "mesh_hash": "2A406EE00DCB5016A2E23540138DB30CCD358C20635409EEBEAEDCA3447BEC17",
+          "triangles": 44
+        }
+      ]
+    },
+    {
+      "index": 37,
+      "form": "FallenTree",
+      "source_variant": 8,
+      "length_m": 5.6594,
+      "trunk_radius_m": 0.3065,
+      "lods": [
+        {
+          "lod": "0",
+          "source_hash": "7C1DD9286C59A4963C2F6D7C0C229F0F300FA958D078DA2A87C2A24D1AD5361C",
+          "mesh_hash": "4A9278C40383789874162593829ED145D8EFAD86DA9CE319067995A5C2BDF347",
+          "triangles": 229
+        },
+        {
+          "lod": "1",
+          "source_hash": "3A5594B183BC37307D04A98483849F1BD671AA02981DA12A8252889FDD0EBA98",
+          "mesh_hash": "1E991284C3F82EDAE5B64AC8768476D25D38942B1A4C1B2D6A2D9A2016422733",
+          "triangles": 135
+        },
+        {
+          "lod": "2",
+          "source_hash": "3A5594B183BC37307D04A98483849F1BD671AA02981DA12A8252889FDD0EBA98",
+          "mesh_hash": "1E991284C3F82EDAE5B64AC8768476D25D38942B1A4C1B2D6A2D9A2016422733",
+          "triangles": 135
+        },
+        {
+          "lod": "F",
+          "source_hash": "45D95252BC2A1F95B9DD09FFCB2CB2CE106F68C69DF96772472A037C0FBA6338",
+          "mesh_hash": "1D673603B18397B7449B599C5E1A0C7BDF842FEAB56CBB33BC94B90796062FCF",
+          "triangles": 44
+        }
+      ]
+    },
+    {
+      "index": 38,
+      "form": "FallenTree",
+      "source_variant": 21,
+      "length_m": 7.6586,
+      "trunk_radius_m": 0.1657,
+      "lods": [
+        {
+          "lod": "0",
+          "source_hash": "7801233B862BF7EAC5723564D710E35FE7A8533FD828A9BC5D9B18FED2E8CD92",
+          "mesh_hash": "384E83C1E2BBF114E4701C2FE440CC676887676B31F49E7FBE385B974AD03C54",
+          "triangles": 481
+        },
+        {
+          "lod": "1",
+          "source_hash": "F87E1F50003CC55D4D677037D8E4319227D6534A9712FEED513500054DDBF773",
+          "mesh_hash": "70DF2FFF063C0A610E38AECD1BEF500B49B0736D268FB3407369BB8E708D100C",
+          "triangles": 325
+        },
+        {
+          "lod": "2",
+          "source_hash": "F87E1F50003CC55D4D677037D8E4319227D6534A9712FEED513500054DDBF773",
+          "mesh_hash": "70DF2FFF063C0A610E38AECD1BEF500B49B0736D268FB3407369BB8E708D100C",
+          "triangles": 325
+        },
+        {
+          "lod": "F",
+          "source_hash": "778F404A6A3EC35E7F52CBAB1F25AA5EE9753C14FA49CE9457BD7442DD4804BB",
+          "mesh_hash": "EB035F67DAD104E023768E2457B4464076ACFC2114C057A5513C18CEFA13E7FC",
+          "triangles": 44
+        }
+      ]
+    },
+    {
+      "index": 39,
+      "form": "FallenTree",
+      "source_variant": 23,
+      "length_m": 5.7575,
+      "trunk_radius_m": 0.1325,
+      "lods": [
+        {
+          "lod": "0",
+          "source_hash": "69C8BE62069B3CA6FC22892DE25F2AE2195BB31546621461CA9196C11C22484D",
+          "mesh_hash": "621F17B68DBBE4526BC8038033649EB107B9A2E9FF03BFDED16658C91C989AC3",
+          "triangles": 431
+        },
+        {
+          "lod": "1",
+          "source_hash": "A0DE8F4E9CA826BA4CF8A25024E0FCA3C9F45851EC598DCAC07716B97A2C5201",
+          "mesh_hash": "A69FC8DABC2FDC81BB5856D631A85A4051003D5549B2C9ADB5BDEB0C83D5DC51",
+          "triangles": 336
+        },
+        {
+          "lod": "2",
+          "source_hash": "A0DE8F4E9CA826BA4CF8A25024E0FCA3C9F45851EC598DCAC07716B97A2C5201",
+          "mesh_hash": "A69FC8DABC2FDC81BB5856D631A85A4051003D5549B2C9ADB5BDEB0C83D5DC51",
+          "triangles": 336
+        },
+        {
+          "lod": "F",
+          "source_hash": "A71E6120B7CC7EB553D2E4CC7FAA03C2CB3256FFEEF08D650C464BFD0478EFF1",
+          "mesh_hash": "80FA42026540340D73E49B48F2CA160FDA0CB02ED4080FF3B5E19980D2F8F931",
+          "triangles": 44
+        }
+      ]
+    },
+    {
+      "index": 40,
+      "form": "Stump",
+      "source_variant": 7,
+      "length_m": 0.6,
+      "trunk_radius_m": 0.3444,
+      "lods": [
+        {
+          "lod": "0",
+          "source_hash": "0763F7E8FFDEA48DD46BF86E0177C7885991291DA6A3A850F3EBA83B70DF7970",
+          "mesh_hash": "18FACAAC4A27E68DC196D4C6E9B277870FDBDCF25F8199288294AA01EC86F07C",
+          "triangles": 70
+        }
+      ]
+    },
+    {
+      "index": 41,
+      "form": "Stump",
+      "source_variant": 22,
+      "length_m": 0.6,
+      "trunk_radius_m": 0.1624,
+      "lods": [
+        {
+          "lod": "0",
+          "source_hash": "2338AFF9273F40D90F3CE3E3B22AEBF607B92552F29AD987860D6DEB78C0B1B2",
+          "mesh_hash": "CD03416A09CBCF26B2B0EC858A7E934F96FBB9A547560ACFE28FD479AA721B77",
+          "triangles": 70
+        }
+      ]
+    },
+    {
+      "index": 42,
+      "form": "Stump",
+      "source_variant": 12,
+      "length_m": 0.6,
+      "trunk_radius_m": 0.1322,
+      "lods": [
+        {
+          "lod": "0",
+          "source_hash": "3BBB92D3BC0DE21AE59C02281B52CF8781CEF9C17BBFCA33C0FFBA8347244553",
+          "mesh_hash": "4A3D438FC6855D0F4CD2D0D61ABBD007B6877AB92DC57A4B77C940816B090C64",
+          "triangles": 70
+        }
+      ]
+    }
+  ]
+}

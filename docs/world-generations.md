@@ -18,7 +18,7 @@ The production feature table holds only open (unfrozen) features so far; `water.
 | `ground.river_beds` | 3 | T4 | Open (review) |
 | `scatter.rocks` | 4 | T5 | Open (review) |
 | `scatter.river` | 5 | T5 | Reserved |
-| `vegetation.forest_structure` | 6 | T6 | Reserved |
+| `vegetation.forest_structure` | 6 | T6 | Open (review) |
 | `vegetation.ground_cover` | 7 | T6 | Reserved |
 | `vegetation.far_canopy` | 8 | T6, including V2 forest grain | Reserved |
 | `vegetation.riparian` | 9 | T6 | Reserved |
@@ -78,6 +78,17 @@ An eligible review recipe includes the same fields while the feature is open. On
 Name a generation explicitly in tests. Launcher-driven tests call `world_generation_pin.pin(N, review_csv)` before adding the launcher to the scene tree. The launcher reads the selection in `_ready`. The optional review CSV defaults to empty. The helper sets `ringworld/runtime/surface_world_generation` and `ringworld/runtime/surface_review_features`, and `unpin()` restores their prior values. Pin 0 for legacy recipes, including the showcase. A positive pin selects v9 at that generation. Unset or a negative value takes the default, which is legacy when either of the v7 landforms or v8 Weather Lung project settings is false. For headless C# fixtures, use `EmitterSiteTestWorlds.Gen17WorldRecipe`, `CreateGen17World` or `CreateProductionSettings`. [Pin helper](../tools/world_generation_pin.gd) · [Test fixtures](../tools/EmitterSiteTestWorlds.cs)
 
 Landscape audits accept `--generation=N` and `--review-features=a,b` after Godot's `--` separator. Review IDs require an explicit latest frozen generation. No flags or `--generation=0` selects the pinned v8 world. An explicit `--generation=1` selects v9 generation 1. A v9 report records the selected generation and review features, and its folder ends in `_gNN` or `_gNN-review-a+b`. The same pose coordinates and camera angles apply across generations. The harness uses the selected world's ground height for poses specified relative to the ground. [Landscape work order](work-orders/terrain-vegetation/T1.md#t1-9-generation-flags-in-the-landscape-harness-and-the-relief-and-drainage-tools)
+
+## Appending catalog entries
+
+New placeable tree forms (T6's derived snags, fallen trees and stumps at indices 30-42; T8's species after them) are appended to the catalog without moving generation 1. The rule, implemented and tested by T6-5 (`tree_catalog_append_test`):
+
+- **The `catalog` fingerprint field never changes.** It hashes `ImportedTreeCatalog.Load()` (`CatalogVersion` 1, `variant_count` 30) the same way for every generation, so row 1 never moves. `ImportedTreeCatalog.CatalogVersion` and `VariantCount` stay 1 and 30.
+- **Appended rows go in `catalog_appended`** (`{count, catalog_versions, hash}`). `WorldGenerationFingerprint.ComputeCatalogAppended(featureSet, table)` hashes the rows of `ImportedTreeSourceTable.RowsEnabled(featureSet)` with index 30 or more, in index order: the row's fields, its meshes from the owning catalog (per LOD slot, surface count and per-surface vertex count, as `catalog` does) and each owning catalog's version. `featureSet` is the generation's ledger set (`WorldGenerationLedger.FeatureSet(generation, review)`), never what happens to be loaded, so a later feature's rows cannot enter an earlier generation's field. With no appended row enabled the field is `{count 0, hash none}` and the derived catalog is not loaded.
+- **A golden row without `catalog_appended` means `none`.** The comparison fills it in; frozen golden rows are never edited.
+- **Cache identity.** In a world whose mask has the row's feature, the vegetation disk-cache identity string gains that catalog's version (`|dc<DerivedTreeCatalog.CatalogVersion>` after `|fs<n>` for `vegetation.forest_structure`, via `ForestStructureIdentitySuffix`); generation 1 strings and `VegetationCacheSettingsHash` are unchanged. The tree disk cache stays off while the feature is open.
+- **Tile validation.** With the feature's bit set, `TryLoadVegetationTile` validates each tree with `ImportedTreeSourceTable.IsCanopySelectable(variant, species, featureSet)`; every other world keeps the literal generation 1 ranges.
+- **New catalog, new rows.** A later catalog (T8) adds its rows to `ImportedTreeSourceTable` with its own `EnablingFeature`, extends the `catalog_appended` hash for that owning catalog, adds its version to the identity suffix, and adds its own check to `tree_catalog_append_test`. A canopy form with an impostor layer gets a second `ImportedTreeImpostorCatalog` instance; the 30-layer arrays are never widened.
 
 ## Freezing a step
 

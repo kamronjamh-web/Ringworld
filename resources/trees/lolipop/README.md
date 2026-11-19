@@ -40,6 +40,10 @@ Open `scenes/TreeAssetPreview.tscn` directly in Godot with F6 (Current Scene). D
 
 Run `godot --headless -s res://tools/realistic_tree_import_test.gd` from the project directory to verify the three imports, source dependencies, geometry, author LOD grouping, and preview scene. To opt into GPU captures, omit `--headless` and pass `-- --capture` after the script argument while using a Vulkan renderer; it writes gallery LOD0, fir LOD0 closeup, and gallery LOD3 only under `.godot/realistic_tree_import/`, and rejects a renderer without a `RenderingDevice`. Production distribution, long-distance presentation, quality budgets, and worst-weather/full-game visual acceptance remain pending. The shared lighting, wind, cloud-mask, and shadow material paths have automated coverage, but that does not establish the performance or human visual acceptance gates.
 
+## Derived dead-wood forms
+
+`resources/trees/prepared/lolipop_derived_catalog.res` (+ `lolipop_derived_catalog.manifest.json`) holds snags (30-35), fallen trees (36-39) and stumps (40-42), built by `tools/prepare_derived_tree_assets.gd` from the prepared base catalog, never the glTF, and loaded by `DerivedTreeCatalog`. Bark surface only, no materials in the resource; the base catalog, its manifest and the impostor resources are untouched. They are adaptations of these LOLIPOP assets (see `THIRD_PARTY_ASSETS.md`). Only worlds with `vegetation.forest_structure` use them (`docs/world-generations.md`, "Appending catalog entries").
+
 ## Import verification (2026-09-06)
 
 - All 105 original payload files were independently SHA-256 compared with the supplied archives and are byte-identical.
