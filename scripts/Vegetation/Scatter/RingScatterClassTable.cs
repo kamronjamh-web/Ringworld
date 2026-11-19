@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using RingworldTechDemo.Terrain.Surface;
@@ -6,22 +7,27 @@ using RingworldTechDemo.Terrain.Surface;
 namespace RingworldTechDemo.Vegetation.Scatter;
 
 /// <summary>T5 design A5: which meshes, LOD bands and draws a class feeds. Append-only; never reorder or remove.</summary>
-public enum RingScatterRenderGroup : byte { Outcrops = 1, Boulders = 2, Cobbles = 3 }
+public enum RingScatterRenderGroup : byte { Outcrops = 1, Boulders = 2, Cobbles = 3, Saplings = 4, Shrubs = 5, DeadWood = 6 }
 
-/// <summary>A5 response fields. Append-only. <c>NearestTreeM</c> is the distance to the nearest accepted tree root, capped at 50 m.</summary>
+/// <summary>
+/// A5 response fields. Append-only. <c>NearestTreeM</c> is the distance to the nearest accepted tree root, capped at 50 m.
+/// T6 design A5 fields (StandAge onward) are derived once per evaluated point by the scatter builder from the habitat sample: StandAge is the effective age of A2, ConiferShare the fir + pine habitat weights of A3,
+/// Treeline SmoothStep(0.24, 0.40, T), Clearing the regional clearing field, and the eight memberships are RingPlantCommunities.Memberships; Dense = ClosedBroadleaf + ConiferStand.
+/// </summary>
 public enum RingHabitatField : byte
 {
-    Slope, Relief8, Relief64, Wetness, RockExposure, Scree, SoilDepth, Canopy, Moisture, Temperature, ForestWeight, GrassWeight, HeightAboveChannel, NearestTreeM
+    Slope, Relief8, Relief64, Wetness, RockExposure, Scree, SoilDepth, Canopy, Moisture, Temperature, ForestWeight, GrassWeight, HeightAboveChannel, NearestTreeM,
+    StandAge, ConiferShare, Treeline, Clearing, Dense, ClosedBroadleaf, ConiferStand, OpenWoodland, ForestEdge, ClearingCommunity, DryMeadow, WetMeadow, RockyFell
 }
 
 public enum RingScatterAnchorKind : byte { Free, NearTrees }
 public enum RingScatterAlignment : byte { Upright, SlopeAligned, BeddingHorizontal, LyingAlongSlope }
 public enum RingScatterCollision : byte { None, ConvexHull, TriMesh, Capsule }
 public enum RingScatterFar : byte { None, RockSpeckle, CanopyTint }
-/// <summary>T6 appends Trees and Shrubs.</summary>
-public enum RingScatterMeshCatalog : byte { Rocks }
-/// <summary>Uniform picks a hashed mesh. BySize and ByField are reserved for T6 and behave as Uniform until that order pins them.</summary>
-public enum RingScatterVariantSelector : byte { Uniform, BySize, ByField }
+/// <summary>Trees: mesh indices are ImportedTreeSourceTable indices. For this catalog a record's Size is a uniform scale multiplier of the source variant. T6 appends Shrubs.</summary>
+public enum RingScatterMeshCatalog : byte { Rocks, Trees }
+/// <summary>Uniform picks a hashed mesh. BySize and ByField are reserved and behave as Uniform. BySpecies (MeshCatalog.Trees rows): the species from the A3 weights at the point times the row's light factors, then a uniform Understory-role variant of that species.</summary>
+public enum RingScatterVariantSelector : byte { Uniform, BySize, ByField, BySpecies }
 
 /// <summary>Out0 + (Out1 - Out0) smoothstep(In0, In1, value). Reversed edges (In0 greater than In1) are allowed.</summary>
 public readonly record struct RingScatterResponse(RingHabitatField Field, float In0, float In1, float Out0, float Out1);
@@ -100,7 +106,7 @@ public sealed class RingScatterClassTable
     private static RingScatterResponse R(RingHabitatField f, float in0, float in1, float out0 = 0f, float out1 = 1f) => new(f, in0, in1, out0, out1);
 
     /// <summary>
-    /// A5 rock rows. Size factors use the schema's "factor x (size a + size b) / 2": the table's "0.45 x (a + b)" is 0.9 and "0.5 x (a + b)" is 1.0.
+    /// A5 rock rows (Ids 1-3) and the T6 rows of feature bit 6 (A7): shrub (Id 11), sapling (Id 12) and dead wood (snag 10, fallen tree 13, stump 14). Size factors use the schema's "factor x (size a + size b) / 2": the table's "0.45 x (a + b)" is 0.9 and "0.5 x (a + b)" is 1.0.
     /// Mesh indices are group-local (RenderGroup selects the group). BaseDensityPerHa values are the table's starting values (T5-5 calibration, see scatter_rock_placement_test).
     /// </summary>
     private static RingScatterClass[] ProductionRows() => new[]
@@ -122,9 +128,10 @@ public sealed class RingScatterClassTable
             Id = 2, Key = "rock.boulder", RenderGroup = RingScatterRenderGroup.Boulders, ReachM = 600f, CellM = 8f, CandidatesPerCell = 2, BaseDensityPerHa = 100f,
             Terms = new[]
             {
-                new RingScatterTerm(0.4f, new[] { R(RingHabitatField.Scree, 0f, 1f) }),
-                new RingScatterTerm(0.24f, new[] { R(RingHabitatField.Relief64, -0.15f, -0.6f), R(RingHabitatField.Slope, 4f, 15f) }),
-                new RingScatterTerm(0.16f, new[] { R(RingHabitatField.RockExposure, 0f, 1f), R(RingHabitatField.Relief64, 0.2f, 0.7f, 1f, 0f) }),
+                // Design-A5 habitat weights (user, 2026-11-19: the A5 boulder density over the T5-5 calibration, which was these x 0.4); the lone-boulder constant is unchanged.
+                new RingScatterTerm(1.0f, new[] { R(RingHabitatField.Scree, 0f, 1f) }),
+                new RingScatterTerm(0.6f, new[] { R(RingHabitatField.Relief64, -0.15f, -0.6f), R(RingHabitatField.Slope, 4f, 15f) }),
+                new RingScatterTerm(0.4f, new[] { R(RingHabitatField.RockExposure, 0f, 1f), R(RingHabitatField.Relief64, 0.2f, 0.7f, 1f, 0f) }),
                 new RingScatterTerm(0.01f, Array.Empty<RingScatterResponse>()),
             },
             Multipliers = new[] { R(RingHabitatField.Canopy, 0f, 1f, 1f, 0.7f), R(RingHabitatField.Slope, 42f, 52f, 1f, 0f) }, // angle of repose: no boulders stand on near-vertical faces
@@ -147,6 +154,92 @@ public sealed class RingScatterClassTable
             Alignment = RingScatterAlignment.SlopeAligned, AlignFactor = 1f, RandomTiltDeg = 4f, EmbedMin = 0.30f, EmbedMax = 0.30f, Collision = RingScatterCollision.None,
             Far = RingScatterFar.RockSpeckle, ResidentCap = 1000, BlockM = 60
         },
+        // T6-7 shrubs (A7, A8): built before the saplings (equal reach, smaller Id). A record's Size is the height in metres (the carrier is 1 unit tall, so the instance scale is the Size). BySpecies, with the builder's look overrides
+        // (WetMeadow dominant: broadleaf; DryMeadow or RockyFell dominant: pine scrub).
+        new RingScatterClass
+        {
+            Id = 11, Key = "veg.shrub", FeatureBit = 6, RenderGroup = RingScatterRenderGroup.Shrubs, ReachM = 150f, CellM = 8f, CandidatesPerCell = 6, BaseDensityPerHa = 100f,
+            Terms = new[]
+            {
+                new RingScatterTerm(2.0f, new[] { R(RingHabitatField.ClosedBroadleaf, 0f, 1f) }),
+                new RingScatterTerm(1.2f, new[] { R(RingHabitatField.ConiferStand, 0f, 1f) }),
+                new RingScatterTerm(1.5f, new[] { R(RingHabitatField.OpenWoodland, 0f, 1f) }),
+                new RingScatterTerm(7.0f, new[] { R(RingHabitatField.ForestEdge, 0f, 1f) }),
+                new RingScatterTerm(0.6f, new[] { R(RingHabitatField.ClearingCommunity, 0f, 1f) }),
+                new RingScatterTerm(0.25f, new[] { R(RingHabitatField.DryMeadow, 0f, 1f) }),
+                new RingScatterTerm(0.6f, new[] { R(RingHabitatField.WetMeadow, 0f, 1f) }),
+                new RingScatterTerm(0.4f, new[] { R(RingHabitatField.RockyFell, 0f, 1f) }),
+                new RingScatterTerm(0.05f, Array.Empty<RingScatterResponse>()),
+            },
+            Multipliers = new[] { R(RingHabitatField.Treeline, 0f, 1f, 0.3f, 1f), R(RingHabitatField.Slope, 30f, 38f, 1f, 0f) },
+            SpacingM = 0f, SpacingSizeFactor = 0.6f, Avoid = new[] { new RingScatterAvoid(10, 2f, 0f) }, TreeClearanceM = 1.0f, TreeClearanceSizeFactor = 0f, SizeMinM = 0.8f, SizeMaxM = 3.0f, SizeExponent = 1.4f,
+            MeshCatalog = RingScatterMeshCatalog.Trees, MeshFirst = 43, MeshCount = 12, VariantSelector = RingScatterVariantSelector.BySpecies,
+            Alignment = RingScatterAlignment.Upright, RandomTiltDeg = 4f, EmbedMin = 0.05f, EmbedMax = 0.05f, Collision = RingScatterCollision.None,
+            ShadowMinSizeM = float.PositiveInfinity, Far = RingScatterFar.None, ResidentCap = 3000, BlockM = 0
+        },
+        new RingScatterClass
+        {
+            Id = 12, Key = "veg.sapling", FeatureBit = 6, RenderGroup = RingScatterRenderGroup.Saplings, ReachM = 150f, CellM = 8f, CandidatesPerCell = 2, BaseDensityPerHa = 100f,
+            Terms = new[]
+            {
+                new RingScatterTerm(0.3f, new[] { R(RingHabitatField.Dense, 0f, 1f) }),
+                new RingScatterTerm(1.1f, new[] { R(RingHabitatField.ForestEdge, 0f, 1f) }),
+                new RingScatterTerm(0.6f, new[] { R(RingHabitatField.ClearingCommunity, 0f, 1f) }),
+                new RingScatterTerm(0.4f, new[] { R(RingHabitatField.OpenWoodland, 0f, 1f) }),
+                new RingScatterTerm(0.02f, Array.Empty<RingScatterResponse>()),
+            },
+            Multipliers = new[] { R(RingHabitatField.Treeline, 0f, 1f, 0.3f, 1f), R(RingHabitatField.Slope, 28f, 34f, 1f, 0f) },
+            SpacingM = 2f, SpacingSizeFactor = 0f, Avoid = new[] { new RingScatterAvoid(10, 2f, 0f), new RingScatterAvoid(11, 0f, 0.5f) }, TreeClearanceM = 1.5f, TreeClearanceSizeFactor = 0f, SizeMinM = 0.8f, SizeMaxM = 1.2f, SizeExponent = 1f,
+            MeshCatalog = RingScatterMeshCatalog.Trees, MeshFirst = 0, MeshCount = 27, VariantSelector = RingScatterVariantSelector.BySpecies,
+            Alignment = RingScatterAlignment.Upright, RandomTiltDeg = 3f, EmbedMin = 0.02f, EmbedMax = 0.03f, Collision = RingScatterCollision.None,
+            ShadowMinSizeM = float.PositiveInfinity, Far = RingScatterFar.None, ResidentCap = 1500, BlockM = 0
+        },
+        // T6-6 dead wood. For MeshCatalog.Trees rows a record's Size is a scale multiplier of the source variant (a log's length is 0.55 x size x the source height). Embeds are fractions of the instance height
+        // (0.1 m of a snag or log of about 10 m, 0.05 m of the stump's source height). Spacing and clearances that the table gives "x length" are measured with the log's length (the builder's Extent).
+        new RingScatterClass
+        {
+            Id = 10, Key = "veg.snag", FeatureBit = 6, RenderGroup = RingScatterRenderGroup.DeadWood, ReachM = 300f, CellM = 32f, CandidatesPerCell = 1, BaseDensityPerHa = 10f,
+            Terms = new[]
+            {
+                new RingScatterTerm(0.8f, new[] { R(RingHabitatField.Dense, 0f, 1f), R(RingHabitatField.StandAge, 0.55f, 0.95f) }),
+                new RingScatterTerm(0.15f, new[] { R(RingHabitatField.OpenWoodland, 0f, 1f) }),
+                new RingScatterTerm(0.05f, Array.Empty<RingScatterResponse>()),
+            },
+            Multipliers = new[] { R(RingHabitatField.Treeline, 0f, 1f), R(RingHabitatField.Slope, 28f, 34f, 1f, 0f) },
+            SpacingM = 6f, SpacingSizeFactor = 0.3f, TreeClearanceM = 3f, TreeClearanceSizeFactor = 0.5f, SizeMinM = 0.85f, SizeMaxM = 1.15f, SizeExponent = 1f,
+            MeshCatalog = RingScatterMeshCatalog.Trees, MeshFirst = 30, MeshCount = 6, VariantSelector = RingScatterVariantSelector.BySpecies,
+            Alignment = RingScatterAlignment.Upright, EmbedMin = 0.01f, EmbedMax = 0.01f, Collision = RingScatterCollision.Capsule, ShadowMinSizeM = 0f, Far = RingScatterFar.None, ResidentCap = 200, BlockM = 0
+        },
+        new RingScatterClass
+        {
+            Id = 13, Key = "veg.fallen", FeatureBit = 6, RenderGroup = RingScatterRenderGroup.DeadWood, ReachM = 150f, CellM = 16f, CandidatesPerCell = 1, BaseDensityPerHa = 10f,
+            Terms = new[]
+            {
+                new RingScatterTerm(0.6f, new[] { R(RingHabitatField.ClosedBroadleaf, 0f, 1f), R(RingHabitatField.StandAge, 0f, 1f, 0.4f, 1f) }),
+                new RingScatterTerm(0.3f, new[] { R(RingHabitatField.ConiferStand, 0f, 1f) }),
+                new RingScatterTerm(0.2f, new[] { R(RingHabitatField.ForestEdge, 0f, 1f) }),
+            },
+            Multipliers = new[] { R(RingHabitatField.Slope, 15f, 25f, 1f, 0f) },
+            SpacingM = 0f, SpacingSizeFactor = 0.5f, Avoid = new[] { new RingScatterAvoid(10, 0f, 1f), new RingScatterAvoid(12, 0f, 1f) }, TreeClearanceM = 0f, TreeClearanceSizeFactor = 0.5f,
+            SizeMinM = 0.85f, SizeMaxM = 1.15f, SizeExponent = 1f,
+            MeshCatalog = RingScatterMeshCatalog.Trees, MeshFirst = 36, MeshCount = 4, VariantSelector = RingScatterVariantSelector.BySpecies,
+            Alignment = RingScatterAlignment.LyingAlongSlope, EmbedMin = 0.01f, EmbedMax = 0.01f, Collision = RingScatterCollision.Capsule, ShadowMinSizeM = 0f, Far = RingScatterFar.None, ResidentCap = 400, BlockM = 0
+        },
+        new RingScatterClass
+        {
+            Id = 14, Key = "veg.stump", FeatureBit = 6, RenderGroup = RingScatterRenderGroup.DeadWood, ReachM = 80f, CellM = 16f, CandidatesPerCell = 1, BaseDensityPerHa = 5f,
+            Terms = new[]
+            {
+                new RingScatterTerm(0.2f, new[] { R(RingHabitatField.Dense, 0f, 1f) }),
+                new RingScatterTerm(1.2f, new[] { R(RingHabitatField.ClearingCommunity, 0f, 1f) }),
+                new RingScatterTerm(0.2f, new[] { R(RingHabitatField.ForestEdge, 0f, 1f) }),
+            },
+            Multipliers = new[] { R(RingHabitatField.Slope, 25f, 32f, 1f, 0f) },
+            SpacingM = 4f, SpacingSizeFactor = 0f, Avoid = new[] { new RingScatterAvoid(10, 1f, 0f), new RingScatterAvoid(12, 1f, 0f), new RingScatterAvoid(13, 1f, 0f) }, TreeClearanceM = 1f, TreeClearanceSizeFactor = 0f,
+            SizeMinM = 0.9f, SizeMaxM = 1.2f, SizeExponent = 1f,
+            MeshCatalog = RingScatterMeshCatalog.Trees, MeshFirst = 40, MeshCount = 3, VariantSelector = RingScatterVariantSelector.BySpecies,
+            Alignment = RingScatterAlignment.Upright, EmbedMin = 0.006f, EmbedMax = 0.006f, Collision = RingScatterCollision.Capsule, ShadowMinSizeM = float.PositiveInfinity, Far = RingScatterFar.None, ResidentCap = 200, BlockM = 0
+        },
     };
 
     public static RingScatterClassTable CreateForTests(IEnumerable<RingScatterClass> rows) => new(rows);
@@ -156,12 +249,34 @@ public sealed class RingScatterClassTable
     public IReadOnlyList<RingScatterClass> BuildOrder { get; }
     public ulong Hash { get; }
 
+    private readonly ConcurrentDictionary<int, RingScatterClassTable> _views = new();
+
     private RingScatterClassTable(IEnumerable<RingScatterClass> rows)
     {
         Rows = Array.AsReadOnly(rows.ToArray());
         BuildOrder = Array.AsReadOnly(Rows.OrderByDescending(r => r.ReachM).ThenBy(r => r.Id).ToArray());
         Hash = ComputeHash(Rows);
     }
+
+    /// <summary>
+    /// T6 A7: a view over the rows whose FeatureBit is set in the world feature mask, build order recomputed over them. An Avoid entry pointing at a row outside the view is dropped.
+    /// Returns this table when every row is in the mask. For a rocks-only mask (bit 4) the view's hash equals the three-row rock table's hash bit for bit.
+    /// </summary>
+    public RingScatterClassTable ForMask(int mask)
+    {
+        int used = 0;
+        foreach (RingScatterClass r in Rows) used |= 1 << r.FeatureBit;
+        return _views.GetOrAdd(mask & used, m =>
+        {
+            RingScatterClass[] kept = Rows.Where(r => (m & (1 << r.FeatureBit)) != 0).ToArray();
+            if (kept.Length == Rows.Count) return this;
+            var ids = new HashSet<ushort>(kept.Select(r => r.Id));
+            return new RingScatterClassTable(kept.Select(r => r.Avoid.All(a => ids.Contains(a.ClassId)) ? r : r with { Avoid = r.Avoid.Where(a => ids.Contains(a.ClassId)).ToArray() }));
+        });
+    }
+
+    /// <summary>The hash of <see cref="ForMask"/> (the scatter cache identity and the fingerprint's class_table_hash).</summary>
+    public ulong HashFor(int mask) => ForMask(mask).Hash;
 
     public int BuildIndexOf(ushort id)
     {

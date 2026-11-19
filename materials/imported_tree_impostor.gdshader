@@ -40,6 +40,7 @@ const float FAR_QUAD_TOP_SIN_HIGH = 0.5;
 #include "res://materials/ring_local_wind.gdshaderinc"
 #include "res://materials/ring_wetness.gdshaderinc"
 #include "res://materials/ring_forest_lighting.gdshaderinc"
+#include "res://materials/ring_foliage_tint.gdshaderinc"
 varying vec3 tree_model_position; // forest lighting switches on: the card point in model (normalized tree) space
 varying float tree_leaf_transmit; // written in fragment() for light(): k_species * facing * crown transmittance towards the primary sun (0 = no translucency); one varying because the shader is at the 32-varying limit
 varying flat vec3 tree_model_light; // forest lighting switches on: the unit direction to the sun in model space (vertex(): MODEL_MATRIX in fragment() lacks the MultiMesh instance transform)
@@ -56,6 +57,7 @@ varying flat int tree_variant;
 varying vec4 tree_parameters;
 varying flat vec2 tree_dither_window; // the pixel is drawn while x <= noise < y (the coverage word of ring_gpu_vegetation_indirect.glsl, decoded in vertex())
 varying flat float tree_dither_seed;
+varying flat vec2 tree_foliage_tint; // T6-8: written in vertex() only while ring_foliage_tint_on(): (value factor, hue term) of this root, see ring_foliage_tint.gdshaderinc
 
 float tree_dither_noise(vec2 pixel, float seed) {
 	return fract(sin(dot(pixel + vec2(seed * 17.0, seed * 43.0), vec2(12.9898, 78.233))) * 43758.5453);
@@ -192,6 +194,10 @@ void vertex() {
 		tree_model_light = normalize(transpose(mat3(MODEL_MATRIX)) * sun_direction);
 		tree_model_position = VERTEX;
 	}
+	if (ring_foliage_tint_on()) {
+		tree_foliage_tint = ring_foliage_tint_terms(root_world, INSTANCE_CUSTOM.z);
+		tree_model_position = VERTEX; // the foliage gate of fragment() reads the model height (the forest lighting block above writes the same value)
+	}
 	vec3 world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	RingVegetationShadowInstance shadow_instance = ring_vegetation_shadow_instance(RING_VEGETATION_SHADOW_TREES, INSTANCE_ID);
 	tree_cloud_occlusion = ring_vegetation_shadow_cloud_vertex(shadow_instance, world_position);
@@ -226,6 +232,12 @@ void fragment() {
 	if (flags.r > .5) {
 		ALPHA = albedo.a;
 		ALPHA_SCISSOR_THRESHOLD = far_quad_mode ? flags.a : tree_parameters.a;
+	}
+	if (ring_foliage_tint_on()) {
+		// T6-8: per-instance and per-stand foliage colour, before the lighting and haze factors; foliage only (the FL-2c gate: a valid hull and at or above the crown base).
+		vec4 tint_hull = texelFetch(variant_parameters, ivec2(tree_variant, 8), 0);
+		vec4 tint_hull_extra = texelFetch(variant_parameters, ivec2(tree_variant, 9), 0);
+		if (ring_crown_valid(tint_hull_extra) && tree_model_position.y >= tint_hull.x - tint_hull.z) albedo.rgb *= ring_foliage_tint(tree_foliage_tint);
 	}
 	ALBEDO = albedo.rgb * mix(night_tint, vec3(1.0), tree_day_factor) * (1.0 - tree_cloud_occlusion * tree_day_factor * .34);
 	ALBEDO *= tree_haze_T;

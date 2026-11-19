@@ -6,6 +6,7 @@ using Godot;
 using RingworldTechDemo.Atmosphere;
 using RingworldTechDemo.Diagnostics;
 using RingworldTechDemo.Terrain.Editable;
+using RingworldTechDemo.Vegetation;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Integration;
 using RingworldTechDemo.Voxel.Phase2;
@@ -416,6 +417,7 @@ public partial class RingStandingGrassLayer : Node3D
         _ringAcrossWidthMeters = s.RingAcrossWidthMeters;
         UpdateCardUnwrapReference(f.AroundMeters);
         RefreshCoordinatedGrassHandoffGlobals();
+        _cardGroundCover = _style.IsCards && (s.WorldFeatureMask & (1 << RingGrassTileBuilder.GroundCoverBit)) != 0;
         EnsureResources();
         UpdateGrassGusts(0, s);
         CaptureGrassModifiers(s);
@@ -671,6 +673,7 @@ public partial class RingStandingGrassLayer : Node3D
                 float modifierDensityStrength = Mathf.Clamp(GrassModifierDensityStrength, 0, 1);
                 RingGrassAppearanceSnapshot appearance = GrassAppearanceProfile?.CapturePlacement() ?? RingGrassAppearanceSnapshot.Default;
                 RingGrassCardPlacement? cardPlacement = cardTile ? _style.PlacementForTier(coverage.Tier) : null;
+                float groundCoverShare = RingGroundCoverSettings.Share; // main thread capture (T6 design B6); the builder reads it only in ground-cover worlds
                 // Cards: the worker cap is the full-lattice tile cap (the sourceFraction rank prefix does the thinning), never a share of the budget.
                 int workerCap = cardTile ? _style.MainCapPerTile : reserve;
                 job = new Job
@@ -698,7 +701,7 @@ public partial class RingStandingGrassLayer : Node3D
                 {
                     job.WorkerStartTick = job.DiagnosticSession != 0 ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
                     var watch = System.Diagnostics.Stopwatch.StartNew();
-                    try { return BuildWorker(k, bounds, cell, candidates, density, workerCap, slope, ownedSampler, e, g, c.Token, fieldWorkerContext, exclusions, appearance, _surfaceCache, coverage.Fraction, coverage.Tier, useGrassClumps, modifiers, modifierDensityStrength, meadowTufts, meadowSpread, minimumHeight, maximumHeight, cardPlacement); }
+                    try { return BuildWorker(k, bounds, cell, candidates, density, workerCap, slope, ownedSampler, e, g, c.Token, fieldWorkerContext, exclusions, appearance, _surfaceCache, coverage.Fraction, coverage.Tier, useGrassClumps, modifiers, modifierDensityStrength, meadowTufts, meadowSpread, minimumHeight, maximumHeight, cardPlacement, groundCoverShare); }
                     finally { watch.Stop(); job.WorkerMilliseconds = watch.Elapsed.TotalMilliseconds; job.WorkerFinishTick = job.DiagnosticSession != 0 ? System.Diagnostics.Stopwatch.GetTimestamp() : 0; }
                 });
             }
@@ -717,7 +720,7 @@ public partial class RingStandingGrassLayer : Node3D
             else GrassBuildTierOtherCount++;
         }
     }
-    private static RingGrassTileData BuildWorker(RingGrassTileKey key, RingGrassTileBounds bounds, float cell, int candidates, float density, int reserve, float slope, RingTerrainSampler? ownedSampler, RingLodSurfaceEditSnapshot edits, RingLodGeometrySnapshot geometry, CancellationToken cancellation, SmoothTerrainVolumetricWorkerContext? fieldWorkerContext, RingGrassExclusionSnapshot? exclusions, RingGrassAppearanceSnapshot appearance, RingGrassSurfaceCache surfaceCache, float sourceFraction, byte sourceTier, bool useGrassClumps, RingGrassModifierSnapshot? modifiers, float modifierDensityStrength, bool meadowTufts, float meadowSpread, float minimumHeight, float maximumHeight, RingGrassCardPlacement? cards = null)
+    private static RingGrassTileData BuildWorker(RingGrassTileKey key, RingGrassTileBounds bounds, float cell, int candidates, float density, int reserve, float slope, RingTerrainSampler? ownedSampler, RingLodSurfaceEditSnapshot edits, RingLodGeometrySnapshot geometry, CancellationToken cancellation, SmoothTerrainVolumetricWorkerContext? fieldWorkerContext, RingGrassExclusionSnapshot? exclusions, RingGrassAppearanceSnapshot appearance, RingGrassSurfaceCache surfaceCache, float sourceFraction, byte sourceTier, bool useGrassClumps, RingGrassModifierSnapshot? modifiers, float modifierDensityStrength, bool meadowTufts, float meadowSpread, float minimumHeight, float maximumHeight, RingGrassCardPlacement? cards = null, float groundCoverShare = 1f)
     {
         using (ownedSampler)
         using (fieldWorkerContext)
@@ -725,7 +728,7 @@ public partial class RingStandingGrassLayer : Node3D
             using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Grass build", worker: true);
             return RingGrassTileBuilder.Build(key, bounds, cell, candidates, density, reserve, slope,
                 fieldWorkerContext?.Sampler ?? ownedSampler ?? throw new InvalidOperationException("Grass worker requires a sampler."), edits, geometry, cancellation,
-                fieldWorkerContext?.Field, exclusions, appearance, surfaceCache: surfaceCache, sourceFraction: sourceFraction, sourceTier: sourceTier, useGrassClumps: useGrassClumps, modifiers: modifiers, modifierDensityStrength: modifierDensityStrength, meadowTufts: meadowTufts, meadowSpread: meadowSpread, minimumHeight: minimumHeight, maximumHeight: maximumHeight, useConfiguredHeightRange: true, cards: cards);
+                fieldWorkerContext?.Field, exclusions, appearance, surfaceCache: surfaceCache, sourceFraction: sourceFraction, sourceTier: sourceTier, useGrassClumps: useGrassClumps, modifiers: modifiers, modifierDensityStrength: modifierDensityStrength, meadowTufts: meadowTufts, meadowSpread: meadowSpread, minimumHeight: minimumHeight, maximumHeight: maximumHeight, useConfiguredHeightRange: true, cards: cards, groundCoverShare: groundCoverShare);
         }
     }
     private void Drain(ulong revision, SmoothTerrainVolumetricDensitySnapshot? field, RingGrassExclusionSnapshot? exclusions)
@@ -1284,6 +1287,12 @@ public partial class RingStandingGrassLayer : Node3D
             M((ulong)BitConverter.SingleToInt32Bits(cardAppearance.SparseHeightMultiplier));
             M((ulong)BitConverter.DoubleToInt64Bits(g.RingRadiusMeters));
             M((ulong)BitConverter.DoubleToInt64Bits(g.RingVerticalBaseOffsetMeters));
+            // T6 design B6: in ground-cover worlds the menu share is a placement input (a change rebuilds the resident tiles through this placement-class path). Other worlds hash exactly as before.
+            if ((s.WorldFeatureMask & (1 << RingGrassTileBuilder.GroundCoverBit)) != 0)
+            {
+                M(0x47434F5653485245UL);
+                M((ulong)BitConverter.SingleToInt32Bits(RingGroundCoverSettings.Share));
+            }
             return h;
         }
         M((ulong)s.Seed);

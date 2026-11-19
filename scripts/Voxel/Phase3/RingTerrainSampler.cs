@@ -4,6 +4,7 @@ using Godot;
 using RingworldTechDemo.Terrain.Generation;
 using RingworldTechDemo.Terrain.Hydrology;
 using RingworldTechDemo.Terrain.Surface;
+using RingworldTechDemo.Vegetation;
 using RingworldTechDemo.Voxel.Core;
 
 namespace RingworldTechDemo.Voxel.Phase3;
@@ -764,8 +765,27 @@ public sealed partial class RingTerrainSampler : IDisposable
         lock (_noiseLock)
         {
             TerrainSample sample = GetTerrainSampleLocked(globalAroundVoxel, globalAcrossVoxel);
-            return GetBiomeTextureWeights(sample);
+            return GetBiomeTextureWeights(sample, globalAroundVoxel, globalAcrossVoxel);
         }
+    }
+
+    private RingForestCanopyFold? _canopyFold;
+
+    /// <summary>T6-10: the forest canopy fold of a world with vegetation.far_canopy (bit 8), else null. One stateless instance per sampler.</summary>
+    internal RingForestCanopyFold? CanopyFold
+        => (WorldFeatureMask & (1 << RingForestCanopyFold.Bit)) == 0 ? null
+            : _canopyFold ??= new RingForestCanopyFold(Seed, _aroundRingVoxelLength, _ringAcrossWidthMeters);
+
+    /// <summary>
+    /// The weights of a sample at a known coordinate. Without vegetation.far_canopy this is exactly <see cref="GetBiomeTextureWeights(in TerrainSample)"/>; with it the natural forest weight is
+    /// replaced by the canopy cover first (RingForestCanopyFold), then the site mask and river beds apply as before. Callers that hold a coordinate use this; the habitat grid and anything that
+    /// must not move with the feature (rocks) call the sample overload.
+    /// </summary>
+    public BiomeTextureWeights GetBiomeTextureWeights(in TerrainSample sample, long globalAroundVoxel, int globalAcrossVoxel)
+    {
+        RingForestCanopyFold? fold = CanopyFold;
+        if (fold == null) return GetBiomeTextureWeights(sample);
+        return RiverBedSurfaceModel.Apply(ApplySiteSurfaceMask(fold.Apply(GetNaturalBiomeTextureWeights(sample), globalAroundVoxel, globalAcrossVoxel, sample), sample.SiteMask), sample.RiverBeds);
     }
 
     /// <summary>
@@ -787,7 +807,9 @@ public sealed partial class RingTerrainSampler : IDisposable
             TerrainSample sample = GetTerrainSampleLocked(globalAroundVoxel, globalAcrossVoxel);
             if (sample.WaterKind is SurfaceWaterKind.River or SurfaceWaterKind.Lake)
                 sample = sample with { WaterKind = SurfaceWaterKind.None, WaterSurfaceHeight = sample.SurfaceHeight, ExactWaterLevel = 0f, HasExactWaterLevel = false };
-            return ApplySiteSurfaceMask(GetNaturalBiomeTextureWeights(sample), sample.SiteMask);
+            BiomeTextureWeights natural = GetNaturalBiomeTextureWeights(sample);
+            if (CanopyFold is { } fold) natural = fold.Apply(natural, globalAroundVoxel, globalAcrossVoxel, sample);
+            return ApplySiteSurfaceMask(natural, sample.SiteMask);
         }
     }
 

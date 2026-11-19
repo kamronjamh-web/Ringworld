@@ -291,6 +291,7 @@ void main()
 #endif
 	RcFields f = rc_sample_fields(dA, across);
 	vec4 w = rc_biome_weights(r.height, r.continental, r.ridge, f);
+	if ((HM_I(RC_P_WORLD_FEATURES) & 256) != 0) w = rc_forest_canopy_fold(w, f.moisture, dA, across); // T6-10: vegetation.far_canopy (bit 8)
 	uint o = uint((s * BIOME_STRIDE + zi * ROW + xi) * BIOME_FLOATS);
 	biome.v[o] = w.x; biome.v[o + 1u] = w.y; biome.v[o + 2u] = w.z; biome.v[o + 3u] = w.w;
 	biome.v[o + 4u] = f.moisture;

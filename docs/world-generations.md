@@ -19,8 +19,8 @@ The production feature table holds only open (unfrozen) features so far; `water.
 | `scatter.rocks` | 4 | T5 | Open (review) |
 | `scatter.river` | 5 | T5 | Reserved |
 | `vegetation.forest_structure` | 6 | T6 | Open (review) |
-| `vegetation.ground_cover` | 7 | T6 | Reserved |
-| `vegetation.far_canopy` | 8 | T6, including V2 forest grain | Reserved |
+| `vegetation.ground_cover` | 7 | T6 | Open (review) |
+| `vegetation.far_canopy` | 8 | T6, including V2 forest grain | Open (review) |
 | `vegetation.riparian` | 9 | T6 | Reserved |
 | `landform.meso_relief` | 10 | T7, including still ponds | Reserved |
 | `landform.coastal_variety` | 11 | T7 | Reserved |

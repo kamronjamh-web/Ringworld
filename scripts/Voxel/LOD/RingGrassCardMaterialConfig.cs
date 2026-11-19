@@ -79,6 +79,12 @@ public sealed class RingGrassCardMaterialConfig
         return material;
     }
 
+    /// <summary>Binds the ground-cover atlas (T6 design B2, layer = kind - 3) for worlds with vegetation.ground_cover; the grass atlas is untouched.</summary>
+    public void ApplyCoverAtlas(ShaderMaterial material, Texture? coverAtlas)
+    {
+        if (coverAtlas != null) material.SetShaderParameter("grass_cover_atlas", coverAtlas);
+    }
+
     public void ApplyCard(ShaderMaterial material, Texture2D? atlas = null)
     {
         if (atlas != null) material.SetShaderParameter("grass_card_atlas", atlas);

@@ -83,6 +83,9 @@ uniform float ground_slope_baseline_meters = 4.0;
 const int SCATTER_ROCKS_BIT = 4;
 const float SPECKLE_CELL_M = 4.0;
 #endif
+// T6-10 far canopy tint (design B5): the world feature bit of vegetation.far_canopy and its global (rgb = canopy albedo, w = the distance in metres where the tree impostors end; w 0 = not published).
+const int FAR_CANOPY_BIT = 8;
+global uniform vec4 ringworld_far_canopy;
 instance uniform vec4 coverage_atlas_rect = vec4(0.0, 0.0, 0.0, 0.0);
 // After coverage_atlas_rect on purpose: instance uniforms without an explicit index are numbered in declaration order, and the
 // ocean and shadow shaders (which share these instance parameters) declare coverage_atlas_rect first.
@@ -347,6 +350,20 @@ void fragment() {
 	// Keep a spatially varying night tint, but leave brightness to Godot's
 	// environment ambient light and directional-light pipeline.
 	vec3 lit_color = terrain_color * mix(night_tint, vec3(1.0), ring_day_factor);
+	float far_canopy_w = 0.0;
+	// FAR_CANOPY_BEGIN
+	if (ring_world_has(FAR_CANOPY_BIT) && ringworld_far_canopy.w > 0.0 && biome_texture_weights_enabled && !debug_color_enabled && !structural_surface) {
+		// T6-10 (design B5): past the tree far distance the forest weight (the canopy cover in these worlds) takes the canopy albedo, roughness 1 and no specular; the weight ramps in over the last 1000 m
+		// before the impostors end and fades out on slopes of 14 to 32 degrees (where rock takes the ground). The geometric normal gives the slope.
+		// Skirt vertices carry no normal (a zero vector): they and any other degenerate normal take no tint.
+		vec3 far_canopy_normal = (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz;
+		if (dot(far_canopy_normal, far_canopy_normal) > 0.25) {
+			float far_canopy_slope = ring_ground_slope_deg(dot(normalize(far_canopy_normal), normalize(surface_up_world)));
+			far_canopy_w = clamp(COLOR.g, 0.0, 1.0) * smoothstep(ringworld_far_canopy.w - 1000.0, ringworld_far_canopy.w, distance_to_camera) * (1.0 - smoothstep(14.0, 32.0, far_canopy_slope));
+			lit_color = mix(lit_color, ring_terrain_albedo_scaled(ringworld_far_canopy.rgb) * mix(night_tint, vec3(1.0), ring_day_factor), far_canopy_w);
+		}
+	}
+	// FAR_CANOPY_END
 	RingHaze haze = ring_haze_sample(camera_world_position, world_position, ring_center, ring_day_factor);
 	ALBEDO = lit_color * haze.T;
 	EMISSION = ring_haze_inscatter(haze);
@@ -355,6 +372,11 @@ void fragment() {
 	ROUGHNESS = surface_roughness;
 	SPECULAR = surface_specular;
 	METALLIC = 0.0;
+	if (far_canopy_w > 0.0) {
+		// T6-10: a closed canopy is rough and matte (the albedo mix is in lit_color above, before the haze).
+		ROUGHNESS = mix(ROUGHNESS, 1.0, far_canopy_w);
+		SPECULAR *= 1.0 - far_canopy_w;
+	}
 	combined_cloud_shadow_occlusion = sample_combined_cloud_shadow(world_position, ring_day_factor);
 	AO = min(1.0 - combined_cloud_shadow_occlusion * 0.72, ring_storm_ambient(ring_storm_level(world_position))); // storm light
 	AO_LIGHT_AFFECT = 0.0;

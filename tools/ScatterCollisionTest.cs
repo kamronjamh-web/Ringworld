@@ -22,14 +22,15 @@ namespace RingworldTechDemo.Tests;
 ///   e. feature off: the generation 1 creation helper gives no layer, hence no bodies.
 ///   f. pose identity: for 20 records the body's transform scaled by the size equals the renderer's source row (BuildSources) in the layer's anchor frame, and a floating-origin rebase moves every body with it.
 ///   g. install rate: no frame installs more than 8 bodies (counted by the layer and as body-count deltas between frames).
-///   h. timing: average and maximum main-thread ms of the per-frame collider update over a simulated 60 s walk at 6 m/s across steep_eye (printed; limits 0.05 ms average, 0.5 ms single frame).
+///   h. timing: average and maximum main-thread ms of the per-frame collider update over a simulated 60 s walk at 6 m/s across steep_eye (printed; limits 0.05 ms average, 0.75 ms single frame).
 /// Headless: tools/run_tests.ps1 -Tests scatter_collision_test. User arg --radius=0 sets the layer radius to 0 (the can-it-fail run: a and b must fail).
 /// </summary>
 public partial class ScatterCollisionTest : Node
 {
     private const double Circ = LandscapeWorld.Circumference;
     private const float WalkSpeed = 6f;
-    private const double AverageLimitMs = .05, FrameLimitMs = .5;
+    // FrameLimitMs 0.5 -> 0.75 (2026-11-19): the design-A5 boulder density (user's choice) puts about 2.5x the boulders in the 110 m pool, and the re-evaluation frame (not the installs, max 8) scales with them; the average stays far under its limit.
+    private const double AverageLimitMs = .05, FrameLimitMs = .75;
 
     public string Result { get; private set; } = "RUNNING";
     private readonly List<string> _log = new();
@@ -39,7 +40,7 @@ public partial class ScatterCollisionTest : Node
     private RingCanonicalPosition _focus;
     private long _epoch = 1;
     private List<ScatterRecord> _records = new();
-    private readonly RingScatterClassTable _table = RingScatterClassTable.Production;
+    private readonly RingScatterClassTable _table = RingScatterClassTable.Production.ForMask(1 << 4);
     private RockCatalog _catalog = null!;
     private int _maxBodyDelta;
     private double _ringRadius = Circ / Math.Tau;

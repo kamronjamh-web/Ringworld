@@ -1139,9 +1139,9 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         float waterHeight = terrainSample.ResolveDisplayedHeight(terrainHeight);
         // T2R-12: far river line coverage in the vertex alpha (S11); alpha stays 1 without a river graph.
         state.TerrainColors[index] = state.Sampler.WithRiverLineAlpha(
-            RingTerrainVisuals.ResolveMacroTextureColor(terrainSample, Mathf.RoundToInt(terrainHeight), state.Sampler, state.LowColor, state.HighColor),
+            RingTerrainVisuals.ResolveMacroTextureColor(terrainSample, Mathf.RoundToInt(terrainHeight), state.Sampler, state.LowColor, state.HighColor, sampleAround, sampleAcross),
             around, across, state.AroundSpacing, state.AcrossSpacing);
-        state.WaterColors[index] = RingWaterModel.EncodeWaterKind(RingTerrainVisuals.ResolveMacroTextureColor(terrainSample, Mathf.RoundToInt(waterHeight), state.Sampler, state.LowColor, state.HighColor), terrainSample.WaterKind);
+        state.WaterColors[index] = RingWaterModel.EncodeWaterKind(RingTerrainVisuals.ResolveMacroTextureColor(terrainSample, Mathf.RoundToInt(waterHeight), state.Sampler, state.LowColor, state.HighColor, sampleAround, sampleAcross), terrainSample.WaterKind);
         state.DisplayedWater[index] = terrainSample.HasSurfaceWater && terrainHeight < terrainSample.WaterSurfaceHeight;
         float terrainCanonicalHeight = terrainHeight + (state.UsesPresentationSurface ? 0.0f : 1.0f) - state.Underlay;
         state.TerrainCanonicalHeights[index] = terrainCanonicalHeight;

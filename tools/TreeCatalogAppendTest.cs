@@ -12,9 +12,9 @@ using RingworldTechDemo.Voxel.LOD;
 namespace RingworldTechDemo.Tools;
 
 /// <summary>
-/// T6-5 (docs/work-orders/terrain-vegetation/T6.md, A6 and A6a): the derived forms (snags 30-35, fallen trees 36-39, stumps 40-42) and the catalog identity rule for appended entries.
+/// T6-5 and T6-7 (docs/work-orders/terrain-vegetation/T6.md, A6, A6a and A8): the derived forms (snags 30-35, fallen trees 36-39, stumps 40-42, shrubs 43-54) and the catalog identity rule for appended entries.
 /// Generation 1's catalog field and cache identity are unchanged with the derived catalog loaded; the golden rows compare with a missing catalog_appended as none; a synthetic row behind an unused
-/// feature moves nothing it should not; the first 30 variants and the base resources match tools/fixtures/tree_catalog_base_golden.json; derived structure, size and regeneration match the manifest.
+/// feature moves nothing it should not; the first 30 variants and the base resources match tools/fixtures/tree_catalog_base_golden.json; derived structure, size and regeneration match the manifest; forms 30-42 keep the mesh hashes T6-5 wrote (tools/fixtures/derived_forms_30_42_golden.json); the shrubs are 2-LOD single-foliage-surface forms whose cluster rectangles regenerate.
 /// Prints TREE_CATALOG_APPEND=PASS. Headless: tools/run_tests.ps1 -Tests tree_catalog_append_test.
 /// </summary>
 public partial class TreeCatalogAppendTest : RefCounted
@@ -22,6 +22,7 @@ public partial class TreeCatalogAppendTest : RefCounted
     const string BaseGoldenPath = "res://tools/fixtures/tree_catalog_base_golden.json";
     const string BaseResource = "res://resources/trees/prepared/lolipop_catalog.res";
     const string ImpostorResource = "res://resources/trees/prepared/lolipop_impostor_atlas.res";
+    const string DerivedGoldenPath = "res://tools/fixtures/derived_forms_30_42_golden.json";
     const string FeatureId = "vegetation.forest_structure";
     const string NewSpecies = "vegetation.new_species";
     const int LodSlots = PreparedDerivedTreeCatalog.LodsPerForm;
@@ -115,7 +116,7 @@ public partial class TreeCatalogAppendTest : RefCounted
         Detail($"a. {checkedRows} golden row(s): catalog equals the recomputed field (gen1 {gen1Catalog}) and catalog_appended is none for each frozen generation");
 
         // b. a synthetic row behind an unused feature
-        var synthetic = new ImportedTreeSourceRow(43, TreeSpecies.Maple, TreeFormKind.Shrub, TreeSizeClass.Small, 1, TreePlacementRole.Shrub, TreeSourceCatalog.T6Derived, "synthetic", 6, NewSpecies);
+        var synthetic = new ImportedTreeSourceRow(55, TreeSpecies.Maple, TreeFormKind.Shrub, TreeSizeClass.Small, 1, TreePlacementRole.Shrub, TreeSourceCatalog.T6Derived, "synthetic", 6, NewSpecies);
         TreeSourceTable test = ImportedTreeSourceTable.CreateForTests(ImportedTreeSourceTable.Rows.Append(synthetic));
         IReadOnlySet<string> gen1 = ledger.FeatureSet(1, Array.Empty<string>());
         var structure = new HashSet<string>(gen1) { FeatureId };
@@ -129,8 +130,8 @@ public partial class TreeCatalogAppendTest : RefCounted
         Check(Appended(onlyNew, test) != Appended(gen1, test), "b. the synthetic row did not change catalog_appended for {new_species} alone");
         Check(Json(WorldGenerationFingerprint.ComputeCatalogField(baseCatalog)) == recomputed, "b. the catalog field changed");
         Dictionary<string, object?> withStructure = WorldGenerationFingerprint.ComputeCatalogAppended(structure, ImportedTreeSourceTable.Production);
-        Check((int)withStructure["count"]! == DerivedTreeCatalog.FormCount, "b. {forest_structure} does not append 13 rows");
-        Detail($"b. synthetic row 43: gen1 none unchanged; {{forest_structure}} count {withStructure["count"]} hash {withStructure["hash"]} unchanged; a set with {NewSpecies} changes it");
+        Check((int)withStructure["count"]! == DerivedTreeCatalog.FormCount, $"b. {{forest_structure}} does not append {DerivedTreeCatalog.FormCount} rows");
+        Detail($"b. synthetic row 55: gen1 none unchanged; {{forest_structure}} count {withStructure["count"]} hash {withStructure["hash"]} unchanged; a set with {NewSpecies} changes it");
     }
 
     // ------------------------------------------------------------------ c: cache identity
@@ -185,23 +186,23 @@ public partial class TreeCatalogAppendTest : RefCounted
     void StructureChecks(IReadOnlyList<ImportedTreeVariant> baseCatalog)
     {
         IReadOnlyList<DerivedTreeForm> forms = DerivedTreeCatalog.Load();
-        Check(forms.Count == DerivedTreeCatalog.FormCount && forms.Select(f => f.Index).SequenceEqual(Enumerable.Range(30, 13)), "e. derived indices are not 30-42 contiguous");
+        Check(forms.Count == DerivedTreeCatalog.FormCount && forms.Select(f => f.Index).SequenceEqual(Enumerable.Range(30, 25)), "e. derived indices are not 30-54 contiguous");
         var resource = ResourceLoader.Load<PreparedDerivedTreeCatalog>(DerivedTreeCatalog.ResourcePath);
         Check(resource.Meshes.Count == forms.Count * LodSlots, $"e. {resource.Meshes.Count} mesh slots, expected {forms.Count * LodSlots} (no LOD3 / impostor slot beyond LODF)");
-        Check(forms.Take(6).All(f => f.Form == TreeFormKind.Snag) && forms.Skip(6).Take(4).All(f => f.Form == TreeFormKind.FallenTree) && forms.Skip(10).All(f => f.Form == TreeFormKind.Stump), "e. form kinds are not snags 30-35, logs 36-39, stumps 40-42");
+        Check(forms.Take(6).All(f => f.Form == TreeFormKind.Snag) && forms.Skip(6).Take(4).All(f => f.Form == TreeFormKind.FallenTree) && forms.Skip(10).Take(3).All(f => f.Form == TreeFormKind.Stump) && forms.Skip(13).All(f => f.Form == TreeFormKind.Shrub), "e. form kinds are not snags 30-35, logs 36-39, stumps 40-42, shrubs 43-54");
         foreach (DerivedTreeForm f in forms)
         {
             ImportedTreeVariant source = baseCatalog[f.SourceBaseVariant];
             string id = $"form {f.Index} ({f.Form} of {source.Name})";
             Check(f.Species == source.Species && f.Materials.Count == 1, $"e. {id} species/materials");
-            int expectedLods = f.Form == TreeFormKind.Stump ? 1 : 4;
+            int expectedLods = f.Form == TreeFormKind.Stump ? 1 : f.Form == TreeFormKind.Shrub ? 2 : 4;
             for (int lod = 0; lod < LodSlots; lod++)
             {
                 Mesh? mesh = f.Lods[lod];
                 if (lod >= expectedLods) { Check(mesh == null, $"e. {id} LOD{lod} should be empty"); continue; }
                 if (mesh == null) { Check(false, $"e. {id} LOD{lod} missing"); continue; }
                 Check(mesh.GetSurfaceCount() == 1, $"e. {id} LOD{lod} has {mesh.GetSurfaceCount()} surfaces");
-                Check(mesh.SurfaceGetMaterial(0) == f.Materials[0], $"e. {id} LOD{lod} lacks the bark material");
+                Check(mesh.SurfaceGetMaterial(0) == f.Materials[0], $"e. {id} LOD{lod} lacks its material");
                 Godot.Collections.Array a = mesh.SurfaceGetArrays(0);
                 Vector3[] v = a[(int)Mesh.ArrayType.Vertex].AsVector3Array();
                 int[] idx = a[(int)Mesh.ArrayType.Index].AsInt32Array();
@@ -224,13 +225,27 @@ public partial class TreeCatalogAppendTest : RefCounted
                         Check(lod == 3 || (box.Size.Y <= reach2 && box.Size.Z <= reach2), $"e. {id} LOD{lod} lateral extent {box.Size.Y:F3} x {box.Size.Z:F3} exceeds 2R + 0.002 = {reach2:F3}");
                         if (lod == 3) Check(tris is >= 30 and <= 110, $"e. {id} LODF has {tris} triangles");
                         break;
+                    case TreeFormKind.Shrub:
+                        // One surface in the source species' foliage material (alpha cutout), normalised space: 1 unit tall, on the ground, wind attachments (Custom0) = (x, 0, z, 1), UVs inside the atlas.
+                        Check(f.Materials[0].GetShaderParameter("use_alpha_cutout").AsBool() && f.Materials[0].GetShaderParameter("tree_foliage_mode").AsInt32() == 1, $"e. {id} LOD{lod} is not in an alpha-cutout foliage material");
+                        Check(Math.Abs(box.End.Y - 1f) < .001f && box.Position.Y > -.001f && box.Position.Y < .35f, $"e. {id} LOD{lod} bounds y {box.Position.Y:F3}..{box.End.Y:F3} (expected 1 unit tall on the ground)");
+                        Check(box.Size.X > .6f && box.Size.X < 2.2f && box.Size.Z > .6f && box.Size.Z < 2.2f, $"e. {id} LOD{lod} footprint {box.Size.X:F2} x {box.Size.Z:F2}");
+                        Check(lod == 0 ? tris == (source.Species == TreeSpecies.Maple ? 28 : source.Species == TreeSpecies.Pine ? 20 : 24) : tris == 8, $"e. {id} LOD{lod} has {tris} triangles");
+                        float[] attach = a[(int)Mesh.ArrayType.Custom0].AsFloat32Array();
+                        Vector2[] uvs = a[(int)Mesh.ArrayType.TexUV].AsVector2Array();
+                        bool attachOk = attach.Length == v.Length * 4, uvOk = uvs.Length == v.Length;
+                        for (int k = 0; attachOk && k < v.Length; k++) attachOk = Math.Abs(attach[k * 4] - v[k].X) < 1e-5f && attach[k * 4 + 1] == 0f && Math.Abs(attach[k * 4 + 2] - v[k].Z) < 1e-5f && attach[k * 4 + 3] == 1f;
+                        foreach (Vector2 uv in uvs) uvOk &= uv.X >= 0f && uv.X <= 1f && uv.Y >= 0f && uv.Y <= 1f;
+                        Check(attachOk, $"e. {id} LOD{lod} wind attachments are not (x, 0, z, 1)");
+                        Check(uvOk, $"e. {id} LOD{lod} has UVs outside the atlas");
+                        break;
                     case TreeFormKind.Stump:
                         float topM = box.End.Y * source.HeightMeters, bottomM = box.Position.Y * source.HeightMeters;
                         Check(topM >= .54f && topM <= .64f && Math.Abs(bottomM + .15f) < .002f, $"e. {id} stump spans {bottomM:F3}..{topM:F3} m, expected -0.15..0.54-0.64 m");
                         break;
                 }
             }
-            bool windOff = f.Form != TreeFormKind.Snag;
+            bool windOff = f.Form is TreeFormKind.FallenTree or TreeFormKind.Stump;
             Variant wind = f.Materials[0].GetShaderParameter("vegetation_wind_enabled");
             Check(windOff ? (wind.VariantType == Variant.Type.Bool && !wind.AsBool()) : (wind.VariantType == Variant.Type.Nil || wind.AsBool()), $"e. {id} wind flag (off for logs and stumps, on for snags)");
             Variant sourceWind = source.Lods[0].SurfaceGetMaterial(0) is ShaderMaterial sm ? sm.GetShaderParameter("vegetation_wind_enabled") : default;
@@ -239,7 +254,7 @@ public partial class TreeCatalogAppendTest : RefCounted
         }
         long bytes = new FileInfo(ProjectSettings.GlobalizePath(DerivedTreeCatalog.ResourcePath)).Length;
         Check(bytes < 8L * 1024 * 1024, $"f. derived resource is {bytes} bytes (limit 8 MiB)");
-        Detail($"e. 13 forms 30-42, snags/logs 4 LOD slots, stumps 1, one surface each, bounds sane; f. derived resource {bytes} bytes");
+        Detail($"e. 25 forms 30-54 contiguous, snags/logs 4 LOD slots, stumps 1, shrubs 2, one surface each, bounds sane; f. derived resource {bytes} bytes");
     }
 
     // ------------------------------------------------------------------ g: regeneration
@@ -271,5 +286,47 @@ public partial class TreeCatalogAppendTest : RefCounted
         }
         Check(compared == built.Resource.Meshes.Count(m => m != null), $"g. compared {compared} LOD entries");
         Detail($"g. regenerated {compared} meshes in process: hashes equal the manifest");
+
+        // h. forms 30-42 keep the mesh hashes T6-5 wrote (the shrubs only append).
+        using JsonDocument goldenDoc = JsonDocument.Parse(File.ReadAllText(ProjectSettings.GlobalizePath(DerivedGoldenPath)));
+        int held = 0;
+        foreach (JsonElement form in goldenDoc.RootElement.GetProperty("forms").EnumerateArray())
+        {
+            int index = form.GetProperty("index").GetInt32();
+            int slot = Array.IndexOf(built.Resource.FormIndices, index);
+            Check(slot >= 0 && slot < 13, $"h. form {index} is not in the regenerated catalog first 13 slots");
+            if (slot < 0) continue;
+            foreach (JsonElement lod in form.GetProperty("lods").EnumerateArray())
+            {
+                string name = lod.GetProperty("lod").GetString()!;
+                ArrayMesh? mesh = built.Resource.Meshes[slot * LodSlots + (name == "F" ? PrepareDerivedTreeAssets.LodF : int.Parse(name))];
+                Check(mesh != null && ImportedTreeRenderLodCatalog.HashLod(mesh) == lod.GetProperty("mesh_hash").GetString(), $"h. form {index} LOD{name} mesh hash differs from the T6-5 golden (forms 30-42 must not change)");
+                Check(lod.GetProperty("source_hash").GetString() == built.Resource.SourceHashes[slot * LodSlots + (name == "F" ? PrepareDerivedTreeAssets.LodF : int.Parse(name))], $"h. form {index} LOD{name} source hash differs from the T6-5 golden");
+                held++;
+            }
+        }
+        Detail($"h. forms 30-42: {held} mesh hashes equal the T6-5 golden");
+
+        // i. the shrubs: the manifest's cluster rectangles are what the tool finds now, per species (maple, fir, pine), and every shrub form has meshes in slots 0 and 1 only.
+        JsonElement clusters = manifest.GetProperty("shrub_clusters");
+        int rectangles = 0;
+        foreach (JsonElement c in clusters.EnumerateArray())
+        {
+            var species = Enum.Parse<TreeSpecies>(c.GetProperty("species").GetString()!);
+            var atlas = Image.LoadFromFile(ProjectSettings.GlobalizePath(PrepareDerivedTreeAssets.AtlasPath(species)));
+            List<PrepareDerivedTreeAssets.ClusterRect> found = PrepareDerivedTreeAssets.ClusterRectangles(baseCatalog, species, atlas);
+            JsonElement[] used = c.GetProperty("used").EnumerateArray().ToArray();
+            Check(found.Count == used.Length && found.Count >= 3, $"i. {species}: {found.Count} cluster rectangles found, manifest has {used.Length} (at least 3 needed)");
+            for (int k = 0; k < Math.Min(found.Count, used.Length); k++)
+                Check(Math.Abs(found[k].U0 - used[k].GetProperty("u0").GetSingle()) < 1e-4f && Math.Abs(found[k].V1 - used[k].GetProperty("v1").GetSingle()) < 1e-4f, $"i. {species}: cluster rectangle {k} differs from the manifest");
+            Check(found.Count <= PrepareDerivedTreeAssets.MaxClusters, $"i. {species}: more than {PrepareDerivedTreeAssets.MaxClusters} rectangles");
+            rectangles += found.Count;
+            Detail($"i. {species} ({PrepareDerivedTreeAssets.LookOf(species)}): {found.Count} cluster rectangles, regenerated equal to the manifest");
+        }
+        Check(clusters.GetArrayLength() == 3, "i. the manifest does not hold three cluster sets");
+        for (int f = 13; f < built.Resource.FormIndices.Length; f++)
+            for (int lod = 0; lod < LodSlots; lod++)
+                Check((built.Resource.Meshes[f * LodSlots + lod] != null) == (lod < 2), $"i. shrub form {built.Resource.FormIndices[f]} slot {lod} {(lod < 2 ? "empty" : "filled")}");
+        Detail($"i. {rectangles} cluster rectangles in total; shrub forms 43-54 fill slots 0 and 1");
     }
 }

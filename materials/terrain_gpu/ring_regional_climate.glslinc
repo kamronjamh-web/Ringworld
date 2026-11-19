@@ -33,7 +33,11 @@
 #define RC_P_PROFILE_COUNT 204
 #define RC_P_PROFILES 205
 #define RC_P_NOISE 285
-#define RC_P_COUNT 317
+// T6-10 (vegetation.far_canopy): the world feature mask (bit 8 = the forest weight is the canopy cover; 0 in generation 1) and the ForestRegionSampler identity (seed, circumference in metres, below 2^30).
+#define RC_P_WORLD_FEATURES 317
+#define RC_P_FOREST_SEED 318
+#define RC_P_FOREST_CIRC 319
+#define RC_P_COUNT 320
 
 #define RC_N_CONT 0
 #define RC_N_EROSION 1
@@ -166,10 +170,17 @@ float rc_range_weight(float value, float minimum, float maximum, float width)
 
 // GetBiomeTextureWeights(sample) for a natural (site-free) runtime sample: height is the presentation height, continentalness / ridge
 // the height-model values cast to float, erosion / moisture / legacy temperature from rc_sample_fields.
+// Side outputs of the last rc_biome_weights call for rc_forest_canopy_fold: the winning profile's channel (1 forest, -1 grassland, -2 water; the channel mapping is one to one for the non-water
+// biomes, see RingTerrainSampler.CreateGpuClimateSettings) and the runtime temperature after the altitude drop.
+int rc_primary_channel = -2;
+float rc_fold_temperature = 0.0;
+
 vec4 rc_biome_weights(float height, float continentalness, float ridgeW, RcFields f)
 {
+	rc_primary_channel = -2;
 	if (height < 0.0) return vec4(1.0, 0.0, 0.0, 0.0);
 	precise float temperature = rc_clamp(f.temperature - max(0.0, height) * HM_F(RC_P_ALT_DROP) / 1000.0, 0.0, 1.0);
+	rc_fold_temperature = temperature;
 	int count = HM_I(RC_P_PROFILE_COUNT);
 	int bestChannel = -1, secondChannel = -1;
 	bool haveBest = false, haveSecond = false;
@@ -195,6 +206,7 @@ vec4 rc_biome_weights(float height, float continentalness, float ridgeW, RcField
 		}
 	}
 	int primary = haveBest ? bestChannel : -1;
+	rc_primary_channel = primary;
 	int secondary = haveSecond ? secondChannel : primary;
 	precise float total = max(0.0001, bestWeight + max(0.0, secondWeight));
 	precise float secondaryWeight = rc_clamp(max(0.0, secondWeight) / total, 0.0, 0.49);
@@ -209,6 +221,110 @@ vec4 rc_biome_weights(float height, float continentalness, float ridgeW, RcField
 	precise float tundra = w[2] * inlandWeight;
 	precise float alpine = w[3] * inlandWeight;
 	return vec4(desert, forest, tundra, alpine);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// T6-10 (vegetation.far_canopy, world feature bit 8): port of RingForestCanopyFold.Apply. The forest weight becomes the canopy cover:
+//   cover = SmoothStep(0.05, 0.55, ForestRegionSampler.Sample(around, across, sample, 0).Density) * ForestStructureSampler.TreelineDensity(T)
+//   forest' = max(0, 1 - (desert + tundra + alpine)) * cover; desert, tundra and alpine unchanged (grass is the remainder).
+// ForestRegionSampler's three value noises (12288, 2048, 768 m) use a 64-bit hash (Hash01). It is reproduced exactly with 32-bit pieces: a uvec2 is (low, high); the low 64 bits of a product
+// come from umulExtended on the low words plus the two cross products. The hash result is (h >> 40) as a 24-bit integer times the float 1f / 16777215f (bits 0x33800001). The float arithmetic is
+// `precise` in the C# evaluation order (RyuJIT does not contract), so only the last place of the smoothstep divisions can differ from the CPU.
+uvec2 rc_u64_mul(uvec2 a, uvec2 b)
+{
+	uint hi, lo;
+	umulExtended(a.x, b.x, hi, lo);
+	hi += a.x * b.y + a.y * b.x;
+	return uvec2(lo, hi);
+}
+
+uvec2 rc_u64_shr(uvec2 a, int n) // 0 < n < 32
+{
+	return uvec2((a.x >> uint(n)) | (a.y << uint(32 - n)), a.y >> uint(n));
+}
+
+float rc_forest_hash01(uint seed, int x, int z, uint salt)
+{
+	uvec2 h = uvec2(seed ^ salt, 0u);
+	h ^= rc_u64_mul(uvec2(uint(x), 0u), uvec2(0x85EBCA87u, 0x9E3779B1u)); // x * 0x9E3779B185EBCA87
+	h ^= rc_u64_mul(uvec2(uint(z), 0u), uvec2(0x27D4EB4Fu, 0xC2B2AE3Du)); // (uint) z * 0xC2B2AE3D27D4EB4F
+	h ^= rc_u64_shr(h, 30);
+	h = rc_u64_mul(h, uvec2(0x1CE4E5B9u, 0xBF58476Du));                     // 0xBF58476D1CE4E5B9
+	h ^= rc_u64_shr(h, 27);
+	h = rc_u64_mul(h, uvec2(0x133111EBu, 0x94D049BBu));                     // 0x94D049BB133111EB
+	h ^= rc_u64_shr(h, 31);
+	precise float r = float(h.y >> 8u) * uintBitsToFloat(0x33800001u);
+	return r;
+}
+
+float rc_forest_fade(float v)
+{
+	precise float r = v * v * v * (v * (v * 6.0 - 15.0) + 10.0);
+	return r;
+}
+
+// ForestRegionSampler.SmoothStep (no edge guard).
+float rc_forest_ss(float e0, float e1, float v)
+{
+	precise float t = clamp((v - e0) / (e1 - e0), 0.0, 1.0);
+	precise float r = t * t * (3.0 - 2.0 * t);
+	return r;
+}
+
+// ForestRegionSampler.ValueNoise for a canonical around in [0, circumference) and an across of 0 or more; the last cell absorbs the circumference remainder.
+float rc_forest_noise(int around, int across, int cellSize, uint salt, int circumference, uint seed)
+{
+	int period = max(1, circumference / cellSize);
+	int x0 = around / cellSize;
+	if (x0 >= period) x0 = period - 1;
+	int z0 = across / cellSize;
+	int x1 = x0 + 1;
+	if (x1 >= period) x1 = 0;
+	int cellStart = x0 * cellSize;
+	int cellWidth = x0 == period - 1 ? circumference - cellStart : cellSize;
+	precise float tx = float(around - cellStart) / float(cellWidth);
+	precise float tz = float(across - z0 * cellSize) / float(cellSize);
+	precise float fx = rc_forest_fade(tx);
+	precise float fz = rc_forest_fade(tz);
+	precise float a = rc_lerp(rc_forest_hash01(seed, x0, z0, salt), rc_forest_hash01(seed, x1, z0, salt), fx);
+	precise float b = rc_lerp(rc_forest_hash01(seed, x0, z0 + 1, salt), rc_forest_hash01(seed, x1, z0 + 1, salt), fx);
+	precise float r = rc_lerp(a, b, fz);
+	return r;
+}
+
+// The weights of rc_biome_weights (read rc_primary_channel and rc_fold_temperature from that call) with the forest channel replaced by the canopy cover.
+// dA is relative to the anchor of the K1 / K2 sample, as for rc_sample_fields; moisture is the field moisture.
+vec4 rc_forest_canopy_fold(vec4 w, float moisture, int dA, int across)
+{
+	// ForestRegionSampler.Sample returns the default (density 0) outside the ring, over water and for biomes other than forest and grassland.
+	if (rc_primary_channel != 1 && rc_primary_channel != -1) return vec4(w.x, 0.0, w.z, w.w);
+	if (across < 0 || across >= HM_I(RC_P_WIDTH)) return vec4(w.x, 0.0, w.z, w.w);
+	int circumference = HM_I(RC_P_FOREST_CIRC);
+	uint seed = uint(HM_I(RC_P_FOREST_SEED));
+	int around = hm_anchor + dA;
+	around = around % circumference;
+	if (around < 0) around += circumference;
+	precise float temperature = rc_clamp(rc_fold_temperature, 0.0, 1.0);
+	precise float moist = rc_clamp(moisture, 0.0, 1.0);
+	precise float climateCore = rc_forest_ss(0.30, 0.78, temperature) * (1.0 - rc_forest_ss(0.88, 1.0, temperature)) * rc_forest_ss(0.38, 0.82, moist);
+	precise float climate = 0.34 + climateCore * 0.66;
+	precise float biome = rc_primary_channel == 1 ? 1.0 : 0.58;
+	precise float suitability = rc_clamp(climate * biome * 1.0, 0.0, 1.0); // slope 0: 1 - SmoothStep(14, 32, 0) = 1
+	float density = 0.0;
+	if (suitability > 0.0)
+	{
+		precise float cover0 = rc_forest_noise(around, across, 12288, 0x51A3u, circumference, seed);
+		precise float variation = rc_forest_noise(around, across, 2048, 0xD925u, circumference, seed);
+		precise float clearingField = rc_forest_noise(around, across, 768, 0x2F71u, circumference, seed);
+		precise float clearing = rc_forest_ss(0.70, 0.91, clearingField) * rc_forest_ss(0.22, 0.55, suitability);
+		precise float d = rc_clamp((cover0 * 0.72 + variation * 0.28) * suitability - clearing * 0.98, 0.0, 1.0);
+		density = d;
+	}
+	precise float tau = 0.15 + 0.85 * rc_forest_ss(0.24, 0.40, temperature);
+	precise float cover = rc_forest_ss(0.05, 0.55, density) * tau;
+	precise float veg = max(0.0, 1.0 - (w.x + w.z + w.w));
+	precise float forest = veg * cover;
+	return vec4(w.x, forest, w.z, w.w);
 }
 
 #endif

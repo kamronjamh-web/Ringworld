@@ -7,6 +7,7 @@ using RingworldTechDemo.Terrain.Generation;
 using RingworldTechDemo.Terrain.Surface;
 using RingworldTechDemo.Vegetation;
 using RingworldTechDemo.Vegetation.Scatter;
+using RingworldTechDemo.Vegetation.Understory;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Phase3;
 
@@ -33,8 +34,20 @@ public partial class RingBiomeDecorationLayer
 		ScatterCapScale = capScale;
 	}
 
+	/// <summary>The rank gate of the sapling batches (the Vegetation tab's "Understory density"); applies at the next cull, no rebuild. Only the understory layer reads it.</summary>
+	internal float UnderstoryDensity { get; set; } = 1f;
+	/// <summary>The rank gate of the dead-wood batches and the filter of the dead-wood colliders (the Vegetation tab's "Dead wood density"); no rebuild.</summary>
+	internal float DeadWoodDensity { get; set; } = 1f;
+
+	internal void ApplyUnderstorySettings(float understoryDensity, float deadWoodDensity)
+	{
+		UnderstoryDensity = Math.Clamp(understoryDensity, 0f, 1f);
+		DeadWoodDensity = Math.Clamp(deadWoodDensity, 0f, 1f);
+	}
+
 	private ScatterStreamer? _scatter;
 	private RingScatterLayer? _scatterLayer;
+	private RingUnderstoryLayer? _understoryLayer;
 	private RingTerrainSampler? _scatterSampler;
 	private RingLodSurfaceEditSnapshot? _scatterEdits;
 	private ulong _scatterEditsVersion = ulong.MaxValue;
@@ -80,6 +93,11 @@ public partial class RingBiomeDecorationLayer
 			if (GodotObject.IsInstanceValid(_scatterLayer)) _scatterLayer.QueueFree();
 			_scatterLayer = null;
 		}
+		if (_understoryLayer != null)
+		{
+			if (GodotObject.IsInstanceValid(_understoryLayer)) _understoryLayer.QueueFree();
+			_understoryLayer = null;
+		}
 		_scatter?.Shutdown();
 		_scatter = null;
 		_scatterSampler = null;
@@ -101,6 +119,8 @@ public partial class RingBiomeDecorationLayer
 			if (_scatter == null) return;
 			_scatterLayer = CreateScatterLayerFor(sampler, BuildScatterLayer);
 			AddScatterLayerToParent(_scatterLayer);
+			_understoryLayer = CreateUnderstoryLayerFor(sampler, BuildUnderstoryLayer);
+			AddScatterLayerToParent(_understoryLayer);
 			_scatterEdits = first; _scatterEditsVersion = first.Version;
 			foreach ((VegetationTileKey key, VegetationTile tile) in _vegetationTiles) ScatterTileResident(key, tile);
 		}
@@ -113,6 +133,7 @@ public partial class RingBiomeDecorationLayer
 		float height = (float)(focus.VerticalMeters - PresentationSurfaceHeight(_scatterEdits, sampler, focus.AroundMeters, focus.AcrossMeters));
 		// The look settings (T5-9): only worlds with scatter.rocks reach here, so everywhere else the ground world global stays (x, y, 0, 0).
 		if (_scatterLayer != null) { _scatterLayer.RockDensity = ScatterRockDensity; _scatterLayer.CapScale = ScatterCapScale; }
+		if (_understoryLayer != null) { _understoryLayer.CapScale = ScatterCapScale; _understoryLayer.UnderstoryDensity = UnderstoryDensity; _understoryLayer.DeadWoodDensity = DeadWoodDensity; }
 		RingGroundSurfaceGlobals.PublishScatterLook(ScatterRockDensity, ScatterDistanceScale);
 		_scatter.DistanceScale = ScatterDistanceScale;
 		_scatter.Pump(focus.AroundMeters, focus.AcrossMeters, height, _scatterEdits, _scatterEdits.Version);
@@ -122,32 +143,46 @@ public partial class RingBiomeDecorationLayer
 	private ScatterStreamer? CreateScatterStreamer(RingTerrainSampler sampler, RingLodSurfaceEditSnapshot edits)
 		=> CreateScatterStreamerFor(sampler, () => BuildScatterStreamer(sampler, edits));
 
-	/// <summary>The creation decision: null (and nothing built) unless the sampler's mask has bit 4.</summary>
+	/// <summary>The creation decision: null (and nothing built) unless the sampler's mask has bit 4 or bit 6 (T6 understory rows).</summary>
 	internal static ScatterStreamer? CreateScatterStreamerFor(RingTerrainSampler sampler, Func<ScatterStreamer> make)
 		=> RingHabitatFieldGrid.IsEnabled(sampler.WorldFeatureMask) ? make() : null;
 
-	/// <summary>The layer exists exactly where the streamer does: null (and nothing built) unless the sampler's mask has bit 4.</summary>
+	/// <summary>The rock layer: null (and nothing built) unless the sampler's mask has bit 4. A bit 6 only world streams sapling records and draws none (the renderer is T6-4b).</summary>
 	internal static RingScatterLayer? CreateScatterLayerFor(RingTerrainSampler sampler, Func<RingScatterLayer> make)
-		=> RingHabitatFieldGrid.IsEnabled(sampler.WorldFeatureMask) ? make() : null;
+		=> (sampler.WorldFeatureMask & (1 << RingHabitatFieldGrid.ScatterRocksBit)) != 0 ? make() : null;
+
+	/// <summary>The understory layer (T6-4b): null (and nothing built) unless the sampler's mask has bit 6 (vegetation.forest_structure).</summary>
+	internal static RingUnderstoryLayer? CreateUnderstoryLayerFor(RingTerrainSampler sampler, Func<RingUnderstoryLayer> make)
+		=> (sampler.WorldFeatureMask & (1 << RingHabitatFieldGrid.ScatterVegetationBit)) != 0 ? make() : null;
 
 	private RingScatterLayer BuildScatterLayer() => new()
 	{
 		Name = "ScatterLayer",
-		Host = new ScatterLayerHost
-		{
-			Geometry = () => _grid?.CaptureLodGeometrySnapshot(),
-			Focus = () => _explorer?.CanonicalPosition,
-			Epoch = () => ScatterRecordEpoch,
-			CopyRecords = CopyResidentScatterRecords,
-			RingAcrossWidthMeters = () => _grid?.RingAcrossWidthMeters ?? 0.0,
-			DistanceScale = () => ScatterDistanceScale,
-			Sun = () => { ResolveTreeSunLight(); return _treeSunLight; },
-			Altitude = () => _explorer?.CurrentAltitudeAboveTerrainMeters ?? 0f,
-		}
+		Host = BuildScatterHost(),
+	};
+
+	private RingUnderstoryLayer BuildUnderstoryLayer() => new()
+	{
+		Name = "UnderstoryLayer",
+		Host = BuildScatterHost(),
+	};
+
+	private ScatterLayerHost BuildScatterHost() => new()
+	{
+		Geometry = () => _grid?.CaptureLodGeometrySnapshot(),
+		Focus = () => _explorer?.CanonicalPosition,
+		Epoch = () => ScatterRecordEpoch,
+		CopyRecords = CopyResidentScatterRecords,
+		RingAcrossWidthMeters = () => _grid?.RingAcrossWidthMeters ?? 0.0,
+		DistanceScale = () => ScatterDistanceScale,
+		Sun = () => { ResolveTreeSunLight(); return _treeSunLight; },
+		Altitude = () => _explorer?.CurrentAltitudeAboveTerrainMeters ?? 0f,
+		RegisterTreeMaterial = RegisterTreeLightingMaterial,
+		SimplifyDistantMaterials = () => SimplifyDistantTreeMaterials,
 	};
 
 	/// <summary>A sibling of this layer, never a descendant (the landscape harness counts everything under the decoration layer as trees).</summary>
-	private void AddScatterLayerToParent(RingScatterLayer? layer)
+	private void AddScatterLayerToParent(Node3D? layer)
 	{
 		Node? parent = GetParent();
 		if (layer == null || parent == null) return;
@@ -172,7 +207,7 @@ public partial class RingBiomeDecorationLayer
 		{
 			ulong treeSettings = VegetationCacheSettingsHash(layout.AroundCellCount, layout.CircumferenceMeters, layout.AcrossCellMeters, (float)_grid.RingAcrossWidthMeters, layout.TileCells, candidates,
 				ForestSpawnChance, GrasslandSpawnChance, GroveDensity, MaximumSlopeDegrees, UseRegionalImportedForest);
-			disk = new ScatterDiskConfig(ResolveVegetationLodCacheRoot(activeWorld), RingScatterTileFile.Identity(sampler, table, treeSettings),
+			disk = new ScatterDiskConfig(ResolveVegetationLodCacheRoot(activeWorld), RingScatterTileFile.Identity(sampler, ctx.Table, treeSettings),
 				Math.Max(0, VegetationDiskCacheBudgetMiB) * 1024L * 1024L, Math.Max(0, VegetationDiskCacheMinimumFreeMiB) * 1024L * 1024L);
 		}
 		return new ScatterStreamer(ctx, sampler.CreateIndependentCopy(), disk, WorldGenerationLedger.Production,

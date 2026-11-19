@@ -15,6 +15,10 @@ Foliage uses alpha blending in the pine/maple source and alpha masks in fir. `Tr
 
 Godot currently imports the maple bark base colour on UV0 but does not honour that source material's metallic/roughness texture UV1 assignment. The production catalog composes a material adaptation while leaving the supplied source assets intact.
 
+## Derived shrubs (T6-7)
+
+Shrub cards (derived catalog indices 43-54) are cut from the packs' own leaf-cluster atlases and are modified adaptations of the LOLIPOP assets; credit as in `THIRD_PARTY_ASSETS.md`.
+
 ## Production forest use
 
 `ImportedTreeCatalog` maps the 30 supplied variants (3 fir, 15 pine, 12 maple)

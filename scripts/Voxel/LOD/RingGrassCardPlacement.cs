@@ -3,7 +3,8 @@ using Godot;
 
 namespace RingworldTechDemo.Voxel.LOD;
 
-internal enum RingGrassCardKind : byte { Card = 0, Low = 1 } // 2 was the retired hero kind; never reuse it (CUSTOM.x encodes kind*4)
+/// <summary>Card kinds (CUSTOM.x encodes kind*4). 2 was the retired hero kind and is never reused. 3-5 are the ground-cover kinds of worlds with vegetation.ground_cover (T6 design B1); 6 is reserved for reeds (T6-12) and is not emitted yet.</summary>
+internal enum RingGrassCardKind : byte { Card = 0, Low = 1, Flower = 3, Fern = 4, TallGrass = 5, Reed = 6 }
 
 /// <summary>Worker-side options of the card placement mode of <see cref="RingGrassTileBuilder.Build"/>. Immutable; part of the placement fingerprint of a Cards layer.</summary>
 internal sealed record RingGrassCardPlacement

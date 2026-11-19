@@ -127,7 +127,7 @@ public partial class ForestStructureTest : RefCounted
     private void TableChecks()
     {
         var rows = ImportedTreeSourceTable.Rows.Take(30).ToList(); // the base rows; derived rows 30-42 are pinned by tree_catalog_append_test
-        Check(ImportedTreeSourceTable.Rows.Count == 43 && ImportedTreeSourceTable.Rows.Skip(30).All(r => r.Role == TreePlacementRole.DeadWood && r.EnablingFeature == FeatureId), "table has " + ImportedTreeSourceTable.Rows.Count + " rows, expected 30 base + 13 derived (dead wood, enabled by the feature)");
+        Check(ImportedTreeSourceTable.Rows.Count == 55 && ImportedTreeSourceTable.Rows.Skip(30).Take(13).All(r => r.Role == TreePlacementRole.DeadWood && r.EnablingFeature == FeatureId) && ImportedTreeSourceTable.Rows.Skip(43).All(r => r.Role == TreePlacementRole.Shrub && r.Form == TreeFormKind.Shrub && r.EnablingFeature == FeatureId), "table has " + ImportedTreeSourceTable.Rows.Count + " rows, expected 30 base + 13 derived (dead wood) + 12 shrubs, enabled by the feature");
         Check(_catalog.Count == 30, "catalog has " + _catalog.Count + " variants");
         var firByHeight = _catalog.Where(v => v.Species == TreeSpecies.Fir).OrderByDescending(v => v.HeightMeters).Select(v => v.Index).ToList();
         for (int i = 0; i < Math.Min(rows.Count, _catalog.Count); i++)
@@ -157,7 +157,7 @@ public partial class ForestStructureTest : RefCounted
         }
         var none = new HashSet<string>();
         var feature = new HashSet<string> { FeatureId };
-        Check(ImportedTreeSourceTable.RowsEnabled(none).Count == 30 && ImportedTreeSourceTable.RowsEnabled(feature).Count == 43, "a. RowsEnabled: 30 base rows without the feature, 43 with it");
+        Check(ImportedTreeSourceTable.RowsEnabled(none).Count == 30 && ImportedTreeSourceTable.RowsEnabled(feature).Count == 55, "a. RowsEnabled: 30 base rows without the feature, 55 with it");
         foreach (int s in SaplingVariants) Check(!ImportedTreeSourceTable.IsCanopySelectable(s, ImportedTreeSourceTable.Row(s).Species, feature), $"a. sapling {s} is canopy selectable");
         Check(ImportedTreeSourceTable.CanopyVariants(TreeSpecies.Fir, TreeSizeClass.Medium).SequenceEqual(new[] { 13 }), "a. fir canopy medium is not {13}");
         Check(ImportedTreeSourceTable.CanopyVariants(TreeSpecies.Fir, TreeSizeClass.Large).SequenceEqual(new[] { 12 }), "a. fir canopy large is not {12}");

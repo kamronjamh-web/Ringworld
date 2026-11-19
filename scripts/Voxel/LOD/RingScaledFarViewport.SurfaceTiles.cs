@@ -486,7 +486,7 @@ public partial class RingScaledFarViewport
             TerrainSample sample = sampler.WithoutFarRiverOwner(edits.GetPresentationTerrainSample(sampler, canonicalAround, canonicalAcross));
             float height = ResolveFarTerrainHeight(sampler, edits, canonicalAround, canonicalAcross);
             if (key.DisplayWater) height = sample.ResolveDisplayedHeight(height);
-            Color color = RingTerrainVisuals.ResolveMacroTextureColor(sample, Mathf.RoundToInt(height), sampler, key.Low, key.High);
+            Color color = RingTerrainVisuals.ResolveMacroTextureColor(sample, Mathf.RoundToInt(height), sampler, key.Low, key.High, canonicalAround, canonicalAcross);
             float Height(double a, double z)
             {
                 long ca = (long)Math.Round(WrapSurfaceTileAround(a, key.Circumference));

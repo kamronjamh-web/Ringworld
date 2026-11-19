@@ -327,6 +327,9 @@
         "materials/vegetation_gpu/**",
         "materials/ring_vegetation*",
         "materials/vegetation*",
+        "materials/ring_foliage*",
+        "tools/FoliageTint*",
+        "tools/foliage_tint*",
         "materials/grass*",
         "resources/grass/**",
         "resources/trees/**",
@@ -2233,6 +2236,17 @@
       "expected_s": 1,
       "timeout_s": 60
     },
+    "foliage_tint_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "FOLIAGE_TINT_GPU",
+      "expected_s": 40,
+      "timeout_s": 180
+    },
     "forest_dive_collision_test": {
       "kind": "test",
       "mode": "gpu",
@@ -2256,6 +2270,30 @@
       "marker": "FOREST_STRUCTURE",
       "expected_s": 45,
       "timeout_s": 150
+    },
+    "ground_cover_cards_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GROUND_COVER_CARDS",
+      "expected_s": 45,
+      "timeout_s": 150
+    },
+    "far_canopy_tint_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation",
+        "terrain",
+        "far-viewport"
+      ],
+      "marker": "FAR_CANOPY_TINT_GPU",
+      "expected_s": 120,
+      "timeout_s": 360
     },
     "forest_region_preview_test": {
       "kind": "test",
@@ -6991,6 +7029,50 @@
       "marker": "SCATTER_ROCK_PLACEMENT",
       "expected_s": 30,
       "timeout_s": 90
+    },
+    "understory_placement_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "UNDERSTORY_PLACEMENT",
+      "expected_s": 30,
+      "timeout_s": 90
+    },
+    "understory_collision_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "UNDERSTORY_COLLISION",
+      "expected_s": 25,
+      "timeout_s": 90
+    },
+    "understory_render_match_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "UNDERSTORY_RENDER_MATCH_GPU",
+      "expected_s": 60,
+      "timeout_s": 240
+    },
+    "prepare_understory_textures": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "PREPARE_UNDERSTORY_TEXTURES",
+      "expected_s": 20,
+      "timeout_s": 120
     },
     "scatter_rock_mesh_validation_test": {
       "kind": "test",

@@ -137,6 +137,26 @@ public static class RingGrassCardAtlasGenerator
             }
         float waste = inside > 0 ? 1f - covered / (float)inside : 0f;
 
+        var report = new System.Text.StringBuilder();
+        var levelsData = BuildMipChain(mask, grad, rand, w, h, report);
+        int total = 0; foreach (var b in levelsData) total += b.Length;
+        var all = new byte[total]; int o = 0;
+        foreach (var b in levelsData) { Buffer.BlockCopy(b, 0, all, o, b.Length); o += b.Length; }
+        uint hsh = 2166136261u; foreach (var b in levelsData[0]) { hsh ^= b; hsh *= 16777619u; }
+        ulong full = 14695981039346656037UL; foreach (byte b in all) { full ^= b; full *= 1099511628211UL; }
+        return new RingGrassCardAtlasData
+        {
+            Parameters = p, Width = w, Height = h, MipCount = levelsData.Count, Pixels = all,
+            Mip0Hash = hsh.ToString("X8"), FullHash = full, CoverageReport = report.ToString(), OutlineWasteFraction = waste,
+            BuildMilliseconds = (System.Diagnostics.Stopwatch.GetTimestamp() - started) * 1000.0 / System.Diagnostics.Stopwatch.Frequency,
+        };
+    }
+
+    /// <summary>The coverage-preserving mip chain of the card atlases (RGBA8, mip 0 down to 1x1, a width of <see cref="Variants"/> tiles). R is box filtered then rescaled per variant tile so the fraction of
+    /// texels at or above the cutoff equals mip 0; G and B are coverage weighted with push-pull fill. A is 128, or, with <paramref name="alpha"/>, that channel box filtered as an area mean. Shared by the
+    /// ground-cover atlas; the grass atlas goes through it with alpha null and its output is unchanged.</summary>
+    internal static List<byte[]> BuildMipChain(float[] mask, float[] grad, float[] rand, int w, int h, System.Text.StringBuilder report, float[]? alpha = null)
+    {
         // Mip chain: R is box filtered then rescaled per variant tile so the fraction of pixels at/above the cutoff
         // equals mip 0 (quantile scale). G/B are box filtered premultiplied by the raw coverage and divided back by it
         // (coverage weighted), so their values on covered texels do not dilute towards the empty background; texels
@@ -148,7 +168,7 @@ public static class RingGrassCardAtlasGenerator
         var pg = new float[w * h]; var pb = new float[w * h];
         for (int i = 0; i < pg.Length; i++) { pg[i] = grad[i] * mask[i]; pb[i] = rand[i] * mask[i]; }
         int lw = w, lh = h;
-        var report = new System.Text.StringBuilder();
+        float[]? curA = alpha;
         var cov0 = new float[Variants];
         int level = 0;
         var naiveCov = new float[Variants];
@@ -187,13 +207,14 @@ public static class RingGrassCardAtlasGenerator
             for (int i = 0; i < lw * lh; i++)
             {
                 bytes[i * 4 + 0] = (byte)Math.Clamp((int)Math.Round(scaledR[i] * 255f), 0, 255);
-                bytes[i * 4 + 3] = 128; // G/B are filled once every level is known
+                bytes[i * 4 + 3] = curA == null ? (byte)128 : (byte)Math.Clamp((int)Math.Round(curA[i] * 255f), 0, 255); // G/B are filled once every level is known
             }
             levelsData.Add(bytes);
             levelR.Add(rawR); levelPg.Add(pg); levelPb.Add(pb); levelW.Add(lw); levelH.Add(lh);
             if (lw == 1 && lh == 1) break;
             int nw = Math.Max(1, lw / 2), nh = Math.Max(1, lh / 2);
             rawR = Down(rawR, lw, lh, nw, nh); pg = Down(pg, lw, lh, nw, nh); pb = Down(pb, lw, lh, nw, nh);
+            if (curA != null) curA = Down(curA, lw, lh, nw, nh);
             lw = nw; lh = nh; level++;
         }
         // Coverage-weighted G/B, push-pull filled from the coarsest level down.
@@ -233,17 +254,7 @@ public static class RingGrassCardAtlasGenerator
             }
             parentG = uG; parentB = uB;
         }
-        int total = 0; foreach (var b in levelsData) total += b.Length;
-        var all = new byte[total]; int o = 0;
-        foreach (var b in levelsData) { Buffer.BlockCopy(b, 0, all, o, b.Length); o += b.Length; }
-        uint hsh = 2166136261u; foreach (var b in levelsData[0]) { hsh ^= b; hsh *= 16777619u; }
-        ulong full = 14695981039346656037UL; foreach (byte b in all) { full ^= b; full *= 1099511628211UL; }
-        return new RingGrassCardAtlasData
-        {
-            Parameters = p, Width = w, Height = h, MipCount = levelsData.Count, Pixels = all,
-            Mip0Hash = hsh.ToString("X8"), FullHash = full, CoverageReport = report.ToString(), OutlineWasteFraction = waste,
-            BuildMilliseconds = (System.Diagnostics.Stopwatch.GetTimestamp() - started) * 1000.0 / System.Diagnostics.Stopwatch.Frequency,
-        };
+        return levelsData;
     }
 
     static float[] Down(float[] src, int w, int h, int nw, int nh)

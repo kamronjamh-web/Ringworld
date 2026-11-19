@@ -67,6 +67,8 @@ meshes are adaptations of LOLIPOP's work and carry the same credit, with a
 
 The derived forms for dead wood (`resources/trees/prepared/lolipop_derived_catalog.res`, indices 30-42, built by `tools/prepare_derived_tree_assets.gd` from the prepared catalog) are also adaptations of LOLIPOP's work and carry the same credit, with a "modified" note: the snags use the bark surface only (foliage removed); the fallen trees and stumps are clipped from the bark surface, capped and re-oriented (logs lie along +X); and the far snag and log poles are generated geometry textured from the same bark texture.
 
+The shrubs (`lolipop_derived_catalog.res`, indices 43-54, built by `tools/prepare_derived_tree_assets.gd`) are adaptations of LOLIPOP's work and carry the same credit, with a "modified" note: shrub cards cut from the leaf-cluster atlases (the maple, pine and fir foliage textures), assembled into generated crossed-card shrub meshes in the source species' foliage material; the understory texture arrays (`resources/trees/prepared/understory/`) are resized copies of the same textures.
+
 ## Water loops (resources/audio/water)
 
 `water_lap_loop.ogg`, `surf_break_loop.ogg`, `surf_far_loop.ogg`, `open_water_loop.ogg`, `stream_babble_loop.ogg`,

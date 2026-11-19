@@ -88,6 +88,26 @@ public static class TreeCrownHullTable
         return FromBounds(index, variant.Species, min, max, variant.HeightMeters, LeafInclinationOf(variant));
     }
 
+    /// <summary>
+    /// T6-7: the hull of one shrub (derived forms 43-54, a single foliage surface, normalised space: 1 unit tall): the ellipsoid fitted to the card bounds with the same convention as <see cref="FromBounds"/>,
+    /// the porosity and k_species of the source species, and the leaf inclination of the card normals (area-weighted, all triangles). Shrubs are not in the canopy raster; the hull feeds translucency and crown occlusion.
+    /// </summary>
+    public static TreeCrownHull FromShrub(int index, TreeSpecies species, Mesh lod0)
+    {
+        Godot.Collections.Array arrays = lod0.SurfaceGetArrays(0);
+        Vector3[] vertices = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+        int[] indices = arrays[(int)Mesh.ArrayType.Index].AsInt32Array();
+        Vector3 min = new(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity), max = -min;
+        foreach (Vector3 v in vertices) { min = min.Min(v); max = max.Max(v); }
+        float[] area = new float[4];
+        for (int i = 0; i + 2 < indices.Length; i += 3)
+        {
+            Vector3 a = vertices[indices[i]], b = vertices[indices[i + 1]], c = vertices[indices[i + 2]];
+            AddTriangleInclination((b - a).Cross(c - a), area);
+        }
+        return FromBounds(index, species, min, max, 1f, NormalizeLeafInclination(area));
+    }
+
     /// <summary>The leaf inclination class weights of a variant: from the alpha-cutout surfaces of its LOD2 (LOD0 when LOD2 has none), area-weighted, normalised to sum 1.</summary>
     public static Vector4 LeafInclinationOf(ImportedTreeVariant variant)
     {

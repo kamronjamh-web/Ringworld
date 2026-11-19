@@ -1,4 +1,5 @@
 using Godot;
+using RingworldTechDemo.Vegetation;
 
 namespace RingworldTechDemo.Voxel.Phase3;
 
@@ -88,7 +89,32 @@ public static class RingTerrainVisuals
         if (sample.HasSurfaceWater && displayedHeight >= sample.WaterSurfaceHeight)
             return ResolveSeededColor(sample, displayedHeight, sampler, lowFallback, highFallback);
 
-        RingTerrainSampler.BiomeTextureWeights weights = sampler.GetBiomeTextureWeights(sample);
+        return BlendMacroTexture(sampler.GetBiomeTextureWeights(sample), null);
+    }
+
+    /// <summary>
+    /// <see cref="ResolveMacroTextureColor(in TerrainSample, int, RingTerrainSampler, Color, Color)"/> for a caller that knows the canonical coordinate. In a world with vegetation.far_canopy
+    /// (T6 design B5) the forest weight is the canopy cover (the same fold as the proxies and Terrain3D) and the far colour takes the canopy albedo by that weight; every other world returns
+    /// exactly the colour of the overload above.
+    /// </summary>
+    public static Color ResolveMacroTextureColor(
+        in TerrainSample sample,
+        int displayedHeight,
+        RingTerrainSampler sampler,
+        Color lowFallback,
+        Color highFallback,
+        long aroundMeters,
+        int acrossMeters)
+    {
+        if (sampler.CanopyFold == null) return ResolveMacroTextureColor(sample, displayedHeight, sampler, lowFallback, highFallback);
+        if (sample.HasSurfaceWater && displayedHeight >= sample.WaterSurfaceHeight)
+            return ResolveSeededColor(sample, displayedHeight, sampler, lowFallback, highFallback);
+        Vector3? canopy = RingFarCanopy.TryGetAlbedo(out Vector3 albedo) ? albedo : null;
+        return BlendMacroTexture(sampler.GetBiomeTextureWeights(sample, aroundMeters, acrossMeters), canopy);
+    }
+
+    private static Color BlendMacroTexture(in RingTerrainSampler.BiomeTextureWeights weights, Vector3? canopyAlbedo)
+    {
         float grassWeight = Mathf.Max(
             0.0f,
             1.0f - weights.Desert - weights.Forest - weights.Tundra - weights.Alpine);
@@ -101,6 +127,8 @@ public static class RingTerrainVisuals
             + ToVector3(_forestTextureColor) * weights.Forest
             + ToVector3(_tundraTextureColor) * weights.Tundra
             + ToVector3(_alpineTextureColor) * weights.Alpine) / total;
+        // T6-10: the far canopy tint, the weight being the folded forest weight (these tiers start where the tree impostors end).
+        if (canopyAlbedo is { } canopy) blended = blended.Lerp(canopy, Mathf.Clamp(weights.Forest, 0.0f, 1.0f));
         return new Color(blended.X, blended.Y, blended.Z, 1.0f);
     }
 

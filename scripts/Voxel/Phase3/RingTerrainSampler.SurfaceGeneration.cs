@@ -37,7 +37,7 @@ public sealed partial class RingTerrainSampler
             }
 
             presentationHeight = GetPresentationSurfaceHeight(globalAroundVoxel, globalAcrossVoxel);
-            biomeWeights = GetBiomeTextureWeights(GetTerrainSampleLocked(globalAroundVoxel, globalAcrossVoxel));
+            biomeWeights = GetBiomeTextureWeights(GetTerrainSampleLocked(globalAroundVoxel, globalAcrossVoxel), globalAroundVoxel, globalAcrossVoxel);
         }
     }
 
@@ -50,7 +50,7 @@ public sealed partial class RingTerrainSampler
         float presentationHeight = (float)diagnostics.Height;
         TerrainSample terrain = CreateRuntimeTerrainSampleLocked(
             globalAroundVoxel, globalAcrossVoxel, diagnostics, presentationHeight);
-        return (presentationHeight, GetBiomeTextureWeights(terrain));
+        return (presentationHeight, GetBiomeTextureWeights(terrain, globalAroundVoxel, globalAcrossVoxel));
     }
 
     private TerrainSample CreateRuntimeTerrainSampleLocked(

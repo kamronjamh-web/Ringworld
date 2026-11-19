@@ -11,7 +11,8 @@ public readonly record struct RingHabitatSample(
     float Moisture, float Temperature, float ForestWeight, float GrassWeight,
     float Canopy, ForestHabitat Habitat,
     float Wetness, float ChannelWetness, float HeightAboveChannelM,
-    float RockExposure, float Scree, float SoilDepth, RingHabitatFlags Flags)
+    float RockExposure, float Scree, float SoilDepth, RingHabitatFlags Flags,
+    float Clearing = 0f, float MapleWeight = 0f, float FirWeight = 0f, float PineWeight = 0f)
 {
     public float Relief64 => (float)RingGroundSurfaceModel.Relief(C64M);
     public float Relief8 => C8M / (MathF.Abs(C8M) + 0.25f);

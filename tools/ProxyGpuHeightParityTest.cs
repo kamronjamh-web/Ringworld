@@ -83,6 +83,8 @@ public partial class ProxyGpuHeightParityTest : RefCounted
                 CreateRecipe("v8_showcase", TerrainGenerationParameters.FromJson(showcaseJson)),
                 CreateRecipe("v7_default", TerrainGenerationParameters.LandformDefault()),
                 CreateRecipe("v9_generation_1", TerrainGenerationParameters.WorldDefault(1)),
+                // T6-10: a vegetation.far_canopy world (bit 8): the forest weight is the canopy cover, compared against the sampler's coordinate overload (the fold); generation 1 rows above are unchanged.
+                CreateRecipe("v9_far_canopy", TerrainGenerationParameters.WorldDefault(1, 1337, new[] { "vegetation.far_canopy" })),
             };
             var timingFixtures = new List<(string Label, long Around, int Across)>();
             foreach (Recipe recipe in recipes)
@@ -354,7 +356,7 @@ public partial class ProxyGpuHeightParityTest : RefCounted
         if (climate)
         {
             TerrainSample s = w.Sampler.GetTerrainSample(around, clampedAcross);
-            RingTerrainSampler.BiomeTextureWeights bw = w.Sampler.GetBiomeTextureWeights(s);
+            RingTerrainSampler.BiomeTextureWeights bw = w.Sampler.CanopyFold != null ? w.Sampler.GetBiomeTextureWeights(s, around, clampedAcross) : w.Sampler.GetBiomeTextureWeights(s);
             r.Cont[i] = s.Continentalness; r.Erosion[i] = s.Erosion; r.Temp[i] = s.Temperature; r.Moist[i] = s.Moisture; r.Ridge[i] = s.RidgeStrength;
             r.WD[i] = bw.Desert; r.WF[i] = bw.Forest; r.WT[i] = bw.Tundra; r.WA[i] = bw.Alpine;
             site |= s.SiteMask.Hardscape > 0f || s.SiteMask.Rock > 0f || s.SiteMask.Sand > 0f;

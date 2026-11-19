@@ -85,7 +85,10 @@ public partial class RingStandingGrassLayer
     private (Vector3 Sun, float Start, float Full, float NightDirect, float DayDirect)? _cardFallbackLighting;
 
     /// <summary>True once the atlas and meshes of the active card parameters exist and the card material is created.</summary>
-    public bool CardAssetsReady => _cardAssets != null && _cardMaterial != null;
+    public bool CardAssetsReady => _cardAssets != null && _cardMaterial != null && (!_cardGroundCover || _cardCoverBound);
+
+    // T6 design B2: worlds with vegetation.ground_cover (bit 7) also bind the ground-cover atlas to the card material; other worlds never build or bind it.
+    private bool _cardGroundCover, _cardCoverBound;
 
     /// <summary>Main thread. Starts the off-thread asset build and creates the mesh and material once it finishes.</summary>
     private bool EnsureCardResources()
@@ -107,6 +110,16 @@ public partial class RingStandingGrassLayer
             _cardMaterial = CreateCardMaterial(_cardAssets!.AtlasTexture);
             _grassLightingStateValid = false;
         }
+        if (_cardGroundCover && !_cardCoverBound)
+        {
+            RingGroundCoverAtlasParameters cover = RingGroundCoverAtlasParameters.Default;
+            if (RingGroundCoverAssets.TryGet(cover, out RingGroundCoverAtlasData? coverAtlas) && coverAtlas != null)
+            {
+                _cardMaterialConfig.ApplyCoverAtlas(_cardMaterial, coverAtlas.GetTexture());
+                _cardCoverBound = true;
+            }
+            else _ = RingGroundCoverAssets.RequestAsync(cover);
+        }
         return true;
     }
 
@@ -121,6 +134,7 @@ public partial class RingStandingGrassLayer
         _interactionMaterialCaches.Remove(id);
         _grassModifierMaterialStates.Remove(id);
         _cardMaterial = null;
+        _cardCoverBound = false;
         _cardMaterialProfile = null;
         _cardWorldUv = null;
         _cardFallbackLighting = null;

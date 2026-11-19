@@ -56,6 +56,12 @@ public sealed class GameplayVegetationDefaults
     public float ScatterDistanceScale => (float)Get("ScatterDistanceScale", RingGraphicsQualityController.PresetScatter(Preset).DistanceScale).AsDouble();
     /// <summary>The preset's cap scale for the per-LOD scatter budgets (no key, no menu row).</summary>
     public float ScatterCapScale => RingGraphicsQualityController.PresetScatter(Preset).CapScale;
+    // T6-8 design A10: forest. Neither changes placement, so neither enters a cache key; no preset dependence.
+    public float FoliageColourVariation => (float)Get("FoliageColourVariation", 1.0).AsDouble();
+    public float GroundCoverShare => (float)Get("GroundCoverShare", 1.0).AsDouble();
+    // T6-6 design A10: understory and dead-wood rank gates (no rebuild, no cache key, no preset dependence).
+    public float UnderstoryDensity => (float)Get("UnderstoryDensity", 1.0).AsDouble();
+    public float DeadWoodDensity => (float)Get("DeadWoodDensity", 1.0).AsDouble();
     public void Load()
     {
         Settings = new();
@@ -125,6 +131,12 @@ public sealed class GameplayVegetationDefaults
         {
             if (value.VariantType is not (Variant.Type.Int or Variant.Type.Float) || !double.IsFinite(value.AsDouble())) return false;
             clean = key == "RockDensity" ? Math.Clamp(value.AsDouble(), 0, 1) : Math.Clamp(value.AsDouble(), 0.5, 1.5);
+            return true;
+        }
+        if (key is "FoliageColourVariation" or "GroundCoverShare" or "UnderstoryDensity" or "DeadWoodDensity")
+        {
+            if (value.VariantType is not (Variant.Type.Int or Variant.Type.Float) || !double.IsFinite(value.AsDouble())) return false;
+            clean = Math.Clamp(value.AsDouble(), 0, 1);
             return true;
         }
         if (key == "MidTreeBatchTileSpan")

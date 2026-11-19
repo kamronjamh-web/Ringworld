@@ -551,6 +551,8 @@ public partial class RingBiomeDecorationLayer
 	{
 		if (!UsePersistentVegetationTiles || _grid?.TerrainSampler is not RingTerrainSampler sampler) return;
 		PumpScatter(sampler);
+		PublishFoliageTint(sampler);
+		PublishFarCanopy(sampler);
 		bool completedAny = false;
 		bool rebuildRequests = false;
 		_vegetationBuildKeyScratch.Clear();

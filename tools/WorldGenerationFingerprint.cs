@@ -70,9 +70,12 @@ public static class WorldGenerationFingerprint
     public static readonly string[] ScatterDressingPoses = { "steep_eye", "scree_eye" };
     const string DressingFixture = "res://tools/fixtures/landscape_poses_dressing_s1337.json";
 
-    /// <summary>True when the spec's world (its generation's frozen features plus the review list) holds scatter.rocks.</summary>
+    /// <summary>True when the spec's world (its generation's frozen features plus the review list) holds any scatter-row feature: scatter.rocks (bit 4) or vegetation.forest_structure (bit 6).</summary>
     public static bool ScatterEnabled(LandscapeWorld.Spec spec)
-        => WorldGenerationLedger.Production.FeatureSet(spec.Recipe.WorldGeneration, spec.Recipe.ReviewFeatures).Contains("scatter.rocks");
+    {
+        IReadOnlySet<string> set = WorldGenerationLedger.Production.FeatureSet(spec.Recipe.WorldGeneration, spec.Recipe.ReviewFeatures);
+        return set.Contains("scatter.rocks") || set.Contains("vegetation.forest_structure");
+    }
 
     /// <summary>T5 design A9: the eight T0 tile poses plus steep_eye and scree_eye, built with the production layout (Circ / ceil(Circ / 30)), every row and all 16 cobble blocks, a clean edit snapshot.</summary>
     public static void ComputeScatterSlot(LandscapeWorld.Spec spec, LandscapeWorld.Worker w, Dictionary<string, object?> row)
@@ -104,7 +107,7 @@ public static class WorldGenerationFingerprint
         row["scatter"] = tiles;
         row["scatter_params"] = new Dictionary<string, object?>
         {
-            ["class_table_hash"] = Hex(table.Hash), ["algorithm_version"] = RingBiomeDecorationLayer.ScatterAlgorithmVersion,
+            ["class_table_hash"] = Hex(table.HashFor(w.Sampler.WorldFeatureMask)), ["algorithm_version"] = RingBiomeDecorationLayer.ScatterAlgorithmVersion,
             ["rock_catalog_sha256"] = RockCatalog.ArtifactSha256, // T5-6: the manifest only, no Godot textures
             ["layout"] = "production"
         };

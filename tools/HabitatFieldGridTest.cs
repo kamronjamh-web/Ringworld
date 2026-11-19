@@ -573,7 +573,8 @@ public partial class HabitatFieldGridTest : RefCounted
     {
         Check(!RingHabitatFieldGrid.IsEnabled(0), "IsEnabled(0) is true");
         Check(RingHabitatFieldGrid.IsEnabled(1 << 4), "IsEnabled(1 << 4) is false");
-        Check(!RingHabitatFieldGrid.IsEnabled(~(1 << 4)), "IsEnabled ignores the bit");
+        Check(!RingHabitatFieldGrid.IsEnabled(~((1 << 4) | (1 << 6))), "IsEnabled ignores the bits");
+        Check(RingHabitatFieldGrid.IsEnabled(1 << 6) && RingHabitatFieldGrid.IsEnabled(1 << 4 | 1 << 6), "IsEnabled(1 << 6) is false");
         Check(!RingHabitatFieldGrid.IsEnabled(_root.WorldFeatureMask), $"the world's feature mask {_root.WorldFeatureMask} has the scatter.rocks bit set");
         bool threw = false;
         try { _ = new RingHabitatFieldGrid(new SyntheticSource((a, z) => 0), 1, 31_415_937L, Width); } catch (ArgumentException) { threw = true; }

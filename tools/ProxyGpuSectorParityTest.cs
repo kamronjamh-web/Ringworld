@@ -43,6 +43,12 @@ public partial class ProxyGpuSectorParityTest : Node
                 string feature = await Run(true);
                 result = feature.StartsWith("PASS", StringComparison.Ordinal) ? result + " | ground.surface " + feature : feature;
             }
+            // T6-10: the same sectors in a ground.surface + vegetation.far_canopy world: K2 pass B folds the forest weight into the canopy cover (colour bytes against the CPU builder's coordinate overload).
+            if (result.StartsWith("PASS", StringComparison.Ordinal))
+            {
+                string canopy = await Run(true, true);
+                result = canopy.StartsWith("PASS", StringComparison.Ordinal) ? result + " | far_canopy " + canopy : canopy;
+            }
         }
         catch (Exception error) { result = "FAIL " + error; }
         Result = result;
@@ -50,13 +56,13 @@ public partial class ProxyGpuSectorParityTest : Node
 
     private void Log(string line) { _lines.Add(line); GD.Print("PROXY_GPU_SECTOR_DETAIL " + line); }
 
-    private async Task<string> Run(bool feature)
+    private async Task<string> Run(bool feature, bool canopy = false)
     {
         if (RenderingServer.GetRenderingDevice() == null) return "FAIL RenderingDevice required";
         string showcase = JsonDocument.Parse(Godot.FileAccess.GetFileAsString("res://resources/menu/showcase_world.json"))
             .RootElement.GetProperty("generation_settings").GetProperty("surface_generation_recipe_json").GetString()!;
         TerrainGenerationParameters recipe = TerrainGenerationParameters.FromJson(showcase);
-        if (feature) recipe = TerrainGenerationParameters.WorldDefault(1, recipe.Seed, new[] { "ground.surface" });
+        if (feature) recipe = TerrainGenerationParameters.WorldDefault(1, recipe.Seed, canopy ? new[] { "ground.surface", "vegetation.far_canopy" } : new[] { "ground.surface" });
         using var settings = new VoxelTerrainSettings
         {
             Seed = unchecked((int)recipe.Seed), SurfaceGenerationRecipeJson = recipe.CanonicalJson,
@@ -77,7 +83,7 @@ public partial class ProxyGpuSectorParityTest : Node
         string detail = string.Join("\n", _lines);
         string dir = ProjectSettings.GlobalizePath("res://.godot/proxy_gpu_sector_parity");
         System.IO.Directory.CreateDirectory(dir);
-        System.IO.File.WriteAllText(System.IO.Path.Combine(dir, feature ? "report_ground_surface.txt" : "report.txt"), detail + "\n");
+        System.IO.File.WriteAllText(System.IO.Path.Combine(dir, canopy ? "report_far_canopy.txt" : feature ? "report_ground_surface.txt" : "report.txt"), detail + "\n");
         if (failures.Count != 0) return "FAIL " + string.Join(" | ", failures.Take(16));
         return $"PASS sectors={sectorsTotal} dry={dry} ocean={ocean} coastal={coastal}";
     }

@@ -321,6 +321,17 @@ public sealed class ProxyGpuHeightKernel : IDisposable
             w.F("RC_P_PROFILES", q.BlendWidth, b + 8);
             w.F("RC_P_PROFILES", q.SelectionMultiplier, b + 9);
         }
+        // T6-10: the feature mask (0 in generation 1) and, for a vegetation.far_canopy world, the ForestRegionSampler identity of the fold. The channel mapping the fold reads (forest 1, grassland -1) is
+        // one to one for the non-water biomes: CreateGpuClimateSettings maps every other biome to 0, 2 or 3.
+        int featureMask = WorldGenerationLedger.Production.MaskFor(p.WorldGeneration, p.ReviewFeatures);
+        w.I("RC_P_WORLD_FEATURES", featureMask);
+        if ((featureMask & (1 << 8)) != 0)
+        {
+            long circumference = (long)c.AroundRingLength;
+            if (circumference <= 0 || circumference >= (1L << 30)) throw new NotSupportedException("vegetation.far_canopy needs a ring circumference below 2^30 m on the GPU path");
+            w.I("RC_P_FOREST_SEED", c.Seed);
+            w.I("RC_P_FOREST_CIRC", (int)circumference);
+        }
         return w.Words;
     }
 

@@ -46,6 +46,7 @@ uniform bool simplified_tree_shading = false;
 #include "res://materials/ring_wetness.gdshaderinc"
 #include "res://materials/ring_forest_lighting.gdshaderinc"
 #include "res://materials/ring_canopy_shade.gdshaderinc"
+#include "res://materials/ring_foliage_tint.gdshaderinc"
 
 // Forest lighting: the crown hull of this renderer's variant (one variant per renderer), see ring_forest_lighting.gdshaderinc. Unset = no crown terms, no translucency.
 instance uniform vec4 tree_crown_hull = vec4(0.0);
@@ -62,6 +63,7 @@ varying vec2 tree_wet_state; // wet world, per vertex: (darkening amount, gloss)
 varying float tree_highlight_roughness; // wet world: the direct highlight keeps the full wet gloss (ROUGHNESS may be held at the SSR floor)
 varying flat float tree_dither_coverage;
 varying flat float tree_dither_seed;
+varying flat vec2 tree_foliage_tint; // T6-8: written in vertex() only while ring_foliage_tint_on(): (value factor, hue term) of this root, see ring_foliage_tint.gdshaderinc
 varying vec3 tree_model_position; // forest lighting switches on: the vertex in model (normalized tree) space, after wind
 varying float tree_leaf_transmit; // written in fragment() for light(): k_species * facing * crown transmittance towards the primary sun (0 = no translucency); one varying because the shader is at the 32-varying limit. Bark below the crown base (no translucency) reuses it for the canopy shade: blocked * species factor (FL-3a)
 varying flat vec3 tree_model_light; // forest lighting switches on: the unit direction to the sun in model space (vertex(): MODEL_MATRIX in fragment() lacks the MultiMesh instance transform)
@@ -85,6 +87,7 @@ void vertex() {
 	tree_dither_coverage = abs(INSTANCE_CUSTOM.w - 2.0) <= 0.25 ? INSTANCE_CUSTOM.y : 1.0;
 	tree_dither_seed = INSTANCE_CUSTOM.z;
 	vec3 root_world = MODEL_MATRIX[3].xyz;
+	if (use_alpha_cutout && ring_foliage_tint_on()) tree_foliage_tint = ring_foliage_tint_terms(root_world, INSTANCE_CUSTOM.z);
 	if (vegetation_wind_enabled) {
 		mat3 basis = mat3(MODEL_MATRIX);
 		vec3 offset; mat3 jacobian;
@@ -131,6 +134,7 @@ void fragment() {
 		}
 		ALPHA_SCISSOR_THRESHOLD = alpha_cutoff;
 	}
+	if (use_alpha_cutout && ring_foliage_tint_on()) albedo.rgb *= ring_foliage_tint(tree_foliage_tint); // T6-8: per-instance and per-stand foliage colour, before the lighting and haze factors
 	ALBEDO = albedo.rgb * mix(night_tint, vec3(1.0), tree_day_factor) * (1.0 - tree_cloud_occlusion * tree_day_factor * 0.34);
 	ALBEDO *= tree_haze_T;
 	ALBEDO *= 1.0 - 0.55 * 0.5 * min(tree_wet_state.x, 1.0); // wet world: bark and foliage darken half as much as soil

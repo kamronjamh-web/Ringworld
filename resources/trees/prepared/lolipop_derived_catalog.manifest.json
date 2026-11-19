@@ -1,13 +1,187 @@
 {
   "schema_version": 1,
-  "tool_version": 1,
+  "tool_version": 2,
   "catalog_version": 1,
-  "form_count": 13,
+  "form_count": 25,
   "engine_identity": "4.8-dev7 (official)|c971f93e7",
   "base_catalog_artifact_sha256": "24FCAB9192BAB5359C41270630F606CADE6926D4C7E9A823BBC233ADA03BE16D",
   "artifact_path": "resources/trees/prepared/lolipop_derived_catalog.res",
-  "artifact_sha256": "66CB31301AA05F03C5A8176EBF058612EABD39B9A4C0E25E556EF33EDE89F951",
-  "total_bytes": 1946642,
+  "artifact_sha256": "D38370CDA711367B8CA77871BD27FA2A414CCF25A06F00F322D67DA2633BC69C",
+  "total_bytes": 1993562,
+  "shrub_clusters": [
+    {
+      "species": "Maple",
+      "look": "Broadleaf",
+      "atlas": "resources/trees/lolipop/maple/textures/Cluster_Mat_baseColor.png",
+      "usage_size": 256,
+      "cutoff": 0.25,
+      "min_coverage": 0.12,
+      "max_coverage": 0.97,
+      "found": 5,
+      "used": [
+        {
+          "u0": 0.05518,
+          "v0": 0.51123,
+          "u1": 0.54492,
+          "v1": 0.97852,
+          "usage_pixels": 9582,
+          "coverage": 0.3181
+        },
+        {
+          "u0": 0.01758,
+          "v0": 0.04541,
+          "u1": 0.4917,
+          "v1": 0.47656,
+          "usage_pixels": 7061,
+          "coverage": 0.2635
+        },
+        {
+          "u0": 0.54395,
+          "v0": 0.01367,
+          "u1": 0.90967,
+          "v1": 0.47314,
+          "usage_pixels": 7126,
+          "coverage": 0.3174
+        },
+        {
+          "u0": 0.59033,
+          "v0": 0.50586,
+          "u1": 0.97559,
+          "v1": 0.78711,
+          "usage_pixels": 4124,
+          "coverage": 0.2695
+        },
+        {
+          "u0": 0.70117,
+          "v0": 0.80176,
+          "u1": 0.97949,
+          "v1": 0.99463,
+          "usage_pixels": 2112,
+          "coverage": 0.296
+        }
+      ],
+      "rejected": []
+    },
+    {
+      "species": "Fir",
+      "look": "FirThicket",
+      "atlas": "resources/trees/lolipop/fir/textures/Brunches_Mat_baseColor.png",
+      "usage_size": 256,
+      "cutoff": 0.25,
+      "min_coverage": 0.12,
+      "max_coverage": 0.97,
+      "found": 4,
+      "used": [
+        {
+          "u0": 0.19141,
+          "v0": 0.01587,
+          "u1": 0.99365,
+          "v1": 0.58594,
+          "usage_pixels": 18541,
+          "coverage": 0.3143
+        },
+        {
+          "u0": 0.01611,
+          "v0": 0.51172,
+          "u1": 0.67188,
+          "v1": 0.95508,
+          "usage_pixels": 12366,
+          "coverage": 0.3219
+        },
+        {
+          "u0": 0.64453,
+          "v0": 0.57031,
+          "u1": 0.95776,
+          "v1": 0.97363,
+          "usage_pixels": 4196,
+          "coverage": 0.1965
+        },
+        {
+          "u0": 0.08008,
+          "v0": 0.04785,
+          "u1": 0.1438,
+          "v1": 0.35449,
+          "usage_pixels": 1069,
+          "coverage": 0.3974
+        }
+      ],
+      "rejected": []
+    },
+    {
+      "species": "Pine",
+      "look": "PineScrub",
+      "atlas": "resources/trees/lolipop/pine/textures/Clusters_Mat_baseColor.png",
+      "usage_size": 256,
+      "cutoff": 0.25,
+      "min_coverage": 0.12,
+      "max_coverage": 0.97,
+      "found": 8,
+      "used": [
+        {
+          "u0": 0.00391,
+          "v0": 0.13281,
+          "u1": 0.77344,
+          "v1": 0.97266,
+          "usage_pixels": 22744,
+          "coverage": 0.2645
+        },
+        {
+          "u0": 0.55859,
+          "v0": 0.79688,
+          "u1": 0.99219,
+          "v1": 0.98047,
+          "usage_pixels": 2939,
+          "coverage": 0.2033
+        },
+        {
+          "u0": 0.69971,
+          "v0": 0.62891,
+          "u1": 0.99219,
+          "v1": 0.79346,
+          "usage_pixels": 2274,
+          "coverage": 0.2738
+        },
+        {
+          "u0": 0.80811,
+          "v0": 0.3999,
+          "u1": 0.96973,
+          "v1": 0.65234,
+          "usage_pixels": 2063,
+          "coverage": 0.3111
+        }
+      ],
+      "rejected": [
+        {
+          "u0": 0.40234,
+          "v0": 0.00732,
+          "u1": 0.95703,
+          "v1": 0.375,
+          "coverage": 0.1126
+        },
+        {
+          "u0": 0.27539,
+          "v0": 0,
+          "u1": 0.37256,
+          "v1": 0.14355,
+          "coverage": 0.0508
+        },
+        {
+          "u0": 0.14502,
+          "v0": 0,
+          "u1": 0.23389,
+          "v1": 0.1333,
+          "coverage": 0.0718
+        },
+        {
+          "u0": 0.01562,
+          "v0": 0.01562,
+          "u1": 0.11328,
+          "v1": 0.11719,
+          "coverage": 1
+        }
+      ]
+    }
+  ],
   "forms": [
     {
       "index": 30,
@@ -381,6 +555,258 @@
           "source_hash": "3BBB92D3BC0DE21AE59C02281B52CF8781CEF9C17BBFCA33C0FFBA8347244553",
           "mesh_hash": "4A3D438FC6855D0F4CD2D0D61ABBD007B6877AB92DC57A4B77C940816B090C64",
           "triangles": 70
+        }
+      ]
+    },
+    {
+      "index": 43,
+      "form": "Shrub",
+      "source_variant": 3,
+      "length_m": 1,
+      "trunk_radius_m": 0,
+      "lods": [
+        {
+          "lod": "0",
+          "source_hash": "37FA2B64D17372CEC2A5A3FBBED279ACB29440EFD6E313C44A857F0D26BE0AC2",
+          "mesh_hash": "DB1FA64B99D09C69E38CCBB184F44F2F09DC8BBEF82B9975EE73753DDF2CF378",
+          "triangles": 28
+        },
+        {
+          "lod": "1",
+          "source_hash": "37FA2B64D17372CEC2A5A3FBBED279ACB29440EFD6E313C44A857F0D26BE0AC2",
+          "mesh_hash": "5C5E12F12A591ECEB9E419BA6EA10C1F4AFEB7A5464058B6C8AAB2C269BADB06",
+          "triangles": 8
+        }
+      ]
+    },
+    {
+      "index": 44,
+      "form": "Shrub",
+      "source_variant": 6,
+      "length_m": 1,
+      "trunk_radius_m": 0,
+      "lods": [
+        {
+          "lod": "0",
+          "source_hash": "20600B285E0B9FF2F6161D4BE8B96E0F3DA085C32AA428589732879F062E5599",
+          "mesh_hash": "CDB13CB87A2872D1A726E67DB366634A2BCFAA54DB6461DA8CA5CAE4C702A6B0",
+          "triangles": 28
+        },
+        {
+          "lod": "1",
+          "source_hash": "20600B285E0B9FF2F6161D4BE8B96E0F3DA085C32AA428589732879F062E5599",
+          "mesh_hash": "42CA6D307E4EAEEAB2443CB5D8F731ED210A38502A986A63B73AFE16399F7E5F",
+          "triangles": 8
+        }
+      ]
+    },
+    {
+      "index": 45,
+      "form": "Shrub",
+      "source_variant": 9,
+      "length_m": 1,
+      "trunk_radius_m": 0,
+      "lods": [
+        {
+          "lod": "0",
+          "source_hash": "DE543D3F6C344D2D8D034FB635FE1B152BEC24A69F11EC60F728C5D2F87DF0B1",
+          "mesh_hash": "F658EAD9D78911EB7F5A90534AB135A7333279A2FDDB7C109C72B3FB1C89DFCB",
+          "triangles": 28
+        },
+        {
+          "lod": "1",
+          "source_hash": "DE543D3F6C344D2D8D034FB635FE1B152BEC24A69F11EC60F728C5D2F87DF0B1",
+          "mesh_hash": "F4418F1F7647153C2302ACDB9A9C0349B559B884B5BCC784C2919704E6849DEF",
+          "triangles": 8
+        }
+      ]
+    },
+    {
+      "index": 46,
+      "form": "Shrub",
+      "source_variant": 0,
+      "length_m": 1,
+      "trunk_radius_m": 0,
+      "lods": [
+        {
+          "lod": "0",
+          "source_hash": "91B3DAFA02FD546732A5A0C692328BEABA0786BAF819F83CA3EFCC0A575EB52A",
+          "mesh_hash": "E9BDA113BB6485E3FE41CF565261A1915F13E4F24FFE361E9478660652996315",
+          "triangles": 28
+        },
+        {
+          "lod": "1",
+          "source_hash": "91B3DAFA02FD546732A5A0C692328BEABA0786BAF819F83CA3EFCC0A575EB52A",
+          "mesh_hash": "D8DF544F443A0836AAE589F460D07D4B6733D694FD591433912355A5A6A735AC",
+          "triangles": 8
+        }
+      ]
+    },
+    {
+      "index": 47,
+      "form": "Shrub",
+      "source_variant": 15,
+      "length_m": 1,
+      "trunk_radius_m": 0,
+      "lods": [
+        {
+          "lod": "0",
+          "source_hash": "A8120DB5FAFB38E26AD36357D86890A2C54B8EE905B84BCC32A15C7B08571D55",
+          "mesh_hash": "A3FA6D4FEA9455AB16C0D2FB09669C928B88DE164EACB410F5C4311E6B412EEF",
+          "triangles": 20
+        },
+        {
+          "lod": "1",
+          "source_hash": "A8120DB5FAFB38E26AD36357D86890A2C54B8EE905B84BCC32A15C7B08571D55",
+          "mesh_hash": "9CF24C5379A517256BD91973A51E96E734D263CB5A1F393A744FA5547B60BED8",
+          "triangles": 8
+        }
+      ]
+    },
+    {
+      "index": 48,
+      "form": "Shrub",
+      "source_variant": 18,
+      "length_m": 1,
+      "trunk_radius_m": 0,
+      "lods": [
+        {
+          "lod": "0",
+          "source_hash": "8993FA2A3606F094B6642E00F430910E2F28C80D6B7B10F8D0A415D8EFA2AF94",
+          "mesh_hash": "8BC2C88010960D41034D80430814E93B244277D5F0B63537F6BB9314A3F43965",
+          "triangles": 20
+        },
+        {
+          "lod": "1",
+          "source_hash": "8993FA2A3606F094B6642E00F430910E2F28C80D6B7B10F8D0A415D8EFA2AF94",
+          "mesh_hash": "DC18B13676F668177A1BAD6C16F712A14E4FD6463CBAFCD898F5C18E82109F40",
+          "triangles": 8
+        }
+      ]
+    },
+    {
+      "index": 49,
+      "form": "Shrub",
+      "source_variant": 21,
+      "length_m": 1,
+      "trunk_radius_m": 0,
+      "lods": [
+        {
+          "lod": "0",
+          "source_hash": "778F404A6A3EC35E7F52CBAB1F25AA5EE9753C14FA49CE9457BD7442DD4804BB",
+          "mesh_hash": "BDE616F17CFFB182B8E47AEBE48416C8832ED0BAC3ED149DD32A7234CEA6B944",
+          "triangles": 20
+        },
+        {
+          "lod": "1",
+          "source_hash": "778F404A6A3EC35E7F52CBAB1F25AA5EE9753C14FA49CE9457BD7442DD4804BB",
+          "mesh_hash": "99B7CBDFBDE68811121C94486DDC44B2B49C026B6C274D48CA18FC50517DDDA4",
+          "triangles": 8
+        }
+      ]
+    },
+    {
+      "index": 50,
+      "form": "Shrub",
+      "source_variant": 27,
+      "length_m": 1,
+      "trunk_radius_m": 0,
+      "lods": [
+        {
+          "lod": "0",
+          "source_hash": "85048C00CAF003EF5B2F4500835124C980551B0EDD4DAD358D0410AFB4A0AD31",
+          "mesh_hash": "913964CB21A4846E7A15649E207850786FC1E719CDF780038FDA29F7AAA1C4E7",
+          "triangles": 20
+        },
+        {
+          "lod": "1",
+          "source_hash": "85048C00CAF003EF5B2F4500835124C980551B0EDD4DAD358D0410AFB4A0AD31",
+          "mesh_hash": "A735735EDE606B30825402076E5B0FEF97D83107A6BFC7C6F49965D60447B0B9",
+          "triangles": 8
+        }
+      ]
+    },
+    {
+      "index": 51,
+      "form": "Shrub",
+      "source_variant": 12,
+      "length_m": 1,
+      "trunk_radius_m": 0,
+      "lods": [
+        {
+          "lod": "0",
+          "source_hash": "3BBB92D3BC0DE21AE59C02281B52CF8781CEF9C17BBFCA33C0FFBA8347244553",
+          "mesh_hash": "F7A7D35FAFF4C758A6230FE069C760EBDC29599973130927E1FE1829082A1D8D",
+          "triangles": 24
+        },
+        {
+          "lod": "1",
+          "source_hash": "3BBB92D3BC0DE21AE59C02281B52CF8781CEF9C17BBFCA33C0FFBA8347244553",
+          "mesh_hash": "AF229620652CAA9075008DBAF1C52AEAF994D5D23FF5F19E614E43303C5DB6FE",
+          "triangles": 8
+        }
+      ]
+    },
+    {
+      "index": 52,
+      "form": "Shrub",
+      "source_variant": 13,
+      "length_m": 1,
+      "trunk_radius_m": 0,
+      "lods": [
+        {
+          "lod": "0",
+          "source_hash": "9D372C976C8B43051C57B67A8FD13668B32087EC87212D534648926890327EBD",
+          "mesh_hash": "72D2393ADCD11C59FE2CE24E22E1B3DEE7FD9155269C71F76EAF68F13F64EB92",
+          "triangles": 24
+        },
+        {
+          "lod": "1",
+          "source_hash": "9D372C976C8B43051C57B67A8FD13668B32087EC87212D534648926890327EBD",
+          "mesh_hash": "04739FB4CC89DBB0C39CB495E442EE7D51DD3A9C005B2B540C28C48F5CA2469C",
+          "triangles": 8
+        }
+      ]
+    },
+    {
+      "index": 53,
+      "form": "Shrub",
+      "source_variant": 14,
+      "length_m": 1,
+      "trunk_radius_m": 0,
+      "lods": [
+        {
+          "lod": "0",
+          "source_hash": "1A78D0BAEB9B52FB2896BD43F22F250FB7C89E757F7DF0818DB0FF472C21536B",
+          "mesh_hash": "638E3197EC4A4487983B1E2715B00853E8B4A5D8D633FD768C02379CE07D8ECE",
+          "triangles": 24
+        },
+        {
+          "lod": "1",
+          "source_hash": "1A78D0BAEB9B52FB2896BD43F22F250FB7C89E757F7DF0818DB0FF472C21536B",
+          "mesh_hash": "83F25A3D20A212E2508ED9A7AEAD0D87DF9A450A63B66BD0A107E848975869C4",
+          "triangles": 8
+        }
+      ]
+    },
+    {
+      "index": 54,
+      "form": "Shrub",
+      "source_variant": 12,
+      "length_m": 1,
+      "trunk_radius_m": 0,
+      "lods": [
+        {
+          "lod": "0",
+          "source_hash": "3BBB92D3BC0DE21AE59C02281B52CF8781CEF9C17BBFCA33C0FFBA8347244553",
+          "mesh_hash": "FC67FCA7F41B7BFEE9E5BC3FFB8E993C1196C27FE9A1CE6D8CAA286CE7B6E628",
+          "triangles": 24
+        },
+        {
+          "lod": "1",
+          "source_hash": "3BBB92D3BC0DE21AE59C02281B52CF8781CEF9C17BBFCA33C0FFBA8347244553",
+          "mesh_hash": "71244A99D137DAFDDEB582F9CA96B3805A782CDAA6843742E4976A455667471F",
+          "triangles": 8
         }
       ]
     }

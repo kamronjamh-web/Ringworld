@@ -175,6 +175,18 @@ ringworld_forest_lighting={
 "type": "vec4",
 "value": Vector4(0, 0, 0, 0)
 }
+ringworld_foliage_frame={
+"type": "mat4",
+"value": Projection(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
+}
+ringworld_foliage_tint={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+ringworld_far_canopy={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
 ring_precip_occlusion={
 "type": "sampler2D",
 "value": ""

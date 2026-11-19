@@ -17,7 +17,7 @@ namespace RingworldTechDemo.Tools;
 /// </summary>
 public partial class PrepareDerivedTreeAssets : RefCounted
 {
-    public const int ToolVersion = 1;
+    public const int ToolVersion = 2;
     public const int LodF = 3;
     public const float LogClip = 0.55f;
     public const float StumpMeters = 0.6f;
@@ -31,6 +31,8 @@ public partial class PrepareDerivedTreeAssets : RefCounted
     {
         public PreparedDerivedTreeCatalog Resource = null!;
         public int[,] Triangles = new int[0, 0]; // [form slot, lod]
+        /// <summary>T6-7: the cluster rectangles each shrub look was cut from, per species (all rectangles in order, with the used count).</summary>
+        public Dictionary<TreeSpecies, (List<ClusterRect> All, List<ClusterRect> Used)> Clusters = new();
     }
 
     public int Run(string output, string manifestPath)
@@ -63,11 +65,17 @@ public partial class PrepareDerivedTreeAssets : RefCounted
                     length_m = Math.Round(resource.LengthMeters[f], 4), trunk_radius_m = Math.Round(resource.TrunkRadiusMeters[f], 4), lods
                 });
             }
+            var shrubClusters = built.Clusters.OrderBy(c => (int)c.Key).Select(c => new
+            {
+                species = c.Key.ToString(), look = LookOf(c.Key).ToString(), atlas = AtlasPath(c.Key).Replace("res://", ""), usage_size = UsageSize, cutoff = ClusterCutoff, min_coverage = MinCoverage, max_coverage = MaxCoverage,
+                found = c.Value.All.Count, used = c.Value.Used.Select(r => new { u0 = Math.Round(r.U0, 5), v0 = Math.Round(r.V0, 5), u1 = Math.Round(r.U1, 5), v1 = Math.Round(r.V1, 5), usage_pixels = r.UsagePixels, coverage = Math.Round(r.Coverage, 4) }).ToArray(),
+                rejected = c.Value.All.Except(c.Value.Used).Select(r => new { u0 = Math.Round(r.U0, 5), v0 = Math.Round(r.V0, 5), u1 = Math.Round(r.U1, 5), v1 = Math.Round(r.V1, 5), coverage = Math.Round(r.Coverage, 4) }).ToArray()
+            }).ToArray();
             var manifest = new
             {
                 schema_version = PreparedDerivedTreeCatalog.CurrentSchemaVersion, tool_version = ToolVersion, catalog_version = resource.CatalogVersion, form_count = resource.FormIndices.Length,
                 engine_identity = PreparedImportedTreeCatalogIdentity.CurrentEngineIdentity, base_catalog_artifact_sha256 = baseSha,
-                artifact_path = "resources/trees/prepared/lolipop_derived_catalog.res", artifact_sha256 = artifactSha, total_bytes = bytes, forms
+                artifact_path = "resources/trees/prepared/lolipop_derived_catalog.res", artifact_sha256 = artifactSha, total_bytes = bytes, shrub_clusters = shrubClusters, forms
             };
             File.WriteAllText(ProjectSettings.GlobalizePath(manifestPath), JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }) + "\n");
             GD.Print($"PREPARE_DERIVED_TREE_ASSETS=PASS forms={resource.FormIndices.Length} bytes={bytes}");
@@ -93,9 +101,9 @@ public partial class PrepareDerivedTreeAssets : RefCounted
         return doc.RootElement.GetProperty("artifact_sha256").GetString() ?? "";
     }
 
-    /// <summary>The derived rows this tool builds: T6Derived rows of the production table that are a snag, fallen tree or stump (shrubs are T6-7), in index order.</summary>
+    /// <summary>The derived rows this tool builds: T6Derived rows of the production table that are a snag, fallen tree, stump or shrub (T6-7), in index order.</summary>
     public static IReadOnlyList<ImportedTreeSourceRow> FormRows()
-        => ImportedTreeSourceTable.Rows.Where(row => row.Catalog == TreeSourceCatalog.T6Derived && row.Form is TreeFormKind.Snag or TreeFormKind.FallenTree or TreeFormKind.Stump).ToArray();
+        => ImportedTreeSourceTable.Rows.Where(row => row.Catalog == TreeSourceCatalog.T6Derived && row.Form is TreeFormKind.Snag or TreeFormKind.FallenTree or TreeFormKind.Stump or TreeFormKind.Shrub).ToArray();
 
     public static Result Build(IReadOnlyList<ImportedTreeVariant> catalog)
     {
@@ -108,6 +116,7 @@ public partial class PrepareDerivedTreeAssets : RefCounted
         var meshes = new ArrayMesh?[rows.Count * lods];
         var length = new float[rows.Count];
         var radius = new float[rows.Count];
+        var clusters = new Dictionary<TreeSpecies, (List<ClusterRect> All, List<ClusterRect> Used)>();
         for (int f = 0; f < rows.Count; f++)
         {
             ImportedTreeSourceRow row = rows[f];
@@ -123,6 +132,22 @@ public partial class PrepareDerivedTreeAssets : RefCounted
             void Put(int lod, ArrayMesh mesh, string hash)
             {
                 meshes[f * lods + lod] = mesh; hashes[f * lods + lod] = hash; tris[f, lod] = Geo.Triangles(mesh);
+            }
+            if (row.Form == TreeFormKind.Shrub)
+            {
+                // T6-7: cards cut from the species' leaf-cluster atlas; the mesh is one foliage surface, LOD0 (slot 0) and LOD1 (slot 1). Source hash: the source variant's LOD0 (the loader checks it).
+                if (!clusters.TryGetValue(v.Species, out var set))
+                {
+                    var atlas = Image.LoadFromFile(ProjectSettings.GlobalizePath(AtlasPath(v.Species))) ?? throw new IOException("atlas " + AtlasPath(v.Species));
+                    List<ClusterRect> all = AllClusterRectangles(catalog, v.Species, atlas);
+                    clusters[v.Species] = set = (all, all.Where(r => r.Coverage >= MinCoverage && r.Coverage <= MaxCoverage).Take(MaxClusters).ToList());
+                }
+                int first = rows.Where(r => r.Form == TreeFormKind.Shrub && r.Species == v.Species).Min(r => r.Index);
+                string source0 = ImportedTreeRenderLodCatalog.HashLod((ArrayMesh)v.Lods[0]);
+                length[f] = 1f; radius[f] = 0f;
+                Put(0, BuildShrub(LookOf(v.Species), row.Index, row.Index - first, 0, set.Used), source0);
+                Put(1, BuildShrub(LookOf(v.Species), row.Index, row.Index - first, 1, set.Used), source0);
+                continue;
             }
             radius[f] = v.TrunkRadiusMeters;
             Geo lod0 = Geo.FromSurface(Bark(0));
@@ -163,7 +188,7 @@ public partial class PrepareDerivedTreeAssets : RefCounted
             res.Meshes.Add(m!);
         }
         res.ResourceSceneUniqueId = "DerivedTreeCatalog";
-        return new Result { Resource = res, Triangles = tris };
+        return new Result { Resource = res, Triangles = tris, Clusters = clusters };
     }
 
     /// <summary>Plain vertex arrays of one surface, with the clipping, orientation and generated-pole helpers.</summary>

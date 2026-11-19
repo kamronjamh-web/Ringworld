@@ -7,7 +7,9 @@ shader_type spatial;
 //   transform : basis X/Z lie in the ground tangent plane (yaw * width scale), basis Y is the card's up axis with lean baked
 //               in (height scale); origin = root. The ground normal is recovered as normalize(cross(Z, X)).
 //   COLOR     : packed biome weights (desert, forest, tundra, alpine); grass is the remainder.
-//   CUSTOM    : x = kind * 4 + atlasVariant + rank * 0.999 (kind 0 card, 1 low upright layer), y = tuft random,
+//   CUSTOM    : x = kind * 4 + atlasVariant + rank * 0.999 (kind 0 card, 1 low upright layer, 3 flower, 4 fern, 5 tall grass, 6 reed (reserved); 2 is retired.
+//               Kinds 3-6 are the ground-cover cards of worlds with vegetation.ground_cover: main-lattice cards that take the main-card keep / grow-in /
+//               compensation path and read grass_cover_atlas layer kind - 3), y = tuft random,
 //               z/w = canonical wind phases (windAround, windAcross).
 //   instance uniforms (10 of 16): vegetation_haze_slot, grass_gust_origin_world, grass_gust_around_world, grass_gust_across_world,
 //               grass_gust_origin_uv, grass_modifier_layer/_origin_world/_around_world/_across_world,
@@ -24,6 +26,7 @@ render_mode cull_disabled, diffuse_lambert, specular_disabled, skip_vertex_trans
 #include "res://materials/ring_canopy_shade.gdshaderinc"
 
 uniform sampler2D grass_card_atlas : filter_linear_mipmap, repeat_disable;
+uniform sampler2DArray grass_cover_atlas : filter_linear_mipmap, repeat_disable; // ground-cover cards (flower, fern, tall grass): R coverage, G height, B random, A petal / seed-head mask
 uniform float grass_card_alpha_cutoff = 0.5;
 uniform float grass_card_single_start = 90.0;   // metres where the 3->1 card collapse begins
 uniform float grass_card_single_end = 160.0;    // metres where only one camera-facing card remains
@@ -47,10 +50,16 @@ uniform float grass_card_normal_tip_start = 0.6; // height gradient where the no
 // Forest lighting FL-3b (translucency switch on): diffuse transmittance of a blade / reflectance, the leaf model of the trees (RING_LEAF_TRANSMISSION_SHAPE = the spectral shape).
 // Plan section 9 Q3: thin blades, T/R about 0.8. The off path keeps grass_card_backlight.
 const float GRASS_LEAF_TRANSMISSION_K = 0.8;
+// Ground-cover colours (T6 design B2): flower petals by atlas variant, fern leaf tint, tall-grass seed-head straw.
+// Petal hue (unit luminance) and its luminance relative to the blade it sits on (meadow ratios: white 4.5x, yellow 3x, violet and pink 1.25x), so petals follow the grass pipeline rather than an absolute albedo.
+const vec3 GRASS_COVER_PETALS[4] = vec3[4](vec3(1.006, 1.006, 0.920), vec3(1.307, 0.998, 0.109), vec3(1.043, 0.869, 2.173), vec3(2.004, 0.656, 1.457));
+const vec4 GRASS_COVER_PETAL_RATIO = vec4(4.5, 3.0, 1.25, 1.25);
+const vec3 GRASS_COVER_FERN_TINT = vec3(0.85, 1.0, 0.80);
+const vec3 GRASS_COVER_STRAW = vec3(1.106, 1.003, 0.664); // seed-head hue (unit luminance) at 2.5x the blade luminance
 
 varying vec3 v_base;
 varying vec3 v_tip;
-varying vec2 v_atlas_uv;
+varying vec3 v_atlas_uv; // xy atlas uv, z = ground-cover id ((kind - 3) * 4 + variant) or -1 for grass and the low layer (a constant, so interpolation leaves it intact)
 varying vec4 v_shape;  // side, tuft random, near-colour blend, per-tuft colour variation
 varying vec4 v_light;  // day factor, cloud occlusion, macro-shadow uv
 varying vec3 v_up_view;
@@ -91,7 +100,8 @@ void vertex() {
 	float rank = (custom_x - kind_slot) / 0.999;
 	float kind = floor(kind_slot * 0.25);
 	float variant = kind_slot - kind * 4.0;
-	bool low = kind > 0.5;
+	bool low = abs(kind - 1.0) < 0.5; // kinds 0 and 1 as before; the cover kinds (3-6) take the main-card path
+	bool cover = kind > 2.5;
 	float scale;
 	float near_width;
 	if (low) {
@@ -162,7 +172,7 @@ void vertex() {
 	v_tip = ground * mix(ringworld_grass_albedo_scale * grass_card_tip_gain, 1.0, conv) * mix(grass_card_tip_shift, vec3(1.0), conv);
 	v_shape.w = (INSTANCE_CUSTOM.y - 0.5) * 2.0 * grass_card_color_variation * (1.0 - conv);
 	v_shape.z = 1.0 - smoothstep(grass_card_fragment_color_meters * 0.55, grass_card_fragment_color_meters, dist);
-	v_atlas_uv = vec2((variant + UV.x) * 0.25, UV.y);
+	v_atlas_uv = vec3((variant + UV.x) * 0.25, UV.y, cover ? (kind - 3.0) * 4.0 + variant : -1.0);
 
 	v_light.x = grass_card_day_factor(ground_up);
 	RingVegetationShadowInstance shadow_instance = ring_vegetation_shadow_instance(RING_VEGETATION_SHADOW_GRASS, INSTANCE_ID);
@@ -179,7 +189,17 @@ void vertex() {
 }
 
 void fragment() {
-	vec4 m = texture(grass_card_atlas, v_atlas_uv);
+	vec4 m = texture(grass_card_atlas, v_atlas_uv.xy);
+	float cover_id = floor(v_atlas_uv.z + 0.5); // ground-cover id (kind - 3) * 4 + variant, or -1
+	float cover_layer = floor(cover_id * 0.25);
+	float cover_variant = cover_id - cover_layer * 4.0;
+	float cover_mask = 0.0;
+	if (cover_id > -0.5) {
+		// Ground-cover card: its own atlas layer replaces the grass read (the second sampler is only touched here).
+		vec4 mc = texture(grass_cover_atlas, vec3(v_atlas_uv.xy, cover_layer));
+		m = vec4(mc.rgb, 1.0);
+		cover_mask = mc.a;
+	}
 	ALPHA = m.r;
 	ALPHA_SCISSOR_THRESHOLD = grass_card_alpha_cutoff;
 	// Far colour (vertex path) is the blend target.
@@ -188,6 +208,18 @@ void fragment() {
 		float lod = grass_card_derivative_lod(v_terrain_uv, float(textureSize(biome_grass_albedo, 0).x));
 		vec3 ground = grass_card_ground_all_biomes(v_terrain_uv, lod, v_biome);
 		col = mix(col, grass_card_blade_color(ground, m.b, m.g, v_shape.y), v_shape.z);
+	}
+	if (cover_id > -0.5) {
+		// Leaves and stems keep the terrain-derived blade colour; the per-kind constant and the A mask (petals, seed heads) are the only changes.
+		// The result then takes the same modifier, wetness, haze and night path as the blade below.
+		if (cover_layer < 0.5) {
+			int petal = int(clamp(cover_variant, 0.0, 3.0));
+			float blade_luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
+			vec3 petal_color = min(GRASS_COVER_PETALS[petal] * (blade_luma * GRASS_COVER_PETAL_RATIO[petal]) * (1.0 + 0.08 * (2.0 * v_shape.y - 1.0)), vec3(0.9));
+			col = mix(col, petal_color, cover_mask);
+		}
+		else if (cover_layer < 1.5) col *= GRASS_COVER_FERN_TINT;
+		else col = mix(col, min(GRASS_COVER_STRAW * (dot(col, vec3(0.2126, 0.7152, 0.0722)) * 2.5), vec3(0.9)), cover_mask);
 	}
 	col = mix(col, v_modifier.rgb, clamp(v_modifier.a, 0.0, 1.0));
 	col *= 1.0 - 0.55 * 0.4 * min(v_wet, 1.0); // wet world: blades darken less than soil

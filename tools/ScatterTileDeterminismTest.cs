@@ -178,7 +178,27 @@ public partial class ScatterTileDeterminismTest : RefCounted
         Check(RingScatterClassTable.CreateForTests(new[] { new RingScatterClass { Id = 1, CellM = 24f } }).Validate().Count > 0, "a. CellM 24 passed Validate");
         Check(RingScatterClassTable.CreateForTests(new[] { new RingScatterClass { Id = 1, BlockM = 30 } }).Validate().Count > 0, "a. BlockM 30 passed Validate");
         Check(RingScatterClassTable.CreateForTests(new[] { new RingScatterClass { Id = 1, Alignment = (RingScatterAlignment)9 } }).Validate().Count > 0, "a. an unknown alignment passed Validate");
-        Check(RingScatterClassTable.Production.Validate().Count == 0 && string.Join(",", RingScatterClassTable.Production.BuildOrder.Select(r => r.Key)) == "rock.outcrop,rock.boulder,rock.cobble", "a. Production is not the valid three-row rock table in build order");
+        const int RocksMask = 1 << 4, VegMask = 1 << 6;
+        RingScatterClassTable prod = RingScatterClassTable.Production, rocksView = prod.ForMask(RocksMask);
+        Check(prod.Validate().Count == 0 && string.Join(",", prod.BuildOrder.Select(r => r.Key)) == "rock.outcrop,rock.boulder,veg.snag,veg.shrub,veg.sapling,veg.fallen,veg.stump,rock.cobble", "a. Production is not the valid eight-row table in build order");
+        Check(rocksView.Validate().Count == 0 && string.Join(",", rocksView.BuildOrder.Select(r => r.Key)) == "rock.outcrop,rock.boulder,rock.cobble", "a. the rocks-only view is not the valid three-row rock table in build order");
+        // T6 A7 mask rules: the rocks-only hash is today's three-row table hash (same header, same rows), a view never holds a row outside the mask, an Avoid to a row outside the view is ignored.
+        ulong rockTableHash = RingScatterClassTable.CreateForTests(prod.Rows.Where(r => r.FeatureBit == 4)).Hash;
+        Check(prod.HashFor(RocksMask) == rockTableHash && rocksView.Hash == rockTableHash, "a. HashFor(rocks-only mask) differs from the three-row rock table's hash");
+        Check(prod.HashFor(RocksMask | (1 << 5)) == rockTableHash, "a. an unrelated mask bit changed the rocks-only hash");
+        Check(prod.HashFor(RocksMask | VegMask) == prod.Hash && prod.HashFor(RocksMask | VegMask) != rockTableHash, "a. the bit 4 + 6 hash is not the full table's");
+        RingScatterClassTable vegView = prod.ForMask(VegMask);
+        Check(string.Join(",", vegView.BuildOrder.Select(r => r.Key)) == "veg.snag,veg.shrub,veg.sapling,veg.fallen,veg.stump" && vegView.Validate().Count == 0 && prod.HashFor(VegMask) != rockTableHash && prod.HashFor(VegMask) == vegView.Hash, "a. the bit 6 view is not the snag, shrub, sapling, fallen tree and stump rows");
+        Check(prod.ForMask(0).Rows.Count == 0 && prod.ForMask(RocksMask) == rocksView, "a. the empty view is not empty or views are not memoised");
+        RingScatterClassTable avoidTable = RingScatterClassTable.CreateForTests(new[]
+        {
+            new RingScatterClass { Id = 1, Key = "a", FeatureBit = 4, ReachM = 100f },
+            new RingScatterClass { Id = 2, Key = "b", FeatureBit = 6, ReachM = 50f, Avoid = new[] { new RingScatterAvoid(1, 1f, 0f) } },
+        });
+        RingScatterClassTable avoidVeg = avoidTable.ForMask(VegMask), avoidBoth = avoidTable.ForMask(RocksMask | VegMask);
+        Check(avoidVeg.Validate().Count == 0 && avoidVeg.Rows[0].Avoid.Length == 0, "a. an Avoid to a row outside the view was not ignored");
+        Check(avoidBoth.Rows[1].Avoid.Length == 1 && avoidBoth.Validate().Count == 0, "a. an Avoid to a row inside the view was dropped");
+        Detail($"a. mask views: rocks-only hash {rocksView.Hash:X16} (equals the three-row table), bit 6 hash {vegView.Hash:X16}, full {prod.Hash:X16}");
 
         // Hash changes when any single column changes (spot-check 5 columns, plus a term and the table size).
         RingScatterClass baseRow = _table.Rows[1];

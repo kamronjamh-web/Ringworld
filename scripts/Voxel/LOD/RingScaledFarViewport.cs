@@ -1547,7 +1547,7 @@ public partial class RingScaledFarViewport : Node
 				circumference, radius, width, scale);
 			// T2R-12: far river line coverage in the vertex alpha (S11); the cell is the larger of the radial and the angular step here.
 			double cell = Math.Max((outerRadius - innerRadius) / radialSteps, distance * Math.Tau / angularSteps);
-			colors[index] = sampler.WithRiverLineAlpha(RingTerrainVisuals.ResolveMacroTextureColor(sample, Mathf.RoundToInt(displayedHeight), sampler, low, high),
+			colors[index] = sampler.WithRiverLineAlpha(RingTerrainVisuals.ResolveMacroTextureColor(sample, Mathf.RoundToInt(displayedHeight), sampler, low, high, around, across),
 				WrapSurfaceTileAround(around, circumference), across, cell, cell);
 			double unwrappedAround = canonicalAnchorAround + (around - anchorAround);
 			canonicalAroundValues[index] = unwrappedAround;

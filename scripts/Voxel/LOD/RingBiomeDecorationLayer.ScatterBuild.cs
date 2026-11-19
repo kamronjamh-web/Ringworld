@@ -22,6 +22,10 @@ public partial class RingBiomeDecorationLayer
 {
 	internal const int ScatterAlgorithmVersion = 1;
 	internal const int ScatterCacheVersion = 1;
+	/// <summary>T6-6: a fallen tree's length is this fraction of the source variant's height (the derived catalog's LogClip; DerivedTreeForm.LengthMeters = 0.55 x HeightMeters).</summary>
+	internal const double LogLengthFraction = 0.55;
+	/// <summary>T6-6: a candidate log is rejected when the exact surface at its midpoint is at least this far above the chord between its ends (a ridge under the log).</summary>
+	internal const double LogRidgeMeters = 0.3;
 
 	private static int _scatterRowsBuildCalls;
 	/// <summary>Counts BuildScatterRows calls (the feature-off check proves the review path never reaches it).</summary>
@@ -66,7 +70,7 @@ public partial class RingBiomeDecorationLayer
 		var key = new ScatterTileKey(tileAround, tileAcross);
 		ScatterTreeSet trees = ctx.BuildTreeSet(sampler, key);
 		using RingTerrainSampler copy = sampler.CreateIndependentCopy();
-		return BuildScatterRows(ctx, copy, key, trees, Array.Empty<ScatterRecord>(), 0, table.BuildOrder.Count, 0xFFFF).Records;
+		return BuildScatterRows(ctx, copy, key, trees, Array.Empty<ScatterRecord>(), 0, ctx.Table.BuildOrder.Count, 0xFFFF).Records;
 	}
 
 	/// <summary>Everything a scatter job needs, captured once: the tree request parameters (the values StartVegetationTileBuilds uses, minus the per-tile key, disk and cancellation), the layout, the class table and the edit snapshot.</summary>
@@ -86,6 +90,9 @@ public partial class RingBiomeDecorationLayer
 
 		private readonly TileBuildRequest _request;
 		private readonly VegetationLayout _layout;
+		// T6-6: authored heights of the base variants (a log's length) and the largest "size" of each row in metres (a log row's is its longest log), for the spacing and avoid search radii.
+		private readonly float[] _sourceHeights = Array.Empty<float>();
+		private readonly Dictionary<ushort, double> _maxExtent = new();
 
 		internal ScatterBuildContext(int seed, double circumference, double ringWidth, long aroundCellCount, double aroundCellMeters, float acrossCellMeters, int tileCells, int candidates,
 			float forestChance, float grasslandChance, float groveDensity, float maximumSlope, bool useRegionalForest, float[] variantWidths, float[] variantHeights,
@@ -93,9 +100,27 @@ public partial class RingBiomeDecorationLayer
 		{
 			IReadOnlyList<string> errors = table.Validate();
 			if (errors.Count != 0) throw new ArgumentException("Invalid scatter class table: " + string.Join("; ", errors), nameof(table));
-			Seed = seed; Circumference = circumference; RingWidth = ringWidth; Table = table; Edits = edits; WorldFeatureMask = worldFeatureMask;
+			Seed = seed; Circumference = circumference; RingWidth = ringWidth; Table = table.ForMask(worldFeatureMask); Edits = edits; WorldFeatureMask = worldFeatureMask;
 			_layout = new VegetationLayout(aroundCellCount, aroundCellMeters, Math.Max(1L, (long)Math.Ceiling(aroundCellCount / (double)tileCells)), aroundCellMeters * tileCells,
 				acrossCellMeters, acrossCellMeters * tileCells, tileCells, circumference);
+			if (Table.Rows.Any(r => r.Alignment == RingScatterAlignment.LyingAlongSlope))
+			{
+				// Always the catalog's heights, whatever the caller passed: the log lengths must not depend on how a context was made (main thread, like ForReview).
+				var heights = new float[ImportedTreeCatalog.VariantCount];
+				foreach (ImportedTreeVariant variant in ImportedTreeCatalog.Load()) heights[variant.Index] = variant.HeightMeters;
+				_sourceHeights = heights;
+			}
+			foreach (RingScatterClass row in Table.Rows)
+			{
+				double extent = row.SizeMaxM;
+				if (row.Alignment == RingScatterAlignment.LyingAlongSlope)
+				{
+					double tallest = 0.0;
+					for (int m = row.MeshFirst; m < row.MeshFirst + row.MeshCount; m++) tallest = Math.Max(tallest, SourceHeight(m));
+					extent = LogLengthFraction * row.SizeMaxM * tallest;
+				}
+				_maxExtent[row.Id] = extent;
+			}
 			_request = new TileBuildRequest(new VegetationTileKey(0, 0), aroundCellCount, aroundCellMeters, circumference, acrossCellMeters, tileCells, candidates, ringWidth, seed,
 				forestChance, grasslandChance, groveDensity, maximumSlope, useRegionalForest, variantWidths, variantHeights, edits, 0, null!, CancellationToken.None, string.Empty, string.Empty, 0, 0, false);
 		}
@@ -104,6 +129,7 @@ public partial class RingBiomeDecorationLayer
 		{
 			Seed = other.Seed; Circumference = other.Circumference; RingWidth = other.RingWidth; Table = other.Table; WorldFeatureMask = other.WorldFeatureMask;
 			_layout = other._layout; Edits = edits; _request = other._request with { Edits = edits };
+			_sourceHeights = other._sourceHeights; _maxExtent = other._maxExtent;
 		}
 
 		/// <summary>The same context over another edit snapshot (the streamer makes one per edit version).</summary>
@@ -130,6 +156,16 @@ public partial class RingBiomeDecorationLayer
 
 		/// <summary>The A8 owner of a position given in centimetres: the tile whose production extent contains it.</summary>
 		internal ScatterTileKey OwnerOf(long aroundCm, long acrossCm) => OwnerOfMetres(aroundCm / 100.0, acrossCm / 100.0);
+
+		/// <summary>The authored height of the base variant a placeable index is made from (itself for a base index, the source variant of a derived one).</summary>
+		internal float SourceHeight(int index)
+		{
+			ImportedTreeSourceRow source = ImportedTreeSourceTable.Row(index);
+			return _sourceHeights[source.SourceBaseVariant >= 0 ? source.SourceBaseVariant : index];
+		}
+
+		/// <summary>The largest "size" in metres a record of the row can have (SizeMaxM; for fallen trees the longest log).</summary>
+		internal double MaxExtent(RingScatterClass row) => _maxExtent[row.Id];
 
 		private ScatterTileKey OwnerOfMetres(double around, double across)
 		{
@@ -222,6 +258,8 @@ public partial class RingBiomeDecorationLayer
 			private readonly Dictionary<CandKey, bool> _accepted = new();
 			private readonly Dictionary<ushort, HashSet<ulong>> _wholeBuilt = new();
 			private readonly Dictionary<long, uint> _tints = new();
+			private readonly Dictionary<CandKey, (ushort Mesh, double Length)> _logShapes = new();
+			private readonly Dictionary<CandKey, LogFrameInfo> _logFrames = new();
 			private readonly List<(double A, int Z)> _treeScratch = new();
 			private readonly double _circ;
 			private readonly double _tileA0, _tileZ0;
@@ -350,11 +388,11 @@ public partial class RingBiomeDecorationLayer
 			private bool AcceptedCore(RingScatterClass row, long cx, long cz, int k, in Geo g)
 			{
 				if (!Viable(row, cx, cz, k, g)) return false;
-				double treeR = row.TreeClearanceM + row.TreeClearanceSizeFactor * (double)g.Size;
+				double treeR = row.TreeClearanceM + row.TreeClearanceSizeFactor * Extent(row, cx, cz, k, g);
 				if (treeR > 0.0 && AnyTreeWithin(g.A, g.Z, treeR)) return false;
 				if (!WinsSpacing(row, cx, cz, k, g)) return false;
 				foreach (RingScatterAvoid avoid in row.Avoid)
-					if (AvoidedBy(row, avoid, g)) return false;
+					if (AvoidedBy(row, avoid, cx, cz, k, g)) return false;
 				return true;
 			}
 
@@ -374,11 +412,60 @@ public partial class RingBiomeDecorationLayer
 				RingHabitatSample f = Grid.Sample(a, z);
 				if ((f.Flags & (RingHabitatFlags.Water | RingHabitatFlags.SiteBlocked)) != 0) return false;
 				double nearest = row.UsesField(RingHabitatField.NearestTreeM) ? NearestTreeM(a, z) : 50.0;
-				double density = Density(row, f, nearest);
+				var derived = new Derived();
+				double density = Density(row, f, nearest, a, z, ref derived);
 				double p = Math.Min(1.0, row.BaseDensityPerHa * density * row.CellM * (double)row.CellM / 10000.0 / row.CandidatesPerCell);
 				if (!(Hash01(cx, cz, _c.Seed, Salt(row, k) + 2) < p)) return false;
+				if (row.Alignment == RingScatterAlignment.LyingAlongSlope && !LogFrameOf(row, cx, cz, k, g).Ok) return false;
 				return row.BuriedDepthFraction <= 0f || BuriedBaseStaysUnderground(row, g);
 			}
+
+			// ------------------------------------------------------------------ fallen trees (T6-6, A7 "Logs")
+
+			/// <summary>The size a row's rules measure with: the record's size (rocks, snags, saplings, stumps), or the log's length in metres for a LyingAlongSlope row.</summary>
+			private double Extent(RingScatterClass row, long cx, long cz, int k, in Geo g)
+				=> row.Alignment == RingScatterAlignment.LyingAlongSlope ? LogShape(row, cx, cz, k, g).Length : g.Size;
+
+			private (ushort Mesh, double Length) LogShape(RingScatterClass row, long cx, long cz, int k, in Geo g)
+			{
+				var ck = new CandKey(row.Id, cx, cz, k);
+				if (_logShapes.TryGetValue(ck, out (ushort Mesh, double Length) known)) return known;
+				int mesh = SelectSpeciesVariant(row, g.A, g.Z, Hash01(cx, cz, _c.Seed, Salt(row, k) + 5));
+				return _logShapes[ck] = ((ushort)mesh, LogLengthFraction * g.Size * _c.SourceHeight(mesh));
+			}
+
+			/// <summary>The pose of a candidate log: horizontal axis (the hashed azimuth), the exact surface at the midpoint and at the two ends, and the record fields that make the renderer lay the mesh (+X axis, centred on the midpoint) on the chord.</summary>
+			private sealed class LogFrameInfo
+			{
+				public bool Ok;
+				public ushort Mesh;
+				public double Length, Yaw, Ux, Uy, Uz, ChordHeight;
+			}
+
+			private LogFrameInfo LogFrameOf(RingScatterClass row, long cx, long cz, int k, in Geo g)
+			{
+				var ck = new CandKey(row.Id, cx, cz, k);
+				if (_logFrames.TryGetValue(ck, out LogFrameInfo? known)) return known;
+				(ushort mesh, double length) = LogShape(row, cx, cz, k, g);
+				var info = new LogFrameInfo { Mesh = mesh, Length = length };
+				_logFrames[ck] = info;
+				double phi = Hash01(cx, cz, _c.Seed, Salt(row, k) + 4) * Math.Tau, cosPhi = Math.Cos(phi), sinPhi = Math.Sin(phi), half = length * 0.5, width = _c.RingWidth;
+				double a0 = g.A - half * cosPhi, z0 = g.Z - half * sinPhi, a1 = g.A + half * cosPhi, z1 = g.Z + half * sinPhi;
+				if (z0 < 4.0 || z0 > width - 4.0 || z1 < 4.0 || z1 > width - 4.0) return info;
+				const RingHabitatFlags blocked = RingHabitatFlags.Water | RingHabitatFlags.SiteBlocked;
+				if ((Grid.Sample(a0, z0).Flags & blocked) != 0 || (Grid.Sample(a1, z1).Flags & blocked) != 0) return info;
+				double h0 = PresentationSurfaceHeight(_edits, _sampler, WrapAround(a0), z0), h1 = PresentationSurfaceHeight(_edits, _sampler, WrapAround(a1), z1);
+				double middle = PresentationSurfaceHeight(_edits, _sampler, g.A, g.Z), chord = (h0 + h1) * 0.5;
+				if (middle - chord >= LogRidgeMeters) return info; // a ridge under the log: its middle would float or its ends sink
+				double pitch = Math.Atan2(h1 - h0, length), cp = Math.Cos(pitch), sp = Math.Sin(pitch);
+				// Axis (around, up, across) = (cp cosPhi, sp, cp sinPhi); the up with no roll is the normal of the vertical plane through it.
+				(double ux, double uy, double uz) = (-sp * cosPhi, cp, -sp * sinPhi);
+				info.Yaw = ScatterLogFrame.YawFor(ux, uy, uz, cp * cosPhi, sp, cp * sinPhi);
+				info.Ux = ux; info.Uy = uy; info.Uz = uz; info.ChordHeight = chord; info.Ok = true;
+				return info;
+			}
+
+			private double WrapAround(double a) => a - Math.Floor(a / _circ) * _circ;
 
 			/// <summary>
 			/// T5-10b: the buried column of an outcrop (down to fraction x size below the root) must stay under the terrain everywhere under its footprint: the centre and 16 ring points all have terrain
@@ -401,42 +488,87 @@ public partial class RingBiomeDecorationLayer
 			private static double Respond(in RingScatterResponse r, double value)
 				=> r.Out0 + ((double)r.Out1 - r.Out0) * RingGroundSurfaceModel.SmoothStep(r.In0, r.In1, value);
 
-			private static double FieldValue(in RingHabitatSample f, RingHabitatField field, double nearestTree) => field switch
+			/// <summary>T6 A5 fields of one evaluated point, computed once on first use (a row that uses none of them pays nothing).</summary>
+			private struct Derived
 			{
-				RingHabitatField.Slope => f.SlopeDeg,
-				RingHabitatField.Relief8 => f.Relief8,
-				RingHabitatField.Relief64 => f.Relief64,
-				RingHabitatField.Wetness => f.WetnessTotal,
-				RingHabitatField.RockExposure => f.RockExposure,
-				RingHabitatField.Scree => f.Scree,
-				RingHabitatField.SoilDepth => f.SoilDepth,
-				RingHabitatField.Canopy => f.Canopy,
-				RingHabitatField.Moisture => f.Moisture,
-				RingHabitatField.Temperature => f.Temperature,
-				RingHabitatField.ForestWeight => f.ForestWeight,
-				RingHabitatField.GrassWeight => f.GrassWeight,
-				RingHabitatField.HeightAboveChannel => f.HeightAboveChannelM,
-				RingHabitatField.NearestTreeM => nearestTree,
-				_ => 0.0
-			};
+				public bool Ready;
+				public float StandAge, ConiferShare, Treeline, Clearing, Dense;
+				public RingCommunityMemberships Memberships;
+			}
 
-			private static double Density(RingScatterClass row, in RingHabitatSample f, double nearestTree)
+			private ForestStructureSampler? _structure;
+
+			private static ForestRegionSample RegionalOf(in RingHabitatSample f) => new(f.Habitat, f.Canopy, 0f, f.Clearing, f.MapleWeight, f.FirWeight, f.PineWeight);
+
+			private void Derive(in RingHabitatSample f, double a, double z, ref Derived d)
+			{
+				if (d.Ready) return;
+				_structure ??= ForestStructureSampler.For(_sampler);
+				long aroundM = (long)Math.Floor(a); int acrossM = (int)Math.Floor(z);
+				d.StandAge = ForestStructureSampler.EffectiveAge(_structure.ContrastedStandAge(aroundM, acrossM), f.Canopy, f.Clearing, f.Temperature);
+				ForestRegionSample regional = RegionalOf(f);
+				ForestStructureSampler.SpeciesWeights(f.Moisture, f.Temperature, f.WetnessTotal, f.Relief64, f.RockExposure, f.SlopeDeg, in regional, out _, out float fir, out float pine);
+				d.ConiferShare = fir + pine;
+				d.Treeline = (float)RingGroundSurfaceModel.SmoothStep(0.24, 0.40, f.Temperature);
+				d.Clearing = f.Clearing;
+				d.Memberships = RingPlantCommunities.Memberships(f.Canopy, f.Clearing, d.ConiferShare, f.WetnessTotal, f.Relief64, f.RockExposure, f.Moisture, f.Scree);
+				d.Dense = d.Memberships.ClosedBroadleaf + d.Memberships.ConiferStand;
+				d.Ready = true;
+			}
+
+			private double FieldValue(in RingHabitatSample f, RingHabitatField field, double nearestTree, double a, double z, ref Derived d)
+			{
+				if (field >= RingHabitatField.StandAge) Derive(f, a, z, ref d);
+				return field switch
+				{
+					RingHabitatField.Slope => f.SlopeDeg,
+					RingHabitatField.Relief8 => f.Relief8,
+					RingHabitatField.Relief64 => f.Relief64,
+					RingHabitatField.Wetness => f.WetnessTotal,
+					RingHabitatField.RockExposure => f.RockExposure,
+					RingHabitatField.Scree => f.Scree,
+					RingHabitatField.SoilDepth => f.SoilDepth,
+					RingHabitatField.Canopy => f.Canopy,
+					RingHabitatField.Moisture => f.Moisture,
+					RingHabitatField.Temperature => f.Temperature,
+					RingHabitatField.ForestWeight => f.ForestWeight,
+					RingHabitatField.GrassWeight => f.GrassWeight,
+					RingHabitatField.HeightAboveChannel => f.HeightAboveChannelM,
+					RingHabitatField.NearestTreeM => nearestTree,
+					RingHabitatField.StandAge => d.StandAge,
+					RingHabitatField.ConiferShare => d.ConiferShare,
+					RingHabitatField.Treeline => d.Treeline,
+					RingHabitatField.Clearing => d.Clearing,
+					RingHabitatField.Dense => d.Dense,
+					RingHabitatField.ClosedBroadleaf => d.Memberships.ClosedBroadleaf,
+					RingHabitatField.ConiferStand => d.Memberships.ConiferStand,
+					RingHabitatField.OpenWoodland => d.Memberships.OpenWoodland,
+					RingHabitatField.ForestEdge => d.Memberships.ForestEdge,
+					RingHabitatField.ClearingCommunity => d.Memberships.Clearing,
+					RingHabitatField.DryMeadow => d.Memberships.DryMeadow,
+					RingHabitatField.WetMeadow => d.Memberships.WetMeadow,
+					RingHabitatField.RockyFell => d.Memberships.RockyFell,
+					_ => 0.0
+				};
+			}
+
+			private double Density(RingScatterClass row, in RingHabitatSample f, double nearestTree, double a, double z, ref Derived d)
 			{
 				double sum = 0.0;
 				foreach (RingScatterTerm term in row.Terms)
 				{
 					double product = term.Weight;
-					foreach (RingScatterResponse factor in term.Factors) product *= Respond(factor, FieldValue(f, factor.Field, nearestTree));
+					foreach (RingScatterResponse factor in term.Factors) product *= Respond(factor, FieldValue(f, factor.Field, nearestTree, a, z, ref d));
 					sum += product;
 				}
-				foreach (RingScatterResponse m in row.Multipliers) sum *= Respond(m, FieldValue(f, m.Field, nearestTree));
+				foreach (RingScatterResponse m in row.Multipliers) sum *= Respond(m, FieldValue(f, m.Field, nearestTree, a, z, ref d));
 				return sum;
 			}
 
 			/// <summary>A8 Matern II: the same class, against VIABLE peers within the hard-core distance; the smaller id wins, equal ids by (class, cx, cz, k).</summary>
 			private bool WinsSpacing(RingScatterClass row, long cx, long cz, int k, in Geo g)
 			{
-				double maxD = row.SpacingM + row.SpacingSizeFactor * (double)row.SizeMaxM;
+				double maxD = row.SpacingM + row.SpacingSizeFactor * _c.MaxExtent(row);
 				if (!(maxD > 0.0)) return true;
 				long ring = RingCells(row, _circ), span = (long)Math.Ceiling(maxD / row.CellM);
 				for (long dz = -span; dz <= span; dz++)
@@ -447,7 +579,7 @@ public partial class RingBiomeDecorationLayer
 						{
 							if (px == cx && pz == cz && k2 == k) continue;
 							Geo p = Geometry(row, px, pz, k2);
-							double required = row.SpacingM + row.SpacingSizeFactor * ((double)g.Size + p.Size) * 0.5;
+							double required = row.SpacingM + row.SpacingSizeFactor * (Extent(row, cx, cz, k, g) + Extent(row, px, pz, k2, p)) * 0.5;
 							if (Dist2(p, g) >= required * required) continue;
 							if (!Viable(row, px, pz, k2, p)) continue;
 							if (p.Id < g.Id || (p.Id == g.Id && (px, pz, k2).CompareTo((cx, cz, k)) < 0)) return false;
@@ -456,10 +588,14 @@ public partial class RingBiomeDecorationLayer
 				return true;
 			}
 
-			private bool AvoidedBy(RingScatterClass row, in RingScatterAvoid avoid, in Geo g)
+			private bool AvoidedBy(RingScatterClass row, in RingScatterAvoid avoid, long cx, long cz, int k, in Geo g)
 			{
 				RingScatterClass other = _byId[avoid.ClassId];
-				double maxD = avoid.ClearanceM + avoid.SizeFactor * ((double)g.Size + other.SizeMaxM) * 0.5;
+				double self = Extent(row, cx, cz, k, g);
+				bool otherIsLog = other.Alignment == RingScatterAlignment.LyingAlongSlope;
+				double otherMax = _c.MaxExtent(other);
+				// A log is avoided along its whole length: the search reaches half of the longest log further.
+				double maxD = avoid.ClearanceM + avoid.SizeFactor * (self + otherMax) * 0.5 + (otherIsLog ? otherMax * 0.5 : 0.0);
 				long ring = RingCells(other, _circ), span = (long)Math.Ceiling(maxD / other.CellM);
 				long ex = (long)Math.Floor(g.A / other.CellM), ez = (long)Math.Floor(g.Z / other.CellM);
 				for (long dz = -span; dz <= span; dz++)
@@ -469,8 +605,20 @@ public partial class RingBiomeDecorationLayer
 						for (int k2 = 0; k2 < other.CandidatesPerCell; k2++)
 						{
 							Geo p = Geometry(other, px, pz, k2);
-							double required = avoid.ClearanceM + avoid.SizeFactor * ((double)g.Size + p.Size) * 0.5;
-							if (Dist2(p, g) >= required * required) continue;
+							if (otherIsLog)
+							{
+								// Distance from the point to the log's axis segment (its midpoint is the record's position, its azimuth the hashed yaw).
+								double length = LogShape(other, px, pz, k2, p).Length, phi = Hash01(px, pz, _c.Seed, Salt(other, k2) + 4) * Math.Tau;
+								double da = WrapDelta(g.A - p.A), dzz = g.Z - p.Z, ax = Math.Cos(phi), az = Math.Sin(phi);
+								double along = Math.Clamp(da * ax + dzz * az, -length * 0.5, length * 0.5);
+								double rx = da - along * ax, rz = dzz - along * az, need = avoid.ClearanceM + avoid.SizeFactor * self * 0.5;
+								if (rx * rx + rz * rz >= need * need) continue;
+							}
+							else
+							{
+								double required = avoid.ClearanceM + avoid.SizeFactor * (self + Extent(other, px, pz, k2, p)) * 0.5;
+								if (Dist2(p, g) >= required * required) continue;
+							}
 							if (IsAcceptedEarlier(other, px, pz, k2, p)) return true;
 						}
 					}
@@ -621,12 +769,71 @@ public partial class RingBiomeDecorationLayer
 			{
 				int salt = Salt(row, k), seed = _c.Seed;
 				double a = g.A, z = g.Z;
+				if (row.Alignment == RingScatterAlignment.LyingAlongSlope)
+				{
+					// A log lies on the chord between its two exact end heights: the position is the midpoint at the chord height, the up has no roll, the yaw is the one that lays the mesh's +X on the axis (ScatterLogFrame).
+					LogFrameInfo log = LogFrameOf(row, cx, cz, k, g);
+					return new ScatterRecord(g.Id, g.AroundCm, g.AcrossCm, (float)log.ChordHeight, row.Id, log.Mesh, g.Size, (float)log.Yaw, ScatterRecord.EncodeUpOct(log.Ux, log.Uy, log.Uz), Tint(a, z));
+				}
 				float surface = PresentationSurfaceHeight(_edits, _sampler, a, z);
 				(double gx, double gz) = Grid.Gradient(a, z);
 				(double ux, double uy, double uz) = AlignedUp(row, gx, gz, cx, cz, seed, salt);
-				int mesh = row.MeshFirst + Math.Min(row.MeshCount - 1, (int)Math.Floor(Hash01(cx, cz, seed, salt + 5) * row.MeshCount));
+				double meshHash = Hash01(cx, cz, seed, salt + 5);
+				int mesh = row.MeshCatalog == RingScatterMeshCatalog.Trees && row.VariantSelector == RingScatterVariantSelector.BySpecies
+					? SelectSpeciesVariant(row, a, z, meshHash)
+					: row.MeshFirst + Math.Min(row.MeshCount - 1, (int)Math.Floor(meshHash * row.MeshCount));
 				float yaw = (float)(Hash01(cx, cz, seed, salt + 4) * Math.Tau);
 				return new ScatterRecord(g.Id, g.AroundCm, g.AcrossCm, surface, row.Id, (ushort)mesh, g.Size, yaw, ScatterRecord.EncodeUpOct(ux, uy, uz), Tint(a, z));
+			}
+
+			// T6 A7 light factors of the understory: maple 1, pine 0.3 + 0.7 (1 - Dense), fir 0.6. Dead-wood rows use the plain A3 weights.
+			/// <summary>BySpecies: the species from the A3 weights at the point (times the light factors for the understory rows; dead wood uses the plain weights and only species that have a form in the row's range), renormalised and drawn with the row's mesh hash; then a uniform variant of that species inside the row's mesh range (Understory role for saplings, DeadWood role for snags, fallen trees and stumps, Shrub role for shrubs with the look overrides below).</summary>
+			private int SelectSpeciesVariant(RingScatterClass row, double a, double z, double meshHash)
+			{
+				RingHabitatSample f = Grid.Sample(a, z);
+				bool dead = row.RenderGroup == RingScatterRenderGroup.DeadWood;
+				bool shrub = row.RenderGroup == RingScatterRenderGroup.Shrubs;
+				TreePlacementRole role = dead ? TreePlacementRole.DeadWood : shrub ? TreePlacementRole.Shrub : TreePlacementRole.Understory;
+				var derived = new Derived();
+				if (!dead) Derive(f, a, z, ref derived);
+				ForestRegionSample regional = RegionalOf(f);
+				ForestStructureSampler.SpeciesWeights(f.Moisture, f.Temperature, f.WetnessTotal, f.Relief64, f.RockExposure, f.SlopeDeg, in regional, out float maple, out float fir, out float pine);
+				double wm = maple, wf = dead || shrub ? fir : fir * 0.6, wp = dead || shrub ? pine : pine * (0.3 + 0.7 * (1.0 - derived.Dense));
+				if (shrub)
+				{
+					// T6-7 look overrides: where WetMeadow is the dominant community the shrub is broadleaf; where DryMeadow or RockyFell is, it is pine scrub. Elsewhere the plain A3 species weights pick the look (maple broadleaf, fir thicket, pine scrub).
+					int best = 0;
+					for (int i = 1; i < RingCommunityMemberships.Count; i++) if (derived.Memberships[i] > derived.Memberships[best]) best = i;
+					if (best == (int)RingPlantCommunity.WetMeadow) { wm = 1.0; wf = 0.0; wp = 0.0; }
+					else if (best == (int)RingPlantCommunity.DryMeadow || best == (int)RingPlantCommunity.RockyFell) { wm = 0.0; wf = 0.0; wp = 1.0; }
+				}
+				if (dead)
+				{
+					if (VariantsOf(row, TreeSpecies.Maple, role).Count == 0) wm = 0.0;
+					if (VariantsOf(row, TreeSpecies.Fir, role).Count == 0) wf = 0.0;
+					if (VariantsOf(row, TreeSpecies.Pine, role).Count == 0) wp = 0.0;
+				}
+				double total = wm + wf + wp;
+				TreeSpecies species = TreeSpecies.Maple; double lo = 0.0, hi = 1.0;
+				if (total > 1e-9)
+				{
+					double cm = wm / total, cf = cm + wf / total;
+					if (meshHash < cm) { species = TreeSpecies.Maple; lo = 0.0; hi = cm; }
+					else if (meshHash < cf) { species = TreeSpecies.Fir; lo = cm; hi = cf; }
+					else { species = TreeSpecies.Pine; lo = cf; hi = 1.0; }
+				}
+				List<int> list = VariantsOf(row, species, role);
+				if (list.Count == 0) return row.MeshFirst;
+				double t = hi > lo ? Math.Clamp((meshHash - lo) / (hi - lo), 0.0, 0.999999) : 0.0;
+				return list[(int)Math.Floor(t * list.Count)];
+			}
+
+			private static List<int> VariantsOf(RingScatterClass row, TreeSpecies species, TreePlacementRole role)
+			{
+				IReadOnlyList<int> all = ImportedTreeSourceTable.Range(species, role);
+				var list = new List<int>(all.Count);
+				foreach (int index in all) if (index >= row.MeshFirst && index < row.MeshFirst + row.MeshCount) list.Add(index);
+				return list;
 			}
 
 			private static (double X, double Y, double Z) Normalize(double x, double y, double z)
@@ -641,9 +848,11 @@ public partial class RingBiomeDecorationLayer
 				switch (row.Alignment)
 				{
 					case RingScatterAlignment.LyingAlongSlope: return normal;
+					case RingScatterAlignment.Upright when row.RandomTiltDeg <= 0f: return (0.0, 1.0, 0.0);
+					case RingScatterAlignment.Upright: // world up with the random lean only (T6 saplings)
 					case RingScatterAlignment.SlopeAligned:
 					{
-						double t = Math.Clamp(row.AlignFactor, 0f, 1f);
+						double t = row.Alignment == RingScatterAlignment.SlopeAligned ? Math.Clamp(row.AlignFactor, 0f, 1f) : 0.0;
 						var up = Normalize(normal.X * t, 1.0 + (normal.Y - 1.0) * t, normal.Z * t);
 						double tilt = Hash01(cx, cz, seed, salt + 7) * row.RandomTiltDeg * Math.PI / 180.0, az = Hash01(cx, cz, seed, salt + 6) * Math.Tau;
 						if (tilt == 0.0) return up;

@@ -29,7 +29,10 @@ public sealed class RingHabitatFieldGrid
     public const double FineM = 8.0, CoarseM = 32.0;
     /// <summary>A3 lever 4: a coarse cell is fine-flagged when the largest coarse slope of its four corners reaches this many degrees (or a corner has water).</summary>
     public const double HabitatFineSlopeDeg = 12.0;
-    public static bool IsEnabled(int worldFeatureMask) => (worldFeatureMask & (1 << ScatterRocksBit)) != 0;
+    /// <summary>T6 A7: the vegetation.forest_structure bit; it also enables the grid and the scatter streamer (its understory rows).</summary>
+    public const int ScatterVegetationBit = 6;
+    /// <summary>Scatter exists (streamer and grid) when the mask has the rocks bit or the forest structure bit.</summary>
+    public static bool IsEnabled(int worldFeatureMask) => (worldFeatureMask & ((1 << ScatterRocksBit) | (1 << ScatterVegetationBit))) != 0;
 
     private const int FinePerCoarse = 4;
 
@@ -37,7 +40,7 @@ public sealed class RingHabitatFieldGrid
     {
         public float H;
         public double Gx, Gz;
-        public float Slope, C8, C64, Moist, Temp, Forest, Grass, Canopy;
+        public float Slope, C8, C64, Moist, Temp, Forest, Grass, Canopy, Clearing, Maple, Fir, Pine;
         public ForestHabitat Habitat;
         public RingHabitatFlags Flags;
     }
@@ -234,7 +237,8 @@ public sealed class RingHabitatFieldGrid
         {
             H = h, Gx = gx, Gz = gz, Slope = slope, C8 = 0f, C64 = c64,
             Moist = s.Moisture, Temp = s.Temperature, Forest = weights.Forest, Grass = 1f - (weights.Desert + weights.Forest + weights.Tundra + weights.Alpine),
-            Canopy = forest.Density, Habitat = forest.Habitat, Flags = FlagsOf(in s, h)
+            Canopy = forest.Density, Habitat = forest.Habitat, Flags = FlagsOf(in s, h),
+            Clearing = forest.Clearing, Maple = forest.MapleWeight, Fir = forest.FirWeight, Pine = forest.PineWeight
         };
     }
 
@@ -271,7 +275,8 @@ public sealed class RingHabitatFieldGrid
         {
             H = centre.Height, Gx = gx, Gz = gz, Slope = SlopeDegrees(gx, gz), C8 = c8, C64 = blend.C64,
             Moist = blend.Moist, Temp = blend.Temp, Forest = blend.Forest, Grass = blend.Grass, Canopy = blend.Canopy,
-            Habitat = GetCoarse(I + (r >= 2 ? 1 : 0), J + (rj >= 2 ? 1 : 0)).Habitat, Flags = centre.Flags
+            Habitat = GetCoarse(I + (r >= 2 ? 1 : 0), J + (rj >= 2 ? 1 : 0)).Habitat, Flags = centre.Flags,
+            Clearing = blend.Clearing, Maple = blend.Maple, Fir = blend.Fir, Pine = blend.Pine
         };
     }
 
@@ -290,6 +295,10 @@ public sealed class RingHabitatFieldGrid
             Forest = (float)B(n00.Forest, n10.Forest, n01.Forest, n11.Forest),
             Grass = (float)B(n00.Grass, n10.Grass, n01.Grass, n11.Grass),
             Canopy = (float)B(n00.Canopy, n10.Canopy, n01.Canopy, n11.Canopy),
+            Clearing = (float)B(n00.Clearing, n10.Clearing, n01.Clearing, n11.Clearing),
+            Maple = (float)B(n00.Maple, n10.Maple, n01.Maple, n11.Maple),
+            Fir = (float)B(n00.Fir, n10.Fir, n01.Fir, n11.Fir),
+            Pine = (float)B(n00.Pine, n10.Pine, n01.Pine, n11.Pine),
             Flags = n00.Flags | n10.Flags | n01.Flags | n11.Flags
         };
     }
@@ -308,7 +317,8 @@ public sealed class RingHabitatFieldGrid
         double rock = RingGroundSurfaceModel.RockExposure(slope, baselineM, relief64, n.Forest);
         double scree = RingGroundSurfaceModel.ScreeWeight(slope, baselineM, relief64, (double)n.Grass + n.Forest);
         return new RingHabitatSample(n.H, slope, (float)baselineM, n.C8, n.C64, n.Moist, n.Temp, n.Forest, n.Grass, n.Canopy, n.Habitat,
-            (float)wetness, 0f, float.PositiveInfinity, (float)rock, (float)scree, (float)(1.0 - rock), flags | n.Flags);
+            (float)wetness, 0f, float.PositiveInfinity, (float)rock, (float)scree, (float)(1.0 - rock), flags | n.Flags,
+            n.Clearing, n.Maple, n.Fir, n.Pine);
     }
 
     // ------------------------------------------------------------------ production source

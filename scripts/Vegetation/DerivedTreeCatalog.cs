@@ -29,7 +29,9 @@ public sealed class DerivedTreeForm
 public static class DerivedTreeCatalog
 {
     public const int CatalogVersion = 1;
-    public const int FormCount = 13;
+    public const int FormCount = 25;
+    /// <summary>T6-6 dead-wood forms (30-42) and T6-7 shrubs (43-54).</summary>
+    public const int DeadWoodFormCount = 13, ShrubFirstIndex = 43, ShrubCount = 12;
     public const int FirstIndex = 30;
     public const string ResourcePath = "res://resources/trees/prepared/lolipop_derived_catalog.res";
 
@@ -62,14 +64,15 @@ public static class DerivedTreeCatalog
                 string hash = resource.SourceHashes[f * lods + lod];
                 if (hash.Length == 0) continue;
                 // Slot 3 (LODF) is fitted to the source LOD0; logs' slots 0 and 1 come from the source LOD1 and LOD2.
-                int sourceLod = lod == 3 ? 0 : kind == TreeFormKind.FallenTree ? (lod == 0 ? 1 : 2) : lod;
+                int sourceLod = lod == 3 || kind == TreeFormKind.Shrub ? 0 : kind == TreeFormKind.FallenTree ? (lod == 0 ? 1 : 2) : lod; // shrub cards are cut from the source species' LOD0 foliage (T6-7)
                 string live = ImportedTreeRenderLodCatalog.HashLod((ArrayMesh)source.Lods[sourceLod]);
                 if (live != hash)
                     throw new InvalidOperationException($"Derived form {resource.FormIndices[f]} slot {lod} was made from a different {source.Name} LOD{sourceLod} (stale). Run tools/prepare_derived_tree_assets.gd.");
             }
-            if (source.Lods[0].SurfaceGetMaterial(0) is not ShaderMaterial bark) throw new InvalidOperationException($"{source.Name} bark material missing.");
-            var material = (ShaderMaterial)bark.Duplicate(false);
-            if (kind != TreeFormKind.Snag) material.SetShaderParameter("vegetation_wind_enabled", false); // wind bends along model +Y: wrong for a lying log or a stump
+            ShaderMaterial? surface = kind == TreeFormKind.Shrub ? FoliageMaterial(source.Lods[0]) : source.Lods[0].SurfaceGetMaterial(0) as ShaderMaterial;
+            if (surface == null) throw new InvalidOperationException($"{source.Name} {(kind == TreeFormKind.Shrub ? "foliage" : "bark")} material missing.");
+            var material = (ShaderMaterial)surface.Duplicate(false);
+            if (kind is TreeFormKind.FallenTree or TreeFormKind.Stump) material.SetShaderParameter("vegetation_wind_enabled", false); // wind bends along model +Y: wrong for a lying log or a stump
             var meshes = new Mesh?[lods];
             for (int lod = 0; lod < lods; lod++)
             {
@@ -82,6 +85,14 @@ public static class DerivedTreeCatalog
             forms.Add(new DerivedTreeForm(resource.FormIndices[f], kind, row.Species, source.Index, meshes, new[] { material }, resource.LengthMeters[f], resource.TrunkRadiusMeters[f]));
         }
         return _forms = forms.AsReadOnly();
+    }
+
+    /// <summary>The alpha-cutout foliage material of a source LOD (shrub cards use it, so the leaf atlas, tint and cutoff are the source species' own).</summary>
+    private static ShaderMaterial? FoliageMaterial(Mesh mesh)
+    {
+        for (int s = 0; s < mesh.GetSurfaceCount(); s++)
+            if (mesh.SurfaceGetMaterial(s) is ShaderMaterial m && m.GetShaderParameter("use_alpha_cutout").AsBool()) return m;
+        return null;
     }
 
     public static DerivedTreeForm Form(int index)

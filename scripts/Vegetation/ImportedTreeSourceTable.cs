@@ -85,10 +85,11 @@ public static class ImportedTreeSourceTable
     {
         List<ImportedTreeSourceRow> rows = BaseRows().ToList();
         rows.AddRange(DerivedRows(rows));
+        rows.AddRange(ShrubRows(rows));
         return rows;
     }
 
-    /// <summary>T6-5 derived rows 30-42 (A1): snags 30-35, fallen trees 36-39, stumps 40-42; species, class and age rank are the source variant's. Shrubs (43-54) come with T6-7. Role is DeadWood, so they are never canopy.</summary>
+    /// <summary>T6-5 derived rows 30-42 (A1): snags 30-35, fallen trees 36-39, stumps 40-42; species, class and age rank are the source variant's. Shrubs (43-54) are ShrubRows. Role is DeadWood, so they are never canopy.</summary>
     private static IEnumerable<ImportedTreeSourceRow> DerivedRows(IReadOnlyList<ImportedTreeSourceRow> baseRows)
     {
         var forms = new (TreeFormKind Form, string Prefix, int[] Sources)[]
@@ -103,6 +104,25 @@ public static class ImportedTreeSourceTable
             {
                 ImportedTreeSourceRow b = baseRows[source];
                 yield return new ImportedTreeSourceRow(index++, b.Species, form, b.SizeClass, b.AgeRank, TreePlacementRole.DeadWood, TreeSourceCatalog.T6Derived, prefix + b.SourceName, source, DerivedFeature);
+            }
+    }
+
+    /// <summary>T6-7 shrub rows 43-54 (A1, A8): broadleaf 43-46 (maple cluster atlas), pine scrub 47-50 (pine clusters), fir thicket 51-54 (fir boughs). Species is the source species, so the material and the crown constants are the source's; the source variant names
+    /// which base variant's foliage material (and LOD0 hash) the shrub is made from. Role Shrub: never canopy, never a sapling.</summary>
+    private static IEnumerable<ImportedTreeSourceRow> ShrubRows(IReadOnlyList<ImportedTreeSourceRow> baseRows)
+    {
+        var looks = new (string Name, int[] Sources)[]
+        {
+            ("Broadleaf", new[] { 3, 6, 9, 0 }),
+            ("PineScrub", new[] { 15, 18, 21, 27 }),
+            ("FirThicket", new[] { 12, 13, 14, 12 }),
+        };
+        int index = 43;
+        foreach (var (name, sources) in looks)
+            for (int v = 0; v < sources.Length; v++)
+            {
+                ImportedTreeSourceRow b = baseRows[sources[v]];
+                yield return new ImportedTreeSourceRow(index++, b.Species, TreeFormKind.Shrub, b.SizeClass, b.AgeRank, TreePlacementRole.Shrub, TreeSourceCatalog.T6Derived, $"Shrub:{name}_{v + 1}", sources[v], DerivedFeature);
             }
     }
 

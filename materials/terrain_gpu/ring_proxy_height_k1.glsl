@@ -83,6 +83,7 @@ void main()
 	{
 		RcFields f = rc_sample_fields(dA, across);
 		vec4 w = rc_biome_weights(h.height, h.continental, h.ridge, f);
+		if ((HM_I(RC_P_WORLD_FEATURES) & 256) != 0) w = rc_forest_canopy_fold(w, f.moisture, dA, across); // T6-10: vegetation.far_canopy (bit 8)
 		precise float temperature = rc_clamp(f.temperature - max(0.0, h.height) * HM_F(RC_P_ALT_DROP) / 1000.0, 0.0, 1.0);
 		outp.o[ob + 4u] = f.erosion;
 		outp.o[ob + 5u] = temperature;

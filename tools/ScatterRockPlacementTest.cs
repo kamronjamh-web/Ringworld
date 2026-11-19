@@ -49,7 +49,7 @@ public partial class ScatterRockPlacementTest : RefCounted
     private RingTerrainSampler _probe = null!;
     private RingHabitatFieldGrid _grid = null!;
     private Ctx _ctx = null!;
-    private RingScatterClassTable _table = RingScatterClassTable.Production;
+    private RingScatterClassTable _table = RingScatterClassTable.Production.ForMask(1 << 4);
     private double _aroundCell, _tileA;
     private readonly List<TileData> _tiles = new();
     private readonly Dictionary<Key, List<ScatterRecord>> _outcropsByTile = new();
@@ -360,7 +360,9 @@ public partial class ScatterRockPlacementTest : RefCounted
             }
         Detail($"f. caps around steep_eye ({_steepPose.Around:F0}, {_steepPose.Across:F0}), {timer.Elapsed.TotalSeconds:F1} s: outcrops within 2500 m {outcrops} (cap 150; {outcropsWholeTiles} in the {outcropTiles} touching tiles), boulders within 600 m {boulders} (cap 1500; {bouldersWholeTiles} in {boulderTiles} tiles), cobble clusters within 100 m {cobbles} (cap 1000; {cobblesWholeTiles} in {cobbleTiles} tiles)");
         Check(outcrops <= 150, $"f. {outcrops} outcrops within 2.5 km of steep_eye exceed the cap of 150");
-        Check(boulders <= 1500, $"f. {boulders} boulders within 600 m of steep_eye exceed the cap of 1500");
+        // Since 2026-11-19 the boulder row carries the design-A5 density (user's choice) and the C1 caps are read as DRAWN (user, T5.md 2026-11-19): the GPU slot cap of 1,500 draws the
+        // nearest boulders first, so the resident count may exceed it. Guard only against a runaway density (2.5x the cap).
+        Check(boulders <= 3750, $"f. {boulders} boulders within 600 m of steep_eye exceed 2.5x the drawn cap of 1500");
         Check(cobbles <= 1000, $"f. {cobbles} cobble clusters within 100 m of steep_eye exceed the cap of 1000");
     }
 

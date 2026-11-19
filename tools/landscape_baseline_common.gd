@@ -357,6 +357,12 @@ static func run_look(ctx: Dictionary) -> Dictionary:
 				if not info.has("error") and bool((ctx["trees"] as Node).get("HasScatterStreamer")):
 					info["scatter_idle"] = await wait_scatter_idle(ctx, 180.0)
 					await COMMON.settle(tree, 2.0)
+				# T6-4b: `--understory-hidden` takes every renderer under the "UnderstoryLayer" node out of the still (the hidden half of the hidden / shown pair; no change in a world without the layer).
+				if harness_flag("--understory-hidden") and _understory_layer(ctx) != null:
+					await COMMON.settle(tree, 2.0)
+					for node in _geometry_nodes(_understory_layer(ctx)):
+						node.layers = 0
+					await COMMON.settle(tree, 0.5)
 				if first and not info.has("error"):
 					await _disable_auto_exposure(ctx)
 					first = false
@@ -436,6 +442,12 @@ static func _scatter_layer(ctx: Dictionary) -> Node:
 	return parent.get_node_or_null("ScatterLayer") if parent != null else null
 
 
+## T6-4b: the understory layer node ("UnderstoryLayer", a sibling of the decoration layer), or null in a world without vegetation.forest_structure (bit 6).
+static func _understory_layer(ctx: Dictionary) -> Node:
+	var parent: Node = (ctx["trees"] as Node).get_parent()
+	return parent.get_node_or_null("UnderstoryLayer") if parent != null else null
+
+
 static func _geometry_nodes(owner: Node) -> Array:
 	var result: Array = []
 	for node in _all_nodes(owner):
@@ -476,6 +488,10 @@ static func capture_original_state(ctx: Dictionary) -> Dictionary:
 	var scatter_layer := _scatter_layer(ctx)
 	state["scatter_geometry"] = _geometry_nodes(scatter_layer) if scatter_layer != null else []
 	state["scatter_layers"] = _layers(state["scatter_geometry"])
+	# T6-4b: the understory layer, the same way (understory_hidden and understory_off are extra cases).
+	var understory_layer := _understory_layer(ctx)
+	state["understory_geometry"] = _geometry_nodes(understory_layer) if understory_layer != null else []
+	state["understory_layers"] = _layers(state["understory_geometry"])
 	# TR-1: the GPU tree outputs are named GpuTree_<around>_<across>_<variant>_L<slot>; a shadow proxy is the child <output name>_ShadowLod<n> (RingBiomeDecorationLayer.GpuShadows.cs).
 	var slot_pattern := RegEx.create_from_string("GpuTree_.*_L(\\d)")
 	# The layer's own map (tools/RingBiomeDecorationLayer.TreeBudgetProbe.cs) wins over the names: an output recreated while its predecessor is still in the tree
@@ -592,8 +608,8 @@ static func restore_state(state: Dictionary) -> void:
 		state["grass_root"].visible = state["grass_visible"]
 	if is_instance_valid(state["trees_root"]):
 		state["trees_root"].visible = state["trees_visible"]
-	for key in [["grass_geometry", "grass_layers"], ["tree_geometry", "tree_layers"], ["scatter_geometry", "scatter_layers"]]:
-		var nodes: Array = state[key[0]]
+	for key in [["grass_geometry", "grass_layers"], ["tree_geometry", "tree_layers"], ["scatter_geometry", "scatter_layers"], ["understory_geometry", "understory_layers"]]:
+		var nodes: Array = state.get(key[0], [])
 		for index in nodes.size():
 			if is_instance_valid(nodes[index]):
 				nodes[index].layers = state[key[1]][index]
@@ -677,6 +693,11 @@ static func verify_case(state: Dictionary, full_label: String) -> String:
 		var node: Node = state["scatter_geometry"][index]
 		if is_instance_valid(node) and node.layers != (0 if label in ["scatter_hidden", "scatter_off"] else int(state["scatter_layers"][index])):
 			return "scatter render layer was not applied for " + label
+	var understory_nodes: Array = state.get("understory_geometry", [])
+	for index in understory_nodes.size():
+		var node: Node = understory_nodes[index]
+		if is_instance_valid(node) and node.layers != (0 if label in ["understory_hidden", "understory_off"] else int(state["understory_layers"][index])):
+			return "understory render layer was not applied for " + label
 	for index in state["tree_geometry"].size():
 		var node: Variant = state["tree_geometry"][index]
 		if not is_instance_valid(node):
@@ -705,7 +726,9 @@ static func verify_case(state: Dictionary, full_label: String) -> String:
 ## T4.md C3: a 4070 feature delta above this at any pose is flagged to the primary (the A1000 numbers are the authoritative ones).
 const FEATURE_AB_FLAG_MS := 0.1
 ## T5-10: scatter_off = scatter_hidden plus the layer's _Process stopped (no cull request, so no compute dispatch); (scatter_hidden delta) - (scatter_off delta) is the layer's per-frame compute and CPU-side cost.
-const EXTRA_CASES := ["feature_off", "scatter_off", "clouds_off", "cloud_shadow_gen_off", "sun_map_off", "hs_receivers_off", "water_hidden", "ui_hidden", "clocks_running", "far_viewport_off", "env_post_off", "env_ssao_off", "env_ssr_off", "atlas_4096", "atlas_8192", "atlas_16384"]
+## T6-4b: understory_hidden hides every renderer and shadow caster under the node named "UnderstoryLayer" (a sibling of the decoration layer; "(no change)" in a world without it); understory_off is that plus the
+## layer's _Process stopped (no cull request, so no compute dispatch). Select them with --extra-cases=understory_hidden,understory_off.
+const EXTRA_CASES := ["feature_off", "scatter_off", "understory_hidden", "understory_off", "clouds_off", "cloud_shadow_gen_off", "sun_map_off", "hs_receivers_off", "water_hidden", "ui_hidden", "clocks_running", "far_viewport_off", "env_post_off", "env_ssao_off", "env_ssr_off", "atlas_4096", "atlas_8192", "atlas_16384"]
 const ENV_POST_FLAGS := ["glow_enabled", "ssao_enabled", "ssil_enabled", "ssr_enabled", "sdfgi_enabled", "volumetric_fog_enabled", "adjustment_enabled"]
 
 
@@ -738,6 +761,23 @@ static func _apply_extra(state: Dictionary, base: String) -> bool:
 			undo.append(func() -> void:
 				if is_instance_valid(layer):
 					layer.process_mode = previous_mode as Node.ProcessMode)
+		"understory_hidden":
+			# A world without the layer has nothing to hide: the case applies and changes nothing ("(no change)").
+			for node in state.get("understory_geometry", []):
+				if is_instance_valid(node):
+					node.layers = 0
+		"understory_off":
+			var understory := _understory_layer({"trees": state["trees_root"]})
+			if understory == null:
+				return false
+			for node in state["understory_geometry"]:
+				if is_instance_valid(node):
+					node.layers = 0
+			var previous_understory_mode: int = understory.process_mode
+			understory.process_mode = Node.PROCESS_MODE_DISABLED
+			undo.append(func() -> void:
+				if is_instance_valid(understory):
+					understory.process_mode = previous_understory_mode as Node.ProcessMode)
 		"clouds_off", "cloud_shadow_gen_off":
 			var bridge := game.get_node_or_null("SunshineCloudBridge")
 			if bridge == null:
@@ -1234,7 +1274,7 @@ static func run_cost(ctx: Dictionary) -> Dictionary:
 			for child in (ctx["game"] as Node).get_children():
 				children.append("%s:%s:%s" % [child.name, child.get_class(), (child.get_script() as Script).resource_path.get_file() if child.get_script() != null else "-"])
 			record["game_children"] = children
-		record["geometry_nodes"] = {"near_terrain": state["near_nodes"].size(), "far_terrain": state["far_nodes"].size(), "trees": state["tree_geometry"].size(), "grass": state["grass_geometry"].size(), "scatter": state["scatter_geometry"].size()}
+		record["geometry_nodes"] = {"near_terrain": state["near_nodes"].size(), "far_terrain": state["far_nodes"].size(), "trees": state["tree_geometry"].size(), "grass": state["grass_geometry"].size(), "scatter": state["scatter_geometry"].size(), "understory": state.get("understory_geometry", []).size()}
 		print("%s %s fill %.1f s, scopes %s, nodes %s" % [marker, key, fill_wall_s, JSON.stringify(fill["scopes"]), JSON.stringify(record["geometry_nodes"])])
 		# 2./3. cases
 		for round_index in rounds:
@@ -1263,6 +1303,9 @@ static func run_cost(ctx: Dictionary) -> Dictionary:
 		# T5-10: with no scatter layer in the world there is nothing to hide; primitive-count jitter between windows must not read as a change ("(no change)").
 		if (state["scatter_geometry"] as Array).is_empty() and record["derived"]["classes"].has("scatter_hidden"):
 			record["derived"]["classes"]["scatter_hidden"]["changed_submissions"] = false
+		# T6-4b: the same for understory_hidden in a world without the understory layer.
+		if (state.get("understory_geometry", []) as Array).is_empty() and record["derived"]["classes"].has("understory_hidden"):
+			record["derived"]["classes"]["understory_hidden"]["changed_submissions"] = false
 		record["extra_state"] = {"water_hidden_count": state.get("water_hidden_count", -1), "ui_hidden_count": state.get("ui_hidden_count", -1), "env_post_before": state.get("env_post_before", {})}
 		results.append(record)
 		print("%s %s derived %s" % [marker, key, JSON.stringify(record["derived"]["summary_line"])])

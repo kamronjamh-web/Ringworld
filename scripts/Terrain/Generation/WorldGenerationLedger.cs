@@ -14,7 +14,7 @@ public sealed class WorldGenerationLedger
     public static WorldGenerationLedger Production { get; } = new(
         new[] { new Row(1, "baseline", Array.Empty<string>(), "2026-11-10") },
         new[] { new FeatureInfo("water.rivers", 0, "T2", 0), new FeatureInfo("ground.surface", 2, "T4", 0), new FeatureInfo("ground.river_beds", 3, "T4", 0),
-        new FeatureInfo("scatter.rocks", 4, "T5", 0), new FeatureInfo("vegetation.forest_structure", 6, "T6", 0) }, 1);
+        new FeatureInfo("scatter.rocks", 4, "T5", 0), new FeatureInfo("vegetation.forest_structure", 6, "T6", 0), new FeatureInfo("vegetation.ground_cover", 7, "T6", 0), new FeatureInfo("vegetation.far_canopy", 8, "T6", 0) }, 1);
 
     private readonly Dictionary<string, FeatureInfo> _byId = new(StringComparer.Ordinal);
 

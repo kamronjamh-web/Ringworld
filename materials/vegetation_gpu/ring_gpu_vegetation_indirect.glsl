@@ -157,7 +157,7 @@ bool accepted(uint id) {
         float custom_x = source[base + 16u];
         float kind_slot = floor(custom_x);
         float card_rank = (custom_x - kind_slot) / 0.999;
-        bool low = floor(kind_slot * 0.25) > 0.5;
+        bool low = abs(floor(kind_slot * 0.25) - 1.0) < 0.5; // kinds 0 and 1 as before; ground-cover kinds (3-6) are main cards
         float d = max(0.0, distance_to_camera - p[75]);
         if (!(d < p[64])) return false;
         if (!card_keeps(card_rank, d, low)) return false;

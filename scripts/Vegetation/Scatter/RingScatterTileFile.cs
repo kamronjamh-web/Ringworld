@@ -27,14 +27,14 @@ internal static class RingScatterTileFile
     /// <summary>Test hook: lets <see cref="DiskCacheAllowed"/> say yes while scatter.rocks is still open.</summary>
     internal static bool ScatterDiskCacheForTests { get; set; }
 
-    /// <summary>Open features never touch the disk: true only when every scatter feature (bits 4 and 5) set in the mask is frozen, or the test override is on.</summary>
+    /// <summary>Open features never touch the disk: true only when every scatter feature (bits 4, 5 and 6) set in the mask is frozen, or the test override is on.</summary>
     public static bool DiskCacheAllowed(int worldFeatureMask, WorldGenerationLedger ledger, bool testOverride)
     {
         if (testOverride) return true;
         bool any = false;
         foreach (WorldGenerationLedger.FeatureInfo feature in ledger.Features)
         {
-            if (feature.Bit != RingHabitatFieldGrid.ScatterRocksBit && feature.Bit != 5) continue;
+            if (feature.Bit != RingHabitatFieldGrid.ScatterRocksBit && feature.Bit != 5 && feature.Bit != RingHabitatFieldGrid.ScatterVegetationBit) continue;
             if ((worldFeatureMask & (1 << feature.Bit)) == 0) continue;
             any = true;
             if (feature.FrozenIn <= 0) return false;

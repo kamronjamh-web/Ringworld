@@ -2,6 +2,7 @@ using System;
 using Godot;
 using RingworldTechDemo.Terrain.Surface;
 using RingworldTechDemo.UI;
+using RingworldTechDemo.Vegetation;
 using RingworldTechDemo.Voxel.LOD;
 
 /// <summary>Isolated persistence evidence for the saved GPU-tree preference.</summary>
@@ -102,6 +103,75 @@ public partial class VegetationSettingsSmoke : Node
             if (!Mathf.IsEqualApprox(layer.ScatterRockDensity, 0.35f) || !Mathf.IsEqualApprox(layer.ScatterDistanceScale, 1.4f) || !Mathf.IsEqualApprox(layer.ScatterCapScale, 0.5f)) throw new InvalidOperationException("scatter settings were not applied to the decoration layer");
         }
         finally { layer.Free(); }
+        // T6-8 forest keys: clamp, nonfinite, defaults (no preset dependence), save round trip, apply.
+        foreach (string forestKey in new[] { "FoliageColourVariation", "GroundCoverShare" })
+        {
+            if (!GameplayVegetationDefaults.TryValidate(forestKey, 7, out Variant forestHigh) || !Mathf.IsEqualApprox((float)forestHigh.AsDouble(), 1)) throw new InvalidOperationException(forestKey + " high range was not clamped to 1");
+            if (!GameplayVegetationDefaults.TryValidate(forestKey, -3, out Variant forestLow) || !Mathf.IsEqualApprox((float)forestLow.AsDouble(), 0)) throw new InvalidOperationException(forestKey + " low range was not clamped to 0");
+            if (GameplayVegetationDefaults.TryValidate(forestKey, double.NaN, out _) || GameplayVegetationDefaults.TryValidate(forestKey, "bad", out _)) throw new InvalidOperationException("invalid " + forestKey + " accepted");
+        }
+        var forest = new GameplayVegetationDefaults(path); forest.Load();
+        foreach (var preset in new[] { RingTerrainLodCoordinator.QualityPreset.Low, RingTerrainLodCoordinator.QualityPreset.Medium, RingTerrainLodCoordinator.QualityPreset.Cinematic5090 })
+        {
+            forest.Preset = preset;
+            if (!Mathf.IsEqualApprox(forest.FoliageColourVariation, 1) || !Mathf.IsEqualApprox(forest.GroundCoverShare, 1)) throw new InvalidOperationException($"forest defaults are not 1 (or follow the {preset} preset)");
+        }
+        forest.Set("FoliageColourVariation", 0.4); forest.Set("GroundCoverShare", 0.65);
+        if (!Mathf.IsEqualApprox(forest.FoliageColourVariation, 0.4f) || !Mathf.IsEqualApprox(forest.GroundCoverShare, 0.65f)) throw new InvalidOperationException("forest overrides did not stick");
+        if (!forest.Save()) throw new InvalidOperationException("forest settings did not save");
+        var forestBack = new GameplayVegetationDefaults(path); forestBack.Load();
+        if (!Mathf.IsEqualApprox(forestBack.FoliageColourVariation, 0.4f) || !Mathf.IsEqualApprox(forestBack.GroundCoverShare, 0.65f)) throw new InvalidOperationException("forest settings did not round-trip");
+        forestBack.Reset(); forestBack.Save();
+        var forestLayer = new RingBiomeDecorationLayer();
+        try
+        {
+            if (!Mathf.IsEqualApprox(forestLayer.FoliageColourVariation, 1)) throw new InvalidOperationException("decoration layer foliage colour variation default is not 1");
+            forestLayer.ApplyFoliageSettings(0.4f);
+            if (!Mathf.IsEqualApprox(forestLayer.FoliageColourVariation, 0.4f)) throw new InvalidOperationException("foliage colour variation was not applied to the decoration layer");
+            forestLayer.ApplyFoliageSettings(3f);
+            if (!Mathf.IsEqualApprox(forestLayer.FoliageColourVariation, 1)) throw new InvalidOperationException("foliage colour variation above 1 was not clamped on apply");
+        }
+        finally { forestLayer.Free(); }
+        // T6-6 dead-wood keys: the rank gates of the understory and dead-wood batches (clamp, nonfinite, default 1 at every preset, round trip, apply).
+        foreach (string gateKey in new[] { "UnderstoryDensity", "DeadWoodDensity" })
+        {
+            if (!GameplayVegetationDefaults.TryValidate(gateKey, 7, out Variant gateHigh) || !Mathf.IsEqualApprox((float)gateHigh.AsDouble(), 1)) throw new InvalidOperationException(gateKey + " high range was not clamped to 1");
+            if (!GameplayVegetationDefaults.TryValidate(gateKey, -3, out Variant gateLow) || !Mathf.IsEqualApprox((float)gateLow.AsDouble(), 0)) throw new InvalidOperationException(gateKey + " low range was not clamped to 0");
+            if (GameplayVegetationDefaults.TryValidate(gateKey, double.NaN, out _) || GameplayVegetationDefaults.TryValidate(gateKey, "bad", out _)) throw new InvalidOperationException("invalid " + gateKey + " accepted");
+        }
+        var gates = new GameplayVegetationDefaults(path); gates.Load();
+        foreach (var preset in new[] { RingTerrainLodCoordinator.QualityPreset.Low, RingTerrainLodCoordinator.QualityPreset.Medium, RingTerrainLodCoordinator.QualityPreset.Cinematic5090 })
+        {
+            gates.Preset = preset;
+            if (!Mathf.IsEqualApprox(gates.UnderstoryDensity, 1) || !Mathf.IsEqualApprox(gates.DeadWoodDensity, 1)) throw new InvalidOperationException($"understory and dead wood defaults are not 1 at the {preset} preset");
+        }
+        gates.Set("UnderstoryDensity", 0.45); gates.Set("DeadWoodDensity", 0.2);
+        if (!gates.Save()) throw new InvalidOperationException("understory settings did not save");
+        var gatesBack = new GameplayVegetationDefaults(path); gatesBack.Load();
+        if (!Mathf.IsEqualApprox(gatesBack.UnderstoryDensity, 0.45f) || !Mathf.IsEqualApprox(gatesBack.DeadWoodDensity, 0.2f)) throw new InvalidOperationException("understory settings did not round-trip");
+        gatesBack.Reset(); gatesBack.Save();
+        var gateLayer = new RingBiomeDecorationLayer();
+        try
+        {
+            if (!Mathf.IsEqualApprox(gateLayer.UnderstoryDensity, 1) || !Mathf.IsEqualApprox(gateLayer.DeadWoodDensity, 1)) throw new InvalidOperationException("decoration layer understory gate defaults are not 1");
+            gateLayer.ApplyUnderstorySettings(0.45f, 0.2f);
+            if (!Mathf.IsEqualApprox(gateLayer.UnderstoryDensity, 0.45f) || !Mathf.IsEqualApprox(gateLayer.DeadWoodDensity, 0.2f)) throw new InvalidOperationException("understory settings were not applied to the decoration layer");
+            gateLayer.ApplyUnderstorySettings(3f, -1f);
+            if (!Mathf.IsEqualApprox(gateLayer.UnderstoryDensity, 1) || !Mathf.IsEqualApprox(gateLayer.DeadWoodDensity, 0)) throw new InvalidOperationException("understory gates were not clamped on apply");
+        }
+        finally { gateLayer.Free(); }
+        // The static the ground-cover selection reads (the drawer's apply writes it): clamped to 0-1, default 1, Revision counts every change.
+        RingGroundCoverSettings.Share = 1f;
+        int revision = RingGroundCoverSettings.Revision;
+        RingGroundCoverSettings.Share = 1f;
+        if (RingGroundCoverSettings.Revision != revision) throw new InvalidOperationException("ground cover revision changed without a change");
+        RingGroundCoverSettings.Share = 0.65f;
+        if (!Mathf.IsEqualApprox(RingGroundCoverSettings.Share, 0.65f) || RingGroundCoverSettings.Revision != revision + 1) throw new InvalidOperationException("ground cover share was not applied or its revision did not increment");
+        RingGroundCoverSettings.Share = 9f;
+        if (!Mathf.IsEqualApprox(RingGroundCoverSettings.Share, 1f) || RingGroundCoverSettings.Revision != revision + 2) throw new InvalidOperationException("ground cover share above 1 was not clamped");
+        RingGroundCoverSettings.Share = -1f;
+        if (!Mathf.IsEqualApprox(RingGroundCoverSettings.Share, 0f)) throw new InvalidOperationException("ground cover share below 0 was not clamped");
+        RingGroundCoverSettings.Share = 1f;
         // The shader global: z density and w distance scale, x and y kept from the last world publish; a world publish clears the look again (worlds without the bit never set it).
         RingGroundSurfaceGlobals.PublishWorld(null);
         Vector4 plain = RingGroundSurfaceGlobals.Published;

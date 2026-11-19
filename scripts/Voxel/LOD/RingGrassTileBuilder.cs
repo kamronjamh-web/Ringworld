@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using Godot;
+using RingworldTechDemo.Vegetation;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Phase2;
 using RingworldTechDemo.Voxel.Phase3;
@@ -67,6 +68,15 @@ internal static class RingGrassTileBuilder
     /// <summary>Tests: override the biome placement chance of card tiles (1 = every lattice cell that passes the other filters).</summary>
     internal static volatile float ForceCardChanceForTests = -1f;
 
+    /// <summary>The ledger bit of vegetation.ground_cover (T6 design B): card kinds 3-5 and the grass response to the coarse habitat fields.</summary>
+    internal const int GroundCoverBit = 7;
+
+    /// <summary>Tests: one record per card candidate (Placed false, at the chance step: the chance before and after the density response and the accept hash) and per placed card (Placed true: the final height and the height before the field factor) in worlds with ground cover.</summary>
+    internal readonly record struct GroundCoverProbe(bool Placed, RingGrassCardKind Kind, RingGrassCardKind LatticeKind, double Around, double Across, float Height, float BaseHeight, RingCoverFields Fields, float ChanceBefore, float ChanceAfter, float Accept);
+
+    /// <summary>Tests: receives the probe records of ground-cover builds. Set it only around sequential builds on one thread.</summary>
+    internal static Action<GroundCoverProbe>? GroundCoverProbeForTests;
+
     /// <summary>Per canonical 1 m cell cache of the pure terrain lookups card mode repeats ~14x per cell.</summary>
     private sealed class CardCell
     {
@@ -116,7 +126,7 @@ internal static class RingGrassTileBuilder
         float sourceFraction = 1, byte sourceTier = 0, bool useGrassClumps = false,
         RingGrassModifierSnapshot? modifiers = null, float modifierDensityStrength = 1,
         bool meadowTufts = false, float meadowSpread = 1, float minimumHeight = .10f, float maximumHeight = .20f, bool useConfiguredHeightRange = false,
-        RingGrassCardPlacement? cards = null)
+        RingGrassCardPlacement? cards = null, float groundCoverShare = 1f)
     {
         double safeCell = Math.Max(1.0, cellSize);
         long circumference = Math.Max(1L, sampler.AroundRingVoxelLength);
@@ -140,6 +150,12 @@ internal static class RingGrassTileBuilder
         BoundedPlacements sink = placements;
         var cardSamples = cardMode ? new Dictionary<(long, int), CardCell>() : null;
         var cardGrid = cardMode ? new Dictionary<(long, long), Vector4>() : null;
+        // T6 design B3-B4: in worlds with vegetation.ground_cover the card placement reads the coarse habitat fields and some main cards become cover kinds. Off, none of this runs.
+        bool groundCover = cardMode && (sampler.WorldFeatureMask & (1 << GroundCoverBit)) != 0;
+        groundCoverShare = float.IsFinite(groundCoverShare) ? Mathf.Clamp(groundCoverShare, 0, 1) : 1f;
+        RingCoarseHabitatPatch? coverPatch = null;
+        bool coverPatchTried = false;
+        Action<GroundCoverProbe>? probe = groundCover ? GroundCoverProbeForTests : null;
         meadowSpread =meadowTufts && float.IsFinite(meadowSpread) ? Mathf.Clamp(meadowSpread, .25f, 2f) : 1f;
         minimumHeight = float.IsFinite(minimumHeight) ? Mathf.Clamp(minimumHeight, .03f, 2f) : .10f;
         maximumHeight = float.IsFinite(maximumHeight) ? Mathf.Clamp(maximumHeight, minimumHeight, 2f) : Mathf.Max(minimumHeight, .20f);
@@ -152,7 +168,7 @@ internal static class RingGrassTileBuilder
             double spacing = Math.Max(.5, cards!.BiomeGridSpacingMeters);
             long around = CanonicalCell((long)Math.Round(gx * spacing), circumference);
             int across = Math.Clamp((int)Math.Round(gz * spacing), 0, width - 1);
-            RingTerrainSampler.BiomeTextureWeights w = sampler.GetBiomeTextureWeights(edits.GetPresentationTerrainSample(sampler, around, across));
+            RingTerrainSampler.BiomeTextureWeights w = sampler.GetBiomeTextureWeights(edits.GetPresentationTerrainSample(sampler, around, across), around, across); // T6-10: the card colour follows the folded ground in vegetation.far_canopy worlds (the chance below keeps natural weights)
             return cardGrid[(gx, gz)] = new Vector4(w.Desert, w.Forest, w.Tundra, w.Alpine);
         }
         Vector4 BilinearBiomeWeights(double around, double across)
@@ -184,6 +200,36 @@ internal static class RingGrassTileBuilder
             float nominal = tall ? options.TallHeight : options.ShortHeight;
             cardHeight = nominal * (.85f + .3f * Hash01(aroundCell, acrossCell, sampler.Seed, salt + 4));
             cardWidth = .45f + nominal * 1.1f;
+        }
+
+        // B3: u = Hash(salt + 23) < share(community) x menu share turns the candidate into a cover kind; the kind comes from Hash(salt + 29) over the community's
+        // fern / flower / tall split and a flower's variant from Hash(salt + 31) over its variant weights. Lowering the menu share turns a hash prefix of the cover cards back into grass.
+        RingGrassCardKind SelectCoverKind(in RingCommunityMemberships memberships, float menuShare, long aroundCell, long acrossCell, int salt, out int variant)
+        {
+            variant = -1;
+            if (!(Hash01(aroundCell, acrossCell, sampler.Seed, salt + 23) < RingPlantCommunities.CoverShare(memberships) * menuShare)) return RingGrassCardKind.Card;
+            RingPlantCommunities.KindSplit(memberships, out float fern, out float flower, out float tall);
+            float pick = Hash01(aroundCell, acrossCell, sampler.Seed, salt + 29);
+            if (pick < fern) return RingGrassCardKind.Fern;
+            if (pick >= fern + flower && tall > 0f) return RingGrassCardKind.TallGrass;
+            if (flower <= 0f) return fern > 0f ? RingGrassCardKind.Fern : RingGrassCardKind.TallGrass; // the hash maximum 1.0 on a split with no flower
+            RingPlantCommunities.VariantWeights(memberships, out float white, out float yellow, out float violet, out float pink);
+            float v = Hash01(aroundCell, acrossCell, sampler.Seed, salt + 31) * (white + yellow + violet + pink);
+            variant = v < white ? 0 : v < white + yellow ? 1 : v < white + yellow + violet ? 2 : 3;
+            if (variant == 3 && pink <= 0f) variant = white > 0f ? 0 : yellow > 0f ? 1 : 2;
+            return RingGrassCardKind.Flower;
+        }
+
+        // B1 heights and widths (metres, before compensation) of the cover kinds.
+        void CoverShape(RingGrassCardKind kind, long aroundCell, long acrossCell, int salt, out float cardWidth, out float cardHeight)
+        {
+            float h = Hash01(aroundCell, acrossCell, sampler.Seed, salt + 4), w = Hash01(aroundCell, acrossCell, sampler.Seed, salt + 3);
+            switch (kind)
+            {
+                case RingGrassCardKind.Flower: cardHeight = Mathf.Lerp(.25f, .55f, h); cardWidth = Mathf.Lerp(.35f, .6f, w); break;
+                case RingGrassCardKind.Fern: cardHeight = Mathf.Lerp(.35f, .9f, h); cardWidth = Mathf.Lerp(.7f, 1.4f, w); break;
+                default: cardHeight = Mathf.Lerp(.7f, 1.2f, h); cardWidth = .45f + .9f * cardHeight; break;
+            }
         }
 
         void TryPlace(double around, double across, long aroundCell, long acrossCell, int salt,
@@ -243,14 +289,39 @@ internal static class RingGrassTileBuilder
             float chance = grassWeight * .82f + weights.Forest * .42f;
             if (appearance.Enabled) chance = Mathf.Clamp(chance * appearance.DensityFor(weights.Forest, sparseWeight)
                 + sparseWeight * .08f * appearance.SparseDensityMultiplier, 0, 1);
+            float chanceBefore = chance;
+            RingCoarseHabitatPatch.Cell coverCell = default;
+            if (groundCover)
+            {
+                if (!coverPatchTried) { coverPatchTried = true; coverPatch = RingCoarseHabitatPatch.TryCreate(sampler, edits, bounds.AroundMin, bounds.AroundMax, bounds.AcrossMin, bounds.AcrossMax); }
+                if (coverPatch != null)
+                {
+                    coverCell = coverPatch.Locate(around, across);
+                    // B4 density: thinner grass under closed canopy. The low layer keeps its chance.
+                    if (cardKind == RingGrassCardKind.Card) chance *= RingCoverFields.DensityFactorOf(coverPatch.Canopy(coverCell));
+                }
+            }
             if (cardMode && ForceCardChanceForTests >= 0) chance = ForceCardChanceForTests;
+            if (probe != null) probe(new GroundCoverProbe(false, cardKind, cardKind, around, across, 0f, 0f, coverPatch?.Sample(around, across) ?? default, chanceBefore, chance, Hash01(aroundCell, acrossCell, sampler.Seed, salt + 2)));
             if (chance < .02f || Hash01(aroundCell, acrossCell, sampler.Seed, salt + 2) > chance) return;
+            // B3 selection (main lattice only, after the accept and before the shape): one accepted candidate is one card of some kind, so the instance count is unchanged.
+            RingGrassCardKind emittedKind = cardKind;
+            int coverVariant = -1;
+            if (coverPatch != null && cardKind == RingGrassCardKind.Card && groundCoverShare > 0f
+                && Hash01(aroundCell, acrossCell, sampler.Seed, salt + 23) < RingPlantCommunities.MaximumCoverShare * groundCoverShare) // cheap bound before the memberships are blended
+                emittedKind = SelectCoverKind(coverPatch.Memberships(coverCell), groundCoverShare, aroundCell, acrossCell, salt, out coverVariant);
             float macro = MacroPatch(canonicalAround, canonicalAcross, sampler.Seed, circumference);
-            float bladeWidth, bladeHeight;
+            float bladeWidth, bladeHeight, unscaledHeight = 0f;
             if (cardMode)
             {
-                CardShape(cards!, cardKind, around, across, aroundCell, acrossCell, salt, weights.Forest, grassWeight, out bladeWidth, out bladeHeight);
-                bladeHeight *= appearance.HeightFor(weights.Forest, sparseWeight);
+                if (emittedKind == RingGrassCardKind.Card || emittedKind == RingGrassCardKind.Low)
+                {
+                    CardShape(cards!, cardKind, around, across, aroundCell, acrossCell, salt, weights.Forest, grassWeight, out bladeWidth, out bladeHeight);
+                    bladeHeight *= appearance.HeightFor(weights.Forest, sparseWeight);
+                    unscaledHeight = bladeHeight;
+                    if (coverPatch != null) bladeHeight *= coverPatch.HeightFactor(coverCell); // B4: grass and the low layer take the height factor
+                }
+                else { CoverShape(emittedKind, aroundCell, acrossCell, salt, out bladeWidth, out bladeHeight); unscaledHeight = bladeHeight; } // B1: the kind's own heights
             }
             else
             {
@@ -318,7 +389,8 @@ internal static class RingGrassTileBuilder
             {
                 // CUSTOM = (kind*4 + atlas variant + rank*0.999, tuft random, wind anchors); the rank rides in the fraction.
                 int variant = Math.Min(RingGrassCardPlacement.AtlasVariants - 1, (int)(Hash01(aroundCell, acrossCell, sampler.Seed, salt + 13) * RingGrassCardPlacement.AtlasVariants));
-                curve = (int)cardKind * 4 + variant + cardRank * .999f;
+                if (coverVariant >= 0) variant = coverVariant; // flowers: the community's variant weights fix the colour family
+                curve = (int)emittedKind * 4 + variant + cardRank * .999f;
                 tint = Hash01(aroundCell, acrossCell, sampler.Seed, salt + 15);
             }
             const double windPeriod = 48.0;
@@ -338,6 +410,7 @@ internal static class RingGrassTileBuilder
                     transform = new Transform3D(new Basis(lean.X, lean.Y + lean.X.Normalized() * lx + lean.Z.Normalized() * lz, lean.Z), transform.Origin);
                 }
                 sink.Add(new Candidate(cardPriority, transform, curve, tint, windAround, windAcross, BilinearBiomeWeights(around, across), tierKey));
+                probe?.Invoke(new GroundCoverProbe(true, emittedKind, cardKind, around, across, bladeHeight, unscaledHeight, coverPatch?.Sample(around, across) ?? default, 0f, 0f, 0f));
                 return;
             }
             if (tierKey < 0) tierKey = Hash01(canonicalAround, canonicalAcross, sampler.Seed, salt + 97);
