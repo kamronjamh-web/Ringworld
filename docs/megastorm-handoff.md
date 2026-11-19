@@ -240,3 +240,8 @@ What the hum represents: the storm's pounding carried through the ring floor and
    - user sign-off;
    - merge to main and push (ask first).
 6. Then the containment field (`docs/containment-field-design.md`).
+
+## Update (2026-11-19): megastorm history fade retired
+
+- The megastorm cloud-history fade (history weight lowered toward 0.15 under megastorm darkness) was removed: lowering history made fast-motion see-through worse (14% vs 1.3% of cloud pixels above 0.25 alpha low in a 3 deg/frame pan).
+- It is replaced by the general history fix (far-silhouette exemption plus a rejected-pixel spatial resolve in SunshineClouds2).

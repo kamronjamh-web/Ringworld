@@ -105,7 +105,12 @@ bool opaque_depth_history_agrees(float expectedDepth, float currentOpaqueDepth,
 	// A negative value is an explicit sky sentinel. Fresh accumulation textures
 	// contain zero, which must never be accepted as either sky or opaque scene.
 	if (expectedDepth < 0.0) {
-		return historyDepth == -1.0;
+		return historyDepth == -1.0
+			|| ring_cloud_history_cloud_in_front(currentCloudEnd, historyMetadata.g, currentOpaqueDepth, historyDepth, cameraTranslation, maxStep);
+	}
+	// History sky, current opaque: accepted when the cloud lies in front of the current surface.
+	if (historyDepth == -1.0) {
+		return ring_cloud_history_cloud_in_front(currentCloudEnd, historyMetadata.g, currentOpaqueDepth, -1.0, cameraTranslation, maxStep);
 	}
 	bool matchingOpaqueDepth = historyDepth > 0.0
 		&& !isnan(historyDepth)

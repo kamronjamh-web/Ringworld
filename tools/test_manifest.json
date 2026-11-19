@@ -1324,6 +1324,19 @@
       "expected_s": 21,
       "timeout_s": 70
     },
+    "cloud_far_silhouette_motion_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "cloud-history",
+        "sunshine-compute"
+      ],
+      "marker": "CLOUD_FAR_SILHOUETTE_MOTION_GPU_TEST",
+      "expected_s": 75,
+      "timeout_s": 240
+    },
     "cloud_history_policy_gpu_test": {
       "kind": "test",
       "mode": "gpu",
@@ -4523,18 +4536,6 @@
       "marker": "ATMOSPHERE_PROJECTOR_STREAMER",
       "expected_s": 5,
       "timeout_s": 120
-    },
-    "megastorm_history_fade_test": {
-      "kind": "test",
-      "mode": "headless",
-      "tier": "gate",
-      "tags": [
-        "clouds",
-        "cloud-history"
-      ],
-      "marker": "MEGASTORM_HISTORY_FADE",
-      "expected_s": 1,
-      "timeout_s": 60
     },
     "sun_history_motion_test": {
       "kind": "test",

@@ -503,6 +503,9 @@ var last_engine_jitter_active := false
 @export_range(0.5, 6.0, 0.05) var cloud_interleave_history_clamp : float = 2.0
 # Reprojected camera motion (raster pixels, worst of five sampled directions) above which the frame is fully marched.
 @export_range(1.0, 200.0, 0.5) var cloud_interleave_max_pixel_motion : float = 24.0
+# Full-march frames: history-rejected pixels show a depth-aware 5x5 mean of this frame's raw march instead of the single raw sample
+# (the fill shader's RING_INTERLEAVE = 1 variant). The block images become raster sized. Not a menu setting.
+@export var cloud_reject_resolve : bool = true
 const INTERLEAVE_MOTION_REFERENCE_METERS := 4000.0
 const INTERLEAVE_MIN_COMPENSATION := 0.05
 var interleave_active_block : int = 0 # 0 (full march) or 2 / 4 for the callback being recorded
@@ -520,6 +523,9 @@ var interleave_block_images : Array[RID] = [] # steady, transient, data per view
 var interleave_block_images_real := false
 var interleave_fill_sets : Array = [] # [ring slot][view]
 var interleave_fill_unavailable := false
+var reject_resolve_ready := false # raster-sized block images and fill descriptor sets exist for the reject-resolve variant
+var reject_resolve_active := false # the callback being recorded resolves history-rejected pixels
+var reject_resolve_callbacks := 0
 
 # Reset temporal color only; GPU shadow and descriptor generations stay intact.
 func request_history_reset() -> void:
@@ -743,6 +749,10 @@ func get_temporal_history_diagnostics() -> Dictionary:
 		"interleave_interleaved_callbacks": interleave_interleaved_callbacks,
 		"interleave_full_march_callbacks": interleave_full_march_callbacks,
 		"interleave_fill_unavailable": interleave_fill_unavailable,
+		"reject_resolve_enabled": cloud_reject_resolve,
+		"reject_resolve_ready": reject_resolve_ready,
+		"reject_resolve_active": reject_resolve_active,
+		"reject_resolve_callbacks": reject_resolve_callbacks,
 	}
 
 # Main-thread bridge publication. Replace the dictionary reference so one
@@ -1956,7 +1966,7 @@ func initialize_compute():
 		return
 	
 	
-	if cloud_interleave > 0:
+	if cloud_interleave > 0 or cloud_reject_resolve:
 		_create_interleave_fill_shader()
 
 	var postpass_shader_spirv = post_pass_compute_shader.get_spirv()
@@ -2033,6 +2043,8 @@ func _reset_interleave_state() -> void:
 	interleave_block_images_real = false
 	interleave_fill_sets.clear()
 	interleave_active_block = 0
+	reject_resolve_ready = false
+	reject_resolve_active = false
 
 func _free_interleave_resources() -> void:
 	if not rd:
@@ -2079,6 +2091,25 @@ func _ensure_interleave_pipelines(block: int) -> bool:
 			printerr("Cloud interleave fill pipeline variant failed to compile; CloudInterleave stays off.")
 			return false
 		interleave_fill_pipelines[block] = fill_variant
+	return true
+
+# Fill-shader pipeline with RING_INTERLEAVE = 1 (reject-resolve), cached in interleave_fill_pipelines[1] and released with the other fill variants.
+func _ensure_reject_resolve_pipeline() -> bool:
+	if interleave_fill_pipelines.has(1):
+		return true
+	if not reject_resolve_ready or not interleave_fill_shader.is_valid() \
+			or interleave_fill_sets.size() != GENERAL_DATA_RING_SIZE or interleave_fill_sets[1].is_empty():
+		return false
+	var constant := RDPipelineSpecializationConstant.new()
+	constant.constant_id = 0
+	constant.value = 1
+	var constants : Array[RDPipelineSpecializationConstant] = [constant]
+	var resolve_variant := rd.compute_pipeline_create(interleave_fill_shader, constants)
+	if not resolve_variant.is_valid():
+		reject_resolve_ready = false
+		printerr("Cloud reject-resolve pipeline variant failed to compile; reject resolve stays off.")
+		return false
+	interleave_fill_pipelines[1] = resolve_variant
 	return true
 
 # Main-shader pipeline with RING_STORM_FALLBACK = 1 (HEAD's analytic storm shape compiled in), created on first use. Stored in
@@ -2203,8 +2234,10 @@ func _megastorm_prewarm_adopt() -> void:
 
 # Steady light (rgba16f), transient light (rgba32f: the alpha carries the packed megastorm haze factors) and march data (rgba32f) for one view. Sized for the largest block (2x2);
 # a 4x4 block uses the top-left part. 1x1 placeholders while interleave has not been requested.
-func _create_interleave_block_images(raster_size: Vector2i, real: bool) -> Array[RID]:
+func _create_interleave_block_images(raster_size: Vector2i, real: bool, full: bool = false) -> Array[RID]:
 	var dims := Vector2i(maxi((raster_size.x + 1) / 2, 1), maxi((raster_size.y + 1) / 2, 1)) if real else Vector2i(1, 1)
+	if real and full:
+		dims = Vector2i(maxi(raster_size.x, 1), maxi(raster_size.y, 1)) # reject-resolve: one raw sample per raster pixel
 	var formats := [RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT, RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT, RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT]
 	var texel_bytes := [8, 16, 16]
 	var images : Array[RID] = []
@@ -2460,6 +2493,7 @@ func _render_callback(effect_callback_type, render_data):
 				if cloud_interleave > 0 and not interleave_fill_shader.is_valid():
 					interleave_fill_unavailable = true
 				var interleave_wanted := cloud_interleave > 0 and interleave_fill_shader.is_valid()
+				var resolve_wanted := cloud_reject_resolve and interleave_fill_shader.is_valid()
 
 				# A valid zero-distance texture keeps the optional far-depth sampler
 				# bound before the far compositor has produced its first frame.
@@ -2731,7 +2765,7 @@ func _render_callback(effect_callback_type, render_data):
 					uniforms_array.append(layer_gradient_uniform)
 
 					# CloudInterleave block images (bindings 26-28). 1x1 placeholders keep the descriptor set valid while it is off.
-					var block_images := _create_interleave_block_images(new_size, interleave_wanted)
+					var block_images := _create_interleave_block_images(new_size, interleave_wanted or resolve_wanted, resolve_wanted)
 					interleave_block_images.append_array(block_images)
 					for block_index in block_images.size():
 						var block_uniform = RDUniform.new()
@@ -2858,11 +2892,12 @@ func _render_callback(effect_callback_type, render_data):
 						ring_postpass_camera.add_id(ring_buffer)
 						postpass_uniforms_array[6] = ring_postpass_camera
 						general_data_uniform_sets[ring_slot].append(rd.uniform_set_create(postpass_uniforms_array, postpass_shader, 0))
-						if interleave_wanted:
+						if interleave_wanted or resolve_wanted:
 							interleave_fill_sets[ring_slot].append(_create_interleave_fill_set(view, ring_buffer, cameraData, far_depth_rid, resized_depth))
 					#endregion
 
 				interleave_block_images_real = interleave_wanted
+				reject_resolve_ready = resolve_wanted
 
 				lights_updated = true
 				segment_lights_dirty = true
@@ -3018,6 +3053,20 @@ func _render_callback(effect_callback_type, render_data):
 						rd.compute_list_end()
 						if interleave_stamped:
 							rd.capture_timestamp(gpu_timestamp_interleave_end_marker)
+					elif reject_resolve_active:
+						# Full march: history-rejected pixels take the depth-aware mean of this frame's raw samples (fill shader, RING_INTERLEAVE = 1).
+						var resolve_stamped := gpu_timestamp_diagnostics_enabled and view == 0 and gpu_timestamp_interleave_begin_marker != "" and gpu_timestamp_interleave_end_marker != ""
+						if resolve_stamped:
+							rd.capture_timestamp(gpu_timestamp_interleave_begin_marker)
+						var resolve_list = rd.compute_list_begin()
+						rd.compute_list_bind_compute_pipeline(resolve_list, interleave_fill_pipelines[1])
+						rd.compute_list_bind_uniform_set(resolve_list, interleave_fill_sets[general_data_ring_index][view], 0)
+						rd.compute_list_dispatch(resolve_list, ((new_size.x - 1) / 8) + 1, ((new_size.y - 1) / 8) + 1, 1)
+						rd.compute_list_end()
+						if resolve_stamped:
+							rd.capture_timestamp(gpu_timestamp_interleave_end_marker)
+						if view == 0:
+							reject_resolve_callbacks += 1
 					complete_this_callback = true
 
 				if gpu_timestamp_scope_active:
@@ -3485,6 +3534,10 @@ func update_matrices(camera_tr, view_proj, new_size: Vector2i):
 	# CloudInterleave (default off): decide whether this callback marches one pixel per block. The march pass then blends its pixels with
 	# decay^(n*n*compensation) because each pixel is marched once per n*n frames; the fill pass uses the plain per-frame decay.
 	interleave_active_block = _resolve_interleave_block(packed_accumulation_decay, camera_tr, view_proj, mapped_previous_camera, prev_proj_dejit, new_size)
+	reject_resolve_active = cloud_reject_resolve and reject_resolve_ready and interleave_active_block == 0 \
+		and not menu_temporal_sampling and not first_run and not ignore_accumilation \
+		and not (diagnostic_raw_density_matte or diagnostic_depth_density_matte or diagnostic_disable_temporal_history) \
+		and _ensure_reject_resolve_pipeline()
 	var perf_interleave_phase := 0.0
 	var perf_fill_decay := 0.0
 	var perf_clamp_gamma := 0.0

@@ -19,7 +19,6 @@ extends SceneTree
 ## --yaw=D / --pitch=D  after the spawn, hold the camera at this yaw / pitch (degrees; re-applied before every shot). --yaw-rel=D adds D to the
 ##               saved yaw instead (facing stays on the spawn side).
 ## --debug-mask=N  RingSunshineCloudBridge.CameraIndependentDebugMask for A/B shots (debug only).
-## --history-fade-off / --history-floor=F  megastorm cloud-history fade A/B (debug properties on the bridge).
 ## --xi-names    name shots tNNN_xiK (K = observer xi in km, rounded).
 ## --probe       after the spawn and --scan-settle seconds, one shot per layer toggle (base, Sunshine off, rain veil off, curtains off,
 ##               far + companion off, base again) to attribute pixels; spawn with a low --speed so the storm barely moves.
@@ -133,10 +132,6 @@ func _run() -> void:
 				n.visible = false
 	if _arg("noon", "") != "" or _arg("night", "") != "":
 		await _set_local_noon()
-	if _arg("history-fade-off", "") != "":
-		_world.get_node("SunshineCloudBridge").set("DebugMegastormHistoryFadeOff", true)
-	if _arg("history-floor", "") != "":
-		_world.get_node("SunshineCloudBridge").set("DebugMegastormHistoryFloorOverride", float(_arg("history-floor", "0.15")))
 	if _arg("debug-mask", "") != "":
 		_world.get_node("SunshineCloudBridge").set("CameraIndependentDebugMask", int(_arg("debug-mask", "0")))
 	# --lift=M: hand the body to scripted flight and climb M metres (holds there; views then go through the scripted command).

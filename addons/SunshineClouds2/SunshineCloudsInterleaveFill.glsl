@@ -11,7 +11,9 @@
 //     blended with the spatial estimate by the per-frame history weight (ring_perf_controls.w);
 //   * invalid history (off-image, behind the camera, or opaque-surface disagreement) falls back to the spatial estimate.
 // It writes the same outputs as the march pass for its pixels (ping-pong B, output color / data, haze, transient light).
-// Diagnostic reason codes (output color G when the history-weight diagnostic is on): 0.9 spatial fallback, 1.0 history held.
+// RING_INTERLEAVE == 1 is the reject-resolve variant for full-march frames (see ring_cloud_reject_resolve): no block grid, every pixel was marched.
+// Diagnostic reason codes (output color G when the history-weight diagnostic is on): 0.9 spatial fallback, 1.0 history held. The reject-resolve variant keeps
+// the march pass's rejection code (0.5 / 0.75) and replaces A with the resolved alpha.
 
 #include "./CloudsInc.comp"
 #include "../../materials/ring_atmosphere_shared.gdshaderinc"
@@ -69,10 +71,94 @@ vec4 history_data(bool fromA, ivec2 pixel) {
 	return fromA ? imageLoad(accum_2A_image, pixel) : imageLoad(accum_2B_image, pixel);
 }
 
+// RING_INTERLEAVE == 1: reject-resolve for full-march frames. The march pass published every pixel's raw sample at its own coordinate
+// (steady alpha < 0 = history rejected, alpha = -1 - a). Rejected pixels show a depth-aware 5 x 5 tent mean of those raw samples
+// instead of the single noisy march, and that mean also seeds their history. Accepted pixels are left untouched.
+void ring_cloud_reject_resolve(ivec2 uv, ivec2 size) {
+	vec4 own = imageLoad(interleave_steady_image, uv);
+	if (own.a >= 0.0) {
+		return;
+	}
+	float ownAlpha = -1.0 - own.a;
+	vec4 ownData = imageLoad(interleave_data_image, uv);
+	vec4 ownTransient = imageLoad(interleave_transient_image, uv);
+
+	CloudPixelRay pixelRay = ring_cloud_pixel_ray(uv, size);
+	float linear_depth = pixelRay.linearDepth;
+	bool has_opaque_depth = pixelRay.hasOpaqueDepth;
+	vec3 raydirection = pixelRay.rayDirection;
+	vec3 rayOrigin = pixelRay.rayOrigin;
+	float opaqueDepthMetadata = has_opaque_depth ? linear_depth : -1.0;
+	float tolerance = max(2.0, max(opaqueDepthMetadata, 0.0) * 3.0 / max(float(size.y), 1.0))
+		* genericData.data.history_controls.y * 2.0;
+
+	vec4 resolvedColor = vec4(0.0);
+	vec4 resolvedData = vec4(0.0);
+	float weightSum = 0.0;
+	for (int dy = -2; dy <= 2; dy++) {
+		for (int dx = -2; dx <= 2; dx++) {
+			ivec2 tap = clamp(uv + ivec2(dx, dy), ivec2(0), size - ivec2(1));
+			vec4 tapColor = imageLoad(interleave_steady_image, tap);
+			vec4 tapData = imageLoad(interleave_data_image, tap);
+			bool centre = dx == 0 && dy == 0;
+			if (centre || ring_cloud_history_opaque_matches(opaqueDepthMetadata, tapData.a, tolerance)) {
+				float tapWeight = float((3 - abs(dx)) * (3 - abs(dy)));
+				tapColor.a = tapColor.a < 0.0 ? -1.0 - tapColor.a : tapColor.a;
+				resolvedColor += tapColor * tapWeight;
+				resolvedData += tapData * tapWeight;
+				weightSum += tapWeight;
+			}
+		}
+	}
+	float inverseWeight = 1.0 / max(weightSum, 0.000001);
+	resolvedColor *= inverseWeight;
+	resolvedData *= inverseWeight;
+	resolvedData.a = opaqueDepthMetadata;
+
+	bool fromA = genericData.data.isAccumulationA > 0.0;
+	if (fromA) {
+		imageStore(accum_1B_image, uv, resolvedColor);
+		imageStore(accum_2B_image, uv, resolvedData);
+	} else {
+		imageStore(accum_1A_image, uv, resolvedColor);
+		imageStore(accum_2A_image, uv, resolvedData);
+	}
+
+	if (genericData.data.menu_temporal_controls.w > 0.5) {
+		// Keep the march pass's rejection reason (written to this texel earlier this frame); A becomes the resolved alpha.
+		float marchReason = imageLoad(output_color_image, uv).g;
+		imageStore(output_color_image, uv, vec4(0.0, marchReason, abs(ownAlpha - resolvedColor.a), resolvedColor.a));
+	} else {
+		vec4 outputColor = resolvedColor;
+		if (!any(isnan(ownTransient.rgb)) && !any(isinf(ownTransient.rgb))) {
+			outputColor.rgb += ownTransient.rgb;
+		}
+		if (genericData.data.temporal_controls.z <= 0.0 && genericData.data.temporal_controls.w <= 0.0) {
+			float haze_distance = clamp(resolvedData.b, 0.0, max(0.0, linear_depth));
+			vec3 ownFactors = ring_cloud_unpack_storm_factors(ownTransient.a);
+			if (ownFactors.x > 0.0) {
+				outputColor.rgb = ring_cloud_atmosphere_apply_storm_factors(outputColor.rgb, rayOrigin, raydirection, haze_distance,
+					genericData.data.ring_atmosphere_profile, ownFactors.yz);
+			} else {
+				outputColor.rgb = ring_cloud_atmosphere_apply(outputColor.rgb, rayOrigin, raydirection, haze_distance, genericData.data.ring_atmosphere_profile);
+			}
+		}
+		imageStore(output_color_image, uv, outputColor);
+	}
+	vec4 outputData = resolvedData;
+	outputData.r = min(outputData.r, ownData.r);
+	outputData.a = has_opaque_depth ? log2(1.0 + max(linear_depth, 0.0)) : -8.0;
+	imageStore(output_data_image, uv, outputData);
+}
+
 void main() {
 	ivec2 uv = ivec2(gl_GlobalInvocationID.xy);
 	ivec2 size = ivec2(genericData.data.raster_size);
 	if (uv.x >= size.x || uv.y >= size.y) {
+		return;
+	}
+	if (RING_INTERLEAVE == 1) {
+		ring_cloud_reject_resolve(uv, size);
 		return;
 	}
 	const int n = RING_INTERLEAVE;
@@ -159,6 +245,9 @@ void main() {
 	float cameraTranslation = length(rayOrigin - genericData.data.previous_camera_origin.xyz);
 	vec4 historyColor = vec4(0.0);
 	vec4 historyMetadata = vec4(0.0);
+	// Far silhouette: a cloud entirely in front of both opaque endpoints is unaffected by what moved behind it.
+	bool cloudInFront = !hist.opaqueHistoryOutside && ring_cloud_history_cloud_in_front(traveledDistance, history_data(fromA, hist.clampedUV).g,
+		opaqueDepthMetadata, history_data(fromA, hist.opaqueHistoryPixel).a, cameraTranslation, maxstep);
 	bool historyValid = historyWeight > 0.0 && !hist.historyOverride && !hist.historyOutsideImage;
 	if (historyValid) {
 		if (hist.coherentBilinearHistory) {
@@ -203,7 +292,8 @@ void main() {
 		// Opaque geometry follows its own previous-frame projection, not the cloud body's.
 		historyValid = !hist.opaqueHistoryOutside && (ring_cloud_history_opaque_matches(hist.expectedHistoryOpaqueDepth,
 			history_data(fromA, hist.opaqueHistoryPixel).a, hist.opaqueDepthTolerance)
-				|| ring_jitter_opaque_neighborhood_matches(fromA, hist.opaqueHistoryPixel, size, hist.expectedHistoryOpaqueDepth, hist.opaqueDepthTolerance));
+				|| ring_jitter_opaque_neighborhood_matches(fromA, hist.opaqueHistoryPixel, size, hist.expectedHistoryOpaqueDepth, hist.opaqueDepthTolerance)
+				|| cloudInFront);
 	}
 	if (historyValid) {
 		historyValid = !any(isnan(historyColor)) && !any(isinf(historyColor))
@@ -213,11 +303,12 @@ void main() {
 	// keeps the full history weight; otherwise the weight fades with cloud-distance and alpha disagreement instead of a hard reject.
 	bool opaquePointAgrees = !hist.opaqueHistoryOutside && (ring_cloud_history_opaque_matches(hist.expectedHistoryOpaqueDepth,
 		history_data(fromA, hist.opaqueHistoryPixel).a, hist.opaqueDepthTolerance)
-			|| ring_jitter_opaque_neighborhood_matches(fromA, hist.opaqueHistoryPixel, size, hist.expectedHistoryOpaqueDepth, hist.opaqueDepthTolerance));
+			|| ring_jitter_opaque_neighborhood_matches(fromA, hist.opaqueHistoryPixel, size, hist.expectedHistoryOpaqueDepth, hist.opaqueDepthTolerance)
+			|| cloudInFront);
 	bool validatedJitter = historyValid && ring_cloud_history_validated_jitter(
 		visibilityGate && opaquePointAgrees
 			&& ((opaqueDepthMetadata < 0.0 && historyMetadata.a == -1.0)
-				|| (opaqueDepthMetadata > 0.0 && historyMetadata.a > 0.0)),
+				|| (opaqueDepthMetadata > 0.0 && historyMetadata.a > 0.0) || cloudInFront),
 		genericData.data.menu_temporal_controls.z > 0.5,
 		genericData.data.temporal_controls.x, cameraTranslation, maxstep);
 	float effectiveHistoryWeight = historyWeight;

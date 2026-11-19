@@ -7,6 +7,19 @@ bool ring_cloud_history_opaque_matches(float expected_depth, float previous_dept
 		&& abs(expected_depth - previous_depth) <= max(tolerance, 0.0);
 }
 
+// The cloud sample lies in front of both opaque endpoints, so what is behind it cannot have changed the cloud; sky counts as infinitely far.
+bool ring_cloud_history_cloud_in_front(float current_end, float previous_end, float current_opaque, float previous_opaque,
+		float camera_translation, float maximum_step) {
+	vec4 controls = vec4(current_end, previous_end, camera_translation, maximum_step);
+	if (any(isnan(controls)) || any(isinf(controls)) || current_end <= 0.0 || previous_end <= 0.0) return false;
+	float reach = max(current_end, previous_end) + max(camera_translation, 0.0) + max(maximum_step, 1.0);
+	bool current_clear = current_opaque == -1.0
+		|| (!isnan(current_opaque) && !isinf(current_opaque) && current_opaque > 0.0 && reach < current_opaque);
+	bool previous_clear = previous_opaque == -1.0
+		|| (!isnan(previous_opaque) && !isinf(previous_opaque) && previous_opaque > 0.0 && reach < previous_opaque);
+	return current_clear && previous_clear;
+}
+
 float ring_cloud_history_compatible_weight(vec4 history_color, vec4 current_color,
 		float previous_cloud_distance, float current_cloud_distance,
 		float maximum_step, float requested_weight, bool enabled, vec2 alpha_band) {

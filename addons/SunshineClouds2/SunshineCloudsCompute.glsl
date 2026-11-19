@@ -2308,6 +2308,7 @@ void main() {
 	//linear_depth = max(linear_depth, traveledDistance);
 	float cameraTranslation = length(delta);
 	float travelspeed = cameraTranslation + maxstep;
+	bool historyRejected = false; // the pixel shows the raw one-frame march (reject-resolve variant, below)
 	//bool debugCollisions = false;
 	if (usingaccumA > 0.0){
 		currentColorAccumilation = coherentBilinearHistory
@@ -2321,6 +2322,10 @@ void main() {
 		bool opaquePointAgrees = !opaqueHistoryOutside && (ring_cloud_history_opaque_matches(expectedHistoryOpaqueDepth,
 			imageLoad(accum_2A_image, opaqueHistoryPixel).a, opaqueDepthTolerance)
 			|| ring_jitter_opaque_neighborhood_matches(true, opaqueHistoryPixel, size, expectedHistoryOpaqueDepth, opaqueDepthTolerance));
+		// Far silhouette: a cloud entirely in front of both opaque endpoints is unaffected by what moved behind it.
+		bool cloudInFront = !opaqueHistoryOutside && ring_cloud_history_cloud_in_front(traveledDistance, currentDataAccumilation.g,
+			opaqueDepthMetadata, imageLoad(accum_2A_image, opaqueHistoryPixel).a, cameraTranslation, maxstep);
+		opaquePointAgrees = opaquePointAgrees || cloudInFront;
 		bool gameplayVisibilityRejected = gameplayTemporalHistory && genericData.data.history_controls.x > 0.5 && !opaquePointAgrees;
 		if (gameplayTemporalHistory && !historyOutsideImage && genericData.data.history_controls.x > 0.5) {
 			if (coherentBilinearHistory) {
@@ -2359,6 +2364,7 @@ void main() {
 
 		if (if_break > 0.0 || gameplayVisibilityRejected || (!gameplayTemporalHistory && !menuStaticHistory && currentDepthBreak != currentDataAccumilation.a && abs(initialdistanceSample - currentDataAccumilation.r) > travelspeed * 0.5)){
 			diagnosticHistoryReason = if_break > 0.0 ? 0.75 : 0.5; // visibility/depth-break reject
+			historyRejected = true;
 			currentColorAccumilation = lightColor;
 			//debugCollisions = true;
 			currentDataAccumilation.r = initialdistanceSample;
@@ -2374,7 +2380,7 @@ void main() {
 			bool validatedJitterAgrees = ring_cloud_history_validated_jitter(
 				genericData.data.history_controls.x > 0.5 && opaquePointAgrees
 					&& ((opaqueDepthMetadata < 0.0 && currentDataAccumilation.a == -1.0)
-						|| (opaqueDepthMetadata > 0.0 && currentDataAccumilation.a > 0.0)),
+						|| (opaqueDepthMetadata > 0.0 && currentDataAccumilation.a > 0.0) || cloudInFront),
 				genericData.data.menu_temporal_controls.z > 0.5,
 				genericData.data.temporal_controls.x, cameraTranslation, maxstep);
 			float agreementDecay = gameplayTemporalHistory ? ((terminalJitterAgrees || validatedJitterAgrees) ? accumdecay
@@ -2407,6 +2413,10 @@ void main() {
 		bool opaquePointAgrees = !opaqueHistoryOutside && (ring_cloud_history_opaque_matches(expectedHistoryOpaqueDepth,
 			imageLoad(accum_2B_image, opaqueHistoryPixel).a, opaqueDepthTolerance)
 			|| ring_jitter_opaque_neighborhood_matches(false, opaqueHistoryPixel, size, expectedHistoryOpaqueDepth, opaqueDepthTolerance));
+		// Far silhouette: a cloud entirely in front of both opaque endpoints is unaffected by what moved behind it.
+		bool cloudInFront = !opaqueHistoryOutside && ring_cloud_history_cloud_in_front(traveledDistance, currentDataAccumilation.g,
+			opaqueDepthMetadata, imageLoad(accum_2B_image, opaqueHistoryPixel).a, cameraTranslation, maxstep);
+		opaquePointAgrees = opaquePointAgrees || cloudInFront;
 		bool gameplayVisibilityRejected = gameplayTemporalHistory && genericData.data.history_controls.x > 0.5 && !opaquePointAgrees;
 		if (gameplayTemporalHistory && !historyOutsideImage && genericData.data.history_controls.x > 0.5) {
 			if (coherentBilinearHistory) {
@@ -2445,6 +2455,7 @@ void main() {
 
 		if (if_break > 0.0 || gameplayVisibilityRejected || (!gameplayTemporalHistory && !menuStaticHistory && currentDepthBreak != currentDataAccumilation.a && abs(initialdistanceSample - currentDataAccumilation.r) > travelspeed * 0.5)){
 			diagnosticHistoryReason = if_break > 0.0 ? 0.75 : 0.5; // visibility/depth-break reject
+			historyRejected = true;
 			currentColorAccumilation = lightColor;
 			//debugCollisions = true;
 			currentDataAccumilation.r = initialdistanceSample;
@@ -2460,7 +2471,7 @@ void main() {
 			bool validatedJitterAgrees = ring_cloud_history_validated_jitter(
 				genericData.data.history_controls.x > 0.5 && opaquePointAgrees
 					&& ((opaqueDepthMetadata < 0.0 && currentDataAccumilation.a == -1.0)
-						|| (opaqueDepthMetadata > 0.0 && currentDataAccumilation.a > 0.0)),
+						|| (opaqueDepthMetadata > 0.0 && currentDataAccumilation.a > 0.0) || cloudInFront),
 				genericData.data.menu_temporal_controls.z > 0.5,
 				genericData.data.temporal_controls.x, cameraTranslation, maxstep);
 			float agreementDecay = gameplayTemporalHistory ? ((terminalJitterAgrees || validatedJitterAgrees) ? accumdecay
@@ -2515,7 +2526,9 @@ void main() {
 		megaFactors = ring_cloud_storm_factors(megaLevels, megaHazeDistance, -log(max(megaHaze.T.g, 0.000001)),
 			genericData.data.ring_storm_ambient.w, ringMegastormStrip.c);
 	}
-	if (RING_INTERLEAVE > 0 && megaHazeOn) {
+	// Full-march reject-resolve (cloud_reject_resolve): the block images are raster sized and hold this frame's raw samples at the pixel itself.
+	bool resolveImages = RING_INTERLEAVE == 0 && all(greaterThanEqual(imageSize(interleave_steady_image), size));
+	if ((RING_INTERLEAVE > 0 || (resolveImages && historyRejected)) && megaHazeOn) {
 		megaPackedFactors = ring_cloud_pack_storm_factors(megaHazeDirect ? megaFactors : ring_cloud_atmosphere_storm_factors(rayOrigin, raydirection,
 			megaHazeDistance, genericData.data.ring_atmosphere_profile, megaLevels, genericData.data.ring_storm_ambient.w, ringMegastormStrip.c));
 	}
@@ -2527,6 +2540,16 @@ void main() {
 		imageStore(interleave_steady_image, blockUV, lightColor);
 		imageStore(interleave_transient_image, blockUV, vec4(blockTransient, megaPackedFactors));
 		imageStore(interleave_data_image, blockUV, vec4(initialdistanceSample, traveledDistance, finalDensityDistance, opaqueDepthMetadata));
+	} else if (resolveImages) {
+		// Reject-resolve: every pixel publishes its raw march at its own coordinate. Steady alpha encodes the flag: >= 0 history accepted,
+		// < 0 history rejected with alpha = -1 - a. The transient image (rgb light, a packed megastorm factors) is written only for rejected pixels.
+		vec3 resolveTransient = (any(isnan(transientLightColor)) || any(isinf(transientLightColor))) ? vec3(0.0) : transientLightColor;
+		float resolveAlpha = clamp(lightColor.a, 0.0, 1.0);
+		imageStore(interleave_steady_image, uv, vec4(lightColor.rgb, historyRejected ? -1.0 - resolveAlpha : resolveAlpha));
+		imageStore(interleave_data_image, uv, vec4(initialdistanceSample, traveledDistance, finalDensityDistance, opaqueDepthMetadata));
+		if (historyRejected) {
+			imageStore(interleave_transient_image, uv, vec4(resolveTransient, megaPackedFactors));
+		}
 	}
 	
 	// Diagnostic output is intentionally after ping-pong stores: it cannot feed
