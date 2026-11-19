@@ -1,7 +1,7 @@
 extends SceneTree
 ## FL-4 (docs/forest-lighting-plan.md section 11): forest lighting is byte-identical when off, proven in the REAL world.
 ## On an isolated copy of slot 3 (real start menu, Continue, tools/tree_visibility_world.gd), at forest poses, at noon and at a low setting sun, two yaws each, still-capture mode:
-##   A  = current shaders, forest lighting off (the default)
+##   A  = current shaders, forest lighting switched off (all three; translucency and crown occlusion default on since 2026-11-19)
 ##   B  = the pre-forest-lighting shader sources (commit 3ca696e, swapped into the cached Shader resources at run time), forest lighting off
 ##   A2 = current shaders again after the restore (determinism control: A must equal A2, else the case is "not deterministic" and not judged)
 ##   S  = current shaders, all three switches on (early look for FL-5, saved as PNG)
@@ -412,6 +412,9 @@ func _stills_run() -> void:
 			var sets: Array = [["off", false, false, false], ["all", true, true, true]]
 			if name == "forest_interior_eye" and (t == "noon" or t == "sun_12_low"):
 				sets = [["off", false, false, false], ["trans", true, false, false], ["shade", false, false, true], ["all", true, true, true]]
+			if args.has("default-pair"):
+				# The shipped default since 2026-11-19: translucency and crown occlusion on, canopy shade off.
+				sets = [["off", false, false, false], ["default", true, true, false]]
 			await WORLD.capture_begin(self, game)
 			for st in sets:
 				var ok: bool = await _apply_set(st[1], st[2], st[3])
@@ -467,8 +470,9 @@ func _run() -> void:
 	if terrain_materials.is_empty():
 		_log("WARNING: no Terrain3D material found; the terrain swap is unproven")
 	await _frames(10)
-	if not _switches_all_off() or bool(forest.get("RasterPublished")):
-		_finish("FAIL the ForestLighting switches are not all off at start (they default off)")
+	# Translucency and crown occlusion default ON since 2026-11-19: switch all three off explicitly; A is the off picture.
+	if not await _switches(false):
+		_finish("FAIL the ForestLighting switches could not be switched off at start")
 		return
 	var poses: Dictionary = WORLD.load_poses()
 	var names := String(args.get("names", "forest_interior_eye,forest_edge_eye,spawn_ground")).split(",", false)

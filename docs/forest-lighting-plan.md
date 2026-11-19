@@ -97,7 +97,7 @@ DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * (k_species * s) * facing * visibility * cr
 
 ## 8. Switch and settings
 
-- Debug switch only, default off: properties `TranslucencyEnabled`, `CanopyShadeEnabled`, `CrownOcclusionEnabled` on a `ForestLighting` node under the game root (reachable by `perf_bench -Variants` node ops and `PERF_BENCH_NODE_PROPS`), plus the start-up environment variable `RING_FOREST_LIGHTING=1` (all three on). Not in the grave-key menu: an on/off is a debug switch (AGENTS.md).
+- Debug switches, not menu settings: properties `TranslucencyEnabled`, `CanopyShadeEnabled`, `CrownOcclusionEnabled` on a `ForestLighting` node under the game root (reachable by `perf_bench -Variants` node ops and `PERF_BENCH_NODE_PROPS`), plus the start-up environment variable `RING_FOREST_LIGHTING=1` (all three on) or `=0` (all three off). Defaults since 2026-11-19 (user): translucency and crown occlusion ON, canopy shade OFF (see "Decisions (2026-11-19)"). Not in the grave-key menu: an on/off is a debug switch (AGENTS.md).
 - No user tunables: every value is a physical constant (section 2). If the user wants one after the stills, the candidate is canopy shade as a whole (strength), not per receiver.
 - Off is byte-identical to today: every new term sits inside a branch on the switch global, and nothing is published while off.
 
@@ -166,3 +166,28 @@ Done in `materials/ring_grass_cards.gdshader` (the live grass; `ring_standing_gr
 - Test `forest_grass_shade_gpu_test` (shipped card material, FL-3a synthetic raster). Measured: off identity 0 of 20 (canopy) and 0 of 6 (translucency) off -> on -> off frames differ, and 0 of 20 against HEAD's grass shader and lighting include; ambient on/off 0.267 under the stand (1 - blocked 0.730 = 0.270), 0.827 isolated crown, 0.462 conifer stand, 1.000 in the open and above; added sun light under the stand has G/R 2.0 times the grass's own G/R (tau_c 0.050 / 0.025). Translucency, open grass, sun 45 deg behind the grass: green 0.0488 -> 0.0928 (gain 1.90); frontlit change 1.0000 (the lobe is zero when the sun is on the viewer's side); transmittance T/R 0.025 -> 0.88 (green), new/old 35 to 91 times.
 - Open point for the primary: backlit-on exceeds frontlit-on (green 0.0928 vs 0.0691, ratio 1.34). The card model lights its reflection with the bent ground normal (n.L 0.7) and has no frontlit face-reflection lobe, so the per-leaf bound T <= R holds only as k * s <= 1 (0.76, 0.88, 0.36). The test reports this and asserts k * s <= 1; whether grass needs a frontlit face lobe is a design choice.
 - Stills for the user (before/after, off left, on right; rows backlit, frontlit, stand under the canopy with ambient light only): `.godot/audit_baseline/common/forest-lighting/fl3b/contact_sheet.png` and the single PNGs beside it.
+
+## FL-4 (2026-11-18): switch-off identity on the real world
+
+- Tool `tools/forest_lighting_identity_world_gpu_test.gd` (`tools/tree_visibility_run.ps1 -Test forest_lighting_identity -Label fl4`): on the frozen slot 3 world it captures A (current shaders, all three switches off), swaps the pre-forest-lighting sources (commit 3ca696e) into the cached Shader resources at run time (Terrain3D: `shader_override` re-assigned) for B, restores, captures A2; plus BS (old shaders, switches on: positive control) and S (current, switches on). `--stills-only` writes still sets (FL-5); `--default-pair` writes off vs the shipped default.
+- First run: 1 to 5 grass-card pixels at 1-2 LSB at noon. Bisect inside `ring_grass_cards.gdshader`: the cause was the old `ring_terrain_direct_diffuse` call moved into the `else` of an if/else (it compiles differently from a top-level call). Restructure: the old call stays verbatim and unconditional; with canopy shade on, a second call of the overload supplies `canopy_above` (its diffuse result discarded). Cost: with shade on, grass evaluates the terrain light terms twice (to be gated on blocked > 0 before shade can default on).
+- Final: PASS, all 8 deterministic forest cases (forest_interior_eye, forest_edge_eye; noon and 8 degree sunset; 2 yaws) byte-identical to the pre-forest-lighting shaders. save_spot is not deterministic in this harness (A vs A2 1 to 22 px, the same as B vs A) and is not judged.
+
+## FL-5 (2026-11-18): cost and stills
+
+perf_bench `-Variants` on the frozen world, RTX 4070, 8 s windows, 3 rounds (report `.godot/perf_bench/fl5/20261118_235219/report.md`); dGPU p50 in ms, same_as_a 0.00 everywhere:
+
+| Scenario (baseline GPU p50) | translucency | crown | shade | all |
+|---|---|---|---|---|
+| forest_interior (8.58) | +0.09 | +0.07 | +0.20 | +0.28 |
+| forest_edge (9.41) | +0.08 | +0.04 | +0.21 | +0.30 |
+| save_spot (9.52) | +0.10 | +0.07 | +0.16 | +0.25 |
+
+- Render CPU within +-0.03 ms, draw calls unchanged. Canopy raster: build 1.3 to 5.0 ms on a worker (about 4000 trees at forest_interior), upload 0.49 to 0.69 ms on the main thread (target 0.5, limit 2), copy 0.06 to 1.5 ms.
+- Stills: `.godot/audit_baseline/common/forest-lighting/fl5/` (off and all-on per pose at noon, 8 degree sunset, 12 degree low sun, night; translucency-only and shade-only at forest_interior noon and low sun; side-by-side pairs in `fl5/pairs/`). The biggest visible effect is backlit open grass at low sun (floor luminance 3 to 6 times); crowns lighter and yellower at noon. Canopy shade is not visible at the three bench poses (none stands under a closed canopy), so the night drop under a closed canopy still has no measurement. With all three on, grass at night was 1.5 times brighter: the grass translucency lobe applied to every light, including the night light.
+
+## Decisions (2026-11-19, user)
+
+- Default ON: leaf translucency and crown occlusion (`RingForestLighting` property defaults; cost about +0.12 to +0.17 ms on the 4070 from the FL-5 table). Canopy shade stays OFF by default until the grass duplicated-terms gate (skip the second terrain-terms call where blocked = 0) is in and stills at a closed-stand pose (including night) exist.
+- The grass translucency lobe is primary sun only, as the trees (no translucency glow from the night light).
+- Open: grass backlit-on exceeds frontlit-on by 1.34 (FL-3b) because the grass card's reflection uses a ground-blended normal; accepted with the stills, revisit with the grass reflection model.

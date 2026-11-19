@@ -235,9 +235,11 @@ void light() {
 		}
 	}
 	if (ring_forest_translucency_on()) {
-		// Leaf model of the trees (bi-Lambertian): the lobe follows the blade's face side toward the viewer, so the transmittance is k * s * albedo.
+		// Leaf model of the trees (bi-Lambertian): the lobe follows the blade's face side toward the viewer, so the transmittance is k * s * albedo. Primary sun only, as the trees
+		// (user, 2026-11-19: no translucency glow from the night light).
 		vec3 face = v_face_view * (dot(v_face_view, VIEW) >= 0.0 ? 1.0 : -1.0);
-		DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * BACKLIGHT * max(-dot(face, LIGHT), 0.0) * direct_visibility;
+		float translucency_sun = LIGHT_IS_DIRECTIONAL ? smoothstep(0.90, 0.995, dot(normalize(LIGHT), normalize((VIEW_MATRIX * vec4(sun_direction, 0.0)).xyz))) : 0.0;
+		DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * BACKLIGHT * max(-dot(face, LIGHT), 0.0) * direct_visibility * translucency_sun;
 	} else {
 		// Diffuse translucency from the far side of the blade, scaled like the terrain's diffuse term.
 		DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * BACKLIGHT * max(dot(-NORMAL, LIGHT), 0.0) * direct_visibility;

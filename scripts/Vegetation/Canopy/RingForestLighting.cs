@@ -11,9 +11,10 @@ using RingworldTechDemo.Voxel.Phase2;
 namespace RingworldTechDemo.Vegetation.Canopy;
 
 /// <summary>
-/// Forest lighting debug switches and the canopy raster publisher (docs/forest-lighting-plan.md sections 5 and 8). Debug switches only, default off: nothing is built,
-/// uploaded or published while they are off. Node name "ForestLighting", child of the game root; perf_bench node ops reach the three switches by that path.
-/// RING_FOREST_LIGHTING=1 at start turns all three on.
+/// Forest lighting debug switches and the canopy raster publisher (docs/forest-lighting-plan.md sections 5 and 8). Debug switches, not menu settings. Defaults (user, 2026-11-19):
+/// leaf translucency and crown occlusion on, canopy shade off (it waits for the grass duplicated-terms gate and closed-stand stills); nothing is built, uploaded or published
+/// while canopy shade is off. Node name "ForestLighting", child of the game root; perf_bench node ops reach the three switches by that path.
+/// RING_FOREST_LIGHTING=1 at start turns all three on, RING_FOREST_LIGHTING=0 all three off (the pre-forest-lighting picture, for A/B and identity checks).
 /// Globals: ringworld_forest_lighting = (translucency, tree sun-shadow distance m, canopy shade, crown occlusion); ringworld_canopy_frame = the 3x4 world -> anchor tangent
 /// frame of the published raster (same math as ringworld_height_shadow_frame; recomputed every frame), with the REFERENCE ALTITUDE in element [3][3] (the free w of the
 /// translation column; the other w components stay 0): the raster's G and B channels hold b * (altitude - reference), so a receiver adds frame[3][3] back;
@@ -28,9 +29,9 @@ public partial class RingForestLighting : Node
     private const double MinimumRebuildSeconds = 0.5;
 
     [Export] public NodePath LayerPath { get; set; } = new("../BiomeDecorations");
-    [Export] public bool TranslucencyEnabled { get; set; }
+    [Export] public bool TranslucencyEnabled { get; set; } = true;
     [Export] public bool CanopyShadeEnabled { get; set; }
-    [Export] public bool CrownOcclusionEnabled { get; set; }
+    [Export] public bool CrownOcclusionEnabled { get; set; } = true;
 
     /// <summary>Main-thread milliseconds of the last resident tree copy (including the hull lookup).</summary>
     public double LastCopyMilliseconds { get; private set; }
@@ -61,6 +62,7 @@ public partial class RingForestLighting : Node
     public override void _Ready()
     {
         if (OS.GetEnvironment("RING_FOREST_LIGHTING") == "1") TranslucencyEnabled = CanopyShadeEnabled = CrownOcclusionEnabled = true;
+        else if (OS.GetEnvironment("RING_FOREST_LIGHTING") == "0") TranslucencyEnabled = CanopyShadeEnabled = CrownOcclusionEnabled = false;
     }
 
     public override void _ExitTree()
