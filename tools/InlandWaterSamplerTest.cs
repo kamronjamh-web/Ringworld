@@ -271,9 +271,9 @@ public partial class InlandWaterSamplerTest : RefCounted
         var edits = new RingLodSurfaceEditSnapshot(1, EmitterSiteTestWorlds.Circumference, new Dictionary<RingTerrainColumnCoordinate, int>());
         var points = _points.Take(300).Select(p => (p.A, p.Z)).ToList();
         string error = RingTerrainProxySector.RoundTripCacheRecords(path, edits, _sampler, EmitterSiteTestWorlds.Width, points, out int version, out long payload, out bool staleLoaded);
-        Check(error.Length == 0, "the v12 record did not round-trip: " + error);
-        Check(version == 12, $"a rivers world wrote cache version {version}, want 12");
-        Check(payload == 4 + 68L * points.Count, $"v12 payload {payload} bytes, want {4 + 68L * points.Count}");
+        Check(error.Length == 0, "the v13 record did not round-trip: " + error);
+        Check(version == 13, $"a rivers world wrote cache version {version}, want 13");
+        Check(payload == 4 + 68L * points.Count, $"v13 payload {payload} bytes, want {4 + 68L * points.Count}");
         Check(!staleLoaded, "a stale-version file was accepted");
         using VoxelTerrainSettings gen1Settings = EmitterSiteTestWorlds.CreateProductionSettings(Seed, EmitterSiteTestWorlds.Gen17WorldRecipe(Seed, 1));
         using var gen1 = new RingTerrainSampler(gen1Settings, true, EmitterSiteTestWorlds.Circumference, EmitterSiteTestWorlds.Circumference / Math.Tau, EmitterSiteTestWorlds.Width, 8400);
