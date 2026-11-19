@@ -199,6 +199,12 @@ public partial class ScatterRockPlacementTest : RefCounted
 
     private void Boulders()
     {
+        // Angle of repose (T5-7b): the boulder row's slope multiplier reaches 0 at 52 degrees of grid slope, so no boulder root stands on a steeper face.
+        int boulderCount = 0, steepest = 0; double steepestSlope = 0.0;
+        foreach (TileData t in _tiles)
+            foreach (ScatterRecord r in t.Records.Where(r => r.ClassId == Boulder)) { boulderCount++; double sl = At(r).SlopeDeg; if (sl > steepestSlope) { steepestSlope = sl; steepest++; } }
+        Check(steepestSlope <= 52.5, $"b. a boulder root stands on a {steepestSlope:F1} degree face (limit 52)");
+        Detail($"b. angle of repose: {boulderCount} boulders over the 14 tiles, steepest root {steepestSlope:F1} degrees");
         const int bands = 18;
         var area = new double[bands, 2]; var samples = new int[bands, 2]; var count = new int[bands, 2];
         foreach (TileData t in _tiles)

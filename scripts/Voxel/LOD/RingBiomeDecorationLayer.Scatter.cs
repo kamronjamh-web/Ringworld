@@ -21,6 +21,7 @@ public partial class RingBiomeDecorationLayer
 	internal float ScatterDistanceScale { get; set; } = 1f;
 
 	private ScatterStreamer? _scatter;
+	private RingScatterLayer? _scatterLayer;
 	private RingTerrainSampler? _scatterSampler;
 	private RingLodSurfaceEditSnapshot? _scatterEdits;
 	private ulong _scatterEditsVersion = ulong.MaxValue;
@@ -57,6 +58,12 @@ public partial class RingBiomeDecorationLayer
 
 	private void ShutdownScatter()
 	{
+		if (_scatterLayer != null)
+		{
+			// Always queued: this runs from _ExitTree, when the layer's parent may be busy removing children (a direct Free would call remove_child on it).
+			if (GodotObject.IsInstanceValid(_scatterLayer)) _scatterLayer.QueueFree();
+			_scatterLayer = null;
+		}
 		_scatter?.Shutdown();
 		_scatter = null;
 		_scatterSampler = null;
@@ -76,6 +83,8 @@ public partial class RingBiomeDecorationLayer
 			RingLodSurfaceEditSnapshot first = _smoothTerrain?.CaptureLodSurfaceEditSnapshot() ?? _grid.CaptureLodSurfaceEditSnapshot();
 			_scatter = CreateScatterStreamer(sampler, first);
 			if (_scatter == null) return;
+			_scatterLayer = CreateScatterLayerFor(sampler, BuildScatterLayer);
+			AddScatterLayerToParent(_scatterLayer);
 			_scatterEdits = first; _scatterEditsVersion = first.Version;
 			foreach ((VegetationTileKey key, VegetationTile tile) in _vegetationTiles) ScatterTileResident(key, tile);
 		}
@@ -97,6 +106,36 @@ public partial class RingBiomeDecorationLayer
 	/// <summary>The creation decision: null (and nothing built) unless the sampler's mask has bit 4.</summary>
 	internal static ScatterStreamer? CreateScatterStreamerFor(RingTerrainSampler sampler, Func<ScatterStreamer> make)
 		=> RingHabitatFieldGrid.IsEnabled(sampler.WorldFeatureMask) ? make() : null;
+
+	/// <summary>The layer exists exactly where the streamer does: null (and nothing built) unless the sampler's mask has bit 4.</summary>
+	internal static RingScatterLayer? CreateScatterLayerFor(RingTerrainSampler sampler, Func<RingScatterLayer> make)
+		=> RingHabitatFieldGrid.IsEnabled(sampler.WorldFeatureMask) ? make() : null;
+
+	private RingScatterLayer BuildScatterLayer() => new()
+	{
+		Name = "ScatterLayer",
+		Host = new ScatterLayerHost
+		{
+			Geometry = () => _grid?.CaptureLodGeometrySnapshot(),
+			Focus = () => _explorer?.CanonicalPosition,
+			Epoch = () => ScatterRecordEpoch,
+			CopyRecords = CopyResidentScatterRecords,
+			RingAcrossWidthMeters = () => _grid?.RingAcrossWidthMeters ?? 0.0,
+			DistanceScale = () => ScatterDistanceScale,
+			Sun = () => { ResolveTreeSunLight(); return _treeSunLight; },
+		}
+	};
+
+	/// <summary>A sibling of this layer, never a descendant (the landscape harness counts everything under the decoration layer as trees).</summary>
+	private void AddScatterLayerToParent(RingScatterLayer? layer)
+	{
+		Node? parent = GetParent();
+		if (layer == null || parent == null) return;
+		Callable.From(() =>
+		{
+			if (GodotObject.IsInstanceValid(layer) && !layer.IsQueuedForDeletion() && GodotObject.IsInstanceValid(parent)) parent.AddChild(layer);
+		}).CallDeferred();
+	}
 
 	private ScatterStreamer BuildScatterStreamer(RingTerrainSampler sampler, RingLodSurfaceEditSnapshot edits)
 	{

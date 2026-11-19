@@ -223,6 +223,8 @@ public sealed class RingGpuVegetationCompute : IDisposable
     public bool OptimizeTreeDispatches { get; set; } = true;
     /// <summary>Per-instance haze atlas channel. Layers set it before <see cref="Initialize"/>; changing it afterwards is not supported.</summary>
     public RingVegetationHaze.Channel HazeChannel { get; set; } = RingVegetationHaze.Channel.None;
+    /// <summary>GPU diagnostic category of this instance's compute lists. Null keeps the category chosen from the batch types (tree-only instances report as TreeCulling).</summary>
+    public string? DiagnosticCategory { get; set; }
     /// <summary>Camera travel (m) after which already-compacted rows get their haze rewritten.</summary>
     public float HazeRefreshMeters { get; set; } = 8f;
     /// <summary>Sun direction change (degrees) after which already-compacted rows get their haze rewritten.</summary>
@@ -1336,9 +1338,9 @@ public sealed class RingGpuVegetationCompute : IDisposable
         // RD disallows buffer updates inside a compute list.
         rd.BufferUpdate(_budgets, 0, 20, _zeroBudgets);
         if (_selectedWork.Count == 0) { Interlocked.Increment(ref _completedUpdates); return; }
-        string diagnosticCategory = grassOnly ? RingPerformanceGpu.GrassCulling
+        string diagnosticCategory = DiagnosticCategory ?? (grassOnly ? RingPerformanceGpu.GrassCulling
             : _work.TrueForAll(static item => !item.Batch.Registration.Grass) ? RingPerformanceGpu.TreeCulling
-            : RingPerformanceGpu.Vegetation;
+            : RingPerformanceGpu.Vegetation);
         using RingPerformanceGpu.GpuScope diagnosticScope = RingPerformanceGpu.BeginScope(diagnosticCategory);
         long list = rd.ComputeListBegin();
         _hazeDispatchOn = hazeOn; _boundVariant = -1;
@@ -1854,7 +1856,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
             if (batch.Registration.Grass) treeOnly = false; else grassOnly = false;
         }
         if (_refreshBatches.Count == 0) return;
-        string category = grassOnly ? RingPerformanceGpu.GrassCulling : treeOnly ? RingPerformanceGpu.TreeCulling : RingPerformanceGpu.Vegetation;
+        string category = DiagnosticCategory ?? (grassOnly ? RingPerformanceGpu.GrassCulling : treeOnly ? RingPerformanceGpu.TreeCulling : RingPerformanceGpu.Vegetation);
         using RingPerformanceGpu.GpuScope scope = RingPerformanceGpu.BeginScope(category);
         long list = rd.ComputeListBegin();
         _boundVariant = -1;

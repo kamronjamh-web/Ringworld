@@ -119,7 +119,7 @@ public sealed class RingScatterClassTable
                 new RingScatterTerm(0.16f, new[] { R(RingHabitatField.RockExposure, 0f, 1f), R(RingHabitatField.Relief64, 0.2f, 0.7f, 1f, 0f) }),
                 new RingScatterTerm(0.01f, Array.Empty<RingScatterResponse>()),
             },
-            Multipliers = new[] { R(RingHabitatField.Canopy, 0f, 1f, 1f, 0.7f) },
+            Multipliers = new[] { R(RingHabitatField.Canopy, 0f, 1f, 1f, 0.7f), R(RingHabitatField.Slope, 42f, 52f, 1f, 0f) }, // angle of repose: no boulders stand on near-vertical faces
             SpacingM = 0f, SpacingSizeFactor = 0.9f, Avoid = new[] { new RingScatterAvoid(1, 0f, 1.0f) }, TreeClearanceM = 1f, TreeClearanceSizeFactor = 0.5f,
             SizeMinM = 1f, SizeMaxM = 4f, SizeExponent = 1.6f, MeshFirst = 0, MeshCount = 16, Alignment = RingScatterAlignment.SlopeAligned, AlignFactor = 0.6f, RandomTiltDeg = 8f,
             EmbedMin = 0.20f, EmbedMax = 0.35f, Collision = RingScatterCollision.ConvexHull, CollisionMinSizeM = 0.8f, ShadowMinSizeM = 2f, Far = RingScatterFar.RockSpeckle,

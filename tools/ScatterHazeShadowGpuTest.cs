@@ -1,8 +1,15 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Godot;
+using RingworldTechDemo.Terrain.Surface;
+using RingworldTechDemo.Tools;
 using RingworldTechDemo.Vegetation.Scatter;
+using RingworldTechDemo.Voxel.Core;
+using RingworldTechDemo.Voxel.LOD;
+using RingworldTechDemo.Voxel.Phase2;
+using RingworldTechDemo.Voxel.Phase3;
 
 namespace RingworldTechDemo.Tests;
 
@@ -18,6 +25,12 @@ namespace RingworldTechDemo.Tests;
 ///   e. strata: the outcrop's band index at 10 rows equals the reference wall's at matched absolute heights (orthographic camera, so a row is a height); a half-band offset must fail.
 ///   f. dither: coverage 0.5 covers 40-60 % of a boulder, its complement the rest (union ~100 %, overlap under 5 %).
 ///   g. GPU ms of the fixture frames (info only).
+///   T5-7b (the layer, design B2/B3/B5/B6):
+///   h. feature off: the creation helper gives no ScatterLayer for a generation 1 sampler and one for the review sampler (a real world is not booted here; gpu_tree_integration_test and the tree tests run unchanged beside this).
+///   i. layer smoke on steep_eye records (BuildScatterReviewTile) plus synthetic rocks at known distances, fed through a fixed host: 10 batches (8 camera, 2 caster); every batch's full-list row count equals the count of
+///      records inside its B5 band (budget slots applied in order); the caster batches hold only boulders of at least 2 m and outcrops inside the sun's near shadow distance; a boulder at 39 m is mostly LOD0 and at 41 m mostly
+///      LOD1, with complementary dither coverage in the cross-fade and full coverage outside it; the camera list drops what is behind the camera; moving the camera 200 m rebuilds nothing, 700 m exactly one anchor rebuild.
+///   j. tree identity is covered by gpu_tree_integration_test and tree_frustum_identity_gpu_test, run unchanged (the layer has its own compute instance).
 /// Run windowed: godot --path . --script res://tools/scatter_haze_shadow_gpu_test.gd (or tools/run_tests.ps1 -Tests scatter_haze_shadow_gpu_test).
 /// World frame: the ring axis is +Y, the surface point is the origin, up is -X (ring centre at x = -R), around is +Z, across is +Y; the ground is the plane x = 0.
 /// </summary>
@@ -303,6 +316,8 @@ public partial class ScatterHazeShadowGpuTest : Node
         await StrataCheck();
         await DitherCheck();
         await StillAndTiming();
+        FeatureOffChecks();
+        await LayerChecks();
     }
 
     // b. haze
@@ -534,6 +549,280 @@ public partial class ScatterHazeShadowGpuTest : Node
         const string path = "c:/Projects/Ringworld/.godot/audit_baseline/common/t5/t5-7a_fixture.png";
         DirAccess.MakeDirRecursiveAbsolute("c:/Projects/Ringworld/.godot/audit_baseline/common/t5");
         still.SavePng(path);
+    }
+
+
+    // ------------------------------------------------------------------ T5-7b: the layer
+
+    private RingTerrainSampler _review = null!;
+
+    // h. feature off
+    private void FeatureOffChecks()
+    {
+        using RingTerrainSampler gen1 = LandscapeWorld.For(1).CreateSampler();
+        bool made = false;
+        RingScatterLayer? none = RingBiomeDecorationLayer.CreateScatterLayerFor(gen1, () => { made = true; return new RingScatterLayer(); });
+        Check(none == null && !made, "feature off: a generation 1 world created a scatter layer");
+        _review = LandscapeWorld.For(1, new[] { "ground.surface", "scatter.rocks" }).CreateSampler();
+        RingScatterLayer? some = RingBiomeDecorationLayer.CreateScatterLayerFor(_review, () => { made = true; return new RingScatterLayer(); });
+        Check(some != null && made, "feature off: the review world did not create a scatter layer");
+        Check(some!.BatchCount == 0 && some.Compute == null, "feature off: a fresh layer already owns batches");
+        some.Free();
+        _log.Add("feature off: generation 1 creates no ScatterLayer, the review world creates one");
+    }
+
+    private const float AnchorMeters = RingScatterLayer.AnchorMeters;
+    private static readonly uint MarkerTint = ScatterRecord.PackBaseTint(1f, 0f, 1f);
+    private const long MarkerTint666 = (63L << 12) | 63L;
+
+    private static float Smooth(float a, float b, float x) { float t = Math.Clamp((x - a) / (b - a), 0f, 1f); return t * t * (3f - 2f * t); }
+    /// <summary>Share of a dithered row's pixels its coverage words keep (the compute's tree_kept_share).</summary>
+    private static float KeptShare(float coverage, float marker) => coverage < 0f ? -coverage : MathF.Max(coverage - (marker > 2.001f ? (marker - 2f) * 5f : 0f), 0f);
+
+    private async Task<(uint[] Commands, float[] Rows)> ReadFull(RingScatterLayer layer, int id)
+    {
+        var done = new TaskCompletionSource<(uint[], float[])>();
+        layer.Compute!.RequestReadbackForTests(id, (c, r) => done.TrySetResult((c, r)));
+        return await done.Task;
+    }
+
+    private async Task<uint> ReadCameraCount(RingScatterLayer layer, int id)
+    {
+        var done = new TaskCompletionSource<uint[]>();
+        layer.Compute!.RequestCameraReadbackForTests(id, (c, _) => done.TrySetResult(c));
+        uint[] commands = await done.Task;
+        return commands.Length >= 2 ? commands[1] : 0u;
+    }
+
+    private async Task WaitFrames(Func<bool> done, int maximum, string what)
+    {
+        for (int i = 0; i < maximum && !done(); i++) await Frames(1);
+        Check(done(), "timeout waiting for " + what);
+    }
+
+    // i. the layer on a fixture
+    private async Task LayerChecks()
+    {
+        const double Circ = LandscapeWorld.Circumference;
+        double ringRadius = Circ / Math.Tau, aroundCell = Circ / Math.Ceiling(Circ / 30.0);
+        LandscapePose pose = LandscapePoseFinder.ReadFixture(ProjectSettings.GlobalizePath("res://tools/fixtures/landscape_poses_dressing_s1337.json")).Poses.First(p => p.Name == "steep_eye");
+        long ta = (long)Math.Floor(Math.Floor(pose.Around / aroundCell) / 8.0), tz = (long)Math.Floor(pose.Across / 240.0);
+        var records = RingBiomeDecorationLayer.BuildScatterReviewTile(_review, ta, tz, LandscapeWorld.Seed, Circ, LandscapeWorld.Width, RingScatterClassTable.Production);
+        int tileRecords = records.Count;
+        ScatterRecord Syn(ulong id, ushort cls, double d, float size, int variant)
+            => new(id, (long)Math.Round((pose.Around + d) * 100.0), (int)Math.Round(pose.Across * 100.0), (float)pose.Ground, cls, (ushort)variant, size, .3f, ScatterRecord.EncodeUpOct(0, 1, 0), MarkerTint);
+        // Boulders (class 2) at 30, 39, 41, 100 and 300 m; outcrops (1) at 100, 300 and 1000 m; cobbles (3) at 5 and 30 m. The variant says which is which.
+        foreach ((int cls, double d, float size, int variant) in new[] { (2, 30.0, 2.5f, 11), (2, 39.0, 2.5f, 13), (2, 41.0, 2.5f, 14), (2, 100.0, 2.5f, 12), (2, 300.0, 2.5f, 10),
+            (1, 100.0, 10f, 1), (1, 300.0, 10f, 2), (1, 1000.0, 10f, 3), (3, 5.0, 1.2f, 1), (3, 30.0, 1.2f, 2) })
+            records.Add(Syn(0xA000UL + (ulong)records.Count, (ushort)cls, d, size, variant));
+        Check(tileRecords > 0, "steep_eye: the review tile holds no scatter records");
+
+        var focus = new RingCanonicalPosition(pose.Around, pose.Ground, pose.Across);
+        RingCanonicalPosition current = focus;
+        var geometry = new RingLodGeometrySnapshot(Transform3D.Identity, Vector3.Zero, Vector3.Zero, ringRadius, 0.0, 0.0, Circ, 0.0, 0.0, focus);
+        Vector3 CameraAt(RingCanonicalPosition f) => geometry.CanonicalToWorld(f.AroundMeters, f.VerticalMeters, f.AcrossMeters);
+        double angle = pose.Around / ringRadius;
+        Vector3 forward = new Vector3((float)-Math.Sin(angle), 0f, (float)Math.Cos(angle)), up = new Vector3((float)-Math.Cos(angle), 0f, (float)-Math.Sin(angle));
+        _cam.Projection = Camera3D.ProjectionType.Perspective; _cam.KeepAspect = Camera3D.KeepAspectEnum.Width; _cam.Fov = 70f; _cam.Far = 6000f;
+        void Aim(Vector3 direction) => _cam.LookAtFromPosition(CameraAt(current), CameraAt(current) + direction * 100f, up);
+        Aim(forward);
+        foreach (Node3D hidden in new Node3D[] { _ground, _wall, _roof }) hidden.Visible = false;
+        _boulders.Multimesh = null; _outcrop.Multimesh = null; _caster.Multimesh = null;
+        SetView(0);
+
+        var layer = new RingScatterLayer
+        {
+            Name = "ScatterLayer", FrustumCulling = false,
+            Host = new ScatterLayerHost
+            {
+                Geometry = () => geometry, Focus = () => current, Epoch = () => 1, CopyRecords = into => into.AddRange(records),
+                RingAcrossWidthMeters = () => LandscapeWorld.Width, Sun = () => _sun, Surface = () => null,
+            },
+        };
+        _vp.AddChild(layer);
+        await WaitFrames(() => layer.DrawOutputs == 10 && !layer.SetPending, 600, "the layer to show its 10 outputs (draw outputs " + layer.DrawOutputs + ")");
+        Check(layer.BatchCount == 10, $"layer: {layer.BatchCount} batches registered, expected 10");
+        var outputs = layer.OutputInfo();
+        Check(outputs.Count(o => !o.Caster) == 8 && outputs.Count(o => o.Caster) == 2, "layer: expected 8 camera outputs and 2 caster outputs");
+        Check(layer.SourceBuilds == 1 && layer.AnchorRebuilds == 0, $"layer: {layer.SourceBuilds} builds and {layer.AnchorRebuilds} anchor rebuilds before any move");
+        Check(layer.GetParent() == _vp && layer.GetChildren().OfType<Node3D>().All(n => n.Name.ToString().StartsWith("ScatterSet")), "layer: renderers are not under the layer's sets");
+
+        // Expected counts from the records and the B5 table (independent of the layer's own table).
+        Vector3 camera = CameraAt(focus);
+        RingScatterClassTable table = RingScatterClassTable.Production;
+        var bands = new[] { new[] { (0f, 45f), (35f, 165f), (135f, 600f) }, new[] { (0f, 165f), (135f, 650f), (550f, 2500f) }, new[] { (0f, 13.5f), (10.5f, 50f) } };
+        var caps = new[] { 1500, 150, 1000 };
+        int[] slotOf = { 0, 1, 2 };
+        int GroupOf(ScatterRecord r) => table.Find(r.ClassId)!.RenderGroup switch { RingScatterRenderGroup.Boulders => 0, RingScatterRenderGroup.Outcrops => 1, _ => 2 };
+        float DistanceOf(ScatterRecord r) => (geometry.CanonicalToWorld(r.AroundCm * .01, r.SurfaceHeight, r.AcrossCm * .01) - camera).Length();
+        var distance = records.Select(DistanceOf).ToArray();
+        const float Slack = .02f;
+        int ambiguousTotal = 0;
+        var expected = new Dictionary<string, (int Min, int Max)>();
+        for (int group = 0; group < 3; group++)
+        {
+            int remainingMin = caps[group], remainingMax = caps[group];
+            for (int lod = 0; lod < bands[group].Length; lod++)
+            {
+                (float near, float far) = bands[group][lod];
+                int exact = 0, ambiguous = 0;
+                for (int i = 0; i < records.Count; i++)
+                {
+                    if (GroupOf(records[i]) != group) continue;
+                    float d = distance[i];
+                    if (d >= near && d < far) exact++;
+                    if (MathF.Abs(d - near) < Slack || MathF.Abs(d - far) < Slack) ambiguous++;
+                }
+                ambiguousTotal += ambiguous;
+                int min = Math.Min(Math.Max(exact - ambiguous, 0), remainingMin), max = Math.Min(exact + ambiguous, remainingMax);
+                remainingMin = Math.Max(remainingMin - min, 0); remainingMax = Math.Max(remainingMax - max, 0);
+                expected[$"ScatterRock_{(group == 0 ? "Boulders" : group == 1 ? "Outcrops" : "Cobbles")}_L{lod}"] = (min, max);
+            }
+        }
+        float shadowDistance = _sun.DirectionalShadowMaxDistance;
+        int casterRemaining = 1650;
+        foreach (int group in new[] { 0, 1 })
+        {
+            int exact = 0, ambiguous = 0;
+            for (int i = 0; i < records.Count; i++)
+            {
+                RingScatterClass cls = table.Find(records[i].ClassId)!;
+                if (GroupOf(records[i]) != group || !(records[i].Size >= cls.ShadowMinSizeM)) continue;
+                if (distance[i] < shadowDistance) exact++;
+                if (MathF.Abs(distance[i] - shadowDistance) < Slack) ambiguous++;
+            }
+            int take = Math.Min(exact, casterRemaining);
+            casterRemaining -= take;
+            expected[$"ScatterRock_{(group == 0 ? "Boulders" : "Outcrops")}_Shadow"] = (Math.Min(Math.Max(exact - ambiguous, 0), take), take + ambiguous);
+        }
+        var full = new Dictionary<string, (uint[] Commands, float[] Rows)>();
+        var lines = new List<string>();
+        foreach (var o in outputs)
+        {
+            full[o.Name] = await ReadFull(layer, o.BatchId);
+            uint n = full[o.Name].Commands.Length >= 2 ? full[o.Name].Commands[1] : 0u;
+            (int min, int max) = expected[o.Name];
+            lines.Add($"{o.Name} {n} (expect {min}-{max})");
+            Check(n >= min && n <= max, $"layer: {o.Name} holds {n} rows, expected {min} to {max}");
+            if (!o.Caster) Check(max > 0 ? n > 0 : n == 0, $"layer: {o.Name} empty although its band holds records");
+        }
+        _log.Add($"layer: 10 batches ({tileRecords} tile + 10 synthetic records); rows " + string.Join(", ", lines));
+
+        // Casters: boulders from 2 m and outcrops only (the rows' up vector has the record's size as its length).
+        foreach (var o in outputs.Where(o => o.Caster))
+        {
+            var rows = full[o.Name].Rows;
+            uint n = full[o.Name].Commands[1];
+            for (int i = 0; i < n; i++)
+            {
+                float size = new Vector3(rows[i * 16 + 1], rows[i * 16 + 5], rows[i * 16 + 9]).Length();
+                if (o.Group == 0) Check(size >= 2f - 1e-3f, $"layer: {o.Name} holds a {size:0.00} m boulder");
+                else Check(o.Group == 1, "layer: a cobble caster exists");
+            }
+        }
+        int smallBoulders = 0;
+        for (int i = 0; i < records.Count; i++) if (GroupOf(records[i]) == 0 && records[i].Size < 2f && distance[i] < shadowDistance) smallBoulders++;
+        _log.Add($"layer casters: only boulders of 2 m and up and outcrops ({smallBoulders} smaller boulders inside the shadow distance are excluded)");
+
+        // Band table and cross-fades: where the marked boulders went.
+        float? Share(string name, int variant)
+        {
+            var (commands, rows) = full[name];
+            float want = variant + 32f * MarkerTint666;
+            for (int i = 0; i < commands[1]; i++)
+                if (MathF.Abs(rows[i * 16 + 12] - want) < .5f) return KeptShare(rows[i * 16 + 13], rows[i * 16 + 15]);
+            return null;
+        }
+        string L(int lod) => $"ScatterRock_Boulders_L{lod}";
+        float s39 = Smooth(35f, 45f, 39f), s41 = Smooth(35f, 45f, 41f);
+        float? a30 = Share(L(0), 11), b30 = Share(L(1), 11), a39 = Share(L(0), 13), b39 = Share(L(1), 13), a41 = Share(L(0), 14), b41 = Share(L(1), 14);
+        float? a100 = Share(L(0), 12), b100 = Share(L(1), 12), c100 = Share(L(2), 12), b300 = Share(L(1), 10), c300 = Share(L(2), 10);
+        Check(a30 is { } x30 && x30 > .999f && b30 == null, $"band: the 30 m boulder is LOD0 only at full coverage (LOD0 {a30}, LOD1 {b30})");
+        Check(a39 is { } x39 && b39 is { } y39 && MathF.Abs(x39 - (1f - s39)) < .03f && MathF.Abs(y39 - s39) < .03f && x39 > y39, $"band: the 39 m boulder is mostly LOD0 in the cross-fade (LOD0 {a39}, LOD1 {b39}, expected {1f - s39:0.000}/{s39:0.000})");
+        Check(a41 is { } x41 && b41 is { } y41 && MathF.Abs(x41 - (1f - s41)) < .03f && MathF.Abs(y41 - s41) < .03f && y41 > x41, $"band: the 41 m boulder is mostly LOD1 in the cross-fade (LOD0 {a41}, LOD1 {b41}, expected {1f - s41:0.000}/{s41:0.000})");
+        Check(a39 + b39 is { } t39 && MathF.Abs(t39 - 1f) < .03f && a41 + b41 is { } t41 && MathF.Abs(t41 - 1f) < .03f, "band: the two LODs of a cross-fade do not add up to full coverage");
+        Check(a100 == null && b100 is { } x100 && x100 > .999f && c100 == null, $"band: the 100 m boulder is LOD1 only at full coverage (LOD0 {a100}, LOD1 {b100}, LOD2 {c100})");
+        Check(b300 == null && c300 is { } x300 && x300 > .999f, $"band: the 300 m boulder is LOD2 only at full coverage (LOD1 {b300}, LOD2 {c300})");
+        _log.Add($"bands: 30 m L0 {a30:0.00}; 39 m L0 {a39:0.00} + L1 {b39:0.00}; 41 m L0 {a41:0.00} + L1 {b41:0.00}; 100 m L1 {b100:0.00}; 300 m L2 {c300:0.00}");
+
+        // The camera list: the filter drops what is behind the camera.
+        int boulderL1 = outputs.First(o => o.Name == L(1)).BatchId, boulderL0 = outputs.First(o => o.Name == L(0)).BatchId;
+        layer.FrustumCulling = true;
+        await Frames(20);
+        uint ahead = await ReadCameraCount(layer, boulderL0), fullL0 = full[L(0)].Commands[1];
+        Check(ahead >= 1 && ahead <= fullL0, $"cull: {ahead} rows ahead of {fullL0}");
+        Aim(-forward);
+        await Frames(20);
+        uint behindL1 = await ReadCameraCount(layer, boulderL1);
+        uint fullL1 = full[L(1)].Commands[1];
+        Check(behindL1 < fullL1, $"cull: looking away still draws {behindL1} of {fullL1} LOD1 rows");
+        _log.Add($"cull: camera list {ahead} of {fullL0} LOD0 rows ahead; {behindL1} of {fullL1} LOD1 rows looking away");
+        Aim(forward);
+        await Frames(10);
+
+        // Row order under a binding cap: the boulder slot capped at half the in-band rows keeps the nearest rows (source rows are ordered by distance from the anchor centre).
+        {
+            int total = 0;
+            for (int lod = 0; lod < 3; lod++) total += (int)full[L(lod)].Commands[1];
+            layer.CapScale = (total / 2 + .2f) / 1500f;
+            await Frames(30);
+            var kept = new int[3];
+            var keptDistance = new List<float>();
+            RingLodGeometrySnapshot centred = geometry.CenteredAt(layer.Anchor.Around, layer.Anchor.Across);
+            var boulderRecords = Enumerable.Range(0, records.Count).Where(i => GroupOf(records[i]) == 0).ToList();
+            float AnchorKey(ScatterRecord r)
+            {
+                double da = r.AroundCm * .01 - layer.Anchor.Around, dz = r.AcrossCm * .01 - layer.Anchor.Across;
+                return (float)Math.Sqrt(da * da + dz * dz);
+            }
+            float worstKept = 0f; int keptRows = 0;
+            var inBandKeys = new List<float>();
+            for (int lod = 0; lod < 3; lod++)
+            {
+                var (commands, rows) = await ReadFull(layer, outputs.First(o => o.Name == L(lod)).BatchId);
+                kept[lod] = (int)commands[1];
+                (float near, float far) = bands[0][lod];
+                foreach (int i in boulderRecords) if (distance[i] >= near && distance[i] < far) inBandKeys.Add(AnchorKey(records[i]));
+                for (int r = 0; r < kept[lod]; r++)
+                {
+                    var position = new Vector3(rows[r * 16 + 3], rows[r * 16 + 7], rows[r * 16 + 11]);
+                    int best = -1; float bestD = 1.5f;
+                    foreach (int i in boulderRecords)
+                    {
+                        float d = (centred.CanonicalToWorld(records[i].AroundCm * .01, records[i].SurfaceHeight, records[i].AcrossCm * .01) - position).Length();
+                        if (d < bestD) { bestD = d; best = i; }
+                    }
+                    Check(best >= 0, "cap: a kept row matches no boulder record");
+                    worstKept = MathF.Max(worstKept, AnchorKey(records[best]));
+                    keptRows++;
+                }
+            }
+            Check(kept.Sum() == total / 2, $"cap: boulder slot kept {kept.Sum()} rows, expected {total / 2} of {total}");
+            inBandKeys.Sort();
+            // Bands overlap in their fades, so rows are counted per LOD batch; the kept rows must all lie within the nearest keptRows of the in-band set, within one anchor snap.
+            float cutoff = inBandKeys[Math.Min(inBandKeys.Count - 1, keptRows - 1)];
+            Check(worstKept <= cutoff + AnchorMeters, $"cap: kept rows reach {worstKept:0} m from the anchor, nearest-{keptRows} cutoff {cutoff:0} m (+512)");
+            Check(kept[2] < (int)full[L(2)].Commands[1], "cap: the far LOD2 rows were not the ones dropped");
+            _log.Add($"cap: boulder slot at half ({total / 2} of {total}): kept L0/L1/L2 {kept[0]}/{kept[1]}/{kept[2]} (were {full[L(0)].Commands[1]}/{full[L(1)].Commands[1]}/{full[L(2)].Commands[1]}); farthest kept {worstKept:0} m from anchor, nearest-{keptRows} cutoff {cutoff:0} m");
+            layer.CapScale = 1f;
+            await Frames(20);
+        }
+
+        // Anchor: 200 m changes nothing, 700 m (past 512) one rebuild.
+        current = new RingCanonicalPosition(focus.AroundMeters + 200.0, focus.VerticalMeters, focus.AcrossMeters);
+        _cam.Position = CameraAt(current);
+        await Frames(40);
+        Check(layer.SourceBuilds == 1 && layer.AnchorRebuilds == 0, $"anchor: a 200 m move rebuilt ({layer.SourceBuilds} builds, {layer.AnchorRebuilds} anchor rebuilds)");
+        current = new RingCanonicalPosition(focus.AroundMeters + 700.0, focus.VerticalMeters, focus.AcrossMeters);
+        _cam.Position = CameraAt(current);
+        await WaitFrames(() => layer.AnchorRebuilds >= 1 && layer.SourceBuilds >= 2 && !layer.SetPending && layer.DrawOutputs == 10, 600, "the anchor rebuild to land");
+        await Frames(40);
+        Check(layer.AnchorRebuilds == 1 && layer.SourceBuilds == 2, $"anchor: a 700 m move gave {layer.AnchorRebuilds} anchor rebuilds and {layer.SourceBuilds} builds");
+        Check(layer.BatchCount == 10 && layer.DrawOutputs == 10, $"anchor: after the swap {layer.BatchCount} batches, {layer.DrawOutputs} draw outputs");
+        _log.Add($"anchor: 200 m = 0 rebuilds, 700 m = {layer.AnchorRebuilds} rebuild; build {layer.LastSourceBuildMs:0.0} ms; {layer.RendererCount} renderers");
+
+        layer.QueueFree();
+        await Frames(3);
     }
 
     private static float MaxAbs(Vector3 v) => MathF.Max(MathF.Abs(v.X), MathF.Max(MathF.Abs(v.Y), MathF.Abs(v.Z)));
