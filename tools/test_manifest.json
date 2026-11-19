@@ -896,6 +896,33 @@
       "expected_s": 1,
       "timeout_s": 60
     },
+    "lens_settings_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "settings",
+        "atmosphere-haze",
+        "ui-menu"
+      ],
+      "marker": "LENS_SETTINGS_SMOKE",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
+    "sun_visibility_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "slow",
+      "tags": [
+        "atmosphere-haze",
+        "clouds",
+        "render-core"
+      ],
+      "marker": "SUN_VISIBILITY_GPU",
+      "user_args": "--prefs=defaults --weather=clear",
+      "expected_s": 145,
+      "timeout_s": 600
+    },
     "atmosphere_visual_test": {
       "kind": "test",
       "mode": "gpu",

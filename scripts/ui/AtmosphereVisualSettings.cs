@@ -42,4 +42,8 @@ public partial class AtmosphereVisualSettings : Resource
     [Export] public bool VegetationInstanceHaze { get; set; } = true;
     /// <summary>Optical-depth quadrature points: 4, 8 or 16.</summary>
     [Export] public int HazeQuality { get; set; } = 4;
+    /// <summary>LF-1: strength (0-1) of the physical veiling glare around the sun (RingSunGlare). 1 = the human eye's glare of the sun as displayed, 0 = no pass at all. Absent in older files, which load as 1.</summary>
+    [Export] public float SunGlare { get; set; } = 1.0f;
+    /// <summary>LF-1: strength (0-1) of ghosts and starburst (drawn from LF-2; inert until then). Absent in older files, which load as 0.</summary>
+    [Export] public float LensFlare { get; set; } = 0.0f;
 }

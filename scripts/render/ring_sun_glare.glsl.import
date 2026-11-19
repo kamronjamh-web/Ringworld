@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://c1ioynl4utunh"
+path="res://.godot/imported/ring_sun_glare.glsl-2b937d8c382128ecea9fbb37ce37041c.res"
+
+[deps]
+
+source_file="res://scripts/render/ring_sun_glare.glsl"
+dest_files=["res://.godot/imported/ring_sun_glare.glsl-2b937d8c382128ecea9fbb37ce37041c.res"]
+
+[params]
+

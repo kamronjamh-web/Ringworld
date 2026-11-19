@@ -154,6 +154,10 @@ public partial class RingLiveTuningDrawer
         AddAtmosphereSlider(tab, "Warmth", "Sun warmth", 0, 1, .01, settings.SunWarmth);
         AddAtmosphereSlider(tab, "HazeBrightness", "Haze brightness", 0, 2, .01, settings.HazeBrightness);
         AddAtmosphereSlider(tab, "EnclosedCloudFog", "Cloud fog (caves/water)", 0, 1, .01, settings.EnclosedCloudFog);
+        tab.AddChild(new Label { Text = "Sun", Modulate = RingUiStyle.Muted });
+        AddAtmosphereSlider(tab, "SunGlare", "Sun glare", 0, 1, .01, settings.SunGlare,
+            "Veiling glare around the sun (eye/lens scatter). 1 = physical for the sun as displayed, 0 = off.");
+        AddAtmosphereSlider(tab, "LensFlare", "Lens flare", 0, 1, .01, settings.LensFlare, "Ghosts and starburst. Not drawn yet.");
         // Physical-only controls (hidden while the Legacy model is selected; see RefreshAtmosphereControls).
         _atmospherePhysicalGroup = new VBoxContainer { Name = "AtmospherePhysicalGroup" };
         _atmospherePhysicalGroup.AddChild(new Label { Text = "Physical haze", Modulate = RingUiStyle.Muted });
@@ -199,10 +203,10 @@ public partial class RingLiveTuningDrawer
         RefreshAtmosphereControls();
     }
 
-    private void AddAtmosphereSlider(VBoxContainer parent, string key, string label, double min, double max, double step, double initial)
+    private void AddAtmosphereSlider(VBoxContainer parent, string key, string label, double min, double max, double step, double initial, string tooltip = "")
     {
-        var row = new HBoxContainer();
-        row.AddChild(new Label { Text = label, CustomMinimumSize = new Vector2(150, 0) });
+        var row = new HBoxContainer { TooltipText = tooltip };
+        row.AddChild(new Label { Text = label, CustomMinimumSize = new Vector2(150, 0), TooltipText = tooltip });
         var slider = new HSlider { Name = "Atmosphere" + key, MinValue = min, MaxValue = max, Step = step, Value = initial, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         var value = new Label { Text = initial.ToString("0.###"), CustomMinimumSize = new Vector2(55, 0) };
         slider.ValueChanged += changed => { value.Text = changed.ToString("0.###"); SetAtmosphereTuningValue(key, (float)changed); };
@@ -237,6 +241,8 @@ public partial class RingLiveTuningDrawer
         SetAtmosphereRange("CloudShadowing", s.CloudShadowing);
         SetAtmosphereRange("StormHaze", s.StormHaze);
         SetAtmosphereRange("EnclosedCloudFog", s.EnclosedCloudFog);
+        SetAtmosphereRange("SunGlare", s.SunGlare);
+        SetAtmosphereRange("LensFlare", s.LensFlare);
         SetAtmosphereRange("AerosolHeight", s.AerosolHeight);
         SetAtmosphereRange("RayleighStrength", s.RayleighStrength);
         SetAtmosphereRange("GroundAlbedo", s.GroundAlbedo);

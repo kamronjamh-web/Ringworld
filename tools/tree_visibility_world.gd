@@ -81,10 +81,13 @@ static func has_property(node: Object, prop: String) -> bool:
 	return false
 
 
-## Hides the moving or noisy scene parts that are not the tree path (clouds, cloud bridge and driver, grass, gust-front leaf debris) so two captures of one state can be byte-identical.
+## Hides the moving or noisy scene parts that are not the tree path (clouds, the cloud driver's advection, grass, gust-front leaf debris) so two captures of one state can be byte-identical.
+## SunshineCloudBridge stays live on purpose: it writes the published cloud matrix and parameters (R3a) every frame, and holding it froze them at the first
+## still's camera while the bound accumulation images kept following the live camera, so every later still read the clouds wrongly (reflections plan 9.9).
+## The cloud motion that breaks byte identity is the driver's wind advection and dither clock, which stay held here (and freeze_world zeroes the bridge's wind).
 static func quiet_scene(game: Node) -> Array:
 	var hidden: Array = []
-	for n in ["RingVolumetricClouds", "SunshineCloudBridge", "SunshineCloudsDriver", "StandingGrass"]:
+	for n in ["RingVolumetricClouds", "SunshineCloudsDriver", "StandingGrass"]:
 		var node := game.get_node_or_null(n)
 		if node == null:
 			continue

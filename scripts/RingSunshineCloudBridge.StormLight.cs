@@ -79,6 +79,29 @@ public partial class RingSunshineCloudBridge
     public Vector4 GetStormPublishedLight() => _stormPublishedLight;
 
     /// <summary>
+    /// CPU twin of the sky's sun_storm_hide (materials/ring_local_sky.gdshader): 1 - ring_storm_shadow_fade(ring_storm_path_level(sun direction, 40 km)) x smoothstep(0, 0.5, storm strength).
+    /// The path level is the mean of <see cref="GetStormLevelAt"/> at 0.2 / 0.45 / 0.7 / 0.95 of 40 km along the sun direction projected on the around / across axes of the published storm frame.
+    /// 1 (no hide) while storm light is invalid. Used by the sun glare (RingSunGlare), which has no GPU copy of the storm map.
+    /// </summary>
+    public float GetSunStormHide(Vector3 sunDirection)
+    {
+        Vector4 light = _stormPublishedLight;
+        if (!_stormPublishedValid || !_stormFramePublished || light.W < 0.5f || light.X <= 0.0f || _explorer == null) return 1.0f;
+        RingCanonicalPosition camera = _explorer.CanonicalPosition;
+        Vector3 around = new(_stormPublishedFrame.X.X, _stormPublishedFrame.X.Y, _stormPublishedFrame.X.Z);
+        Vector3 across = new(_stormPublishedFrame.Y.X, _stormPublishedFrame.Y.Y, _stormPublishedFrame.Y.Z);
+        float sum = 0.0f;
+        foreach (float fraction in new[] { 0.2f, 0.45f, 0.7f, 0.95f })
+        {
+            Vector3 offset = sunDirection * (40000.0f * fraction);
+            sum += GetStormLevelAt(camera.AroundMeters + offset.Dot(around), camera.AcrossMeters + offset.Dot(across));
+        }
+        float level = Mathf.Min(sum * 0.25f, 1.0f);
+        float fade = level <= 0.0f ? 0.0f : SmoothUnit((level - light.Y) / Mathf.Max(light.Z - light.Y, 1e-6f));
+        return 1.0f - fade * SmoothUnit(light.X / 0.5f);
+    }
+
+    /// <summary>
     /// CPU storm level D at a canonical position: the C# mirror of ring_ws_apply_macro's g_ws_storm (max of the storm term and the heavy-overcast
     /// term of the coverage). Uses the uploaded camera-independent systems, so it is meaningful only while CameraIndependentClouds is on.
     /// </summary>

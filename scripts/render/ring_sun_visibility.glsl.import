@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://d106r4tiw0niu"
+path="res://.godot/imported/ring_sun_visibility.glsl-186cad42514ce52a7db3a1edb5542135.res"
+
+[deps]
+
+source_file="res://scripts/render/ring_sun_visibility.glsl"
+dest_files=["res://.godot/imported/ring_sun_visibility.glsl-186cad42514ce52a7db3a1edb5542135.res"]
+
+[params]
+

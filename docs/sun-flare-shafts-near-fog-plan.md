@@ -1,6 +1,6 @@
 # Sun lens flare, light shafts and near ground fog: feature arc plan
 
-Status: plan, 2026-11-18. The NF-0 and LF-0 spikes are done: both are GO, with work-order changes (see "Spike results" at the end). Costs marked **est.** are estimates. Every phase begins with a measurement step.
+Status: plan, 2026-11-18. The NF-0 and LF-0 spikes are done: both are GO, with work-order changes (see "Spike results" at the end). LF-1 (glare) is implemented ("LF-1 result"). The NF-1 design and the refined NF-2..NF-7 orders are in "NF-1 design"; they override sections C.2 to C.8. Costs marked **est.** are estimates. Every phase begins with a measurement step.
 
 Covers three features:
 - (a) sun lens flare and glare;
@@ -503,3 +503,235 @@ Stills:
 3. **`sun_visibility_gpu_test` uses the image channel as its oracle.** Disc minus annulus luminance against 2.55 x `sun_color` x transmittance gives an independent F at every pose, including storm and eclipse, where the sky shader itself hides the disc. The crescent case scrubs `EclipseEventDirector.ScrubToTau` to 0.3 to 0.7 coverage in a cloud-free window and checks against `RawEclipseCoverage` (3 %).
 4. **Compositor order.** A "lens effects last" rule beside `EnsureRainHazeCompositorLast`, as planned.
 5. **Flicker check.** It needs running clocks (wind): with clocks held, F was constant to 0.01 over 40 frames at the forest edge.
+
+## LF-1 result (2026-11-18): glare on by default, tests pass
+
+Implemented as LF-0 amended it. Uncommitted; evidence in `.godot/audit_baseline/common/atmosphere/lf1/`.
+
+**What runs.**
+- `RingSunGlare` (C# node in the game scene) publishes CPU scalars each frame: the sun direction the sky draws, the disc radius, eclipse coverage (`RawEclipseCoverage`), storm hide (`RingSunshineCloudBridge.GetSunStormHide`, the CPU twin of the sky's `sun_storm_hide`, refreshed at 10 Hz), the enclosure gate (underwater or cave fog weight), the camera-column cloud transmittance and the strength.
+- `RingSunGlareComposite.gd` runs two computes, last in the compositor ("lens effects last": `RingLocalWeatherEffects.AttachLensEffect` / `EnsureLensEffectsLast`, kept by `EnsureRainHazeCompositorLast` on every path).
+  - `ring_sun_visibility.glsl` (one group): 48 disc and 16 annulus taps on main depth, far depth and the live Sunshine accumulation alpha. F = F_taps x (1 - coverage) x storm_hide x gate.
+  - Measures the displayed disc radiance L from the resolved HDR colour: the brightest clean disc tap minus the clean annulus mean. It holds L in a persistent buffer while the sun is covered.
+  - `ring_sun_glare.glsl` adds strength x F x L x Omega_disc x GSF(theta) in a window around the sun, with a radial fade over the outer quarter of the window. GSF is the CIE 1999 general disability glare function (age 25, pigmentation 0.5).
+- Strength 0 removes the effect from the compositor (byte-identical). With the sun off-screen the effect is inactive (no dispatch).
+- Menu: Atmosphere tab, "Sun" group: "Sun glare" (0 to 1, default 1) and "Lens flare" (0 to 1, default 0; persisted, draws nothing until LF-2).
+
+**Calibration.** Strength 1 is the human eye's physical glare of the sun as displayed. The displayed disc is only about 10x the sky beside it (L = 2.42 at noon against 2.55 x sun_color expected), while the real sun is about 1e5x. Physical glare of the displayed sun is therefore a faint fringe within about 1 degree: the window is 72 px at 1080p, PSNR 78 dB against glare off. No gain was added (user rule: no boost without approval). A debug-only, non-persisted `RingSunGlare.GlareSourceGain` exists for comparison stills (gain 30 and 1000 in `lf1/`). Question LF-A in the report.
+
+**Tests.** `sun_visibility_gpu_test` (gpu, slow, 144 s) and `lens_settings_smoke_test` pass, with `rainbow_gpu_test`, `rain_streaks_gpu_test`, `atmosphere_menu_smoke_test` and `atmosphere_settings_smoke_test`.
+
+| Case | F | Image oracle |
+|---|---|---|
+| clear noon, centred / 14 deg off | 1.000 / 1.000 | 1.000 / 1.025 |
+| behind a ridge (sun 2 deg) | 0.000 | 0.000 |
+| far arch (forced sun direction, main depth empty 1.00, far empty 0.00) | 0.000 | - |
+| inside a cloud | 0.000 | 0.001 |
+| eclipse coverage 0.524 (F_taps 0.958) | 0.456 = expected 0.456 | 0.385 |
+| pinned storm | 0.000 | -0.021 |
+
+- Strength 0 is byte-identical to the effect absent.
+- Glare on changes only pixels inside the window.
+- L_hold is identical with the draw on and off over 30 frames: no feedback.
+- Cost: root viewport A-B-A 2.66 / 2.63 / 2.56 ms, inside noise (LF-0 measured about 0.012 ms by timestamps). 4070, indicative.
+
+**Left for later.** LF-2 ghosts and starburst (user); the hub false sun and lightning (A3 default: no); `sun_disk_intensity` is read from the shader default (no material sets it today).
+
+## NF-1 design (2026-11-18): near ground fog
+
+This section overrides C.2 to C.8 where they differ. The NF-0 numbers stand. The user's answers apply: the fog is weather and location driven and terrain-aware; it runs on High and above at 0.4 to 0.8 ms, reduced on Medium, off on Low; clear air stays clean.
+
+### N1. Architecture
+
+| Part | Owner | Runs |
+|---|---|---|
+| Drivers D (per kind, per camera) | `RingNearFog` (C#), 2 Hz, smoothed | CPU |
+| Near-water field (water mask and surface height, 8 m texels, +-256 m) | `RingNearFog`, rebuilt on a worker after a 32 m move | CPU worker, uploaded as a small texture |
+| Terrain height T0 and basin floor B | the height-shadow producer, copied on each L0 rebuild | GPU compute, no CPU cost |
+| Density rho and lighting per froxel | `FogVolume` (`FOG_VOLUME_SHAPE_WORLD`) with `materials/ring_near_fog.gdshader` (`shader_type fog`) | Godot volumetric fog |
+| Fog end for main-empty pixels (the whole sky) | `RingNearFogEndComposite.gd` + `ring_near_fog_end.glsl` | post-transparent compute, 1/8 resolution |
+| Environment volumetric fog settings and on/off | `RingNearFog`, the only writer | CPU |
+
+The density and lighting functions live once in `materials/ring_near_fog_common.gdshaderinc`. That file uses plain parameters only (no globals inside the functions), so the fog shader wraps it with globals and the compute expands it with `RingAtmosphereLuts.ExpandIncludes` and feeds it from its UBO and bindings.
+
+### N2. Density (world space, terrain-relative, three kinds)
+
+rho(x) = amount x [ rho_rad(x) + rho_mist(x) + rho_steam(x) ] x (1 + c_k x N(x)) x gate
+
+**Radiation fog: pools in basins with a flat lid.**
+rho_rad = sigma_rad x D_rad x Lid((z - B(x)) / H)
+- z is the froxel's ring-vertical height.
+- B(x) is the basin floor: the min of T0 over a radius of about 320 m, then a 3 x 3 box blur.
+- H is the "Fog layer height" menu value, default 40 m.
+- In a valley B is the valley floor, so the fog fills the valley to a flat top at B + H whatever the local slope. On a plateau or plain B is close to the ground, so the fog lies H deep. Above B + H there is none, so ridges stand clear.
+
+**Mist: hugs the ground.**
+rho_mist = sigma_mist x D_mist x Lid(h_g(x) / H_m)
+- h_g = z - T0(x).
+- H_m = clamp(0.35 H, 5, 40) m.
+
+**Steam fog: over rivers and lakes.**
+rho_steam = sigma_steam x D_steam x W(x) x Lid((z - z_w(x)) / H_s)
+- W is the near-water mask and z_w the water surface height.
+- H_s = 6 m.
+
+**Lid.** Lid(u) = 1 / (1 + exp((u - 1) / 0.15)): flat below, smooth top, never sea-level anchored.
+
+**Design constants (per metre).** sigma_rad = 0.01, sigma_mist = 0.002, sigma_steam = 0.01.
+
+**Noise.** Two-octave world-anchored value noise at 40 m and 11 m, advected by the shared wind, contrast c = 0.5 (radiation and mist) and 0.9 (steam wisps). It fades to 0 over the last 40 % of the window in both the froxels and the fog end, which avoids aliasing in the large far slices.
+
+**Gate.** gate = (1 - enclosure weight) x fast-travel and altitude fade (N6).
+
+**The map frame.** `WORLD_POSITION` goes to the ring frame through `ringworld_height_shadow_frame`, with the curvature term h = f.z - f.x^2 / 2R (validated in NF-0 to 0.003 m). T0 and B are sampled in the L0 slot space (+-2 km, four times the window), with the existing bounds and params. L1 is not needed until NF-8.
+
+### N3. Drivers D (CPU, 2 Hz, exponentially smoothed with tau 20 s)
+
+Inputs at the camera:
+- climate moisture m and temperature t (`TerrainSample.Moisture` / `.Temperature`, 0 to 1);
+- wet map soak and rain-now (`RingWetWorld`);
+- shared wind speed in m/s;
+- the Sunshine coverage at the camera (night cloud cover);
+- `CelestialFrame` (sun elevation, time since sunset, night length).
+
+Derived factors:
+- **humidity** h = 1 - (1 - m)(1 - 0.8 soak);
+- **cool factor** f_T = 1 - smoothstep(0.7, 0.95, t);
+- **clear night** f_clr = 1 - 0.8 coverage;
+- **wind cut-offs**: radiation 1 - smoothstep(2, 5 m/s); mist 1 - smoothstep(4, 9); steam 1 - smoothstep(3, 8);
+- **diurnal**: f_rad_time = smoothstep(0.1, 0.7, p) at night (p = time since sunset / night length). After sunrise it is 1 - smoothstep(3, 20 deg, sun elevation) until noon, then 0 until sunset. It is continuous at sunrise and at sunset, and stateless, so time skips and save and load need no history.
+
+| Kind | D |
+|---|---|
+| Radiation | smoothstep(0.45, 0.8, h) x f_T x f_clr x f_rad_time x wind_rad x (1 - rain_now) |
+| Mist | smoothstep(0.65, 0.9, h) x (0.3 + 0.7 f_rad_time) x wind_mist x (1 - 0.5 rain_now) |
+| Steam | f_rad_time x (1 - t) x wind_steam (spatially only where W > 0) |
+
+- A dry climate gets nothing.
+- After rain the soak raises h, giving post-rain mist that fades as the wet map dries. This is the physical replacement for the removed MIST-1/2.
+- Inactive: when amount x max_k(sigma_k x D_k) < 1e-4 per metre, `RingNearFog` fades the fog out over 2 s and then disables volumetric fog (byte-identical, measured in NF-0).
+- D is weather state for every world, not generation.
+- Advection (coastal) fog is not in the first cut.
+
+### N4. Lighting (froxels)
+
+**`ALBEDO`** = omega (0.99) x V_light(x).
+- Sun term (by day): V_light = T_haze_sun(x) x V_cloud(x) x V_height(x).
+  - T_haze_sun comes from the haze include (`ring_haze_sun_transmittance` through a small wrapper in `ring_haze_shared.gdshaderinc`; NF-5 measures its per-froxel cost). The fallback, if it costs over 0.08 ms, is one camera value: the fog is within 250 m of the camera, so T_sun barely varies.
+  - V_cloud: the Sunshine near cloud-shadow cascade; register the fog material with `RingCloudShadowProjector.Register`.
+  - V_height: `ring_height_shadow_sample`, which follows whichever light the lattice was built for (`ringworld_height_shadow_light`).
+- Godot's froxels add the directional shadow atlas, which gives the tree and POI shafts.
+- At night the sun factors must not zero the planet light. V_light blends with the day factor between the sun factors and the planet-light factors (cloud only), because `ALBEDO` scales every light.
+- NF-5 confirms that the `StarLight` energy carries no camera-column cloud dimming; otherwise the cloud would be counted twice.
+
+**`EMISSION`** = omega x A_fog(x), with Godot's ambient inject at 0. NF-0 showed that `EMISSION` is in-scattered radiance, independent of sigma.
+- A_fog = 0.5 (1 + rho_g) A_up + 0.5 rho_g E_sun_ground(x) / pi.
+  - The first half is the sky above and the ground reflecting it; the second is the ground bounce of sunlight, which matters for fog over sunlit ground.
+  - rho_g = the haze ground albedo (0.11).
+- A_up is the radiance a white upward Lambert surface gets from the Environment ambient (colour, energy, sky contribution).
+  - day_side_atmosphere publishes it as a new global `ringworld_fog_ambient`, from the same inputs it gives the Environment.
+  - That keeps the fog and the shaded terrain in one unit system, and fixes NF-0's saturated blue glow.
+- Under the forest canopy, A_fog should take the forest lane's canopy sky occlusion (`ringworld_canopy_cover`) once FL lands. That is a follow-up, not NF-5.
+
+**Settings and lights.**
+- Anisotropy 0.7.
+- Light volumetric energy 1 on the sun, planet and hub lights.
+- Other OmniLights and SpotLights keep Godot's default of 1: lamps glow in fog, which is physical. NF-7 checks the cost near POI lights.
+
+### N5. The sky gap: one fog-end pass after the far-scene composites (option (a))
+
+NF-0 found that `RingFarBackdropComposite` overwrites every main-empty pixel (the whole sky) after Godot fogged it. Option (a) is kept; this design picks where it applies.
+
+**One post-transparent compute, ordered after Sunshine, the lightning channels, the rainbow and the containment field composite, and before shock distortion, the rain streaks, the rain haze and the lens effects.**
+- It computes T_end and S_end per pixel at 1/8 resolution: 16 exponentially spaced steps to the fog length, with the shared density and the N4 lighting minus the shadow atlas.
+- It applies them, upsampled bilinearly with a depth-aware edge test, as follows:
+  - **Main-empty pixels**, only while the far backdrop is active: c' = c x T_end + S_end. After Sunshine, c is exactly the unfogged radiance arriving at the window's end: far ring, sky, clouds and lightning together. So this one formula fogs the backdrop, clouds and bolts correctly.
+  - **Main geometry beyond the window with cloud in front** (Sunshine accumulation alpha > 0): c' = c + alpha x S_end - (1 - T_end) x C_cloud. This corrects the cloud that Sunshine composited over already-fogged geometry. NF-4 confirms whether Sunshine's accumulation colour is premultiplied.
+  - Every other pixel is untouched: Godot fogged it.
+
+**Why not the planned double path** (the far backdrop applies T_end and S_end, and Sunshine applies them through GenericData):
+- A post-Sunshine pass sees the composed result, so the order of fog, cloud and backdrop is exact for sky pixels.
+- No Sunshine ABI change, no reimport.
+- The far backdrop shader is untouched.
+
+Option (b), the backdrop drawn inside the sky shader, stays the recorded end state.
+
+**Calibration oracle.** With `RingFarBackdropComposite` disabled, Godot fogs the sky itself (NF-0: sky luma 0.23 to 0.57). NF-4 calibrates the fog-end integration, including Godot's phase normalisation and light-energy convention, against that, under uniform fog without noise or shadows, before turning on the shared density.
+
+**Cost.** est. 0.02 to 0.04 ms (240 x 135 x 16 steps, a few taps each). Measured in NF-4.
+
+### N6. Ownership, presets, fades
+
+**Ownership.** `RingNearFog` sets a static `OwnerRegistered`. While it is set:
+- `RingVolumetricCloudLayer` (`_Ready` and `SetCloudsEnabled`) does not touch `VolumetricFogEnabled` or `VolumetricFogDensity`;
+- `RingLocalVolumetricCloudRenderer` does not touch them either (`_Ready`, `ConfigureEnvironment`, `RestoreEnvironmentSettings`). If someone enables that legacy renderer, the near fog stands down: they are mutually exclusive, and the legacy path is not production.
+- `RingScaledFarViewport` writes only its own Environment and is unchanged.
+
+**Environment while active.**
+- length: preset;
+- detail spread 2;
+- temporal reprojection on at 0.9;
+- GI inject 0, ambient inject 0, global density 0;
+- anisotropy 0.7;
+- sky affect 1 (only the skyless pixels matter; the backdrop pass handles the rest).
+
+**Presets** (`environment/volumetric_fog/volume_size` and `volume_depth` are global and set at run time through `RenderingServer.EnvironmentSetVolumetricFogVolumeSize`):
+
+| Preset | Fog | Grid | Length | Noise | NF-0 cost |
+|---|---|---|---|---|---|
+| Low | off | - | - | - | 0 |
+| Medium | reduced | 48 x 48 x 40 | 150 m | one octave | +0.08 ms |
+| High, Very High, Ultra | full | 96 x 96 x 80 (project setting) | 220 m | two octaves | +0.20 ms |
+
+- Very High and Ultra stay at High's grid until NF-7 shows a reason; a 128-wide grid costs more for little gain at 220 m.
+- The user allowed "reduced or none" on Medium. Reduced is chosen because it measured +0.08 ms; it is a one-line preset change if the user prefers none.
+- `RingGraphicsQualityController` is modified in the tree by another lane. NF-6 waits for that to land, or touches only its own new method.
+
+**Fades** (all multiply `gate`, then the owner disables below threshold):
+- ground speed 30 to 60 m/s: temporal reprojection smears;
+- camera above max(B + H, T0 + H_m) + 2 H at the camera: the fog is out of reach below;
+- enclosure (cave fog or underwater weight).
+
+### N7. Grave-key menu (Atmosphere tab, "Ground fog" group)
+
+- **Ground fog amount**, 0 to 2, default 1. 1 = as the weather produces it; 0 = off and byte-identical.
+- **Fog layer height**, 10 to 150 m, default 40.
+
+Kinds, noise, anisotropy and the grid are design data and presets. "Force fog" (a fixed D per kind) is a debug hook on `RingNearFog` for tests and stills, not a menu row.
+
+### N8. Refined work orders (these replace the C.8 table)
+
+Every order: `tools/run_tests.ps1 -Files <changed files> -Label nf-<n> -DryRun` first, then run. Register new tests in `tools/test_manifest.json`. Report the results.md summary and non-pass rows. Do not edit `project.godot`; propose lines. Do not touch other lanes' files.
+
+**Gotcha (found in LF-1).** A `.glsl` RDShaderFile is used through its imported `.res`. The test runner does not reimport, so an edited `.glsl` silently runs the old SPIR-V.
+- After every `.glsl` edit, run `tools/use_godot_48.ps1 --headless --import`.
+- Then restore `addons/terrain_3d/bin/~libterrain...dll` if the import deleted it (godot-test-run skill).
+- Check that the `.godot/imported/<name>.glsl-*.res` timestamp moved.
+
+`-Files` on `scenes/VoxelRingIntegrationTest.tscn` selects about 370 tests (it is a core file). Use `-Tests` for the named set instead.
+
+| WO | Role | Content | Tests and gates |
+|---|---|---|---|
+| NF-2a | implementer | **T0 and basin textures.** In the height-shadow producer (`RingTerrainHeightShadowGpu` / `RingTerrainHeightShadow.Gpu.cs`), after each L0 height upload and mip rebuild, a tiny compute copies the L0 height buffer into an R32F 1024^2 texture, and builds the basin floor B into R32F 64^2 (64 m texels: an 8 x 8 min pass to 128^2, then 2 x 2 to 64^2, a 5 x 5 min, then a 3 x 3 box, all toroidal in slot space). Publish `ringworld_height_shadow_t0_l0` and `ringworld_near_fog_basin_l0` (Texture2DRD globals; declare them in `project.godot`, proposed lines in the report). A GLSL-compatible sampling helper goes in a new `materials/ring_near_fog_common.gdshaderinc`. | `near_fog_terrain_fields_test` (GPU): T0 at 9 points matches `Terrain3DGameplay.SampleHeight` within 0.05 m, including across a recentre and the toroidal seam; B is no higher than T0 everywhere, and in a known basin pose B is within 2 m of the basin floor. Height-shadow tests unchanged (`-Files` selects them). |
+| NF-2b | implementer | **Owner, environment, FogVolume, density.** `RingNearFog` node: the ownership switch (N6) and its two legacy writers; the environment config while active; the FogVolume + `ring_near_fog.gdshader` with the N2 density (drivers as uniforms; a debug "force D" hook); placeholder lighting `ALBEDO` = omega, `EMISSION` = 0; amount default **0** until NF-6; fades (N6); off below threshold. | `near_fog_identity_gpu_test`: amount 0, inactive, and active-then-off are each byte-identical to the feature absent, with FXAA and once with TAA. **Terrain-relative regression** (the MIST-1 bug), headless on the shared function: density 1.5 m above ground on a 1,000 m plateau equals that on a 0 m plain; radiation density at a ridge top 60 m above the basin floor (H 40) is under 5 % of the floor value; the lid is flat (equal density at equal z across a valley floor and its lower slope). |
+| NF-3 | implementer | **Drivers and near-water field.** N3 drivers at 2 Hz with smoothing; the near-water field (64^2, 8 m texels, from `TerrainSample.WaterKind` / `ExactWaterLevel`) on a worker after a 32 m move, published as `ringworld_near_fog_water` plus a frame vec4. | `near_fog_drivers_test` (headless): monotone in humidity and soak; 0 above each wind cut-off; radiation 0 at noon, peaking at sunrise, gone by 20 deg; continuous at sunrise and sunset; no radiation fog under rain; steam only where W > 0; a dry climate gives 0. |
+| NF-4 | implementer | **Fog end (N5).** `RingNearFogEndComposite.gd` + `ring_near_fog_end.glsl` at 1/8 resolution; the order rule (after Sunshine, the lightning channels, the rainbow and the containment field; before shock distortion, rain and lens) as an `Ensure...` beside the rain and lens rules; both application formulas; calibration against Godot's own sky fog (far backdrop disabled) under uniform fog. | `near_fog_composition_gpu_test`: (1) uniform fog, backdrop on (our pass) against backdrop off (Godot's sky fog): mean sky luma within 2 %; (2) a strip across a near-terrain to sky skyline and across a near-terrain to far-backdrop boundary: luminance step within 2 %; (3) a cloud in front of distant main-view terrain: within 3 % of the reference. `rain_cloud_compositing_gpu_test`, `haze_consistency_gpu_test`, `rainbow_gpu_test` and `sun_visibility_gpu_test` unchanged. Cost by timestamps at 1080p. |
+| NF-5 | implementer | **Lighting (N4).** T_haze_sun, V_cloud (register with `RingCloudShadowProjector`), V_height, day and night blend, `ringworld_fog_ambient` from day_side_atmosphere, `EMISSION` = omega x A_fog; the same model in the fog end. | `near_fog_shadow_gpu_test`: fog under a cloud-shadow edge and behind a ridge darkens; tree shafts present at `forest_edge_eye` with fog forced on; **ambient calibration**: a white upward card in shade against thick fog with the sun off (A_fog prediction within 10 %); planet-lit night fog non-zero and blue-grey; cost of T_haze_sun per froxel (fallback if over 0.08 ms). |
+| NF-6 | implementer | **Menu, presets, persistence, default on.** The N7 rows (live-tuning-setting skill), the N6 preset table, amount default 1. | `near_fog_settings_smoke_test`; `atmosphere_menu_smoke_test` extended; preset test: Low off, Medium 48^2 x 40 at 150 m, High 96^2 x 80. |
+| NF-7 | implementer, lead reviews | **Review pack.** Slot 3 v9 world, main game path, VSync as shipped. Movie Maker plus `tools/media/ffmpeg_tools.ps1`: a dawn valley from the floor and from the ridge; forest shafts after rain; river steam at dawn; planet-lit night fog; a walk and a fast turn (`flicker`: no reprojection pops); clear noon (must equal fog off). Cost A-B-A at the four standard poses with fog forced on (gate 0.6 ms on High), and inactive (0.05 ms). Calibration check of sunward brightness (physical; no clamp without the user). | user sign-off |
+| NF-8 | contingent | Far form (C.6): L1 T0 and basin, the fog end to 2 to 5 km, later V7a. | own design |
+
+**Order and parallelism.** NF-2a and NF-3 can run in parallel (different files). NF-2b needs NF-2a's include. NF-4 and NF-5 need NF-2b. NF-6 comes last before NF-7. Five implementer orders plus the review, about the size the plan estimated.
+
+**Costs (4070, 1080p, High, indicative).**
+
+| Part | Cost |
+|---|---|
+| Froxels, measured in NF-0 | +0.20 ms |
+| T_haze_sun per froxel | est. up to +0.05 ms |
+| Fog end | est. 0.02 to 0.04 ms |
+| T0 copy and basin build | about 0.01 ms per L0 rebuild (recentres only) |
+| CPU drivers | under 0.05 ms per tick |
+| Near-water field | about 1 to 3 ms on a worker per 32 m moved |
+| **Total while active** | **est. 0.25 to 0.3 ms**, under the 0.6 ms gate |
+| Inactive | 0 GPU |

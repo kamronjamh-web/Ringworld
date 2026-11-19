@@ -24,6 +24,7 @@ public sealed class AtmosphereVisualDefaults
         RingAtmosphereModel.HazeStormStrength = Settings.StormHaze;
         RingAtmosphereModel.EnclosedCloudFog = Settings.EnclosedCloudFog;
         RingAtmosphereLuts.SkyViewEnabled = Settings.SkyHazeLut;
+        RingSunGlare.SetSettings(Settings.SunGlare, Settings.LensFlare);
         RingVegetationHaze.Enabled = Settings.VegetationInstanceHaze;
         RingAtmosphereModel.HazeModel = (RingAtmosphereModel.HazeModelKind)Mathf.Clamp(Settings.HazeModel, 0, 1);
         RingAtmosphereModel.SetPhysicalControls(Settings.AerosolHeight, Settings.RayleighStrength,
@@ -54,6 +55,8 @@ public sealed class AtmosphereVisualDefaults
             case "SkyTintR": Settings.SkyTintR = value; break;
             case "SkyTintG": Settings.SkyTintG = value; break;
             case "SkyTintB": Settings.SkyTintB = value; break;
+            case "SunGlare": Settings.SunGlare = value; break;
+            case "LensFlare": Settings.LensFlare = value; break;
             case "HazeQuality": Settings.HazeQuality = float.IsFinite(value) ? (int)Mathf.Round(value) : 4; break;
             default: return;
         }
@@ -149,6 +152,8 @@ public sealed class AtmosphereVisualDefaults
         Settings.SkyTintR = Clean(Settings.SkyTintR, 1, 0, 2);
         Settings.SkyTintG = Clean(Settings.SkyTintG, 1, 0, 2);
         Settings.SkyTintB = Clean(Settings.SkyTintB, 1.01f, 0, 2);
+        Settings.SunGlare = Clean(Settings.SunGlare, 1, 0, 1);
+        Settings.LensFlare = Clean(Settings.LensFlare, 0, 0, 1);
         Settings.HazeQuality = Settings.HazeQuality <= 6 ? 4 : Settings.HazeQuality <= 11 ? 8 : 16;
     }
     private static float Clean(float value, float fallback, float minimum, float maximum) => float.IsFinite(value) ? Mathf.Clamp(value, minimum, maximum) : fallback;

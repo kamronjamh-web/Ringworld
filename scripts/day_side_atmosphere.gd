@@ -240,6 +240,9 @@ var current_geometric_day_factor: float = 0.0
 var current_solar_visibility: float = 1.0
 var current_atmosphere_factor: float = 1.0
 var current_underwater_factor: float = 0.0
+## Read by RingSunGlare (C#): the sun direction written to the sky (the drawn disc's direction) and the enclosure weight handed to the cloud bridge (cave fog or underwater).
+var published_sun_direction: Vector3 = Vector3.ZERO
+var published_enclosed_fog_weight: float = 0.0
 var underwater_view_layer: CanvasLayer = null
 var underwater_view_rect: ColorRect = null
 var underwater_view_material: ShaderMaterial = null
@@ -711,6 +714,7 @@ func _apply_underground_fog_coupling(environment: Environment, weight: float, ca
 # Sunshine clouds are composited after Godot fog, so in caves and underwater the bridge fades them by the same exp fog at cloud depth.
 # Reads the final Environment values (cave coupling and water already applied); off whenever the Environment fog is off.
 func _publish_enclosed_cloud_fog(environment: Environment, cave_fog_weight: float) -> void:
+	published_enclosed_fog_weight = maxf(cave_fog_weight, current_underwater_factor) if environment.fog_enabled else 0.0
 	if cloud_lighting_bridge == null or not cloud_lighting_bridge.has_method("SetEnclosedFog"):
 		return
 	var weight := maxf(cave_fog_weight, current_underwater_factor) if environment.fog_enabled else 0.0
@@ -1485,6 +1489,7 @@ func _update_sky(
 	_set_sky_param("space_color", Vector3(space_sky_color.r, space_sky_color.g, space_sky_color.b))
 	live[&"atmosphere_factor"] = atmosphere_factor
 	live[&"sun_direction"] = to_sun.normalized()
+	published_sun_direction = live[&"sun_direction"]
 	# Hub zenith halo (spec E.1): the hub hangs over the local zenith. hub_level 0 draws nothing.
 	live[&"hub_direction"] = -viewer_outward
 	live[&"hub_level"] = current_hub_level

@@ -200,7 +200,54 @@ public partial class RingLocalWeatherEffects
         }
         EnsureRainHazeCompositorLast(_rainHazeWorldEnvironment);
     }
+    /// <summary>Lens effects (the sun glare, later ghosts) are drawn by the lens, so they run after everything the scene contains, rain streaks and rain haze included ("lens effects last").</summary>
+    private static readonly System.Collections.Generic.List<CompositorEffect> LensEffects = new();
+    /// <summary>Registers a lens effect and puts it at the very end of the environment's compositor (adding it when absent).</summary>
+    public static void AttachLensEffect(WorldEnvironment? environment, CompositorEffect effect)
+    {
+        if (!LensEffects.Contains(effect)) LensEffects.Add(effect);
+        if (environment == null || !GodotObject.IsInstanceValid(environment)) return;
+        environment.Compositor ??= new Compositor();
+        var effects = environment.Compositor.CompositorEffects;
+        using Godot.Collections.Array effectsLifetime = (Godot.Collections.Array)effects;
+        if (effects.Count > 0 && effects[^1] == effect) return;
+        effects.Remove(effect);
+        effects.Add(effect);
+        environment.Compositor.CompositorEffects = effects;
+        EnsureLensEffectsLast(environment);
+    }
+    /// <summary>Unregisters a lens effect and removes it from the environment's compositor.</summary>
+    public static void DetachLensEffect(WorldEnvironment? environment, CompositorEffect effect)
+    {
+        LensEffects.Remove(effect);
+        if (environment == null || !GodotObject.IsInstanceValid(environment) || environment.Compositor == null) return;
+        var effects = environment.Compositor.CompositorEffects;
+        using Godot.Collections.Array effectsLifetime = (Godot.Collections.Array)effects;
+        if (effects.Remove(effect)) environment.Compositor.CompositorEffects = effects;
+    }
+    /// <summary>Moves every registered lens effect that is in the compositor to the very end, in registration order; a no-op (no write) when they already are.</summary>
+    public static void EnsureLensEffectsLast(WorldEnvironment? environment)
+    {
+        if (LensEffects.Count == 0 || environment == null || !GodotObject.IsInstanceValid(environment) || environment.Compositor == null) return;
+        var effects = environment.Compositor.CompositorEffects;
+        using Godot.Collections.Array effectsLifetime = (Godot.Collections.Array)effects;
+        var inCompositor = new System.Collections.Generic.List<CompositorEffect>();
+        foreach (CompositorEffect lens in LensEffects) if (GodotObject.IsInstanceValid(lens) && effects.Contains(lens)) inCompositor.Add(lens);
+        if (inCompositor.Count == 0) return;
+        bool inOrder = effects.Count >= inCompositor.Count;
+        for (int k = 0; inOrder && k < inCompositor.Count; k++) inOrder = effects[effects.Count - inCompositor.Count + k] == inCompositor[k];
+        if (inOrder) return;
+        foreach (CompositorEffect lens in inCompositor) effects.Remove(lens);
+        foreach (CompositorEffect lens in inCompositor) effects.Add(lens);
+        environment.Compositor.CompositorEffects = effects;
+    }
+
     public static void EnsureRainHazeCompositorLast(WorldEnvironment? environment)
+    {
+        EnsureRainHazeOrder(environment);
+        EnsureLensEffectsLast(environment);   // every path of the rain / haze ordering, including its early returns
+    }
+    private static void EnsureRainHazeOrder(WorldEnvironment? environment)
     {
         if (environment == null || !GodotObject.IsInstanceValid(environment) || _activeRainHazeEffects == null
             || !_activeRainHazeEffects.TryGetTarget(out var owner) || !GodotObject.IsInstanceValid(owner)
@@ -210,7 +257,10 @@ public partial class RingLocalWeatherEffects
         using Godot.Collections.Array effectsLifetime = (Godot.Collections.Array)effects;
         // Order: Sunshine (anything else), then the rain streak raster pass, then the rain haze composite last.
         CompositorEffect? streaks = owner._streakCompositor;
-        if (effects.Count > 0 && effects[^1] == owner._rainHazeCompositor && (streaks == null || (effects.Count > 1 && effects[^2] == streaks))) return;
+        int lensTail = 0;   // lens effects sit after the rain haze ("lens effects last", EnsureLensEffectsLast), so the haze is last among the rest
+        while (lensTail < effects.Count && LensEffects.Contains(effects[effects.Count - 1 - lensTail])) lensTail++;
+        if (effects.Count > lensTail && effects[effects.Count - 1 - lensTail] == owner._rainHazeCompositor
+            && (streaks == null || (effects.Count > lensTail + 1 && effects[effects.Count - 2 - lensTail] == streaks))) return;
         if (streaks != null) effects.Remove(streaks);
         effects.Remove(owner._rainHazeCompositor);
         if (streaks != null) effects.Add(streaks);
