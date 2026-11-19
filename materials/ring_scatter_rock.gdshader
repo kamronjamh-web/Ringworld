@@ -26,7 +26,9 @@ uniform int rock_group = 0; // 0 boulder, 1 outcrop, 2 cobble
 uniform sampler2D rock_positions : filter_nearest, repeat_disable;
 uniform sampler2D rock_normals : filter_nearest, repeat_disable;
 // 0 normal; 1 haze transmittance T; 2 haze in-scatter; 3 direct visibility (shadow, cloud, macro); 4 albedo after wetness (before night tint and haze);
-// 5 strata band index; 6 solid white (coverage). Debug views only: tools/ScatterHazeShadowGpuTest.cs drives them, the game never sets it.
+// 5 strata band index; 6 solid white (coverage); 7 world normal as colour (n * 0.5 + 0.5, unlit); 8 albedo = the record's ground tint v_tint, everything else normal (lit, hazed);
+// 9 albedo = constant 0.18, everything else normal; 10 grey of dot(world normal, ring up) * 0.5 + 0.5 (unlit); 11 grey of the AO value (unlit); 12 green where the view-space normal faces the camera, red where it faces away (unlit); 13 direct visibility replacing the diffuse light (no ambient), albedo 0.5; 14 the raw shadow-map ATTENUATION and 15 the raw contact-shadow term the same way. Debug views only: tools/ScatterHazeShadowGpuTest.cs and the T5-10 harness
+// (--rock-debug-view=N through tools/ScatterDebugBridge.cs) drive them, the game never sets it.
 uniform int rock_debug_view = 0;
 // Macro-shadow frame of the batch (set per renderer): canonical around/across metres from rock_frame_origin along the two covectors, plus the macro-shadow uv of that origin.
 instance uniform vec3 rock_frame_origin;
@@ -119,6 +121,9 @@ void fragment() {
 	float base_weight = smoothstep(0.0, 0.15, v_base);
 	rock = mix(rock, v_tint, 0.7 * (1.0 - base_weight)) * mix(0.85, 1.0, base_weight);
 
+	if (rock_debug_view == 8) rock = v_tint;
+	else if (rock_debug_view == 9) rock = vec3(0.18);
+
 	// Wet world: rock porosity 0.5 (T4 D9), gloss, no puddles.
 	float roughness = 0.92;
 	float specular = 0.18;
@@ -139,8 +144,9 @@ void fragment() {
 	SPECULAR = specular;
 	rock_wet_state = vec3(wet_gloss, roughness, specular);
 	AO = min(1.0 - v_light.y * 0.72, ring_storm_ambient(ring_storm_level(v_world)));
+	if (rock_debug_view >= 20 && (rock_debug_view - 20 & 16) != 0) AO = 1.0;
 	AO_LIGHT_AFFECT = 0.0;
-	if (rock_debug_view != 0) {
+	if (rock_debug_view != 0 && rock_debug_view < 8 || rock_debug_view == 10 || rock_debug_view >= 11 && rock_debug_view < 16 || rock_debug_view >= 17 && rock_debug_view <= 19) {
 		vec3 probe = vec3(1.0);
 		vec3 probe_emission;
 		rock_apply_atmosphere(probe, probe_emission);
@@ -150,7 +156,14 @@ void fragment() {
 		else if (rock_debug_view == 4) shown = wet_albedo;
 		else if (rock_debug_view == 5) shown = vec3((float(int(floor(band_height / max(ringworld_ground_world.x, 0.001))) & 127) + 1.0) / 128.0);
 		else if (rock_debug_view == 6) shown = vec3(1.0);
-		ALBEDO = rock_debug_view == 3 ? vec3(1.0) : vec3(0.0);
+		else if (rock_debug_view == 7) shown = world_normal * 0.5 + 0.5;
+		else if (rock_debug_view == 10) shown = vec3(dot(world_normal, v_up) * 0.5 + 0.5);
+		else if (rock_debug_view == 11) shown = vec3(AO);
+		else if (rock_debug_view == 17) shown = vec3(v_light.x);
+		else if (rock_debug_view == 18) shown = vec3(dot(v_up, normalize(sun_direction)) * 0.5 + 0.5);
+		else if (rock_debug_view == 19) shown = vec3(max(dot(world_normal, normalize(sun_direction)), 0.0) * 0.5);
+		else if (rock_debug_view == 12) shown = NORMAL.z > 0.0 ? vec3(0.0, 0.4, 0.0) : vec3(0.6, 0.0, 0.0);
+		ALBEDO = rock_debug_view == 3 ? vec3(1.0) : (rock_debug_view >= 13 && rock_debug_view <= 15 ? vec3(0.5) : vec3(0.0));
 		EMISSION = shown;
 		AO = 1.0;
 		SPECULAR = 0.0;
@@ -163,9 +176,20 @@ void fragment() {
 void light() {
 	float direct_visibility;
 	// Contact flags: RING_SHADOW_DEFAULT, the Terrain3D surface's own (rocks are solid ground, not grass: the contact strength is the surface strength).
-	vec3 diffuse = ring_terrain_direct_diffuse(NORMAL, LIGHT, ATTENUATION, LIGHT_IS_DIRECTIONAL, LIGHT_COLOR, VIEW_MATRIX, v_light.x, v_light.y, v_light.zw, v_world,
-		ring_viewer_world_position, SCREEN_UV, FRAGCOORD.xy, VIEWPORT_SIZE, INV_PROJECTION_MATRIX, RING_SHADOW_DEFAULT, direct_visibility);
-	if (rock_debug_view == 3) {
+	// Views 20 + m (m a bit mask, A/B only): 1 shadow-map attenuation forced to 1, 2 contact shadow off, 4 cloud occlusion 0, 8 macro-shadow uv zeroed, 16 AO 1 (fragment()).
+	int ab = rock_debug_view >= 20 ? rock_debug_view - 20 : 0;
+	vec3 diffuse = ring_terrain_direct_diffuse(NORMAL, LIGHT, (ab & 1) != 0 ? 1.0 : ATTENUATION, LIGHT_IS_DIRECTIONAL, LIGHT_COLOR, VIEW_MATRIX, v_light.x, (ab & 4) != 0 ? 0.0 : v_light.y,
+		(ab & 8) != 0 ? vec2(0.0) : v_light.zw, v_world, ring_viewer_world_position, SCREEN_UV, FRAGCOORD.xy, VIEWPORT_SIZE, INV_PROJECTION_MATRIX,
+		(ab & 2) != 0 ? RING_SHADOW_NO_CONTACT : RING_SHADOW_DEFAULT, direct_visibility);
+	if (rock_debug_view == 16) {
+		// no direct light: the lit result is the ambient alone
+	} else if (rock_debug_view == 14) {
+		DIFFUSE_LIGHT = vec3(ATTENUATION); // the raw shadow-map term
+	} else if (rock_debug_view == 15) {
+		DIFFUSE_LIGHT = vec3(ring_contact_visibility(FRAGCOORD.xy, VIEWPORT_SIZE, INV_PROJECTION_MATRIX, 1.0, RING_SHADOW_DEFAULT)); // the raw contact-shadow term
+	} else if (rock_debug_view == 13) {
+		DIFFUSE_LIGHT = vec3(direct_visibility); // replaces the ambient the engine put there: the sun term alone, times the albedo 0.5 the fragment set
+	} else if (rock_debug_view == 3) {
 		DIFFUSE_LIGHT += vec3(direct_visibility);
 	} else {
 		DIFFUSE_LIGHT += diffuse;

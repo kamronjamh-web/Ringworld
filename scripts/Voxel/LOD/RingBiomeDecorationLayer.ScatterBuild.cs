@@ -376,7 +376,26 @@ public partial class RingBiomeDecorationLayer
 				double nearest = row.UsesField(RingHabitatField.NearestTreeM) ? NearestTreeM(a, z) : 50.0;
 				double density = Density(row, f, nearest);
 				double p = Math.Min(1.0, row.BaseDensityPerHa * density * row.CellM * (double)row.CellM / 10000.0 / row.CandidatesPerCell);
-				return Hash01(cx, cz, _c.Seed, Salt(row, k) + 2) < p;
+				if (!(Hash01(cx, cz, _c.Seed, Salt(row, k) + 2) < p)) return false;
+				return row.BuriedDepthFraction <= 0f || BuriedBaseStaysUnderground(row, g);
+			}
+
+			/// <summary>
+			/// T5-10b: the buried column of an outcrop (down to fraction x size below the root) must stay under the terrain everywhere under its footprint: the centre and 16 ring points all have terrain
+			/// height at or above root height - fraction x size + clearance. Pure and deterministic (presentation surface heights through the job's lattice memo).</summary>
+			private bool BuriedBaseStaysUnderground(RingScatterClass row, in Geo g)
+			{
+				double a = g.A, z = g.Z;
+				double limit = PresentationSurfaceHeight(_edits, _sampler, a, z) - row.BuriedDepthFraction * (double)g.Size + row.BuriedClearanceM;
+				double radius = row.BuriedFootprintRadius * (double)g.Size, width = _c.RingWidth;
+				for (int i = 0; i < 16; i++)
+				{
+					double angle = i * (Math.PI / 8.0);
+					double pa = a + radius * Math.Cos(angle), pz = Math.Clamp(z + radius * Math.Sin(angle), 0.0, width);
+					pa -= Math.Floor(pa / _circ) * _circ;
+					if (PresentationSurfaceHeight(_edits, _sampler, pa, pz) < limit) return false;
+				}
+				return true;
 			}
 
 			private static double Respond(in RingScatterResponse r, double value)

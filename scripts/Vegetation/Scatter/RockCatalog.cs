@@ -55,7 +55,7 @@ public sealed class RockGroupCatalog
 /// </summary>
 public sealed class RockCatalog
 {
-    public const int CatalogVersion = 1;
+    public const int CatalogVersion = 2;
     public const string ArtifactPath = "res://resources/rocks/prepared/rock_catalog.bin";
     public const string ManifestPath = "res://resources/rocks/prepared/rock_catalog.manifest.json";
     private const int LodCount = 3;

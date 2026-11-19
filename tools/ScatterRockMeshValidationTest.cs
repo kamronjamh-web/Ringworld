@@ -167,7 +167,7 @@ public partial class ScatterRockMeshValidationTest : RefCounted
             for (int v = 0; v < outcrops.VariantCount; v++)
             {
                 (double min, double max) = YRange(outcrops.Lods[l], v, 0, outcrops.Lods[l].VertexCount);
-                Check(Math.Abs(min + 0.75) <= 1e-3, $"outcrops LOD{l} v{v}: min y {min}");
+                Check(Math.Abs(min - Gen.OutcropBaseY) <= 1e-3, $"outcrops LOD{l} v{v}: min y {min}");
                 Check(max >= 0.25 - 1e-3 && max <= 0.6 + 1e-3, $"outcrops LOD{l} v{v}: top {max} outside 0.25..0.6");
                 if (l == 0)
                 {
@@ -176,6 +176,14 @@ public partial class ScatterRockMeshValidationTest : RefCounted
                     Check(Math.Abs(xMax - xMin - 1) <= 2e-3, $"outcrops LOD0 v{v}: horizontal length {xMax - xMin}");
                 }
             }
+        // T5-10b: the class row's buried-base footprint radius covers every outcrop vertex (and is not slack by more than 10 %), so the pure placement rule needs no catalog.
+        double outcropRadius = 0;
+        for (int l = 0; l < 3; l++)
+            for (int v = 0; v < outcrops.VariantCount; v++)
+                for (int i = 0; i < outcrops.Lods[l].VertexCount; i++) outcropRadius = Math.Max(outcropRadius, Math.Sqrt(outcrops.Lods[l].X(v, i) * outcrops.Lods[l].X(v, i) + outcrops.Lods[l].Z(v, i) * outcrops.Lods[l].Z(v, i)));
+        float rowRadius = RingScatterClassTable.Production.Rows.First(r => r.Key == "rock.outcrop").BuriedFootprintRadius;
+        Check(rowRadius >= outcropRadius && rowRadius <= outcropRadius * 1.1 + 1e-6, $"outcrop row BuriedFootprintRadius {rowRadius} vs measured max horizontal radius {outcropRadius:F4}");
+        Detail($"outcrop max horizontal radius {outcropRadius:F4} (row BuriedFootprintRadius {rowRadius})");
         Gen.RockLod c0 = cobbles.Lods[0];
         double maxRadius = 0;
         for (int v = 0; v < cobbles.VariantCount; v++)
@@ -302,7 +310,7 @@ public partial class ScatterRockMeshValidationTest : RefCounted
     {
         RockCatalog catalog = RockCatalog.Load();
         Check(ReferenceEquals(catalog, RockCatalog.Load()), "RockCatalog.Load is not cached");
-        Check(RockCatalog.CatalogVersion == 1, "catalog version");
+        Check(RockCatalog.CatalogVersion == 2, "catalog version");
         Check(catalog.TotalBytes == new FileInfo(ProjectSettings.GlobalizePath(BinRes)).Length, "TotalBytes");
         Check(RockCatalog.ArtifactSha256 == Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(ProjectSettings.GlobalizePath(BinRes)))), "ArtifactSha256 differs from the bin's SHA-256");
         Gen.RockSet set = Gen.Generate(RegenSeed);

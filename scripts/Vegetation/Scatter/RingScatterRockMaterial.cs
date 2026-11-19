@@ -22,6 +22,9 @@ public sealed class RingScatterRockMaterial
         "biome_texture_scale", "biome_alpine_albedo",
     };
 
+    /// <summary>TEST ONLY (T5-10b harness, tools/ScatterDebugBridge.cs): the shader's rock_debug_view for every material built afterwards. 0 in the game.</summary>
+    public static int DebugView;
+
     private readonly ShaderMaterial[,] _materials = new ShaderMaterial[3, LodCount]; // [shader rock_group, lod]
     private RingTerrain3DSurface? _surface;
 
@@ -54,6 +57,7 @@ public sealed class RingScatterRockMaterial
                 RockLodMesh mesh = data.Lods[lod];
                 var material = new ShaderMaterial { Shader = shader, ResourceName = $"ScatterRock_{group}_L{lod}" };
                 material.SetShaderParameter("rock_group", ShaderGroup(group));
+                if (DebugView != 0) material.SetShaderParameter("rock_debug_view", DebugView);
                 material.SetShaderParameter("rock_positions", mesh.Positions);
                 material.SetShaderParameter("rock_normals", mesh.Normals);
                 // The biome albedo is a constant of the terrain; the follower registration replays the live values later.

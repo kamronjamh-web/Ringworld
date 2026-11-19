@@ -15,6 +15,9 @@ public partial class ScatterDebugBridge : RefCounted
 {
     public void EnableTileTiming(bool on) => RingBiomeDecorationLayer.ScatterTileTiming = on;
 
+    /// <summary>T5-10b: sets the shader's rock_debug_view (see ring_scatter_rock.gdshader) for the rock materials built from now on; 0 clears it.</summary>
+    public void SetRockDebugView(int view) => RingScatterRockMaterial.DebugView = view;
+
     public void UseA5Density(bool on)
     {
         RingScatterClassTable.DebugOverride = null;

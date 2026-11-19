@@ -449,7 +449,7 @@ public partial class ScatterHazeShadowGpuTest : Node
     private async Task StrataCheck()
     {
         RockLodMesh lod = _catalog.Outcrops.Lods[0];
-        float size = 14f / lod.UnitAabb.Size.Y;
+        float size = 14f / (lod.UnitAabb.Size.Y - (float)(-0.75 - PrepareRockAssets.OutcropBaseY)); // the pre-T5-10b catalog's height (foot at -0.75): the deeper foot (-1.25) is buried, so the strata fixture keeps the same visible span
         _wall.Visible = true; _ground.Visible = false;
         SetSun(new Vector3(-.77f, 0f, -.64f));
         Boulders();

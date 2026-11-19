@@ -72,6 +72,11 @@ public sealed record RingScatterClass
     public int ResidentCap { get; init; }
     /// <summary>0 builds the whole tile; 60 builds per 60 m block (cobbles, A6).</summary>
     public int BlockM { get; init; }
+    /// <summary>T5-10b buried-base rule: the mesh reaches this fraction of the size below the root (0.75 for outcrops, 0 = rule off). A candidate is not viable when the terrain under any of 17 points of its footprint (the centre and 16 on a ring of <see cref="BuriedFootprintRadius"/> x size) lies below the root height - fraction x size + <see cref="BuriedClearanceM"/>, because the buried column would come out of a cliff face there.</summary>
+    public float BuriedDepthFraction { get; init; }
+    /// <summary>Horizontal radius of the group's largest variant in unit space (checked against the prepared catalog by scatter_rock_mesh_validation_test).</summary>
+    public float BuriedFootprintRadius { get; init; }
+    public float BuriedClearanceM { get; init; } = 0.5f;
 
     internal bool UsesField(RingHabitatField field)
     {
@@ -110,7 +115,7 @@ public sealed class RingScatterClassTable
             },
             SpacingM = 30f, SpacingSizeFactor = 0.6f, TreeClearanceM = 2f, TreeClearanceSizeFactor = 0.5f, SizeMinM = 5f, SizeMaxM = 40f, SizeExponent = 2.2f,
             MeshFirst = 0, MeshCount = 8, Alignment = RingScatterAlignment.BeddingHorizontal, Collision = RingScatterCollision.TriMesh, ShadowMinSizeM = 0f,
-            Far = RingScatterFar.None, ResidentCap = 150, BlockM = 0
+            Far = RingScatterFar.None, ResidentCap = 150, BlockM = 0, BuriedDepthFraction = 1.25f, BuriedFootprintRadius = 0.55f
         },
         new RingScatterClass
         {
@@ -209,6 +214,7 @@ public sealed class RingScatterClassTable
             h.I32((int)r.MeshCatalog); h.I32(r.MeshFirst); h.I32(r.MeshCount); h.I32((int)r.VariantSelector);
             h.I32((int)r.Alignment); h.F32(r.AlignFactor); h.F32(r.RandomTiltDeg); h.F32(r.EmbedMin); h.F32(r.EmbedMax);
             h.I32((int)r.Collision); h.F32(r.CollisionMinSizeM); h.F32(r.ShadowMinSizeM); h.I32((int)r.Far); h.I32(r.ResidentCap); h.I32(r.BlockM);
+            h.F32(r.BuriedDepthFraction); h.F32(r.BuriedFootprintRadius); h.F32(r.BuriedClearanceM);
         }
         return h.H;
     }
@@ -239,6 +245,7 @@ public sealed class RingScatterClassTable
             if (!(float.IsFinite(r.SizeExponent) && r.SizeExponent > 0f)) errors.Add($"{n}: SizeExponent must be finite and positive");
             if (!(float.IsFinite(r.SpacingM) && r.SpacingM >= 0f && float.IsFinite(r.SpacingSizeFactor) && r.SpacingSizeFactor >= 0f)) errors.Add($"{n}: spacing invalid");
             if (!(float.IsFinite(r.TreeClearanceM) && r.TreeClearanceM >= 0f && float.IsFinite(r.TreeClearanceSizeFactor) && r.TreeClearanceSizeFactor >= 0f)) errors.Add($"{n}: tree clearance invalid");
+            if (!(float.IsFinite(r.BuriedDepthFraction) && r.BuriedDepthFraction >= 0f && float.IsFinite(r.BuriedFootprintRadius) && r.BuriedFootprintRadius >= 0f && float.IsFinite(r.BuriedClearanceM) && r.BuriedClearanceM >= 0f)) errors.Add($"{n}: buried-base values invalid");
             if (r.MeshFirst < 0 || r.MeshCount < 1 || r.MeshFirst + r.MeshCount > ushort.MaxValue) errors.Add($"{n}: mesh range invalid");
             foreach (RingScatterTerm t in r.Terms)
             {

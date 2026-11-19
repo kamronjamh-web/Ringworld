@@ -20,7 +20,7 @@ namespace RingworldTechDemo.Tools;
 /// </summary>
 public partial class PrepareRockAssets : RefCounted
 {
-    public const int GeneratorVersion = 1;
+    public const int GeneratorVersion = 2;
     public const int CommittedSeed = 5006;
     public const double Quantum = 4096.0;
     public const int LodCount = 3;
@@ -538,6 +538,8 @@ public partial class PrepareRockAssets : RefCounted
     // ------------------------------------------------------------------ outcrops
 
     private const int OutcropBeds = 7, OutcropRing = 48;
+    /// <summary>T5-10b: the outcrop's buried foot (unit length below the root). The bed boundaries still start at -0.75; only the bottom ring of bed 0 and the bottom cap sit deeper.</summary>
+    public const double OutcropBaseY = -1.25;
     private static readonly int[] ExtraRingBeds = { 1, 3, 5 }; // LOD0 walls with one extra ring
 
     private sealed class OutcropRings
@@ -594,7 +596,7 @@ public partial class PrepareRockAssets : RefCounted
         }
         for (int i = 0; i < OutcropBeds; i++)
         {
-            rings.Bottom[i] = Ring(rb[i], yb[i]); rings.Top[i] = Ring(rt[i], yb[i + 1]);
+            rings.Bottom[i] = Ring(rb[i], i == 0 ? OutcropBaseY : yb[i]); rings.Top[i] = Ring(rt[i], yb[i + 1]);
             if (Array.IndexOf(ExtraRingBeds, i) >= 0) rings.Extra[i] = Ring(rx[i], 0.5 * (yb[i] + yb[i + 1]));
         }
         double[] topRing = rings.Top[OutcropBeds - 1];
@@ -681,7 +683,7 @@ public partial class PrepareRockAssets : RefCounted
                 for (int k = 0; k < N; k++) { int k1 = (k + 1) % N; idx.AddRange(new[] { (ushort)(fanRing + k), (ushort)centre, (ushort)(fanRing + k1) }); }
                 double bx = 0, bz = 0;
                 for (int k = 0; k < N; k++) { bx += pos[(firstBottom + k) * 3]; bz += pos[(firstBottom + k) * 3 + 2]; }
-                int bottomCentre = AddPoint(bx / N, -0.75, bz / N);
+                int bottomCentre = AddPoint(bx / N, OutcropBaseY, bz / N);
                 for (int k = 0; k < N; k++) { int k1 = (k + 1) % N; idx.AddRange(new[] { (ushort)(firstBottom + k), (ushort)(firstBottom + k1), (ushort)bottomCentre }); }
                 foreach (List<int> list in topLists) tops.Add(list.ToArray());
                 positions.Add(pos.ToArray());

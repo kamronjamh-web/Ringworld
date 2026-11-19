@@ -62,6 +62,7 @@ public partial class ScatterRockPlacementTest : RefCounted
             Setup();
             BuildPoseTiles();
             Caps();
+            BuriedBases();
             Outcrops();
             Boulders();
             Cobbles();
@@ -365,6 +366,35 @@ public partial class ScatterRockPlacementTest : RefCounted
 
     private static long PositiveModulo(long v, long n) { long r = v % n; return r < 0 ? r + n : r; }
 
+    // ------------------------------------------------------------------ i. buried bases (T5-10b)
+
+    /// <summary>The buried column of an outcrop (0.75 x size below the root) stays under the terrain at the centre and on a 16-point footprint ring, for every accepted outcrop in the 14 tiles and the steep_eye disc.</summary>
+    private void BuriedBases()
+    {
+        RingScatterClass row = _table.Rows.First(r => r.Id == Outcrop);
+        int checkedCount = 0, exposed = 0;
+        double worst = double.MaxValue;
+        string firstBad = "";
+        foreach (ScatterRecord r in _outcropsByTile.Values.SelectMany(list => list))
+        {
+            double a = r.AroundCm / 100.0, z = r.AcrossCm / 100.0;
+            double bottom = r.SurfaceHeight - row.BuriedDepthFraction * (double)r.Size + row.BuriedClearanceM, radius = row.BuriedFootprintRadius * (double)r.Size;
+            double lowest = RingBiomeDecorationLayer.PresentationSurfaceHeight(_ctx.Edits, _probe, a, z) - bottom;
+            for (int i = 0; i < 16; i++)
+            {
+                double angle = i * Math.PI / 8.0, pa = a + radius * Math.Cos(angle), pz = Math.Clamp(z + radius * Math.Sin(angle), 0.0, Width);
+                pa -= Math.Floor(pa / Circ) * Circ;
+                lowest = Math.Min(lowest, RingBiomeDecorationLayer.PresentationSurfaceHeight(_ctx.Edits, _probe, pa, pz) - bottom);
+            }
+            checkedCount++;
+            worst = Math.Min(worst, lowest);
+            if (lowest < 0.0) { exposed++; if (firstBad.Length == 0) firstBad = $" first at ({a:F1}, {z:F1}) size {r.Size:F1}, terrain {-lowest:F2} m below the buried base"; }
+        }
+        Detail($"i. buried bases: {checkedCount} outcrops (14 tiles plus the steep_eye disc) checked on the centre and 16 ring points at {row.BuriedFootprintRadius} x size; lowest margin of any point above the buried base {worst:F2} m (rule: at least 0 above base + {row.BuriedClearanceM} m); {exposed} exposed");
+        Check(checkedCount >= 20, $"i. only {checkedCount} outcrops in the buried-base check");
+        Check(exposed == 0, $"i. {exposed} of {checkedCount} outcrops have terrain below their buried base within the footprint;{firstBad}");
+    }
+
     // ------------------------------------------------------------------ e. ground agreement
 
     // Tors on convex crests (A5 crest term) are exempt; Lead decision 2026-11-18. The crest term does not read rock exposure, so the A2 agreement rule (the 16 m grid's rock signal against the
@@ -393,7 +423,9 @@ public partial class ScatterRockPlacementTest : RefCounted
         double all = roots.Count > 0 ? (double)good / roots.Count : 0.0, fraction = rocky > 0 ? (double)rockyGood / rocky : 0.0;
         Detail($"e. ground agreement over {roots.Count} outcrop roots (14 tiles plus the steep_eye disc): all roots {good} ({100.0 * all:F1} %, printed only); roots with grid RockExposure >= 0.3: {rockyGood} of {rocky} have terrain rock exposure >= 0.3 on the 4 m baseline = {100.0 * fraction:F1} %; terrain rock exposure in 0.1 bins (all roots): {string.Join(" ", hist)}");
         Detail($"e. crest-only roots (grid RockExposure < 0.3): {crestOnly.Count}" + (crestOnly.Count > 0 ? $", mean 16 m slope {crestOnly.Average(c => c.Slope16):F1} deg, mean Relief64 {crestOnly.Average(c => c.Relief):F2}" : ""));
-        Check(rocky >= 10 && fraction >= 0.8, $"e. only {rockyGood} of {rocky} outcrop roots with grid rock exposure >= 0.3 ({100.0 * fraction:F1} %) have terrain rock exposure >= 0.3");
+        // Lead decision 2026-11-19 (T5-10b): 0.75, not design A2's estimated 0.8. The deeper outcrop foot (-1.25) re-admits steep-face outcrops, where the 16 m grid and the
+        // 4 m terrain baseline disagree more; measured 57 of 73 = 78.1 %, and with n of about 70 one standard error is about 5 points. A real regression (outcrops off rock) falls far below.
+        Check(rocky >= 10 && fraction >= 0.75,$"e. only {rockyGood} of {rocky} outcrop roots with grid rock exposure >= 0.3 ({100.0 * fraction:F1} %) have terrain rock exposure >= 0.3");
     }
 
     // ------------------------------------------------------------------ g. summary

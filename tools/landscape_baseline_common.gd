@@ -100,6 +100,9 @@ static func setup(tree: SceneTree, marker: String, weather_pose_report := "t0") 
 	scatter_debug.call("UseA5Density", a5_density)
 	if a5_density:
 		print("%s scatter A5 density: boulder term weights %s" % [marker, str(scatter_debug.call("BoulderWeights"))])
+	# T5-10b: `--rock-debug-view=N` sets the rock shader's rock_debug_view (ring_scatter_rock.gdshader) before the world boots; the rock materials are built during boot.
+	var rock_debug_view := int(harness_arg("--rock-debug-view=", "0"))
+	scatter_debug.call("SetRockDebugView", rock_debug_view)
 	var booted: Dictionary = await H.boot(tree, marker)
 	if booted.is_empty():
 		return {}
@@ -146,6 +149,19 @@ static func setup(tree: SceneTree, marker: String, weather_pose_report := "t0") 
 		"explorer": explorer, "surface": surface, "grass": grass, "trees": trees, "scaled_far": scaled_far, "sun": sun, "preset": preset, "weather": weather, "ok": true}
 	ctx["ground_model"] = null if str(booted["world_tag"]).is_empty() else booted["world_bridge"]
 	ctx["record"] = _common_record(ctx)
+	# T5-10b: `--shadow-debug-mode=N` sets ringworld_shadow_debug_mode (1 sun visibility, 2 geometry, 3 contact, 4 terrain, 5 cloud, 6 storm) for the whole run; with `--rock-debug-view=13` a rock shows the term itself.
+	# T5-10b: `--env-off=ssao,ssil,ssr,sdfgi,glow,volumetric_fog,adjustment` clears those WorldEnvironment flags for the whole run (A/B of screen-space terms on the rocks).
+	for env_flag in harness_csv("--env-off="):
+		if world_environment.environment != null:
+			world_environment.environment.set(env_flag + "_enabled", false)
+	# T5-10b: `--hs-receivers-off` turns the terrain height-shadow receivers off for the whole run (A/B).
+	if harness_flag("--hs-receivers-off"):
+		var height_shadow := game.get_node_or_null("TerrainHeightShadow")
+		if height_shadow != null:
+			height_shadow.set("ReceiversEnabled", false)
+	var shadow_debug_mode := int(harness_arg("--shadow-debug-mode=", "0"))
+	if shadow_debug_mode != 0:
+		RenderingServer.global_shader_parameter_set("ringworld_shadow_debug_mode", shadow_debug_mode)
 	if a5_density:
 		ctx["record"]["scatter_a5_density"] = true
 	if H.seed != H.PINNED_SEED:
