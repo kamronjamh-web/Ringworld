@@ -159,6 +159,38 @@ ringworld_height_shadow_light={
 "type": "vec4",
 "value": Vector4(0, 0, 0, 0)
 }
+ringworld_height_shadow_t0_l0={
+"type": "sampler2D",
+"value": ""
+}
+ringworld_near_fog_basin_l0={
+"type": "sampler2D",
+"value": ""
+}
+ringworld_near_fog_t0_bounds={
+"type": "vec4",
+"value": Vector4(1000000000, -1000000000, 1000000000, -1000000000)
+}
+ringworld_near_fog_fields_params={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+ringworld_near_fog_ref_world={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+ringworld_near_fog_ref_frame={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+ringworld_near_fog_water={
+"type": "sampler2D",
+"value": ""
+}
+ringworld_near_fog_water_frame={
+"type": "vec4",
+"value": Vector4(0, 0, 8, 0)
+}
 ringworld_canopy_cover={
 "type": "sampler2D",
 "value": ""
@@ -298,6 +330,10 @@ ringworld_haze_sun_irradiance_remote={
 ringworld_haze_ambient_day={
 "type": "vec3",
 "value": Vector3(0.2631, 0.3464, 0.4922)
+}
+ringworld_fog_ambient={
+"type": "vec3",
+"value": Vector3(0.1, 0.12, 0.17)
 }
 ringworld_haze_ambient_night={
 "type": "vec3",

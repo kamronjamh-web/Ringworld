@@ -50,6 +50,7 @@
 [ext_resource type="Script" path="res://scripts/Vegetation/Canopy/RingForestLighting.cs" id="forest_lighting"]
 [ext_resource type="Script" path="res://scripts/Weather/RingLensDroplets.cs" id="lens_droplets"]
 [ext_resource type="Script" path="res://scripts/Atmosphere/RingSunGlare.cs" id="sun_glare"]
+[ext_resource type="Script" path="res://scripts/Atmosphere/NearFog/RingNearFog.cs" id="near_fog"]
 [ext_resource type="Script" path="res://scripts/Shadows/RingContactShadows.cs" id="contact_shadows"]
 [ext_resource type="Script" path="res://scripts/Weather/RingRainbow.cs" id="storm_rainbow"]
 [ext_resource type="Script" path="res://scripts/Weather/RingGustFrontDebris.cs" id="storm_gust_debris"]
@@ -727,6 +728,9 @@ script = ExtResource("lens_droplets")
 
 [node name="SunGlare" type="Node" parent="."]
 script = ExtResource("sun_glare")
+
+[node name="NearFog" type="Node" parent="."]
+script = ExtResource("near_fog")
 
 [node name="ScaledFarViewport" type="Node" parent="." unique_id=12184627]
 script = ExtResource("21")

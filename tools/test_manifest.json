@@ -328,6 +328,9 @@
         "materials/ring_vegetation*",
         "materials/vegetation*",
         "materials/ring_foliage*",
+        "materials/ring_understory*",
+        "scripts/Voxel/LOD/RingGroundCover*",
+        "tools/PrepareDerivedShrubs*",
         "tools/FoliageTint*",
         "tools/foliage_tint*",
         "materials/grass*",
@@ -370,6 +373,14 @@
         "resources/water/**",
         "scenes/*Water*",
         "tools/water_shared_wind_gpu_test.gd"
+      ]
+    },
+    "near-fog": {
+      "globs": [
+        "materials/ring_near_fog*",
+        "materials/shadows/ring_near_fog*",
+        "scripts/Atmosphere/NearFog/**",
+        "scripts/render/RingNearFogEnd*"
       ]
     },
     "atmosphere-haze": {
@@ -3139,6 +3150,97 @@
       "marker": "HEIGHT_SHADOW_LATTICE",
       "expected_s": 13,
       "timeout_s": 60
+    },
+    "near_fog_terrain_fields_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "near-fog",
+        "atmosphere-haze",
+        "shadows"
+      ],
+      "marker": "NEAR_FOG_TERRAIN_FIELDS",
+      "expected_s": 300,
+      "timeout_s": 1500
+    },
+    "near_fog_drivers_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "near-fog",
+        "atmosphere-haze",
+        "weather"
+      ],
+      "marker": "NEAR_FOG_DRIVERS",
+      "expected_s": 30,
+      "timeout_s": 120
+    },
+    "near_fog_settings_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "settings",
+        "atmosphere-haze",
+        "near-fog"
+      ],
+      "marker": "NEAR_FOG_SETTINGS_SMOKE",
+      "expected_s": 5,
+      "timeout_s": 60
+    },
+    "near_fog_identity_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "near-fog",
+        "atmosphere-haze",
+        "weather"
+      ],
+      "marker": "NEAR_FOG_IDENTITY",
+      "expected_s": 600,
+      "timeout_s": 2700
+    },
+    "near_fog_terrain_relative_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "near-fog",
+        "atmosphere-haze",
+        "shadows"
+      ],
+      "marker": "NEAR_FOG_TERRAIN_RELATIVE",
+      "expected_s": 400,
+      "timeout_s": 1700
+    },
+    "near_fog_composition_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "near-fog",
+        "atmosphere-haze",
+        "weather"
+      ],
+      "marker": "NEAR_FOG_COMPOSITION",
+      "expected_s": 600,
+      "timeout_s": 2700
+    },
+    "near_fog_shadow_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "atmosphere-haze",
+        "near-fog",
+        "shadows"
+      ],
+      "marker": "NEAR_FOG_SHADOW",
+      "expected_s": 900,
+      "timeout_s": 2700
     },
     "height_shadow_publish_gpu_test": {
       "kind": "test",

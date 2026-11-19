@@ -204,7 +204,8 @@ public partial class RingRainbow : Node
         for (int i = 0; i < effects.Count; i++)
         {
             string path = ScriptPath(effects[i]);
-            if (path.EndsWith("RingRainStreaksComposite.gd", StringComparison.Ordinal) || path.EndsWith("RingRainHazeComposite.gd", StringComparison.Ordinal)) return i;
+            if (path.EndsWith("RingRainStreaksComposite.gd", StringComparison.Ordinal) || path.EndsWith("RingRainHazeComposite.gd", StringComparison.Ordinal)
+                || path.EndsWith("RingNearFogEndComposite.gd", StringComparison.Ordinal)) return i; // the near-fog end pass sits right after the rainbow (RingNearFog.EnsureCompositorSlot)
         }
         return effects.Count;
     }

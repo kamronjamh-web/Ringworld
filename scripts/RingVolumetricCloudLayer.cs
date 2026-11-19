@@ -511,7 +511,7 @@ public partial class RingVolumetricCloudLayer : Node3D
 
         // The merged-mesh path does not require volumetric fog. A separate
         // renderer can claim local cloud ownership after this node is ready.
-        if (!_externalVolumetricRendererOwnsLocalClouds)
+        if (!_externalVolumetricRendererOwnsLocalClouds && !RingworldTechDemo.Atmosphere.NearFog.RingNearFog.OwnerRegistered)
         {
             _worldEnvironment.Environment.VolumetricFogEnabled = false;
             _worldEnvironment.Environment.VolumetricFogDensity = 0.0f;
@@ -841,6 +841,7 @@ public partial class RingVolumetricCloudLayer : Node3D
             && !_externalVolumetricRendererOwnsLocalClouds;
         UpdateAltitudeAwareCloudOwnership(force: true);
         if (!_externalVolumetricRendererOwnsLocalClouds
+            && !RingworldTechDemo.Atmosphere.NearFog.RingNearFog.OwnerRegistered
             && _worldEnvironment?.Environment is { } environment)
         {
             environment.VolumetricFogEnabled = false;

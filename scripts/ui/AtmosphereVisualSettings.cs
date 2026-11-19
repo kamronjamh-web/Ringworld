@@ -46,4 +46,8 @@ public partial class AtmosphereVisualSettings : Resource
     [Export] public float SunGlare { get; set; } = 1.0f;
     /// <summary>LF-1: strength (0-1) of ghosts and starburst (drawn from LF-2; inert until then). Absent in older files, which load as 0.</summary>
     [Export] public float LensFlare { get; set; } = 0.0f;
+    /// <summary>NF-6: near ground fog amount (RingNearFog.Amount), 0 = off, 1 = as the weather makes it. Only drawn on High and above (RingNearFog.PresetAllowsFog). Absent in older files, which load as 1.</summary>
+    [Export] public float NearFogAmount { get; set; } = 1.0f;
+    /// <summary>NF-6: depth in metres of the radiation-fog layer (RingNearFog.LayerHeight). Absent in older files, which load as 40.</summary>
+    [Export] public float NearFogLayerHeight { get; set; } = 40.0f;
 }

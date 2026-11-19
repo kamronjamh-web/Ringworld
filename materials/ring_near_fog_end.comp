@@ -1,0 +1,269 @@
+#version 450
+// Near ground fog, fog end (NF-4; docs/sun-flare-shafts-near-fog-plan.md, NF-1 design N5). Compiled at run time from RDShaderSource by RingNearFog (RingAtmosphereLuts.ExpandIncludes
+// expands the includes; the owner prepends #define PASS_A or PASS_B after the #version line). Godot's froxels cannot reach the pixels the far backdrop composite writes (the whole sky),
+// nor the cloud Sunshine composites over already-fogged distant geometry. Two passes of RingNearFogEndComposite.gd:
+//   PASS_A: 1/8 resolution (ceil(w/8) x ceil(h/8), RGBA16F: rgb = S_end in-scatter, a = T_end transmittance). One texel = the view ray through the centre of its 8x8 block, marched in
+//           16 steps with the froxels' depth distribution (z = Leff ((i + 1) / 16)^2, the engine's detail_spread 2) through the SAME density (ring_near_fog_sample on the same T0 /
+//           basin / water textures, same uniforms) and the SAME lighting functions (ring_near_fog_*), front to back.
+//   PASS_B: full resolution, read-modify-write of the resolved HDR colour (alpha untouched).
+//           main-empty pixel (depth 0, reversed-Z) while the far backdrop is drawing:  c' = c * T_end + S_end   (c already holds sky, far ring, clouds and bolts)
+//           main geometry beyond the window with a Sunshine cloud in front:             c' = c + alpha * (S_end - (1 - T_end) * C_cloud)
+//             Sunshine composites mix(c, C_cloud, alpha) with C_cloud STRAIGHT (not premultiplied: addons/SunshineClouds2/SunshineCloudsPostCompute.comp, color.rgb = mix(color.rgb,
+//             currentAccumilation.rgb, density)), so the cloud over fogged geometry c_f is (1 - a) c_f + a C and the wanted result (1 - a) c_f + a (C T + S) differs by a (S - (1 - T) C).
+//           every other pixel untouched (Godot fogged it).
+// The engine stores density and albedo x density in fixed point; the froxel shader rounds stochastically (unbiased), so pass A models the mean and applies no quantisation (NF-5b). In-scatter per step = omega (V S + A).
+// Engine conventions matched (servers/rendering/renderer_rd/shaders/environment/volumetric_fog_process.glsl): the integration distance of a slab is the VIEW-DEPTH difference (not the ray
+// length), the sampled position is the view ray scaled to that depth, and a sky pixel reads the last slice, whose depth is Leff = L (1 - 0.5 / N)^2.
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(std140, set = 0, binding = 0) uniform Frame {
+	mat4 proj;
+	mat4 inv_proj;
+	mat4 cam;          // camera view -> world
+	vec4 size;         // full width, height, A width, height
+	mat4 frame;        // ringworld_height_shadow_frame
+	vec4 sun;          // xyz direction toward the sun (world), w anisotropy g
+	vec4 radiance;     // rgb sun colour x energy x pi x volumetric fog energy, w single-scattering albedo omega
+	vec4 ambient;      // rgb A = ringworld_fog_ambient (NF-5b), the ambient in-scatter radiance (the fill light), w unused
+	vec4 drive;        // xyz drivers, w = amount x gate
+	vec4 layer;        // layer height H, window length L, Leff (depth of the last slice), debug sigma (< 0 off)
+	vec4 noise;        // xy noise offset (anchor + wind, mod 4096)
+	vec4 shape;        // ringworld_height_shadow_shape (z = ring radius)
+	vec4 fields_params;
+	vec4 t0_bounds;
+	vec4 ref_world;
+	vec4 ref_frame;
+	vec4 water_frame;
+	vec4 flags;        // x apply main-empty pixels (far backdrop drawing), y apply the cloud correction, z test hook: paint main-empty pixels
+	// NF-5 lighting inputs (the same numbers the froxel shader's uniforms hold; see ring_near_fog_light.gdshaderinc):
+	vec4 haze0;        // haze sigma_R.xyz, H_R
+	vec4 haze1;        // haze sigma_A (storm applied), H_A, cap height, ground albedo rho_g
+	vec4 light0;       // xyz direction toward the sun for the haze, w day weight
+	vec4 light1;       // xyz ring up
+	vec4 light2;       // rgb sun colour x energy x pi x volumetric fog energy, w anisotropy g (the froxel shader's nf_light2)
+	vec4 hs_l0_params; vec4 hs_l1_params; vec4 hs_l0_bounds; vec4 hs_l0_prev_bounds; vec4 hs_l1_bounds; vec4 hs_l1_prev_bounds; vec4 hs_state; vec4 hs_light; // the height-shadow globals
+	vec4 cs0;          // Sunshine near cloud-shadow cascade: x usable, y height projection, z strength, w ring radius
+	vec4 cs_center; vec4 cs_around; vec4 cs_across; vec4 cs_up;
+	vec4 cs1;          // xy uv offset, z near radius, w hand-off start
+	vec4 cs_sun;       // xyz sun ray (height projection), w hand-off end
+	vec4 planet_dir;   // xyz direction toward the planet light
+	vec4 planet_rad;   // rgb planet light colour x energy x pi x volumetric fog energy
+	vec4 cam_minus_ref; // xyz camera world position - ref_world
+	vec4 cloud;        // Sunshine min_step_distance, max_step_distance; froxel grid width, height (project volume_size)
+} U;
+
+#ifdef PASS_A
+layout(rgba16f, set = 0, binding = 1) uniform restrict writeonly image2D fog_end;
+layout(set = 0, binding = 2) uniform sampler2D ringworld_height_shadow_t0_l0;
+layout(set = 0, binding = 3) uniform sampler2D ringworld_near_fog_basin_l0;
+layout(set = 0, binding = 4) uniform sampler2D ringworld_near_fog_water;
+layout(set = 0, binding = 5) uniform sampler2DArray ringworld_height_shadow_l0;   // the producer's lattice arrays (RingTerrainHeightShadow.GetGlobalsSnapshot)
+layout(set = 0, binding = 6) uniform sampler2DArray ringworld_height_shadow_l1;
+layout(set = 0, binding = 7) uniform sampler2D cloud_shadow_near;                  // the Sunshine near cloud-shadow cascade (RingCloudShadowProjector.GetVegetationFrame)
+
+// The height-shadow include (shared with the Godot receivers) reads these names; here they are macros onto the UBO (RING_HEIGHT_SHADOW_COMPUTE). There is no hub light in the compute.
+#define RING_HEIGHT_SHADOW_COMPUTE
+#define ringworld_height_shadow_l0_params U.hs_l0_params
+#define ringworld_height_shadow_l1_params U.hs_l1_params
+#define ringworld_height_shadow_l0_bounds U.hs_l0_bounds
+#define ringworld_height_shadow_l0_prev_bounds U.hs_l0_prev_bounds
+#define ringworld_height_shadow_l1_bounds U.hs_l1_bounds
+#define ringworld_height_shadow_l1_prev_bounds U.hs_l1_prev_bounds
+#define ringworld_height_shadow_state U.hs_state
+#define ringworld_height_shadow_light U.hs_light
+#define ringworld_hub_light_weight 0.0
+
+// The fields include declares these as globals in the Godot shader language; here they are macros onto the UBO (RING_NEAR_FOG_FIELDS_COMPUTE).
+#define RING_NEAR_FOG_FIELDS_COMPUTE
+#define ringworld_near_fog_fields_params U.fields_params
+#define ringworld_near_fog_t0_bounds U.t0_bounds
+#define ringworld_near_fog_ref_world U.ref_world
+#define ringworld_near_fog_ref_frame U.ref_frame
+#define ringworld_near_fog_water_frame U.water_frame
+#define ringworld_height_shadow_frame U.frame
+#define ringworld_height_shadow_shape U.shape
+#include "res://materials/ring_near_fog_fields.gdshaderinc"
+#include "res://materials/ring_atmosphere_shared.gdshaderinc"
+#include "res://materials/ring_haze_shared.gdshaderinc"
+
+#define RING_NEAR_FOG_HAZE0 U.haze0
+#define RING_NEAR_FOG_HAZE1 U.haze1
+#define RING_NEAR_FOG_LIGHT0 U.light0
+#define RING_NEAR_FOG_LIGHT1 U.light1
+#define RING_NEAR_FOG_SUN_RAD U.light2.rgb
+#define RING_NEAR_FOG_G U.light2.w
+#define RING_NEAR_FOG_PLANET_DIR U.planet_dir.xyz
+#define RING_NEAR_FOG_PLANET_RAD U.planet_rad.rgb
+#define RING_NEAR_FOG_TSUN_OVERRIDE vec4(0.0)
+
+// Twin of the near-cascade branch of sample_local_cloud_shadow (materials/ring_cloud_shadow.gdshaderinc, ring_cloud_shadow_coordinates), operation for operation, for a GPU cascade pair
+// (UpdateCascades: hand-off 0..1 m, far strength = near strength). The far cascade is not read (the fog lies within 250 m of the camera, the near map's full-weight zone); outside the near map
+// or without it the visibility is 1. Faded by the day factor like the ground's combined cloud shadow.
+float rnf_cloud_arc_angle(float tangent, float outward) {
+	float q = tangent / outward;
+	if (outward > 0.0 && abs(q) <= 0.05) {
+		float q2 = q * q;
+		return q * (1.0 - q2 * (1.0 / 3.0 - q2 * (1.0 / 5.0 - q2 * (1.0 / 7.0))));
+	}
+	return atan(tangent, outward);
+}
+
+vec2 rnf_cloud_sin_cos(float angle) {
+	if (abs(angle) <= 0.05) {
+		float a2 = angle * angle;
+		return vec2(
+			angle * (1.0 - a2 * (1.0 / 6.0) * (1.0 - a2 * (1.0 / 20.0) * (1.0 - a2 * (1.0 / 42.0)))),
+			1.0 - a2 * 0.5 * (1.0 - a2 * (1.0 / 12.0) * (1.0 - a2 * (1.0 / 30.0) * (1.0 - a2 * (1.0 / 56.0)))));
+	}
+	return vec2(sin(angle), cos(angle));
+}
+
+float ring_near_fog_cloud_visibility(vec3 world, float day) {
+	if (U.cs0.x < 0.5) return 1.0;
+	vec3 relative = world - U.cs_center.xyz;
+	float tangent = dot(relative, U.cs_around.xyz);
+	float across = dot(relative, U.cs_across.xyz);
+	float inward = dot(relative, U.cs_up.xyz);
+	float ring_radius = U.cs0.w;
+	vec2 planar = vec2(tangent, across);
+	if (ring_radius > 1.0) {
+		float outward_radius = ring_radius - inward;
+		float arc = ring_radius * rnf_cloud_arc_angle(tangent, outward_radius);
+		float altitude = ring_radius - length(vec2(tangent, outward_radius));
+		planar = vec2(arc, across);
+		if (U.cs0.y > 0.5) {
+			float angle = arc / ring_radius;
+			vec2 sine_cosine = rnf_cloud_sin_cos(angle);
+			vec3 local_around = U.cs_around.xyz * sine_cosine.y + U.cs_up.xyz * sine_cosine.x;
+			vec3 local_up = U.cs_up.xyz * sine_cosine.y - U.cs_around.xyz * sine_cosine.x;
+			float sun_up = dot(U.cs_sun.xyz, local_up);
+			if (sun_up > 0.04) {
+				planar -= vec2(dot(U.cs_sun.xyz, local_around), dot(U.cs_sun.xyz, U.cs_across.xyz)) * (altitude / sun_up);
+			}
+		}
+	}
+	float radius = max(U.cs1.z, 1.0);
+	vec2 uv = planar / (radius * 2.0) + vec2(0.5) + U.cs1.xy;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return 1.0;
+	float handoff = smoothstep(U.cs1.w, max(U.cs1.w + 1.0, U.cs_sun.w), length(planar));
+	float near_weight = 1.0 - smoothstep(0.72, 0.94, length(planar / radius));
+	if (near_weight <= 0.001) return 1.0;
+	vec2 phases = textureLod(cloud_shadow_near, uv, 0.0).rg;
+	float occlusion = (1.0 - (1.0 - phases.r) * (1.0 - phases.g)) * handoff * U.cs0.z * near_weight;
+	return 1.0 - clamp(occlusion * day, 0.0, 1.0);
+}
+#include "res://materials/ring_near_fog_light.gdshaderinc"
+
+const int STEPS = 16;
+
+void main() {
+	ivec2 a = ivec2(gl_GlobalInvocationID.xy);
+	if (any(greaterThanEqual(a, ivec2(U.size.zw)))) return;
+	vec2 uv = min((vec2(a) * 8.0 + 4.0) / U.size.xy, vec2(1.0));
+	vec2 ndc = uv * 2.0 - 1.0;
+	vec4 near_point = U.inv_proj * vec4(ndc, 1.0, 1.0);
+	vec3 vray = near_point.xyz / near_point.w;
+	vray /= -vray.z;                       // view ray with unit depth
+	vec3 wray = mat3(U.cam) * vray;        // world offset per unit view depth
+	vec3 view_dir = normalize(wray);
+	vec3 light_s = ring_near_fog_light_s(view_dir);   // the unshadowed light in-scatter S, once per texel (the view direction is fixed along the ray)
+	vec3 ambient_a = U.ambient.rgb;                     // A, the ambient in-scatter radiance the froxels get from the fog fill light
+	float omega = U.radiance.w;
+	float leff = U.layer.z, window = U.layer.y;
+	bool debug_uniform = U.layer.w >= 0.0;
+	bool fields = U.ref_world.w > 0.5;
+	float ray_len = length(wray);
+	float t = 1.0;
+	vec3 s = vec3(0.0);
+	float prev = 0.0;
+	for (int i = 0; i < STEPS; i++) {
+		float u = float(i + 1) / float(STEPS);
+		float z1 = leff * u * u;
+		float zm = 0.5 * (prev + z1);
+		float rho = 0.0;
+		vec3 fp = vec3(0.0);
+		if (fields) {
+			fp = ring_near_fog_point_from_frame(ring_near_fog_frame_apply_rel(U.cam_minus_ref.xyz + wray * zm));
+		}
+		if (debug_uniform) {
+			rho = U.drive.w * U.layer.w;
+		} else if (fields) {
+			float fade = 1.0 - smoothstep(0.6 * window, window, zm * ray_len);
+			rho = U.drive.w * ring_near_fog_sample(fp, U.drive.xyz, U.layer.x, U.noise.xy, fade);
+		}
+		vec3 v = vec3(1.0);
+		if (rho > 0.0 && fields) {                                         // the froxel's visibility at this sample (only where it has density)
+			float t0 = ring_near_fog_fields_valid(fp.xy) ? ring_near_fog_t0(fp.xy) : fp.z;
+			v = ring_near_fog_visibility_at(U.cam[3].xyz + wray * zm, fp.z, t0, zm * ray_len);
+		}
+		float ext = exp(-rho * (z1 - prev));
+		s += t * (1.0 - ext) * ring_near_fog_inscatter(omega, v, light_s, ambient_a);
+		t *= ext;
+		prev = z1;
+	}
+	imageStore(fog_end, a, vec4(s, t));
+}
+#endif
+
+#ifdef PASS_B
+layout(set = 0, binding = 1) uniform sampler2D fog_end_tex;   // linear
+layout(rgba16f, set = 0, binding = 2) uniform restrict image2D scene_color;
+layout(set = 0, binding = 3) uniform sampler2D scene_depth;
+layout(set = 0, binding = 4) uniform sampler2D cloud_color;   // Sunshine accumulation colour: rgb straight cloud colour, a density
+layout(set = 0, binding = 5) uniform sampler2D cloud_data;    // r = distance of the first density along the ray (m)
+
+void main() {
+	ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+	if (any(greaterThanEqual(p, ivec2(U.size.xy)))) return;
+	float depth = texelFetch(scene_depth, p, 0).r;
+	vec2 uv = (vec2(p) + 0.5) / U.size.xy;
+	if (depth == 0.0) {
+		if (U.flags.z > 0.5) {   // test hook: paint every main-empty pixel (RingNearFog.DebugMaskEmpty)
+			imageStore(scene_color, p, vec4(0.8, 0.0, 0.8, 1.0));
+			return;
+		}
+		if (U.flags.x < 0.5) return;
+		vec4 fe = textureLod(fog_end_tex, (vec2(p) + 0.5) / (U.size.zw * 8.0), 0.0);
+		vec4 c = imageLoad(scene_color, p);
+		c.rgb = c.rgb * fe.a + fe.rgb;
+		imageStore(scene_color, p, c);
+		return;
+	}
+	if (U.flags.y < 0.5) return;
+	vec4 cc = textureLod(cloud_color, uv, 0.0);
+	if (cc.a <= 0.0) return;
+	vec4 v = U.inv_proj * vec4(uv * 2.0 - 1.0, depth, 1.0);
+	float dist = length(v.xyz / v.w);
+	if (dist < U.layer.z) return;   // geometry inside the window: a cloud in front of it is not a case (Godot fogged the geometry, the cloud is farther)
+	// The displayed cloud alpha exactly as SunshineCloudsPostCompute.comp composites it (depth-aware fade; enclosed fog excluded).
+	vec4 data = textureLod(cloud_data, uv, 0.0);
+	float minstep = U.cloud.x, maxstep = U.cloud.y;
+	float alpha = clamp(cc.a, 0.0, 1.0);
+	float lerp_amount = 0.0;
+	if (data.r > dist) {
+		lerp_amount = 1.0;
+	} else if (data.g > dist) {
+		float first = mix(1.0 - clamp((data.g - data.r) / minstep, 0.0, 1.0), 1.0, clamp(data.r / maxstep, 0.0, 1.0));
+		lerp_amount = clamp((data.g - dist) / (data.g - data.r), 0.0, 1.0) * first;
+	}
+	alpha *= smoothstep(minstep, minstep * 2.0, dist);
+	alpha = mix(alpha, 0.0, lerp_amount);
+	if (alpha <= 0.0) return;
+	vec4 fe = textureLod(fog_end_tex, (vec2(p) + 0.5) / (U.size.zw * 8.0), 0.0);
+	vec4 c = imageLoad(scene_color, p);
+	c.rgb += alpha * (fe.rgb - (1.0 - fe.a) * cc.rgb);
+	imageStore(scene_color, p, c);
+}
+#endif
+
+#ifdef PASS_COPY
+// Test hook (RingNearFogEndComposite.request_state_readback): copy of the resolved colour into a texture that can be read back.
+layout(rgba16f, set = 0, binding = 1) uniform restrict readonly image2D copy_src;
+layout(rgba16f, set = 0, binding = 2) uniform restrict writeonly image2D copy_dst;
+
+void main() {
+	ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+	if (any(greaterThanEqual(p, ivec2(U.size.xy)))) return;
+	imageStore(copy_dst, p, imageLoad(copy_src, p));
+}
+#endif

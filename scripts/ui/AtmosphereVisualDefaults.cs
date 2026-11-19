@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using Godot;
 using RingworldTechDemo.Atmosphere;
+using RingworldTechDemo.Atmosphere.NearFog;
 using RingworldTechDemo.Voxel.LOD;
 
 namespace RingworldTechDemo.UI;
@@ -25,6 +26,8 @@ public sealed class AtmosphereVisualDefaults
         RingAtmosphereModel.EnclosedCloudFog = Settings.EnclosedCloudFog;
         RingAtmosphereLuts.SkyViewEnabled = Settings.SkyHazeLut;
         RingSunGlare.SetSettings(Settings.SunGlare, Settings.LensFlare);
+        RingNearFog.Amount = Settings.NearFogAmount;
+        RingNearFog.LayerHeight = Settings.NearFogLayerHeight;
         RingVegetationHaze.Enabled = Settings.VegetationInstanceHaze;
         RingAtmosphereModel.HazeModel = (RingAtmosphereModel.HazeModelKind)Mathf.Clamp(Settings.HazeModel, 0, 1);
         RingAtmosphereModel.SetPhysicalControls(Settings.AerosolHeight, Settings.RayleighStrength,
@@ -57,6 +60,8 @@ public sealed class AtmosphereVisualDefaults
             case "SkyTintB": Settings.SkyTintB = value; break;
             case "SunGlare": Settings.SunGlare = value; break;
             case "LensFlare": Settings.LensFlare = value; break;
+            case "NearFogAmount": Settings.NearFogAmount = value; break;
+            case "NearFogLayerHeight": Settings.NearFogLayerHeight = value; break;
             case "HazeQuality": Settings.HazeQuality = float.IsFinite(value) ? (int)Mathf.Round(value) : 4; break;
             default: return;
         }
@@ -154,6 +159,8 @@ public sealed class AtmosphereVisualDefaults
         Settings.SkyTintB = Clean(Settings.SkyTintB, 1.01f, 0, 2);
         Settings.SunGlare = Clean(Settings.SunGlare, 1, 0, 1);
         Settings.LensFlare = Clean(Settings.LensFlare, 0, 0, 1);
+        Settings.NearFogAmount = Clean(Settings.NearFogAmount, 1, 0, 2);
+        Settings.NearFogLayerHeight = Clean(Settings.NearFogLayerHeight, 40, 10, 150);
         Settings.HazeQuality = Settings.HazeQuality <= 6 ? 4 : Settings.HazeQuality <= 11 ? 8 : 16;
     }
     private static float Clean(float value, float fallback, float minimum, float maximum) => float.IsFinite(value) ? Mathf.Clamp(value, minimum, maximum) : fallback;

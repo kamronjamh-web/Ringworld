@@ -589,6 +589,7 @@ func _process(delta: float) -> void:
 	# owns sun direction and graphics quality owns its static shadow settings.
 	var underground_sky_access := _get_underground_sky_access()
 	_apply_underground_lighting(environment, underground_sky_access, _get_enclosure_blend() * _get_structural_sky_access())
+	_publish_fog_ambient()
 	underground_lighting_darkness = 1.0 - clampf(underground_sky_access, 0.0, 1.0)
 	var cave_fog_weight := _get_enclosure_blend() * _get_structural_sky_access() * (1.0 - current_underwater_factor) * _underground_cave_fog_weight()
 	_apply_underground_fog_coupling(environment, cave_fog_weight, _underground_cave_fog_density())
@@ -1229,6 +1230,25 @@ func _publish_haze_lighting(surface_up: Vector3, to_sun: Vector3) -> void:
 		_published_haze_lup_day = _haze_lup_day
 		_published_haze_lup_night = lup_night
 		cloud_lighting_bridge.call("SetHazeSkyRadiance", _haze_lup_day, lup_night)
+
+
+# Ambient in-scatter radiance A of the near ground fog (RingNearFog, NF-5b), published as ringworld_fog_ambient (linear rgb): the isotropic in-scatter of a fog volume is the mean radiance over the sphere, half sky
+# and half ground, A = 0.5 (L_sky_mean + L_ground). L_sky_mean is the EQUAL-AREA mean sky radiance (isotropic scattering weights every direction equally; the cosine-weighted mean is for Lambert surfaces):
+# the haze model's L_up (RingHazeSkyIrradiance.Compute [2]) with the day, cloud-ambient, storm and underground-access factors the ground bounce's sky term uses (_publish_ground_bounce), the planet light and
+# night floor at night, blended by the day factor. L_ground is the ground bounce published for the sky radiance map (published_ground_bounce, read only). RingNearFog turns A into a fill light the froxels
+# integrate (EMISSION is quantised away at fog densities, Godot's ambient inject samples the sky along the ring axis).
+var published_fog_ambient: Vector3 = Vector3(-1.0, -1.0, -1.0)   # also read by RingNearFog (GlobalShaderParameterGet is editor-only)
+
+
+func _publish_fog_ambient() -> void:
+	var night_floor := Vector3(haze_night_floor.r, haze_night_floor.g, haze_night_floor.b) * eclipse_atmosphere_night_multiplier
+	var day := clampf(current_day_factor, 0.0, 1.0)
+	var day_sky := _haze_lup_day * (current_cloud_ambient_transmittance * clampf(current_storm_ambient, 0.0, 1.0))
+	var sky_mean := (_haze_lup_planet + night_floor).lerp(day_sky, day) * clampf(_get_underground_sky_access(), 0.0, 1.0)
+	var a := (sky_mean + published_ground_bounce) * 0.5
+	if _relative_change(a, published_fog_ambient) > 0.005:
+		published_fog_ambient = a
+		RenderingServer.global_shader_parameter_set("ringworld_fog_ambient", a)
 
 
 # A palette colour as a unit-luminance per-channel multiplier (hue only), so a tint lerp changes colour without changing brightness.

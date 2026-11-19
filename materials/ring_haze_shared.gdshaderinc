@@ -371,6 +371,17 @@ vec3 ring_haze_sun_transmittance(RingHazeParams p, vec3 ray, vec2 interval, floa
 	return exp(-tau_col * airmass) * smoothstep(-0.06, 0.0, cos_sun);
 }
 
+// Sun transmittance at a point given directly: h = altitude above the floor (m), cos_sun = dot(to_sun, local up) there. The same column, airmass and sun_vis as
+// ring_haze_sun_transmittance (whose h_mid and cos_sun come from the path midpoint); for consumers that know the point, not a ray (the near ground fog, NF-5).
+vec3 ring_haze_sun_transmittance_point(RingHazeParams p, float h, float cos_sun) {
+	float cap = p.cap_height;
+	float col_R = max(p.H_R * (exp(min(-h / max(p.H_R, 1.0), 80.0)) - exp(-cap / max(p.H_R, 1.0))), 0.0);
+	float col_A = max(p.H_A * (exp(min(-h / max(p.H_A, 1.0), 80.0)) - exp(-cap / max(p.H_A, 1.0))), 0.0);
+	vec3 tau_col = p.sigma_R * col_R + vec3(p.sigma_A * col_A);
+	float airmass = 1.025 / (max(cos_sun, 0.0) + 0.025);
+	return exp(-tau_col * airmass) * smoothstep(-0.06, 0.0, cos_sun);
+}
+
 // Sun transmittance with the column topped by the field over the path midpoint (ring_haze_field_column_top); without a field it is
 // ring_haze_sun_transmittance exactly.
 vec3 ring_haze_sun_transmittance_lid(RingHazeParams p, vec3 ray, vec2 interval, float camera_height, vec3 outward, vec3 axis, float radius_m, float side_negative) {

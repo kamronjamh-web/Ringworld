@@ -136,6 +136,23 @@ func _run() -> void:
 	for removed_name in ["MistDensity", "MistHeight"]:
 		if _drawer.find_child("Atmosphere" + removed_name, true, false) != null:
 			return _fail("removed mist slider still present: " + removed_name)
+	# NF-6 "Ground fog" group: two sliders with the documented ranges and defaults; a change through the real signal reaches the persisted file.
+	var fog_amount := _drawer.find_child("AtmosphereNearFogAmount", true, false) as HSlider
+	var fog_height := _drawer.find_child("AtmosphereNearFogLayerHeight", true, false) as HSlider
+	if fog_amount == null or fog_height == null:
+		return _fail("ground fog sliders missing")
+	if fog_amount.min_value != 0.0 or fog_amount.max_value != 2.0 or fog_height.min_value != 10.0 or fog_height.max_value != 150.0 \
+			or not is_equal_approx(fog_amount.value, 1.0) or not is_equal_approx(fog_height.value, 40.0):
+		return _fail("ground fog slider ranges or defaults wrong")
+	var has_fog_group := false
+	for fog_label in _drawer.find_children("*", "Label", true, false):
+		if (fog_label as Label).text == "Ground fog":
+			has_fog_group = true
+	if not has_fog_group:
+		return _fail("Ground fog group label missing")
+	fog_amount.value = 1.5
+	fog_height.value = 60.0
+	await process_frame
 	# POI haze and cloud shadows follow the regular haze and terrain cloud shadows: no per-POI toggles in the menu.
 	for check_name in ["AtmospherePoiHaze", "AtmospherePoiCloudShadow"]:
 		if _drawer.find_child(check_name, true, false) != null:
@@ -198,6 +215,8 @@ func _run() -> void:
 	await create_timer(0.3).timeout
 	if not is_equal_approx(float((_graphics.call("GetAtmosphereTuningDiagnostics") as Dictionary).get("density", -1.0)), 0.58) or not is_equal_approx(density.value, 0.58):
 		return _fail("atmosphere profile reload did not preserve the saved UI value")
+	if not is_equal_approx(fog_amount.value, 1.5) or not is_equal_approx(fog_height.value, 60.0):
+		return _fail("ground fog values did not survive the profile reload")
 	_graphics.call("ApplyPreset", 2, true, false)
 	await process_frame
 	if not is_equal_approx(float((_graphics.call("GetAtmosphereTuningDiagnostics") as Dictionary).get("density", -1.0)), 0.58):

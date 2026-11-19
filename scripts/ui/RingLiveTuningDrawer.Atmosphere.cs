@@ -158,6 +158,11 @@ public partial class RingLiveTuningDrawer
         AddAtmosphereSlider(tab, "SunGlare", "Sun glare", 0, 1, .01, settings.SunGlare,
             "Veiling glare around the sun (eye/lens scatter). 1 = physical for the sun as displayed, 0 = off.");
         AddAtmosphereSlider(tab, "LensFlare", "Lens flare", 0, 1, .01, settings.LensFlare, "Ghosts and starburst. Not drawn yet.");
+        tab.AddChild(new Label { Text = "Ground fog", Modulate = RingUiStyle.Muted });
+        AddAtmosphereSlider(tab, "NearFogAmount", "Ground fog amount", 0, 2, .01, settings.NearFogAmount,
+            "Near ground fog (valleys at dawn, mist after rain, steam over water). 1 = as the weather makes it, 0 = off. High preset and above only.");
+        AddAtmosphereSlider(tab, "NearFogLayerHeight", "Fog layer height (m)", 10, 150, 1, settings.NearFogLayerHeight,
+            "Depth of the radiation-fog layer that pools in valleys.");
         // Physical-only controls (hidden while the Legacy model is selected; see RefreshAtmosphereControls).
         _atmospherePhysicalGroup = new VBoxContainer { Name = "AtmospherePhysicalGroup" };
         _atmospherePhysicalGroup.AddChild(new Label { Text = "Physical haze", Modulate = RingUiStyle.Muted });
@@ -243,6 +248,8 @@ public partial class RingLiveTuningDrawer
         SetAtmosphereRange("EnclosedCloudFog", s.EnclosedCloudFog);
         SetAtmosphereRange("SunGlare", s.SunGlare);
         SetAtmosphereRange("LensFlare", s.LensFlare);
+        SetAtmosphereRange("NearFogAmount", s.NearFogAmount);
+        SetAtmosphereRange("NearFogLayerHeight", s.NearFogLayerHeight);
         SetAtmosphereRange("AerosolHeight", s.AerosolHeight);
         SetAtmosphereRange("RayleighStrength", s.RayleighStrength);
         SetAtmosphereRange("GroundAlbedo", s.GroundAlbedo);

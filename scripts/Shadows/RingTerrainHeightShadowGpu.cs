@@ -19,6 +19,8 @@ public sealed class RingTerrainHeightShadowGpu : IDisposable
     private const string ScatterShaderPath = "res://materials/shadows/ring_height_shadow_scatter.comp";
     private const string MipsShaderPath = "res://materials/shadows/ring_height_shadow_mips.comp";
     private const string BuildShaderPath = "res://materials/shadows/ring_height_shadow_build.comp";
+    private const string NearFogShaderPath = "res://materials/shadows/ring_near_fog_fields.comp";
+    public const int NearFogBasinSize = 64;
     private const int BuildParamBytes = 96;
     private readonly RenderingDevice _rd;
     private readonly int _levels;
@@ -27,6 +29,7 @@ public sealed class RingTerrainHeightShadowGpu : IDisposable
     private readonly Rid[] _heightBuffers, _mipBuffers, _scatterSets, _mipSets, _outputTextures, _buildSets, _layerViews;
     private byte[]? _chunkBytes;
     private bool _initialized;
+    private Rid _nearFogShader, _nearFogPipeline, _nearFogSet, _nearFogT0, _nearFogBasin, _nearFogStageA, _nearFogStageB, _nearFogStageC;
 
     public string Error { get; private set; } = "";
     public bool Ready => _initialized && Error.Length == 0;
@@ -212,6 +215,88 @@ public sealed class RingTerrainHeightShadowGpu : IDisposable
         _rd.ComputeListEnd();
     }
 
+    /// <summary>R32F 1024^2 copy of the level-0 heights (same toroidal slots as the height buffer); invalid until <see cref="InitializeNearFogFields"/> succeeded.</summary>
+    public Rid NearFogT0Texture => _nearFogT0;
+    /// <summary>R32F 64^2 basin floor (min over a 320 m footprint, blurred 3x3), slot = (T0 slot >> 4) &amp; 63.</summary>
+    public Rid NearFogBasinTexture => _nearFogBasin;
+    public bool NearFogFieldsReady => _nearFogSet.IsValid && _initialized && Error.Length == 0;
+    public string NearFogError { get; private set; } = "";
+
+    /// <summary>
+    /// NF-2a: compiles the near-fog field pass and allocates T0 (R32F 1024^2, 4 MB), the basin image (R32F 64^2) and the basin staging buffers. Non-fatal: on failure
+    /// <see cref="NearFogError"/> is set and the height-shadow producer itself keeps working (the near fog just sees no fields).
+    /// </summary>
+    public bool InitializeNearFogFields()
+    {
+        if (!Ready) return false;
+        if (_nearFogSet.IsValid) return true;
+        string source = RingAtmosphereLuts.ExpandIncludes(NearFogShaderPath);
+        if (string.IsNullOrEmpty(source)) return NearFogFail("near fog fields shader missing: " + NearFogShaderPath);
+        using var shaderSource = new RDShaderSource { SourceCompute = source };
+        using RDShaderSpirV spirv = _rd.ShaderCompileSpirVFromSource(shaderSource);
+        if (!string.IsNullOrWhiteSpace(spirv.CompileErrorCompute)) return NearFogFail("near fog fields shader compile error: " + spirv.CompileErrorCompute);
+        _nearFogShader = _rd.ShaderCreateFromSpirV(spirv);
+        if (!_nearFogShader.IsValid) return NearFogFail("near fog fields shader creation failed");
+        _nearFogPipeline = _rd.ComputePipelineCreate(_nearFogShader);
+        if (!_nearFogPipeline.IsValid) return NearFogFail("near fog fields pipeline creation failed");
+        int n = RingHeightShadowLattice.TextureSize, b = NearFogBasinSize;
+        Rid Image(int size) => _rd.TextureCreate(new RDTextureFormat
+        {
+            Width = (uint)size, Height = (uint)size, Depth = 1, ArrayLayers = 1, Mipmaps = 1, TextureType = RenderingDevice.TextureType.Type2D,
+            Format = RenderingDevice.DataFormat.R32Sfloat,
+            UsageBits = RenderingDevice.TextureUsageBits.StorageBit | RenderingDevice.TextureUsageBits.SamplingBit | RenderingDevice.TextureUsageBits.CanCopyFromBit
+                        | RenderingDevice.TextureUsageBits.CanUpdateBit,
+        }, new RDTextureView(), new Godot.Collections.Array<byte[]> { new byte[size * size * 4] });
+        _nearFogT0 = Image(n);
+        _nearFogBasin = Image(b);
+        _nearFogStageA = _rd.StorageBufferCreate((uint)(b * 2 * b * 2 * 4), new byte[b * 2 * b * 2 * 4]);
+        _nearFogStageB = _rd.StorageBufferCreate((uint)(b * b * 4), new byte[b * b * 4]);
+        _nearFogStageC = _rd.StorageBufferCreate((uint)(b * b * 4), new byte[b * b * 4]);
+        if (!_nearFogT0.IsValid || !_nearFogBasin.IsValid || !_nearFogStageA.IsValid || !_nearFogStageB.IsValid || !_nearFogStageC.IsValid) return NearFogFail("near fog fields allocation failed");
+        var uniforms = new Godot.Collections.Array<RDUniform>();
+        void Add(RenderingDevice.UniformType type, int binding, Rid rid)
+        {
+            var uniform = new RDUniform { UniformType = type, Binding = binding };
+            uniform.AddId(rid);
+            uniforms.Add(uniform);
+        }
+        Add(RenderingDevice.UniformType.StorageBuffer, 0, _heightBuffers[0]);
+        Add(RenderingDevice.UniformType.Image, 1, _nearFogT0);
+        Add(RenderingDevice.UniformType.StorageBuffer, 2, _nearFogStageA);
+        Add(RenderingDevice.UniformType.StorageBuffer, 3, _nearFogStageB);
+        Add(RenderingDevice.UniformType.StorageBuffer, 4, _nearFogStageC);
+        Add(RenderingDevice.UniformType.Image, 5, _nearFogBasin);
+        _nearFogSet = _rd.UniformSetCreate(uniforms, _nearFogShader, 0);
+        return _nearFogSet.IsValid || NearFogFail("near fog fields uniform set creation failed");
+    }
+
+    private bool NearFogFail(string message)
+    {
+        NearFogError = message;
+        GD.PushError(message);
+        return false;
+    }
+
+    /// <summary>
+    /// NF-2a: refreshes T0 and the basin floor from the level-0 height buffer (call after the L0 upload and BuildMips(0)). One compute list, five dependent
+    /// dispatches: copy, 8x8 min, 2x2 min, 5x5 min, 3x3 blur. No readback.
+    /// </summary>
+    public void BuildNearFogFields()
+    {
+        if (!NearFogFieldsReady) return;
+        long list = _rd.ComputeListBegin();
+        _rd.ComputeListBindComputePipeline(list, _nearFogPipeline);
+        _rd.ComputeListBindUniformSet(list, _nearFogSet, 0);
+        uint[] groups = { (uint)(RingHeightShadowLattice.TextureSize / 8), 16, 8, 8, 8 };
+        for (int mode = 0; mode < 5; mode++)
+        {
+            if (mode > 0) _rd.ComputeListAddBarrier(list);
+            _rd.ComputeListSetPushConstant(list, new byte[16] { (byte)mode, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }, 16);
+            _rd.ComputeListDispatch(list, groups[mode], groups[mode], 1);
+        }
+        _rd.ComputeListEnd();
+    }
+
     /// <summary>Highest master height of a level (the early-stop bound of the march; one pass over 1M floats).</summary>
     public static float LevelMaxHeight(RingHeightShadowClipmap clipmap, int level)
     {
@@ -301,6 +386,10 @@ public sealed class RingTerrainHeightShadowGpu : IDisposable
                 if (group[i].IsValid) _rd.FreeRid(group[i]);
                 group[i] = default;
             }
+        foreach (Rid rid in new[] { _nearFogSet, _nearFogT0, _nearFogBasin, _nearFogStageA, _nearFogStageB, _nearFogStageC, _nearFogPipeline, _nearFogShader })
+            if (rid.IsValid) _rd.FreeRid(rid);
+        _nearFogSet = default; _nearFogT0 = default; _nearFogBasin = default; _nearFogStageA = default; _nearFogStageB = default; _nearFogStageC = default;
+        _nearFogPipeline = default; _nearFogShader = default;
         foreach (Rid rid in new[] { _staging, _buildParams, _scatterPipeline, _scatterShader, _mipsPipeline, _mipsShader, _buildPipeline, _buildShader })
             if (rid.IsValid) _rd.FreeRid(rid);
         _staging = default; _buildParams = default; _scatterPipeline = default; _scatterShader = default; _mipsPipeline = default; _mipsShader = default;

@@ -11,6 +11,9 @@
 // macro term keeps covering the part of the receiver the window cannot rule lit.
 // Authority rule: the real-time sun map owns every blocker it contains. A texel whose blocker lies inside the map (camera distance + G < shape.w)
 // contributes no weight, so the macro term (and the map itself) stay in charge there; shape.w is 0 while the sun map is suspended.
+// The near-fog end compute (materials/ring_near_fog_end.comp) defines RING_HEIGHT_SHADOW_COMPUTE and supplies these names itself (sampler bindings, macros onto its UBO,
+// ringworld_hub_light_weight); the functions below are shared unchanged. Godot materials never define it, so they see exactly the declarations they always did.
+#ifndef RING_HEIGHT_SHADOW_COMPUTE
 #include "res://materials/celestial_lighting.gdshaderinc" // ringworld_hub_light_weight
 
 global uniform sampler2DArray ringworld_height_shadow_l0;
@@ -25,6 +28,7 @@ global uniform vec4 ringworld_height_shadow_l1_prev_bounds;
 global uniform vec4 ringworld_height_shadow_state; // front layer, previous layer (-1 none), crossfade t, light (1 sun)
 global uniform vec4 ringworld_height_shadow_shape; // tan(penumbra), receiver bias m, floor radius m, authority distance A
 global uniform vec4 ringworld_height_shadow_light; // xyz world direction toward the light the front layer was built for, w = 1 while the feature and its receivers are on (published or not), else 0
+#endif
 
 struct RingHeightShadow {
 	float visibility; // 1 = lit, only meaningful where weight > 0

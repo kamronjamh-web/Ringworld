@@ -18,6 +18,10 @@ public partial class RingTerrainHeightShadow
         GlobalL0Bounds = "ringworld_height_shadow_l0_bounds", GlobalL0PrevBounds = "ringworld_height_shadow_l0_prev_bounds",
         GlobalL1Bounds = "ringworld_height_shadow_l1_bounds", GlobalL1PrevBounds = "ringworld_height_shadow_l1_prev_bounds",
         GlobalState = "ringworld_height_shadow_state", GlobalShape = "ringworld_height_shadow_shape", GlobalLight = "ringworld_height_shadow_light";
+    /// <summary>NF-2a near-fog fields: T0 (R32F 1024^2 copy of the L0 heights, same slots as the lattice), the basin floor (R32F 64^2, slot = (T0 slot >> 4) &amp; 63), the anchor-local bounds of the window T0 holds and (texel, 1/(N texel), valid, 0).</summary>
+    public const string GlobalT0 = "ringworld_height_shadow_t0_l0", GlobalBasin = "ringworld_near_fog_basin_l0",
+        GlobalT0Bounds = "ringworld_near_fog_t0_bounds", GlobalFieldsParams = "ringworld_near_fog_fields_params",
+        GlobalRefWorld = "ringworld_near_fog_ref_world", GlobalRefFrame = "ringworld_near_fog_ref_frame";
     private const string TimestampPrefix = "ringhs:";
     private static readonly Vector4 EmptyBounds = new(1e9f, -1e9f, 1e9f, -1e9f);
 
@@ -42,10 +46,14 @@ public partial class RingTerrainHeightShadow
         public double TotalMeasuredMs, MaxSliceMs;
         public readonly float[] Unresolved = { float.NaN, float.NaN };
         public readonly float[] UnresolvedShadowed = { float.NaN, float.NaN };
+        // NF-2a: the L0 window the T0 copy holds (set by the render thread after each copy, read under Gate by PushGlobals).
+        public HeightShadowIndexRect? FieldsRect;
+        public int FieldsTexel;
     }
 
     private GpuLink? _link;
     private readonly Texture2DArrayRD?[] _arrays = new Texture2DArrayRD?[2];
+    private readonly Texture2Drd?[] _fields = new Texture2Drd?[2]; // 0 = T0, 1 = basin floor
     private bool _globalArraysRegistered, _globalsDirty, _statsWanted;
     private bool _globalArraysInitializationQueued;
     private bool _globalArraysReleased;
@@ -53,6 +61,9 @@ public partial class RingTerrainHeightShadow
     private readonly Dictionary<string, Variant> _globalCache = new();
     private double[]? _frameRows;
     private long _anchor, _anchorAcross;
+
+    /// <summary>Main thread. The anchor (canonical around, across metres; multiples of 4096 L0 texels) the published frame matrix and bounds are relative to, as of the last push. NF-2b publishes its water field relative to it.</summary>
+    public (long Around, long Across) PublishedAnchor => (_anchor, _anchorAcross);
 
     private bool GpuReady => _link is { Ready: true };
     private bool GpuFailed => _link is { Failed: true };
@@ -104,7 +115,7 @@ public partial class RingTerrainHeightShadow
         if (!_globalArraysInitializationQueued)
         {
             _globalArraysInitializationQueued = true;
-            for (int l = 0; l < 2; l++) _arrays[l] ??= new Texture2DArrayRD();
+            for (int l = 0; l < 2; l++) { _arrays[l] ??= new Texture2DArrayRD(); _fields[l] ??= new Texture2Drd(); }
             RenderingServer.CallOnRenderThread(Callable.From(() =>
             {
                 PointArraysAtPlaceholder();
@@ -115,6 +126,8 @@ public partial class RingTerrainHeightShadow
         if (!_globalArraysReady) return;
         RenderingServer.GlobalShaderParameterSet(GlobalL0, _arrays[0]!);
         RenderingServer.GlobalShaderParameterSet(GlobalL1, _arrays[1]!);
+        RenderingServer.GlobalShaderParameterSet(GlobalT0, _fields[0]!);
+        RenderingServer.GlobalShaderParameterSet(GlobalBasin, _fields[1]!);
         _globalArraysRegistered = true;
     }
 
@@ -130,12 +143,18 @@ public partial class RingTerrainHeightShadow
             link.Rd = rd;
             link.Gpu = gpu;
             for (int l = 0; l < 2; l++) _arrays[l]!.TextureRdRid = gpu.OutputTexture(l);
+            // The near-fog fields are optional: a failure leaves the placeholders bound and the fields invalid, the height shadows are unaffected.
+            if (gpu.InitializeNearFogFields() && _fields[0] != null && _fields[1] != null && GodotObject.IsInstanceValid(_fields[0]) && GodotObject.IsInstanceValid(_fields[1]))
+            {
+                _fields[0]!.TextureRdRid = gpu.NearFogT0Texture;
+                _fields[1]!.TextureRdRid = gpu.NearFogBasinTexture;
+            }
             link.Ready = true;
         }
         catch (Exception error) { link.Error = error.Message; link.Failed = true; }
     }
 
-    private Rid _placeholderArray;
+    private Rid _placeholderArray, _placeholderField;
 
     /// <summary>A valid 1x1x3 RG16F array texture the global samplers point at while no GPU session exists: a Texture2DArrayRD without an RID falls back to a plain 2D texture, which invalidates every material uniform set that bound the 2DArray global (type mismatch errors every frame).</summary>
     private void PointArraysAtPlaceholder()
@@ -152,6 +171,18 @@ public partial class RingTerrainHeightShadow
         }
         for (int l = 0; l < 2; l++)
             if (_placeholderArray.IsValid && _arrays[l] != null && GodotObject.IsInstanceValid(_arrays[l])) _arrays[l]!.TextureRdRid = _placeholderArray;
+        // The NF-2a field samplers get a valid 1x1 R32F texture the same way (never an empty Texture2DRD, never a freed image).
+        if (main != null && !_placeholderField.IsValid)
+        {
+            var fieldFormat = new RDTextureFormat
+            {
+                Format = RenderingDevice.DataFormat.R32Sfloat, Width = 1, Height = 1, Depth = 1, ArrayLayers = 1, Mipmaps = 1,
+                TextureType = RenderingDevice.TextureType.Type2D, UsageBits = RenderingDevice.TextureUsageBits.SamplingBit,
+            };
+            _placeholderField = main.TextureCreate(fieldFormat, new RDTextureView(), new Godot.Collections.Array<byte[]> { new byte[4] });
+        }
+        for (int l = 0; l < 2; l++)
+            if (_placeholderField.IsValid && _fields[l] != null && GodotObject.IsInstanceValid(_fields[l])) _fields[l]!.TextureRdRid = _placeholderField;
     }
 
     private void UnregisterGlobalArrays()
@@ -161,6 +192,8 @@ public partial class RingTerrainHeightShadow
         // Invalid RID selects the engine's typed array default before the wrappers/backing textures are retired.
         RenderingServer.GlobalShaderParameterSet(GlobalL0, Variant.From(default(Rid)));
         RenderingServer.GlobalShaderParameterSet(GlobalL1, Variant.From(default(Rid)));
+        RenderingServer.GlobalShaderParameterSet(GlobalT0, Variant.From(default(Rid)));
+        RenderingServer.GlobalShaderParameterSet(GlobalBasin, Variant.From(default(Rid)));
         _globalArraysRegistered = false;
     }
 
@@ -178,9 +211,16 @@ public partial class RingTerrainHeightShadow
             if (exiting)
             {
                 for (int l = 0; l < 2; l++)
+                {
                     if (_arrays[l] != null && GodotObject.IsInstanceValid(_arrays[l])) _arrays[l]!.TextureRdRid = default;
-                if (_placeholderArray.IsValid && RenderingServer.GetRenderingDevice() is { } rd) rd.FreeRid(_placeholderArray);
-                _placeholderArray = default;
+                    if (_fields[l] != null && GodotObject.IsInstanceValid(_fields[l])) _fields[l]!.TextureRdRid = default;
+                }
+                if (RenderingServer.GetRenderingDevice() is { } rd)
+                {
+                    if (_placeholderArray.IsValid) rd.FreeRid(_placeholderArray);
+                    if (_placeholderField.IsValid) rd.FreeRid(_placeholderField);
+                }
+                _placeholderArray = default; _placeholderField = default;
                 _globalArraysReady = false;
             }
         }));
@@ -206,6 +246,8 @@ public partial class RingTerrainHeightShadow
     {
         GpuLink link = _link!;
         _uploadCallbacksPosted++;
+        HeightShadowIndexRect? fieldsRect = clipmap.Levels[0].Window?.Rect;
+        int fieldsTexel = clipmap.Levels[0].TexelMeters;
         RenderingServer.CallOnRenderThread(Callable.From(() =>
         {
             try
@@ -216,6 +258,12 @@ public partial class RingTerrainHeightShadow
                 {
                     foreach ((int level, HeightShadowSlotRect rect) in items) gpu.UploadSlotRect(level, clipmap, rect);
                     if (mipLevels != null) for (int l = 0; l < mipLevels.Length; l++) if (mipLevels[l]) gpu.BuildMips(l);
+                    // NF-2a: T0 copy and basin floor, once per L0 refresh (the mips flag marks the final callback of a moved level).
+                    if (mipLevels is { Length: > 0 } && mipLevels[0] && gpu.NearFogFieldsReady)
+                    {
+                        gpu.BuildNearFogFields();
+                        lock (link.Gate) { link.FieldsRect = fieldsRect; link.FieldsTexel = fieldsTexel; }
+                    }
                 }
                 RecordCallbackCpu(link, watch.Elapsed.TotalMilliseconds);
             }
@@ -319,7 +367,8 @@ public partial class RingTerrainHeightShadow
         }
         if (_link != null) { lock (_link.Gate) { result["gpu_slices_measured"] = _link.MeasuredSlices; result["gpu_ms_total"] = _link.TotalMeasuredMs; result["gpu_ms_max_slice"] = _link.MaxSliceMs; } }
         result["anchor_around"] = _anchor; result["anchor_across"] = _anchorAcross;
-        result["array_rids"] = _link?.Gpu != null ? new Godot.Collections.Array<Rid> { _link.Gpu.OutputTexture(0), _link.Gpu.OutputTexture(1) } : new Godot.Collections.Array<Rid>();
+        result["near_fog_rids"] = _link?.Gpu is { NearFogFieldsReady: true } fields ? new Godot.Collections.Array<Rid> { fields.NearFogT0Texture, fields.NearFogBasinTexture } : new Godot.Collections.Array<Rid>();
+        result["array_rids"] =_link?.Gpu != null ? new Godot.Collections.Array<Rid> { _link.Gpu.OutputTexture(0), _link.Gpu.OutputTexture(1) } : new Godot.Collections.Array<Rid>();
     }
 
     private void QueueStats(int layer)
@@ -418,6 +467,7 @@ public partial class RingTerrainHeightShadow
         SetGlobal(GlobalL0Bounds, empty); SetGlobal(GlobalL0PrevBounds, empty); SetGlobal(GlobalL1Bounds, empty); SetGlobal(GlobalL1PrevBounds, empty);
         SetGlobal(GlobalState, Variant.From(new Vector4(-1, -1, 1, 0)));
         SetGlobal(GlobalShape, none);
+        SetGlobal(GlobalFieldsParams, none); SetGlobal(GlobalT0Bounds, empty); SetGlobal(GlobalRefWorld, none); SetGlobal(GlobalRefFrame, none);
     }
 
     /// <summary>Writes every ringworld_height_shadow_* global in one main-thread call (atomic from the shaders' point of view); the frame matrix is rebuilt every frame (floating origin).</summary>
@@ -463,6 +513,7 @@ public partial class RingTerrainHeightShadow
             SetGlobal(l == 0 ? GlobalL0Bounds : GlobalL1Bounds, Variant.From(front));
             SetGlobal(l == 0 ? GlobalL0PrevBounds : GlobalL1PrevBounds, Variant.From(prev));
         }
+        PushNearFogFields(anchor, anchorAcross, m);
         HeightShadowPublished state = _roles.Current;
         {
             Vector4 b0 = ToBounds(w0, t0, anchor, anchorAcross);
@@ -478,6 +529,37 @@ public partial class RingTerrainHeightShadow
             _globalsDirty = false;
             if (_statsWanted) QueueStats(_roles.Front);
         }
+    }
+
+    /// <summary>
+    /// NF-2a: bounds (anchor-local around min/max, across min/max) of the L0 window the T0 copy holds, and (texel m, 1 / (N texel), valid, 0). Written with the other globals
+    /// in the same push, so the frame and the bounds always share one anchor. T0 and the basin are overwritten on the render thread at the final upload callback, up to a few
+    /// frames before the matching window is published here; only the strip of slots the recentre refills (the far edge of the old window, 1.5 km or more from the camera) can
+    /// disagree for those frames, far outside the near-fog range.
+    /// </summary>
+    /// <summary>
+    /// The frame matrix translates by about the ring radius (5 Mm), so a float32 f = M * world + t loses 0.25 to 0.5 m of f.z to cancellation (the receivers only need metres).
+    /// The near fog needs the canonical height to about 0.01 m, so it evaluates the frame relative to a reference: the camera's world position and its frame image, the latter
+    /// computed here in double precision. f(world) = f_ref + mat3(M) * (world - ref) is exact algebra and only ever combines small numbers (ring_near_fog_frame_point).
+    /// </summary>
+    private void PushNearFogReference(double[] m)
+    {
+        Camera3D? camera = GetViewport()?.GetCamera3D();
+        if (camera == null) { SetGlobal(GlobalRefWorld, Variant.From(new Vector4(0, 0, 0, 0))); SetGlobal(GlobalRefFrame, Variant.From(new Vector4(0, 0, 0, 0))); return; }
+        Vector3 world = camera.GlobalPosition;
+        (double fx, double fy, double fz) = HeightShadowFrameMath.Apply(m, world.X, world.Y, world.Z);
+        SetGlobal(GlobalRefWorld, Variant.From(new Vector4(world.X, world.Y, world.Z, 1f)));
+        SetGlobal(GlobalRefFrame, Variant.From(new Vector4((float)fx, (float)fy, (float)fz, 0f)));
+    }
+
+    private void PushNearFogFields(long anchor, long anchorAcross, double[] frameRows)
+    {
+        PushNearFogReference(frameRows);
+        HeightShadowIndexRect? rect = null; int texel = 0;
+        if (_link is { Ready: true } link) lock (link.Gate) { rect = link.FieldsRect; texel = link.FieldsTexel; }
+        bool valid = rect != null && texel > 0; // set by the render thread only after a successful copy, and the link is replaced on release
+        SetGlobal(GlobalFieldsParams, Variant.From(new Vector4(valid ? texel : 0, valid ? 1f / (RingHeightShadowLattice.TextureSize * texel) : 0f, valid ? 1f : 0f, 0f)));
+        SetGlobal(GlobalT0Bounds, Variant.From(valid ? ToBounds(rect!.Value, texel, anchor, anchorAcross) : EmptyBounds));
     }
 
     /// <summary>

@@ -141,7 +141,11 @@ func run() -> void:
 		var rain_count := 0
 		for effect in effects:
 			if effect.get_instance_id() == int(diagnostics.compositor_id): rain_count += 1
-		if not check(rain_count == 1 and effects[-1].get_instance_id() == int(diagnostics.compositor_id),"rain must appear exactly once after Sunshine"): return
+		# Lens effects (the sun glare, RingLocalWeatherEffects.EnsureLensEffectsLast) sit after the rain haze by design: the lens sees the rain. Rain haze is last among the rest.
+		var tail := effects.size() - 1
+		while tail > 0 and effects[tail].get_script() != null and String(effects[tail].get_script().resource_path).ends_with("RingSunGlareComposite.gd"):
+			tail -= 1
+		if not check(rain_count == 1 and effects[tail].get_instance_id() == int(diagnostics.compositor_id),"rain must appear exactly once after Sunshine (before the lens effects)"): return
 		var eligible := 0; var changed := 0; var once_error := 0.0; var twice_error := 0.0
 		var sample_min := 1.0; var sample_max := 0.0
 		var opacity := float(driver.call("HazeOpacity",float(diagnostics.rain_intensity) * float(diagnostics.haze_gate),minf(750.0,camera.far)))

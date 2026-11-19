@@ -123,8 +123,11 @@ public partial class RingLocalVolumetricCloudRenderer : Node3D
                 localVolumeVisible: false,
                 FarShellHandoffStartMeters,
                 FarShellHandoffEndMeters);
-            _worldEnvironment.Environment.VolumetricFogEnabled = false;
-            _worldEnvironment.Environment.VolumetricFogDensity = 0.0f;
+            if (!RingworldTechDemo.Atmosphere.NearFog.RingNearFog.OwnerRegistered)
+            {
+                _worldEnvironment.Environment.VolumetricFogEnabled = false;
+                _worldEnvironment.Environment.VolumetricFogDensity = 0.0f;
+            }
             SetProcess(false);
             GD.Print("Legacy fog-volume cloud tier disabled; Sunshine Clouds 2 is primary and merged meshes remain fallback-only.");
             return;
@@ -208,7 +211,7 @@ public partial class RingLocalVolumetricCloudRenderer : Node3D
 
     private void ConfigureEnvironment(bool active)
     {
-        if (_worldEnvironment?.Environment is not { } environment) return;
+        if (_worldEnvironment?.Environment is not { } environment || RingworldTechDemo.Atmosphere.NearFog.RingNearFog.OwnerRegistered) return;
         environment.VolumetricFogEnabled = active;
         environment.VolumetricFogDensity = 0.0f;
         environment.VolumetricFogLength = Mathf.Max(1000.0f, FogRenderLengthMeters);
@@ -221,7 +224,7 @@ public partial class RingLocalVolumetricCloudRenderer : Node3D
 
     private void RestoreEnvironmentSettings()
     {
-        if (!_environmentCaptured || _worldEnvironment?.Environment is not { } environment) return;
+        if (!_environmentCaptured || _worldEnvironment?.Environment is not { } environment || RingworldTechDemo.Atmosphere.NearFog.RingNearFog.OwnerRegistered) return;
         environment.VolumetricFogEnabled = _previousFogEnabled;
         environment.VolumetricFogDensity = _previousFogDensity;
         environment.VolumetricFogLength = _previousFogLength;

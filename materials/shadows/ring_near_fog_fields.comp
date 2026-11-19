@@ -1,0 +1,83 @@
+#version 450
+// NF-2a: the two near-fog terrain fields, built from the level-0 height buffer of the height-shadow producer after each L0 upload
+// (RingTerrainHeightShadowGpu.BuildNearFogFields; compiled at runtime like the other height-shadow passes).
+//   mode 0: T0 copy, heights (slot space, float[1024^2]) -> R32F image, same toroidal slots.
+//   mode 1: 8x8 min  T0 -> stage A (128^2).
+//   mode 2: 2x2 min  A  -> stage B (64^2): the min of every 16x16 block (64 m at the default 4 m texel).
+//   mode 3: 5x5 min  B  -> stage C (64^2), toroidal (& 63): a 320 m footprint.
+//   mode 4: 3x3 box blur C -> basin floor B image (R32F 64^2), toroidal.
+// Basin texel j holds the block j = (slot >> 4) of the T0 slots, so the basin slot of a point is (floor(p / t0) >> 4) & 63.
+#include "res://materials/shadows/ring_height_shadow_common.compinc"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) restrict readonly buffer LevelHeights { float h[]; } level;
+layout(set = 0, binding = 1, r32f) uniform restrict writeonly image2D t0_image;
+layout(set = 0, binding = 2, std430) restrict buffer StageA { float a[]; } stage_a;
+layout(set = 0, binding = 3, std430) restrict buffer StageB { float b[]; } stage_b;
+layout(set = 0, binding = 4, std430) restrict buffer StageC { float c[]; } stage_c;
+layout(set = 0, binding = 5, r32f) uniform restrict writeonly image2D basin_image;
+
+layout(push_constant, std430) uniform Params {
+	uint mode;
+	uint pad0;
+	uint pad1;
+	uint pad2;
+} p;
+
+void main() {
+	uvec2 id = gl_GlobalInvocationID.xy;
+	if (p.mode == 0u) {
+		if (id.x < HS_N && id.y < HS_N) {
+			imageStore(t0_image, ivec2(id), vec4(level.h[id.y * HS_N + id.x], 0.0, 0.0, 0.0));
+		}
+	} else if (p.mode == 1u) {
+		if (id.x >= 128u || id.y >= 128u) {
+			return;
+		}
+		float best = 3.4e38;
+		for (uint dy = 0u; dy < 8u; dy++) {
+			for (uint dx = 0u; dx < 8u; dx++) {
+				best = min(best, level.h[(id.y * 8u + dy) * HS_N + id.x * 8u + dx]);
+			}
+		}
+		stage_a.a[id.y * 128u + id.x] = best;
+	} else if (p.mode == 2u) {
+		if (id.x >= 64u || id.y >= 64u) {
+			return;
+		}
+		float best = 3.4e38;
+		for (uint dy = 0u; dy < 2u; dy++) {
+			for (uint dx = 0u; dx < 2u; dx++) {
+				best = min(best, stage_a.a[(id.y * 2u + dy) * 128u + id.x * 2u + dx]);
+			}
+		}
+		stage_b.b[id.y * 64u + id.x] = best;
+	} else if (p.mode == 3u) {
+		if (id.x >= 64u || id.y >= 64u) {
+			return;
+		}
+		float best = 3.4e38;
+		for (int dy = -2; dy <= 2; dy++) {
+			for (int dx = -2; dx <= 2; dx++) {
+				uint sx = uint(int(id.x) + dx) & 63u;
+				uint sy = uint(int(id.y) + dy) & 63u;
+				best = min(best, stage_b.b[sy * 64u + sx]);
+			}
+		}
+		stage_c.c[id.y * 64u + id.x] = best;
+	} else {
+		if (id.x >= 64u || id.y >= 64u) {
+			return;
+		}
+		float sum = 0.0;
+		for (int dy = -1; dy <= 1; dy++) {
+			for (int dx = -1; dx <= 1; dx++) {
+				uint sx = uint(int(id.x) + dx) & 63u;
+				uint sy = uint(int(id.y) + dy) & 63u;
+				sum += stage_c.c[sy * 64u + sx];
+			}
+		}
+		imageStore(basin_image, ivec2(id), vec4(sum / 9.0, 0.0, 0.0, 0.0));
+	}
+}
