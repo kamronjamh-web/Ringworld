@@ -89,7 +89,8 @@ function Get-Queue {
     }
     return $out
 }
-function Get-Mine { Get-ChildItem $dir -Filter "*_$Label.ticket" -ErrorAction SilentlyContinue | Select-Object -First 1 }
+# Exact match: a bare "*_<label>" filter also matched another agent's "<x>_<label>" ticket (2026-11-20).
+function Get-Mine { Get-ChildItem $dir -Filter "*_$Label.ticket" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match ('^\d{20}_' + [regex]::Escape($Label) + '\.ticket$') } | Select-Object -First 1 }
 
 # Free VRAM in MiB of the first GPU, or $null when nvidia-smi is missing or fails.
 function Get-FreeVramMb {
@@ -176,7 +177,7 @@ if ($null -ne $Wrap) {
         if (-not (Invoke-Acquire)) { exit 1 }
         $hb = Start-Job -ArgumentList $dir, $Label -ScriptBlock {
             param($d, $l)
-            while ($true) { Start-Sleep -Seconds 300; Get-ChildItem $d -Filter "*_$l.ticket" -ErrorAction SilentlyContinue | ForEach-Object { $_.LastWriteTime = Get-Date } }
+            while ($true) { Start-Sleep -Seconds 300; Get-ChildItem $d -Filter "*_$l.ticket" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match ('^\d{20}_' + [regex]::Escape($l) + '\.ticket$') } | ForEach-Object { $_.LastWriteTime = Get-Date } }
         }
     }
     $code = 0
