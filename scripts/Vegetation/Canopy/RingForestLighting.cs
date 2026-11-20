@@ -46,6 +46,39 @@ public partial class RingForestLighting : Node
     public long PublishedAnchorAcross => _published?.AnchorAcross ?? 0;
     public float PublishedReferenceAltitude => _published?.ReferenceAltitude ?? 0f;
 
+    /// <summary>Debug probe for stills and pose searches (not used by the game): the most blocked texel of mip <paramref name="level"/> within <paramref name="radiusMeters"/> of the
+    /// published anchor, as (around offset m, across offset m, blocked fraction b) relative to PublishedAnchorAround / PublishedAnchorAcross; z = -1 while nothing is published.</summary>
+    public Vector3 DensestCanopyOffset(int level, float radiusMeters)
+    {
+        CanopyRasterResult? raster = _published;
+        if (raster == null) return new Vector3(0, 0, -1);
+        level = Math.Clamp(level, 0, ForestCanopyRaster.Levels - 1);
+        int size = ForestCanopyRaster.Size >> level;
+        float texel = ForestCanopyRaster.TexelMeters * (1 << level);
+        var best = new Vector3(0, 0, -1);
+        for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+            {
+                float around = (x + 0.5f) * texel - ForestCanopyRaster.HalfSizeMeters, across = (y + 0.5f) * texel - ForestCanopyRaster.HalfSizeMeters;
+                if (around * around + across * across > radiusMeters * radiusMeters) continue;
+                float blocked = raster.Texel(level, x, y, 0);
+                if (blocked > best.Z) best = new Vector3(around, across, blocked);
+            }
+        return best;
+    }
+
+    /// <summary>Debug probe: the blocked fraction b of the mip <paramref name="level"/> texel at an anchor-relative offset (metres); -1 while nothing is published or outside the raster.</summary>
+    public float CanopyBlockedAt(int level, float aroundOffset, float acrossOffset)
+    {
+        CanopyRasterResult? raster = _published;
+        if (raster == null) return -1f;
+        level = Math.Clamp(level, 0, ForestCanopyRaster.Levels - 1);
+        int size = ForestCanopyRaster.Size >> level;
+        float texel = ForestCanopyRaster.TexelMeters * (1 << level);
+        int x = (int)MathF.Floor((aroundOffset + ForestCanopyRaster.HalfSizeMeters) / texel), y = (int)MathF.Floor((acrossOffset + ForestCanopyRaster.HalfSizeMeters) / texel);
+        return x < 0 || y < 0 || x >= size || y >= size ? -1f : raster.Texel(level, x, y, 0);
+    }
+
     private RingBiomeDecorationLayer? _layer;
     private readonly ForestCanopyRaster _raster = new();
     private readonly List<CanopyTreeRecord> _records = new();

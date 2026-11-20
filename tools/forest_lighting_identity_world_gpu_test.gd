@@ -10,6 +10,9 @@ extends SceneTree
 ## Pass: every deterministic case has B == A (byte for byte) and BS == A. Scratch copies of the old sources live in res://.godot/fl4_head_<pid>/ and are deleted at the end.
 ## Run (windowed Vulkan; never on the player's save; takes the GPU queue): tools/tree_visibility_run.ps1 -Test forest_lighting_identity -Label fl4 -Build
 ## Args (after --): --out=<dir> --stills=<dir> [--names=forest_interior_eye,forest_edge_eye,spawn_ground] [--times=noon,sunset] [--sun-elevation=8] [--settle=60]
+## Stills mode (--stills-only): [--times=noon,sun_8_set,sun_12_low,night] [--default-pair] [--shade-pair] [--night-all] [--find-stand=<pose>[:radius m]] (adds the pose closed_stand_eye: the densest
+## canopy of the published raster near that pose, see _find_stand; name it in --names to capture it). --shade-pair: the shipped default (canopy shade off) against the default plus canopy shade,
+## with side-by-side pairs (default left, shade right) in <stills>/pairs/ and the floor luminance ratio shade / default per still (the night drop at night).
 ## Prints FOREST_LIGHTING_IDENTITY_WORLD=PASS | FAIL <why> and a per-case table (identical, differing pixels, max channel difference).
 
 const COMMON := preload("res://tools/shadow_harness_common.gd")
@@ -387,6 +390,12 @@ func _stills_run() -> void:
 	var specs := {"noon": {"mode": "noon"}, "sun_8_set": {"mode": "elevation", "value": 8.0, "rising": false},
 		"sun_12_low": {"mode": "elevation", "value": 12.0, "rising": false}, "night": {"mode": "elevation", "value": -30.0, "rising": false}}
 	var lumas: Array = []
+	if args.has("find-stand"):
+		var stand: Dictionary = await _find_stand(poses, String(args["find-stand"]))
+		if stand.is_empty():
+			_log("closed stand search failed")
+		else:
+			poses["closed_stand_eye"] = stand
 	for name in names:
 		if not poses.has(name):
 			_log("pose %s missing" % name)
@@ -395,7 +404,7 @@ func _stills_run() -> void:
 		var label := "save_spot" if name == "spawn_ground" else String(name)
 		var yaw0 := fposmod(float(pose["yaw_deg"]), 360.0)
 		for t in times:
-			if t == "night" and name != "forest_interior_eye":
+			if t == "night" and name != "forest_interior_eye" and not args.has("night-all"):
 				continue
 			await WORLD.go_pose(self, game, pose, yaw0, true)
 			if not _set_time(specs[t]):
@@ -415,7 +424,11 @@ func _stills_run() -> void:
 			if args.has("default-pair"):
 				# The shipped default since 2026-11-19: translucency and crown occlusion on, canopy shade off.
 				sets = [["off", false, false, false], ["default", true, true, false]]
+			if args.has("shade-pair"):
+				# Canopy shade default decision: the shipped default against the default plus canopy shade.
+				sets = [["default", true, true, false], ["shade", true, true, true]]
 			await WORLD.capture_begin(self, game)
+			var pair: Array = []
 			for st in sets:
 				var ok: bool = await _apply_set(st[1], st[2], st[3])
 				var img: Image = await _stable_grab()
@@ -423,14 +436,95 @@ func _stills_run() -> void:
 				img.save_png(stills_dir.path_join(tag + ".png"))
 				var luma := _floor_luma(img)
 				lumas.append([tag, luma])
-				_log("STILL %s yaw %d ok=%s floor_luma %.5f | raster published=%s rebuilds=%d trees=%d copy_ms=%.3f build_ms=%.3f upload_ms=%.3f" % [tag, int(round(yaw)), str(ok), luma,
-					str(forest.get("RasterPublished")), int(forest.get("RebuildCount")), int(forest.get("LastTreeCount")), float(forest.get("LastCopyMilliseconds")),
-					float(forest.get("LastBuildMilliseconds")), float(forest.get("LastUploadMilliseconds"))])
+				pair.append([img, luma])
+				_log("STILL %s yaw %d ok=%s floor_luma %.5f | raster published=%s rebuilds=%d trees=%d copy_ms=%.3f build_ms=%.3f upload_ms=%.3f | blocked at the eye mip2 %.3f mip3 %.3f" % [tag,
+					int(round(yaw)), str(ok), luma, str(forest.get("RasterPublished")), int(forest.get("RebuildCount")), int(forest.get("LastTreeCount")), float(forest.get("LastCopyMilliseconds")),
+					float(forest.get("LastBuildMilliseconds")), float(forest.get("LastUploadMilliseconds")), _blocked_at(pose, 2), _blocked_at(pose, 3)])
+			if args.has("shade-pair") and pair.size() == 2:
+				_save_pair(pair[0][0], pair[1][0], stills_dir.path_join("pairs").path_join("%s_%s.png" % [label, t]))
+				_log("PAIR %s %s floor_luma default %.5f shade %.5f ratio shade/default %.3f" % [label, t, pair[0][1], pair[1][1], pair[1][1] / maxf(pair[0][1], 1e-6)])
 			await _apply_set(false, false, false)
 			WORLD.capture_end(game)
 	for l in lumas:
 		print("FL5 LUMA %s %.5f" % [l[0], l[1]])
 	_finish("PASS stills written to " + stills_dir)
+
+
+## Blocked fraction of the published raster under a pose (mip level texel; -1 when no raster is published).
+func _blocked_at(pose: Dictionary, level: int) -> float:
+	if not bool(forest.get("RasterPublished")):
+		return -1.0
+	return float(forest.call("CanopyBlockedAt", level, float(pose["around_m"]) - float(forest.get("PublishedAnchorAround")), float(pose["across_m"]) - float(forest.get("PublishedAnchorAcross"))))
+
+
+## Canopy shade on until a raster built after the last move is published and no rebuild followed for 1.5 s (real time; the raster rebuilds on a 64 m move or a tile change).
+func _wait_raster(previous_rebuilds: int) -> bool:
+	forest.set("CanopyShadeEnabled", true)
+	for i in 900:
+		await _frames(1)
+		if bool(forest.get("RasterPublished")) and int(forest.get("RebuildCount")) > previous_rebuilds:
+			break
+	var last := int(forest.get("RebuildCount"))
+	var quiet_since := Time.get_ticks_msec()
+	var started := quiet_since
+	while Time.get_ticks_msec() - quiet_since < 1500 and Time.get_ticks_msec() - started < 30000:
+		await _frames(1)
+		if int(forest.get("RebuildCount")) != last:
+			last = int(forest.get("RebuildCount"))
+			quiet_since = Time.get_ticks_msec()
+	return bool(forest.get("RasterPublished"))
+
+
+## Closed-stand pose (--find-stand=<pose>[:radius]): canopy shade on at noon at that pose; the most blocked 16 m texel (mip 3) of the published raster within the radius (default 400 m) of the anchor,
+## then two refinements on the raster rebuilt there (8 m texels, mip 2, within 48 m and 24 m). The eye is at that spot, yaw of the source pose, pitch -5. Empty when no raster is published.
+func _find_stand(poses: Dictionary, spec: String) -> Dictionary:
+	var parts := spec.split(":")
+	if not poses.has(parts[0]):
+		_log("find-stand: pose %s missing" % parts[0])
+		return {}
+	var pose: Dictionary = (poses[parts[0]] as Dictionary).duplicate()
+	pose["name"] = "closed_stand_eye"
+	pose["pitch_deg"] = -5.0
+	var levels := [3, 2, 2]
+	var radii := [float(parts[1]) if parts.size() > 1 else 400.0, 48.0, 24.0]
+	var rebuilds := int(forest.get("RebuildCount"))
+	await WORLD.go_pose(self, game, pose, float(pose["yaw_deg"]), true)
+	for step in levels.size():
+		if not await _wait_raster(rebuilds):
+			_log("find-stand: no raster published")
+			forest.set("CanopyShadeEnabled", false)
+			return {}
+		var best: Vector3 = forest.call("DensestCanopyOffset", levels[step], radii[step])
+		var anchor_a := float(forest.get("PublishedAnchorAround"))
+		var anchor_z := float(forest.get("PublishedAnchorAcross"))
+		_log("find-stand step %d: anchor (%.0f, %.0f) trees %d; densest mip %d within %.0f m at offset (%.1f, %.1f) blocked %.3f (pose was at (%.1f, %.1f), blocked mip2 %.3f mip3 %.3f)" % [step, anchor_a, anchor_z,
+			int(forest.get("LastTreeCount")), levels[step], radii[step], best.x, best.y, best.z, float(pose["around_m"]) - anchor_a, float(pose["across_m"]) - anchor_z, _blocked_at(pose, 2), _blocked_at(pose, 3)])
+		if best.z <= 0.0:
+			break
+		pose["around_m"] = anchor_a + best.x
+		pose["across_m"] = anchor_z + best.y
+		rebuilds = int(forest.get("RebuildCount"))
+		await WORLD.go_pose(self, game, pose, float(pose["yaw_deg"]), true)
+	await _wait_raster(rebuilds)
+	var surface: Node = game.get_node("Terrain3DGameplay")
+	pose["ground_m"] = float(surface.call("SampleHeight", float(pose["around_m"]), float(pose["across_m"])))
+	pose["notes"] = "closed stand found from %s: blocked mip2 %.3f mip3 %.3f" % [parts[0], _blocked_at(pose, 2), _blocked_at(pose, 3)]
+	_log("CLOSED_STAND around_m %.3f across_m %.3f ground_m %.2f yaw_deg %.1f | %s" % [float(pose["around_m"]), float(pose["across_m"]), float(pose["ground_m"]), float(pose["yaw_deg"]), pose["notes"]])
+	report["closed_stand"] = pose
+	forest.set("CanopyShadeEnabled", false)
+	await _frames(30)
+	return pose
+
+
+## Side by side (a left, b right), written as one PNG.
+func _save_pair(a: Image, b: Image, path: String) -> void:
+	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
+	var w := a.get_width()
+	var h := a.get_height()
+	var sheet := Image.create(w * 2, h, false, a.get_format())
+	sheet.blit_rect(a, Rect2i(0, 0, w, h), Vector2i(0, 0))
+	sheet.blit_rect(b, Rect2i(0, 0, w, h), Vector2i(w, 0))
+	sheet.save_png(path)
 
 
 func _run() -> void:

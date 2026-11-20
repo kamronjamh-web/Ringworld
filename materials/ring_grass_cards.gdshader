@@ -267,8 +267,9 @@ void light() {
 	DIFFUSE_LIGHT += ring_terrain_direct_diffuse(NORMAL, LIGHT, ATTENUATION, LIGHT_IS_DIRECTIONAL, LIGHT_COLOR,
 		VIEW_MATRIX, v_light.x, v_light.y, v_light.zw, v_ground_world, ring_viewer_world_position, SCREEN_UV,
 		FRAGCOORD.xy, VIEWPORT_SIZE, INV_PROJECTION_MATRIX, RING_SHADOW_CONTACT_GRASS, v_ground_hs, direct_visibility);
-	if (ring_canopy_shade_on()) {
-		// Forest lighting: the same terms again through the overload that also returns the sun visibility above the canopy (result discarded), then the canopy's transmitted sunlight.
+	if (ring_canopy_shade_on() && v_canopy.x > 0.0) {
+		// Forest lighting, under the canopy only (blocked > 0): the same terms again through the overload that also returns the sun visibility above the canopy (result discarded),
+		// then the canopy's transmitted sunlight. Where blocked = 0 the transmitted term is exactly 0, so skipping the block leaves those pixels byte-identical to canopy shade off.
 		float canopy_above;
 		float direct_visibility_canopy;
 		ring_terrain_direct_diffuse(NORMAL, LIGHT, ATTENUATION, LIGHT_IS_DIRECTIONAL, LIGHT_COLOR,

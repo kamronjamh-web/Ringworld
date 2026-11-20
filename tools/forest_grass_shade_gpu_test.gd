@@ -10,7 +10,10 @@ extends SceneTree
 ##   (b) canopy on, ambient only: on/off = 1 - blocked of the probe under the stand, the isolated crown and the conifer stand, 1 in the open and above; with a sun the added light is zero in the open and above,
 ##       and greener than the grass itself under the stand (added G/R about twice the albedo G/R: tau_c 0.050 / 0.025);
 ##   (c) translucency on, no canopy: backlit grass brighter than off; frontlit change small (reported); physical bound: backlit-on <= frontlit-on (k <= 1); the old and new transmittance printed;
-##   (d) stills (FOREST_GRASS_SHADE_STILLS_DIR): backlit and frontlit, off and on, and the stand with the canopy off and on, plus one contact sheet.
+##   (d) stills (FOREST_GRASS_SHADE_STILLS_DIR): backlit and frontlit, off and on, and the stand with the canopy off and on, plus one contact sheet;
+##   (e) blocked = 0 identity: with canopy shade on, the open and above-the-crowns frames are byte-identical to canopy shade off for every light (the grass skips its canopy light block there);
+##   (f) reference identity (FOREST_GRASS_SHADE_REF_SHADER = path of another ring_grass_cards.gdshader, e.g. HEAD's from git show): every location and light, canopy off and on, byte-identical to it
+##       (proves a restructure such as the blocked > 0 gate changes no pixel).
 ## Run (windowed Vulkan, not --headless; no other Godot process running): tools/run_tests.ps1 -Tests forest_grass_shade_gpu_test -Label fl3b
 ## Prints FOREST_GRASS_SHADE_GPU_TEST=PASS|FAIL.
 const TEST := preload("res://tools/ForestCanopyShadeGpuTest.cs")
@@ -59,6 +62,7 @@ var grass_node: MultiMeshInstance3D
 var grass_material: ShaderMaterial
 var failures: Array[String] = []
 var off_frames := {} # "location_light" -> PackedByteArray
+var on_frames := {} # "location_light" -> PackedByteArray (canopy on)
 var stills := {}
 
 func _initialize() -> void:
@@ -83,6 +87,8 @@ func _run() -> void:
 	var results := {}
 	var identity_bad := 0
 	var identity_total := 0
+	var zero_bad := 0
+	var zero_total := 0
 	for location: String in LOCATIONS:
 		for light: String in LIGHTS:
 			_set_switches(OFF)
@@ -97,8 +103,15 @@ func _run() -> void:
 				identity_bad += 1
 				failures.append("(a) %s %s: off frame differs after canopy off -> on -> off" % [location, light])
 			off_frames["%s_%s" % [location, light]] = off_a["data"]
+			on_frames["%s_%s" % [location, light]] = on_shot["data"]
+			if location == "open" or location == "above":
+				zero_total += 1
+				if on_shot["data"] != off_a["data"]:
+					zero_bad += 1
+					failures.append("(e) %s %s: canopy on differs from off where blocked = 0" % [location, light])
 			results["%s_%s" % [location, light]] = {"off": off_a["rgb"], "on": on_shot["rgb"], "off_image": off_a["image"], "on_image": on_shot["image"]}
 	print("FL3B (a) canopy identity: %d of %d off -> on -> off frames differ" % [identity_bad, identity_total])
+	print("FL3B (e) blocked = 0 identity: %d of %d canopy-on frames (open, above) differ from canopy off" % [zero_bad, zero_total])
 	_check_canopy(results, probes)
 	# (a)/(c): translucency.
 	var trans := {}
@@ -123,6 +136,10 @@ func _run() -> void:
 	var head_dir := OS.get_environment("FOREST_GRASS_SHADE_HEAD_DIR")
 	if head_dir != "":
 		await _head_identity(head_dir)
+	if failed: return
+	var reference := OS.get_environment("FOREST_GRASS_SHADE_REF_SHADER")
+	if reference != "":
+		await _reference_identity(reference)
 	if failed: return
 	_write_stills(trans, results)
 	for message in failures: print("FOREST_GRASS_SHADE_GPU_TEST failure: " + message)
@@ -222,6 +239,34 @@ func _head_identity(directory: String) -> void:
 				failures.append("(a) %s %s differs between the HEAD shader and the new shader with the switches off" % [location, light])
 	grass_material.shader = original
 	print("FL3B (a) identity against the HEAD shader (switches off, lighting include %s): %d of %d frames differ" % ["HEAD" if not lighting.is_empty() else "current", differing, total])
+
+# (f) Renders every location and light with a reference grass shader, canopy off and on, and compares with the current shader's frames byte for byte.
+func _reference_identity(path: String) -> void:
+	var code := FileAccess.get_file_as_string(path)
+	if code.is_empty():
+		_fail("FOREST_GRASS_SHADE_REF_SHADER %s is empty or missing" % path)
+		return
+	var reference := Shader.new()
+	reference.code = code
+	var original := grass_material.shader
+	grass_material.shader = reference
+	var total := 0
+	var differing := 0
+	for location: String in LOCATIONS:
+		for light: String in LIGHTS:
+			for state in ["off", "canopy"]:
+				_set_switches(OFF if state == "off" else CANOPY)
+				var shot := await _shot(location, light)
+				if failed: return
+				total += 1
+				var key := "%s_%s" % [location, light]
+				var mine: PackedByteArray = off_frames[key] if state == "off" else on_frames[key]
+				if shot["data"] != mine:
+					differing += 1
+					failures.append("(f) %s %s canopy %s differs from the reference shader" % [location, light, state])
+	grass_material.shader = original
+	_set_switches(OFF)
+	print("FL3B (f) identity against the reference shader %s (canopy off and on): %d of %d frames differ" % [path, differing, total])
 
 func _write_stills(trans: Dictionary, results: Dictionary) -> void:
 	var directory := OS.get_environment("FOREST_GRASS_SHADE_STILLS_DIR")
