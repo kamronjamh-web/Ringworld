@@ -8468,6 +8468,21 @@
       "runner": "tools/tree_visibility_run.ps1",
       "user_args": "-Test oracle -SkipBuild"
     },
+    "near_fog_review_capture": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "atmosphere-haze",
+        "near-fog"
+      ],
+      "marker": "NEAR_FOG_REVIEW",
+      "expected_s": 2400,
+      "timeout_s": 5400,
+      "profile": "own-runner",
+      "runner": "tools/tree_visibility_run.ps1",
+      "user_args": "-Test near_fog_review -Resolution 1280x720 -EngineArgs '--fixed-fps 30' -SkipBuild"
+    },
     "tree_frustum_identity_gpu_test": {
       "kind": "test",
       "mode": "gpu",

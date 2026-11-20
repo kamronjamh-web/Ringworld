@@ -299,6 +299,21 @@ public partial class NearFogDriversTest : RefCounted
         Check(microseconds < 50.0, $"probe plus evaluate costs {microseconds:F2} us");
     }
 
+    private void TestActivationRate()
+    {
+        float threshold = RingNearFog.ActivationThreshold;
+        float dry = RingNearFog.ActivationRate(new Vector3(0f, 0f, 1f), false, 1f, 1f);
+        float wet = RingNearFog.ActivationRate(new Vector3(0f, 0f, 1f), true, 1f, 1f);
+        Check(dry == 0f && dry < threshold, $"steam-only drive without water should not activate (rate {dry})");
+        Check(Mathf.IsEqualApprox(wet, 0.01f) && wet >= threshold, $"steam-only drive with water should give 0.01 (rate {wet})");
+        foreach (bool near in new[] { false, true })
+        {
+            Check(Mathf.IsEqualApprox(RingNearFog.ActivationRate(new Vector3(1f, 0f, 0f), near, 1f, 1f), 0.01f), $"radiation term should not depend on the water flag ({near})");
+            Check(Mathf.IsEqualApprox(RingNearFog.ActivationRate(new Vector3(0f, 1f, 0f), near, 1f, 1f), 0.002f), $"mist term should not depend on the water flag ({near})");
+        }
+        Check(Mathf.IsEqualApprox(RingNearFog.ActivationRate(new Vector3(0f, 0f, 1f), true, 0.5f, 0.5f), 0.0025f), "amount and gate should scale the rate linearly");
+    }
+
     public int Run()
     {
         TestMonotone();
@@ -309,6 +324,7 @@ public partial class NearFogDriversTest : RefCounted
         TestWaterField();
         TestWaterFieldFailure();
         TestProbeNeutral();
+        TestActivationRate();
         if (_failures.Count == 0)
         {
             Console.WriteLine("NEAR_FOG_DRIVERS=PASS");

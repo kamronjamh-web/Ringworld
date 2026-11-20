@@ -21,7 +21,7 @@
   Do not run two copies at once (one shared profile).
 #>
 param(
-  [ValidateSet("oracle", "frustum_identity", "cull_verify", "blob_probe", "cadence", "forest_lighting_identity")][string]$Test = "oracle",
+  [ValidateSet("oracle", "frustum_identity", "cull_verify", "blob_probe", "cadence", "forest_lighting_identity", "near_fog_review")][string]$Test = "oracle",
   [string]$Label = "occl-v",
   [string]$ScriptArgs = "",
   [string]$Resolution = "1600x900",
@@ -31,6 +31,7 @@ param(
   [int]$TimeoutMin = 80,
   [int]$StallMinutes = 10,
   [string]$RunId = "",
+  [string]$World = "",   # optional world folder mirrored as slot 3 instead of the live slot (e.g. a perf_bench snapshot: bench_worlds\slot3_<date>\world)
   [switch]$InQueue
 )
 $ErrorActionPreference = "Stop"
@@ -43,9 +44,10 @@ $spec = @{
   cadence          = @{ Script = "tree_cadence_probe.gd";               Marker = "TREE_CADENCE";            Needs = $null }
   blob_probe       = @{ Script = "tree_frustum_blob_probe.gd";         Marker = "TREE_FRUSTUM_BLOB";       Needs = "TreeFrustumCulling" }
   forest_lighting_identity = @{ Script = "forest_lighting_identity_world_gpu_test.gd"; Marker = "FOREST_LIGHTING_IDENTITY_WORLD"; Needs = $null }
+  near_fog_review  = @{ Script = "near_fog_review_capture.gd";          Marker = "NEAR_FOG_REVIEW";         Needs = $null }
 }[$Test]
 $marker = $spec.Marker
-$allScripts = @("tree_visibility_oracle.gd", "tree_frustum_identity_gpu_test.gd", "tree_cull_verify_sweep.gd", "tree_cadence_probe.gd", "tree_frustum_blob_probe.gd", "forest_lighting_identity_world_gpu_test.gd")
+$allScripts = @("tree_visibility_oracle.gd", "tree_frustum_identity_gpu_test.gd", "tree_cull_verify_sweep.gd", "tree_cadence_probe.gd", "tree_frustum_blob_probe.gd", "forest_lighting_identity_world_gpu_test.gd", "near_fog_review_capture.gd")
 function Quote([string]$s) { return "'" + $s.Replace("'", "''") + "'" }
 # The sweeps count one frame at a time (readback), so simulate a fixed 33 ms per frame whatever the readback costs.
 if ($Test -eq "cull_verify" -and -not $EngineArgs) { $EngineArgs = "--fixed-fps 30" }
@@ -81,10 +83,10 @@ if (-not $InQueue) {
 
   $inner = "& $(Quote $PSCommandPath) -InQueue -Test $Test -Label $(Quote $Label) -RunId $RunId -Resolution $Resolution -TimeoutMin $TimeoutMin -StallMinutes $StallMinutes" +
     $(if ($Build) { " -Build" } else { "" }) + $(if ($SkipBuild) { " -SkipBuild" } else { "" }) +
-    $(if ($ScriptArgs) { " -ScriptArgs $(Quote $ScriptArgs)" } else { "" }) + $(if ($EngineArgs) { " -EngineArgs $(Quote $EngineArgs)" } else { "" })
+    $(if ($ScriptArgs) { " -ScriptArgs $(Quote $ScriptArgs)" } else { "" }) + $(if ($EngineArgs) { " -EngineArgs $(Quote $EngineArgs)" } else { "" }) + $(if ($World) { " -World $(Quote $World)" } else { "" })
   # One ticket per run: gpu_queue finds tickets by label, so a shared label let a second run match the first one's ticket.
   # frustum_identity, cull_verify and blob_probe check correctness or pictures and may share the GPU; oracle and cadence time things and stay exclusive.
-  $qClass = if ($Test -in @("frustum_identity", "cull_verify", "blob_probe", "forest_lighting_identity")) { "shared" } else { "exclusive" }
+  $qClass = if ($Test -in @("frustum_identity", "cull_verify", "blob_probe", "forest_lighting_identity", "near_fog_review")) { "shared" } else { "exclusive" }
   & (Join-Path $PSScriptRoot "gpu_queue.ps1") -Label "tree_vis_$($Label)_$RunId" -Class $qClass -Wrap $inner
   exit $LASTEXITCODE
 }
@@ -99,8 +101,9 @@ New-Item -ItemType Directory -Force $out | Out-Null
 if (Test-UserPlaying) { Write-Host "USER_PLAYING"; Write-Host "$marker=FAIL user is playing (exit 9)"; exit 9 }
 $otherRun = @(Get-CimInstance Win32_Process -Filter "Name like 'Godot%'" -ErrorAction SilentlyContinue | Where-Object { $cl = $_.CommandLine; $cl -and @($allScripts | Where-Object { $cl.Contains($_) }).Count -gt 0 })
 if ($otherRun.Count -gt 0) { Write-Host "$marker=FAIL another tree visibility Godot is still running (pid $($otherRun[0].ProcessId)) on the shared profile; not touching it"; exit 2 }
-$realSlot = Join-Path $real "worlds\slot_3"
-if (-not (Test-Path $realSlot)) { Write-Host "$marker=FAIL real profile has no worlds\slot_3"; exit 1 }
+$realSlot = if ($World) { $World } else { Join-Path $real "worlds\slot_3" }
+if (-not (Test-Path $realSlot)) { Write-Host "$marker=FAIL world folder $realSlot missing"; exit 1 }
+Write-Host "world source: $realSlot"
 
 # ---- isolated profile: read the real one, write only under .godot\test_runs\appdata_occl-v
 if ((-not (Test-Path $iso))) {

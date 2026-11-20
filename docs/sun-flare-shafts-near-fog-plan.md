@@ -781,3 +781,33 @@ Open for the user: mist strength stays 0.002 per metre (physical) unless they ch
 ### User answers after NF-6 (2026-11-19)
 - Mist density stays 0.002 per metre (physical); no move to 0.004.
 - Fixtures with no graphics controller keep the gate open (fog amount 1), so test scenes may show near fog in foggy weather. Tests that need clear air set it explicitly.
+
+## NF-7 review pack (2026-11-20)
+
+Evidence: `.godot/audit_baseline/common/atmosphere/nf7/` (mp4 + contact sheet + `flicker` per clip, `stills/` with fog off / on pairs, `cost/report.md`). Captures: `tools/near_fog_review_capture.gd` through `tools/tree_visibility_run.ps1 -Test near_fog_review -Resolution 1280x720 -EngineArgs "--fixed-fps 30" -World <bench_worlds\slot3_2026-11-16\world>` (real start menu + Continue, optimized C#, the user's live settings: High, FXAA, no TAA). The runner gained `-World` because the live slot 3 is now a different world (seed 1568115916, created 2026-11-19), where the perf poses are ocean; the review uses the frozen perf snapshot `slot3_2026-11-16` (v9, seed 2028030306), the same world as the cost table.
+
+| Clip | Place, time | Drive (world's own -> forced) | Result |
+|---|---|---|---|
+| dawn_floor | mountain_valley_eye, sun 7 deg rising | (0, 0, 0) -> (1, 0.6, 0) | valley filled to a flat lid, bright sunward glow, ridges clear |
+| dawn_ridge | ridge 88 m above that floor, 280 m away, looking down | (0, 0, 0) -> (1, 0.6, 0) | fog lies in the hollows within the 220 m window; valleys beyond it stay clear (NF-8) |
+| forest_rain | forest_edge_eye facing the sun at 12 deg, wet map soaked, no rain | (0, 0.163, 0.049) -> (0, 1, 0) | tree shadow shafts in the mist; sunward: near-white share 0.03 %, p99 luma 0.90 (off 0.70): no saturation |
+| river_steam | bank of a 100 m wide reach (level 2.0 m), sun 6 deg rising | (0.67, 0.34, 0.41) -> (0, 0.3, 1) | a low white band over the water; camera above the level (no underwater frame) |
+| night | mountain_valley_eye, planet-lit night (giant 21 deg) | (0, 0, 0) -> (1, 0.6, 0) | blue-grey veil over the dark ground and the far ridges |
+| walk_on / walk_off | forest_clearing_eye, sun 10 deg: walk 4 s, two 180 deg turns at 360 deg/s | (0.21, 0, 0.18) -> (1, 0.6, 0) / amount 0 | `flicker`: the only spikes are inside the turns, the same with fog off; the first frames after each turn change no more than the steady hold (0.54 vs 0.55 levels; off 0.84 to 0.86): no reprojection pops or lag |
+| noon | plains_eye, sun 75 deg, world drive | (0, 0, 0) for 60 s | amount 1 vs 0: 21,613 px differ, the same as amount 1 vs amount 1 (21,845 px, cloud and grass noise); SSIM 0.99986: clear noon equals fog off |
+
+Cost (`tools/perf_bench.ps1 -Scenarios save_spot,plains,forest_interior,noon_9km -Variants`, in-session A-X-A, 3 rounds x 8 s, RTX 4070 at P0, 1600 x 900 High, VSync off for the windows, clocks held at noon; baseline = owner present with the gate forced to 0):
+
+| Pose | fog forced on (D = (1, 0.5, 0)) dGPU p50 | dwall p50 | drender CPU | owner absent vs inactive dGPU | A-A floor |
+|---|---|---|---|---|---|
+| save_spot | +0.38 | +0.38 | +0.14 | +0.01 | 0.04 |
+| plains | +0.38 | +0.39 | +0.14 | -0.01 | 0.15 |
+| forest_interior | +0.37 | +0.36 | +0.13 | 0.00 | 0.04 |
+| noon_9km | +0.26 | +0.26 | +0.10 | 0.00 | 0.09 |
+
+Under the 0.6 ms High gate while active; inactive is within noise (gate 0.05 ms). At 60 Hz VSync as shipped the frame is capped at 16.7 ms against 8.4 to 9.8 ms GPU here, so the fog does not change the shipped frame rate on this machine.
+
+Fix found by the review: the activation rate counted the steam driver everywhere, although steam has density only where the near-water mask W > 0. Steam has no humidity term (time x (1 - t) x wind), so on calm nights and mornings the fog volume was on (about +0.38 ms) even on dry land with no water in reach, drawing nothing. `RingNearFog.ActivationRate` now counts the steam term only when the near-water field holds water (natural drive; forced drives unchanged), and the field is kept current while the steam drive and the world gate are non-zero. `RingNearFogWaterField.WaterTexelCount` caches the count on adopt. Tests: `near_fog_drivers_test` (new ActivationRate case), `near_fog_identity_gpu_test`, `near_fog_shadow_gpu_test` pass.
+- Check on the slot 3 snapshot with the fix (`--clips=dawn_survey`, world drive at sun 7 deg rising and at a planet-lit night, `nf7/steam_activation_survey_report.json`): the steam-only states (mountain_eye dawn steam 0.168 and night 0.124, mountain_valley_eye 0.165 and 0.149, hill_forest_valley and plains at night, all with 0 water texels) stay off; before the fix the first four would have been on at 0.0012 to 0.0017 per metre. coast_eye (22 water texels) switches on for steam as intended; plains and forest_clearing at dawn are on for their small radiation term (0.024 to 0.063).
+
+Open after NF-7 (questions for the user): the activation threshold (1e-4 per metre is about 2 % opacity over the 220 m window; forest_clearing at night sat at 1.07e-4, paying +0.38 ms for an invisible veil; a threshold of about 5e-4, 10 %, would avoid that), and whether the review should be redone on the new live slot 3 world.

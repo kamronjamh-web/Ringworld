@@ -20,7 +20,7 @@ namespace RingworldTechDemo.Atmosphere.NearFog;
 /// Altitude fade: the CPU estimate of the reach top = max(B + H, T0 + H_m), with T0 the sampler's presentation surface height at the camera (clamped to sea level like the height-shadow source) and
 /// B the minimum of T0 over the camera and rings of 8 points at 160 m and 320 m (an estimate of the GPU basin floor, which is the same footprint blurred; it can only be a little higher than B);
 /// the fade is 1 up to the top and 0 at top + 2 H (smoothstep), so "the camera above top + 2 H" gives no fog.
-/// Active when amount x max_k(sigma_k D_k) x gate >= <see cref="ActivationThreshold"/> per metre.
+/// Active when amount x max_k(sigma_k D_k) x gate >= <see cref="ActivationThreshold"/> per metre; the steam term counts only with water in the near-water field (natural drive; forced drives always count it).
 /// While the legacy local volumetric cloud renderer is enabled the near fog does not register and never activates (they are mutually exclusive; the legacy path is not production).
 /// </summary>
 public partial class RingNearFog : Node
@@ -291,8 +291,10 @@ public partial class RingNearFog : Node
 
         float worldGate = DebugForceFog ? 1f : ForcedGate >= 0f ? Mathf.Clamp(ForcedGate, 0f, 1f) : ComputeGate();
         LastWorldGate = worldGate;
-        float sigmaDrive = Mathf.Max(0.01f * _drive.X, Mathf.Max(0.002f * _drive.Y, 0.01f * _drive.Z));
-        LastRate = amount * sigmaDrive * worldGate;
+        // Keep the near-water field current while it can matter (the steam term needs to know whether water is near before the fog is on).
+        if (_fogOn || (_drive.Z > 0f && worldGate > 0f)) UpdateWater(position);
+        bool steamNear = forced || (_water != null && _water.HasField && _water.WaterTexelCount > 0);
+        LastRate = ActivationRate(_drive, steamNear, amount, worldGate);
         bool want = LastRate >= ActivationThreshold;
         _fade = want ? Mathf.Min(1f, _fade + dt / FadeSeconds) : Mathf.Max(0f, _fade - dt / FadeSeconds);
 
@@ -300,12 +302,18 @@ public partial class RingNearFog : Node
         if (_fogOn)
         {
             UpdateWind(dt);
-            UpdateWater(position);
             UpdateLighting();
             UpdateMaterial(amount, _fade * worldGate);
             UpdateEnd(delta, amount * _fade * worldGate);
         }
         if (_fade <= 0f && _fogOn) Deactivate();
+    }
+
+    /// <summary>Activation rate per metre: amount x max(0.01 radiation, 0.002 mist, 0.01 steam when water is near) x gate.</summary>
+    public static float ActivationRate(Vector3 drive, bool steamWaterNear, float amount, float worldGate)
+    {
+        float sigmaDrive = Mathf.Max(0.01f * drive.X, Mathf.Max(0.002f * drive.Y, steamWaterNear ? 0.01f * drive.Z : 0f));
+        return amount * sigmaDrive * worldGate;
     }
 
     private float ComputeGate()

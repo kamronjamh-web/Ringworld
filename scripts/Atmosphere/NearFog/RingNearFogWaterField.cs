@@ -72,6 +72,8 @@ public sealed class RingNearFogWaterField : IDisposable
     public double CenterAcrossMeters => _originAcross + Size / 2 * TexelMeters;
     /// <summary>The front field, R then G per texel, row-major (index = (j * Size + i) * 2). Main thread; valid while <see cref="HasField"/>.</summary>
     public ReadOnlySpan<float> Data => _front;
+    /// <summary>Texels of the front field whose mask channel is above 0.5 (0 while no field is built). Cached when a build is adopted.</summary>
+    public int WaterTexelCount { get; private set; }
 
     /// <summary>Mask (R) and surface height (G) of texel (i, j) of the front field.</summary>
     public (float Mask, float Height) Texel(int i, int j)
@@ -86,6 +88,7 @@ public sealed class RingNearFogWaterField : IDisposable
         _generation++;
         _hasField = false;
         _hasRequest = false;
+        WaterTexelCount = 0;
     }
 
     /// <summary>Main thread, every frame. Uploads a finished build and starts the next one when the camera is more than <see cref="RebuildDistanceMeters"/> from the last request (or none was made).</summary>
@@ -169,6 +172,9 @@ public sealed class RingNearFogWaterField : IDisposable
     private void Adopt()
     {
         (_front, _back) = (_back, _front);
+        int waterTexels = 0;
+        for (int k = 0; k < _front.Length; k += Channels) if (_front[k] > 0.5f) waterTexels++;
+        WaterTexelCount = waterTexels;
         _originAround = _pendingOriginAround;
         _originAcross = _pendingOriginAcross;
         Buffer.BlockCopy(_front, 0, _upload, 0, _upload.Length);
