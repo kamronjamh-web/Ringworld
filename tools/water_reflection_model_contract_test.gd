@@ -15,9 +15,10 @@ func _check(condition: bool, message: String) -> void:
 		_failed = true
 
 func _init() -> void:
-	var proxy := FileAccess.get_file_as_string(PROXY_PATH)
-	var global := FileAccess.get_file_as_string(GLOBAL_PATH)
-	var appearance := FileAccess.get_file_as_string(APPEARANCE_PATH)
+	# Normalise line endings: a checkout with core.autocrlf=true writes CRLF, and the body scan looks for LF "}" lines.
+	var proxy := FileAccess.get_file_as_string(PROXY_PATH).replace("\r\n", "\n")
+	var global := FileAccess.get_file_as_string(GLOBAL_PATH).replace("\r\n", "\n")
+	var appearance := FileAccess.get_file_as_string(APPEARANCE_PATH).replace("\r\n", "\n")
 	_check(not proxy.is_empty() and not global.is_empty() and not appearance.is_empty(), "shader source unreadable")
 	_check_appearance(appearance)
 	_check_proxy(proxy)
@@ -131,7 +132,7 @@ func _check_horizon_march(proxy: String) -> void:
 	_check(body.find("ring_cloud_reflection_near_fade(") >= 0, "horizon march must apply ring_cloud_reflection_near_fade( on geometry hits")
 	_check(body.find("ring_cloud_reflection_sample_placed(") < 0 and body.find("ring_cloud_reflection_sample(") < 0, "horizon march must not take the full or placed sample")
 	_check(proxy.find("mix(storm_ssr_keep, 1.0, ssr_cloud_valid)") >= 0, "model 1 hit weight must lift the storm fade where the cloud image is valid")
-	var global_text := FileAccess.get_file_as_string(GLOBAL_PATH)
+	var global_text := FileAccess.get_file_as_string(GLOBAL_PATH).replace("\r\n", "\n")
 	_check(global_text.find("ring_cloud_reflection.gdshaderinc") < 0, "ring_ocean_global must not include the cloud reflection include")
 	for file_name in DirAccess.get_files_at("res://materials"):
 		if file_name.ends_with(".gdshader") and file_name.to_lower().find("far") >= 0:

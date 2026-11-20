@@ -12,6 +12,16 @@
         "desktop_mid_high"
       ]
     },
+    "water_sound_sources_test": {
+      "status": "flaky",
+      "match": "cost, walk along stem 211",
+      "retries": 0,
+      "evidence": "2026-11-20 night gate triage (RTX 4070): walk cost gate flips between ~0.038 and ~0.075 ms/frame (gate 0.05) on identical code since 11-17 (11-18 flip_alone pass 09:10 vs r1_5a fail 09:11); same work per run (37 river queries, 3.17 calls/frame, 0 B alloc); failed 5 of 5 on 80aff5b incl. P-core and E-core pinning; no sampler/hydrology/audio change since 571008e. Owner: SFX project, make the gate robust (min-of-N or relative timing)",
+      "since": "2026-11-20",
+      "machines": [
+        "desktop_mid_high"
+      ]
+    },
     "generated_output_policy_test": {
       "status": "known-fail",
       "match": "GENERATED_OUTPUT_POLICY_TEST=FAIL \\(30 violations\\)",

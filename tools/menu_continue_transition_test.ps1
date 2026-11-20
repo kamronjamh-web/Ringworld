@@ -95,6 +95,14 @@ foreach ($caseName in $cases) {
     $text = Get-Content -Raw $meta
     $text = $text -replace '"slot":\s*\d+', ('"slot": ' + $pair[0])
     Set-Content -NoNewline -Path $meta -Value $text
+    # A save made while walking carries the player's velocity, and the restored player coasts on it after the hand-off (0.72 m from a
+    # 4 m/s save), which the 0.5 m pose check would read as a wrong landing. Zero it in the copy so the pose checks measure the landing only.
+    $state = Join-Path $isoProfile "worlds\slot_$($pair[0])\world_state_surface_runtime_v1.json"
+    if (Test-Path $state) {
+      $text = Get-Content -Raw $state
+      $text = $text -replace '"(Velocity(Around|Vertical|Across))":\s*[-0-9.eE+]+', '"$1": 0'
+      Set-Content -NoNewline -Path $state -Value $text
+    }
   }
   # Start from the starfield cover: drop any menu snapshot the real slots carry.
   Get-ChildItem (Join-Path $isoProfile "worlds") -Recurse -Filter "menu_snapshot.*" | Remove-Item -Force
