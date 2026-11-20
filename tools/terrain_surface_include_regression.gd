@@ -12,6 +12,7 @@ extends SceneTree
 #   options : --out=<res:// or abs dir>   write the actual images there (default res://.godot/terrain_surface_include_regression)
 #             --golden-dir=<dir>          override the golden directory
 #             --max-diff=<0..255>         per-channel tolerance (default 0 = pixel identical)
+#             --antitile-off              ground anti-tiling off (ringworld_ground_antitile = 0): proves the restructured shaders reproduce the pre-anti-tiling goldens
 # Goldens: captured on the RTX 4070 desktop, 2026-10-29, branch storm-revamp-wip (the earlier A1000 goldens were stale; byte-exact only on this GPU class).
 # Re-captured 2026-11-16 on the 4070 after the weather mist removal: the test relies on shader-default haze uniforms, whose default mist (sigma_M0 4e-6) is gone (max diff 1-8/255).
 # Requires a real Vulkan/Forward+ renderer (do not pass --headless).
@@ -46,6 +47,7 @@ var _golden_dir := DEFAULT_GOLDEN_DIR
 var _out_dir := DEFAULT_OUT_DIR
 var _capture := false
 var _max_diff := 0
+var _antitile_off := false
 var _ground_height := 0.0
 
 
@@ -59,6 +61,8 @@ func _init() -> void:
 			_golden_dir = arg.substr(13)
 		elif arg.begins_with("--max-diff="):
 			_max_diff = int(arg.substr(11))
+		elif arg == "--antitile-off":
+			_antitile_off = true
 	call_deferred("_run")
 	create_timer(240.0).timeout.connect(func() -> void: _fail("timeout"))
 
@@ -103,6 +107,7 @@ func _run() -> void:
 	if RenderingServer.get_rendering_device() == null:
 		_fail("requires Vulkan/Forward+ (do not run headless)")
 		return
+	RenderingServer.global_shader_parameter_set("ringworld_ground_antitile", 0.0 if _antitile_off else 1.0)
 	_viewport = SubViewport.new()
 	_viewport.own_world_3d = true
 	_viewport.size = VIEWPORT_SIZE

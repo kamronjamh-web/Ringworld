@@ -50,6 +50,7 @@ uniform sampler2D biome_alpine_albedo : source_color, filter_linear_mipmap_aniso
 #include "res://materials/ring_far_weather_shadow.gdshaderinc"
 #include "res://materials/ring_terrain_grass_coverage.gdshaderinc"
 #include "res://materials/ring_surface_albedo_scale.gdshaderinc"
+#include "res://materials/ring_biome_antitile.gdshaderinc"
 #include "res://materials/ring_surface_aperture.gdshaderinc"
 #include "res://materials/ring_wetness.gdshaderinc"
 #ifdef RING_GROUND_SURFACE
@@ -184,18 +185,6 @@ void vertex() {
 	}
 }
 
-vec3 sample_biome_triplanar(sampler2D texture_map, vec3 position, vec3 normal, vec3 blend) {
-	vec2 x_uv = position.zy;
-	vec2 y_uv = position.xz;
-	vec2 z_uv = position.xy;
-	x_uv.x *= normal.x < 0.0 ? -1.0 : 1.0;
-	y_uv.x *= normal.y < 0.0 ? -1.0 : 1.0;
-	z_uv.x *= normal.z >= 0.0 ? -1.0 : 1.0;
-	return texture(texture_map, x_uv).rgb * blend.x
-		+ texture(texture_map, y_uv).rgb * blend.y
-		+ texture(texture_map, z_uv).rgb * blend.z;
-}
-
 void fragment() {
 #ifdef RING_GROUND_SURFACE
 	// T4 ground surface: the blocks below run only in worlds with ground.surface. The strata footprint is taken here, before any discard, in uniform control flow.
@@ -242,12 +231,19 @@ void fragment() {
 		float ground_facing = smoothstep(0.45, 0.78, dot(world_normal, normalize(surface_up_world)));
 		grass_coverage_upward = ground_facing;
 		vec3 texture_position = world_position * biome_texture_scale;
+		// Ground anti-tiling (ring_biome_antitile.gdshaderinc). World space: the ring axis is y, so the ground is the x or z projection and each projection with weight has a lattice. Derivatives here in uniform control flow, explicit-gradient taps in the branches.
+		vec3 dpdx = dFdx(texture_position);
+		vec3 dpdy = dFdy(texture_position);
+		blend = ring_triplanar_prune(blend);
+		RingAntiTile tx = ring_biome_antitile_x(texture_position, world_normal, blend.x, dpdx, dpdy);
+		RingAntiTile ty = ring_biome_antitile_y(texture_position, world_normal, blend.y, dpdx, dpdy);
+		RingAntiTile tz = ring_biome_antitile_z(texture_position, world_normal, blend.z, dpdx, dpdy);
 		// Most LOD fragments carry one dominant biome and (at a boundary) one
 		// secondary weight. Branches keep distant terrain from paying for all
 		// six maps / eighteen triplanar lookups per fragment.
 		vec3 dirt = vec3(0.0);
 		if (ground_facing < 1.0 GROUND_NOT_ON)
-			dirt = sample_biome_triplanar(biome_dirt_albedo, texture_position, world_normal, blend);
+			dirt = ring_biome_triplanar_world(biome_dirt_albedo, world_normal, blend, tx, ty, tz, dpdx, dpdy);
 		if (ground_facing > 0.0) {
 			vec4 packed = clamp(COLOR, 0.0, 1.0);
 			float grass_weight = max(0.0, 1.0 - packed.r - packed.g - packed.b - packed.a);
@@ -255,18 +251,18 @@ void fragment() {
 			float total = max(0.0001, grass_weight + packed.r + packed.g + packed.b + packed.a);
 			vec3 surface_texture = vec3(0.0);
 			if (grass_weight > 0.0) {
-				vec3 grass = sample_biome_triplanar(biome_grass_albedo, texture_position, world_normal, blend);
+				vec3 grass = ring_biome_triplanar_world(biome_grass_albedo, world_normal, blend, tx, ty, tz, dpdx, dpdy);
 				grass = mix(grass, grass * vec3(0.72, 1.30, 0.62), 0.58);
 				surface_texture += grass * grass_weight;
 			}
 			if (packed.r > 0.0)
-				surface_texture += sample_biome_triplanar(biome_desert_albedo, texture_position, world_normal, blend) * packed.r;
+				surface_texture += ring_biome_triplanar_world(biome_desert_albedo, world_normal, blend, tx, ty, tz, dpdx, dpdy) * packed.r;
 			if (packed.g > 0.0)
-				surface_texture += sample_biome_triplanar(biome_forest_albedo, texture_position, world_normal, blend) * packed.g;
+				surface_texture += ring_biome_triplanar_world(biome_forest_albedo, world_normal, blend, tx, ty, tz, dpdx, dpdy) * packed.g;
 			if (packed.b > 0.0)
-				surface_texture += sample_biome_triplanar(biome_tundra_albedo, texture_position, world_normal, blend) * packed.b;
+				surface_texture += ring_biome_triplanar_world(biome_tundra_albedo, world_normal, blend, tx, ty, tz, dpdx, dpdy) * packed.b;
 			if (packed.a > 0.0)
-				surface_texture += sample_biome_triplanar(biome_alpine_albedo, texture_position, world_normal, blend) * packed.a;
+				surface_texture += ring_biome_triplanar_world(biome_alpine_albedo, world_normal, blend, tx, ty, tz, dpdx, dpdy) * packed.a;
 			terrain_color = mix(dirt, surface_texture / total, ground_facing);
 #ifdef RING_GROUND_SURFACE
 			if (ground_on) ground_surface_texture = surface_texture / total;
@@ -288,7 +284,7 @@ void fragment() {
 			terrain_color = ground_surface_texture;
 			if (ground_rock + ground_scree > 0.0) {
 				if (ground_rock > 0.0) strata_factor = ring_ground_strata_factor(ground_height, strata_footprint);
-				vec3 alpine = sample_biome_triplanar(biome_alpine_albedo, texture_position, world_normal, blend);
+				vec3 alpine = ring_biome_triplanar_world(biome_alpine_albedo, world_normal, blend, tx, ty, tz, dpdx, dpdy);
 				terrain_color = mix(mix(ground_surface_texture, alpine * GROUND_SCREE_TINT, ground_scree), alpine * GROUND_ROCK_TINT * strata_factor, ground_rock);
 			}
 			// D5 colour variation on the dry albedo (before grass coverage, wetness and the albedo scale), from the interpolated C64.

@@ -10,6 +10,8 @@ extends SceneTree
 #   curve    GLSL curve vs RingGrassCardCurve.cs parity
 #   measure  GPU ms of cards (vsync off, >= 400 frames) at 1600x900
 #   weather  wind on (globals) screenshot sanity
+#   tiling   ground anti-tiling (materials/ring_biome_antitile.gdshaderinc): 5 m periodicity of the ground and card colour, on vs off; run through
+#            tools/ground_antitile_gpu_test.gd
 const SURFACE = preload("res://scripts/Terrain/Surface/RingTerrain3DSurface.cs")
 const GEOMETRY = preload("res://scripts/Terrain/Surface/RingTerrain3DCollisionGeometry.cs")
 const FIXTURE = preload("res://tools/GrassCardShaderFixture.cs")
@@ -88,7 +90,7 @@ func _run() -> void:
 	else:
 		viewport = SubViewport.new()
 		viewport.own_world_3d = true
-		viewport.size = Vector2i(960, 540)
+		viewport.size = Vector2i(TILING_VIEW_PX, TILING_VIEW_PX) if mode == "tiling" else Vector2i(960, 540)
 		viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 		root.add_child(viewport)
 		scene_parent = viewport
@@ -103,6 +105,7 @@ func _run() -> void:
 		"color": await _run_color()
 		"measure": await _run_measure()
 		"weather": await _run_weather()
+		"tiling": await _run_tiling()
 		_: _fail("unknown mode " + mode)
 
 
@@ -571,6 +574,216 @@ func _run_measure() -> void:
 	f.store_string("\n".join(results))
 	f.close()
 	await _finish(0)
+
+
+# ------------------------------------------------------------------ ground anti-tiling
+
+# Orthographic top-down, noon-ish sun, over pure grass (packed weights 0): 512 px over 51.2 m = 10 px/m, so the 5 m texture period is 50 px.
+const TILING_VIEW_PX := 512
+const TILING_PX_PER_M := 10.0
+const TILING_POSE := {"name": "tiling", "cam": Vector2(-100, 0), "eye": 50.0, "look": Vector3(-99.5, 0, 0), "sun": Vector3(0.30, 0.85, 0.20)}
+const TILING_REPEAT_LAGS := [35, 50, 65]      # 3.5 m, 5 m, 6.5 m
+const TILING_LATTICE_LAGS := [Vector2i(29, 0), Vector2i(14, 25), Vector2i(-14, 25)] # 1/G uv = 2.89 m along u and the two other hex directions
+# Measured on the RTX 4070 (2026-11-20): P_off 1.04-1.05 in all three cases (rho(5 m) 0.998), P_on 0.015-0.017 (ratio 0.014-0.016), lattice-lag rho on <= 0.014
+# (off: -0.23 at 2.89 m along u, 0.03 on the other two), mean linear RGB on vs off within 0.11 % (a), 0.08 % (c), +1000 m anchor max channel diff 1, +137 m diff 21-22.
+const TILING_OFF_SCORE_FLOOR := 0.50          # off-score (P) must exceed this: the test sees the repeat (measured 1.04)
+const TILING_ON_RATIO_MAX := 0.25             # on-score <= this x off-score (measured 0.016)
+const TILING_ON_SCORE_CEILING := 0.08         # and below this absolute ceiling (measured 0.017)
+const TILING_MEAN_TOLERANCE := 0.01           # mean linear RGB on vs off, per channel (relative; measured 0.0011)
+const TILING_LATTICE_MARGIN := 0.05           # lattice-lag rho on may exceed off by at most this, and must stay below TILING_LATTICE_MAX
+const TILING_LATTICE_MAX := 0.10              # (measured 0.014)
+const TILING_PERIOD_MAX_DIFF := 1             # anchor + 1000 m must reproduce the image (max channel diff; measured 1)
+const TILING_PERIOD_SENSITIVITY_MIN := 8      # an anchor shift of 137 m must change it by at least this (measured 21)
+
+
+func _tiling_camera() -> void:
+	var cam: Vector2 = TILING_POSE.cam
+	var up: Vector3 = fixture.GroundNormal(cam.x, cam.y)
+	var ground: Vector3 = fixture.GroundWorld(cam.x, cam.y)
+	var across: Vector3 = (fixture.GroundWorld(cam.x, cam.y + 1.0) - ground).normalized()
+	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
+	camera.keep_aspect = Camera3D.KEEP_HEIGHT
+	camera.size = TILING_VIEW_PX / TILING_PX_PER_M
+	camera.global_position = ground + up * float(TILING_POSE.eye)
+	camera.look_at(ground, across)
+
+
+func _tiling_set(on: bool) -> void:
+	RenderingServer.global_shader_parameter_set("ringworld_ground_antitile", 1.0 if on else 0.0)
+
+
+# rho(L) at the repeat lags along both image axes and at the hex lattice lags. P = rho(5 m) - mean(rho(3.5 m), rho(6.5 m)), max over the axes.
+func _tiling_metrics(image: Image) -> Dictionary:
+	var lx := PackedInt32Array()
+	var ly := PackedInt32Array()
+	for lag in TILING_REPEAT_LAGS:
+		lx.append(lag)
+		ly.append(0)
+	for lag in TILING_REPEAT_LAGS:
+		lx.append(0)
+		ly.append(lag)
+	for v in TILING_LATTICE_LAGS:
+		lx.append(v.x)
+		ly.append(v.y)
+	var rho: PackedFloat64Array = fixture.LumaAutocorrelation(image, lx, ly)
+	var px: float = rho[1] - 0.5 * (rho[0] + rho[2])
+	var py: float = rho[4] - 0.5 * (rho[3] + rho[5])
+	var lattice: float = maxf(rho[6], maxf(rho[7], rho[8]))
+	return {"p": maxf(px, py), "px": px, "py": py, "rho5x": rho[1], "rho5y": rho[4], "lattice": lattice, "lattice_rho": [rho[6], rho[7], rho[8]], "mean": fixture.MeanLinearRgb(image)}
+
+
+func _tiling_case(label: String, off: Image, on: Image, rows: Array) -> bool:
+	var m_off := _tiling_metrics(off)
+	var m_on := _tiling_metrics(on)
+	var mean_off: Vector3 = m_off.mean
+	var mean_on: Vector3 = m_on.mean
+	var mean_delta := maxf(absf(mean_on.x / mean_off.x - 1.0), maxf(absf(mean_on.y / mean_off.y - 1.0), absf(mean_on.z / mean_off.z - 1.0)))
+	var ok_sense: bool = float(m_off.p) >= TILING_OFF_SCORE_FLOOR
+	var ok_on: bool = float(m_on.p) <= TILING_ON_RATIO_MAX * float(m_off.p) and float(m_on.p) <= TILING_ON_SCORE_CEILING
+	var ok_mean: bool = mean_delta <= TILING_MEAN_TOLERANCE
+	var ok_lattice: bool = float(m_on.lattice) <= minf(float(m_off.lattice) + TILING_LATTICE_MARGIN, TILING_LATTICE_MAX)
+	var ok := ok_sense and ok_on and ok_mean and ok_lattice
+	var line := "GROUND_ANTITILE case=%s P_off=%.3f (x %.3f y %.3f, rho5 %.3f/%.3f) P_on=%.3f (x %.3f y %.3f, rho5 %.3f/%.3f) ratio=%.3f lattice_rho off=%s on=%s mean_delta=%.4f (off %s on %s) %s" % [
+		label, m_off.p, m_off.px, m_off.py, m_off.rho5x, m_off.rho5y, m_on.p, m_on.px, m_on.py, m_on.rho5x, m_on.rho5y, float(m_on.p) / maxf(float(m_off.p), 1e-6),
+		str(m_off.lattice_rho), str(m_on.lattice_rho), mean_delta, mean_off, mean_on,
+		"PASS" if ok else "FAIL(sense=%s on=%s mean=%s lattice=%s)" % [ok_sense, ok_on, ok_mean, ok_lattice]]
+	print(line)
+	rows.append(line)
+	return ok
+
+
+func _tiling_pair() -> Array:
+	await _settle(6)
+	_tiling_set(false)
+	await _settle(4)
+	var off := await _grab()
+	_tiling_set(true)
+	await _settle(4)
+	var on := await _grab()
+	return [off, on]
+
+
+func _run_tiling() -> void:
+	var rows: Array = []
+	var all_ok := true
+	var pose: Dictionary = TILING_POSE
+	await _apply_pose(pose)
+	await _rebuild_field(pose, true)
+	_tiling_camera()
+	fixture.SetMode("production")
+	# a) ground only
+	field_root.visible = false
+	var pair := await _tiling_pair()
+	_shot(pose, "a_off", pair[0])
+	_shot(pose, "a_on", pair[1])
+	all_ok = _tiling_case("a_ground", pair[0], pair[1], rows) and all_ok
+	# Periodicity of the shader: the texture anchor + 1000 m reproduces the image, 137 m does not (around, then across).
+	for param in ["ring_texture_anchor_around_meters", "ring_texture_anchor_across_meters"]:
+		var base: float = float(_terrain_material().call("get_shader_param", param))
+		_tiling_set(true)
+		var images: Array = []
+		for shift in [0.0, 1000.0, 137.0]:
+			_terrain_material().call("set_shader_param", param, base + shift)
+			await _settle(4)
+			images.append(await _grab())
+		_terrain_material().call("set_shader_param", param, base)
+		var same: int = fixture.MaxChannelDiff(images[0], images[1])
+		var moved: int = fixture.MaxChannelDiff(images[0], images[2])
+		var ok_period := same <= TILING_PERIOD_MAX_DIFF and moved >= TILING_PERIOD_SENSITIVITY_MIN
+		var line := "GROUND_ANTITILE case=period %s +1000 m max_diff=%d (<= %d) +137 m max_diff=%d (>= %d) %s" % [param, same, TILING_PERIOD_MAX_DIFF, moved, TILING_PERIOD_SENSITIVITY_MIN, "PASS" if ok_period else "FAIL"]
+		print(line)
+		rows.append(line)
+		all_ok = ok_period and all_ok
+	# b) ground + cards (neutral colour mode: the card colour is the ground copy, no per-blade jitter)
+	field_root.visible = true
+	fixture.SetMode("neutral")
+	pair = await _tiling_pair()
+	_shot(pose, "b_off", pair[0])
+	_shot(pose, "b_on", pair[1])
+	all_ok = _tiling_case("b_ground_cards", pair[0], pair[1], rows) and all_ok
+	_tiling_set(true)
+	# c) the proxy terrain
+	var proxy_result = await _tiling_proxy_case(rows)
+	if proxy_result != null:
+		all_ok = proxy_result and all_ok
+	var f := FileAccess.open(ProjectSettings.globalize_path(out_dir.path_join("tiling_results.txt")), FileAccess.WRITE)
+	f.store_string("\n".join(rows))
+	f.close()
+	if not all_ok:
+		_fail("ground anti-tiling targets missed (see GROUND_ANTITILE lines)")
+		return
+	print("GROUND_ANTITILE=PASS")
+	await _finish(0)
+
+
+# c) ring_terrain_proxy.gdshader on a quad whose surface up is +z (the proxy's ring axis is world y, so "up" is horizontal): ring_center far along +z.
+func _tiling_proxy_case(rows: Array):
+	var proxy_viewport := SubViewport.new()
+	proxy_viewport.own_world_3d = true
+	proxy_viewport.size = Vector2i(TILING_VIEW_PX, TILING_VIEW_PX)
+	proxy_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	root.add_child(proxy_viewport)
+	var environment := Environment.new()
+	environment.background_mode = Environment.BG_COLOR
+	environment.background_color = Color(0.10, 0.12, 0.17)
+	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	environment.ambient_light_color = Color(0.30, 0.33, 0.38)
+	var world_environment := WorldEnvironment.new()
+	world_environment.environment = environment
+	proxy_viewport.add_child(world_environment)
+	var sun_dir := Vector3(0.30, 0.20, 0.90).normalized()
+	var light := DirectionalLight3D.new()
+	proxy_viewport.add_child(light)
+	_orient_light(light, sun_dir)
+	var surface_tool := SurfaceTool.new()
+	surface_tool.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var corners := [Vector3(-40, -40, 0), Vector3(40, -40, 0), Vector3(40, 40, 0), Vector3(-40, 40, 0)]
+	for index in [0, 2, 1, 0, 3, 2]: # Godot front faces are clockwise
+		surface_tool.set_normal(Vector3(0, 0, 1))
+		surface_tool.set_color(Color(0, 0, 0, 0)) # packed weights all 0: pure grass
+		surface_tool.set_uv(Vector2(0.5, 0.5))
+		surface_tool.set_uv2(Vector2(0, 0))
+		surface_tool.add_vertex(corners[index])
+	var mesh := surface_tool.commit()
+	var material := ShaderMaterial.new()
+	material.shader = load("res://materials/ring_terrain_proxy.gdshader")
+	var camera_position := Vector3(0, 0, 60)
+	material.set_shader_parameter("ring_center", Vector3(0, 0, 100000))
+	material.set_shader_parameter("sun_direction", sun_dir)
+	material.set_shader_parameter("camera_world_position", camera_position)
+	material.set_shader_parameter("geomorph_enabled", false)
+	material.set_shader_parameter("biome_texture_weights_enabled", true)
+	material.set_shader_parameter("biome_texture_scale", 0.2)
+	for biome in ["grass", "dirt", "desert", "forest", "tundra", "alpine"]:
+		material.set_shader_parameter("biome_%s_albedo" % biome, _terrain_material().call("get_shader_param", "biome_%s_albedo" % biome))
+	var instance := MeshInstance3D.new()
+	instance.mesh = mesh
+	instance.material_override = material
+	proxy_viewport.add_child(instance)
+	var proxy_camera := Camera3D.new()
+	proxy_camera.projection = Camera3D.PROJECTION_ORTHOGONAL
+	proxy_camera.keep_aspect = Camera3D.KEEP_HEIGHT
+	proxy_camera.size = TILING_VIEW_PX / TILING_PX_PER_M
+	proxy_camera.current = true
+	proxy_camera.near = 0.05
+	proxy_camera.far = 500.0
+	proxy_viewport.add_child(proxy_camera)
+	proxy_camera.global_position = camera_position
+	proxy_camera.look_at(Vector3(0, 0, 0), Vector3.UP)
+	var images: Array = []
+	for on in [false, true]:
+		_tiling_set(on)
+		await _frames(8)
+		var image := proxy_viewport.get_texture().get_image()
+		if image == null or image.is_empty():
+			_fail("proxy readback failed")
+			return false
+		image.convert(Image.FORMAT_RGBA8)
+		images.append(image)
+		image.save_png(ProjectSettings.globalize_path(out_dir.path_join("c_proxy_%s.png" % ("on" if on else "off"))))
+	_tiling_set(true)
+	proxy_viewport.queue_free()
+	return _tiling_case("c_proxy", images[0], images[1], rows)
 
 
 # ------------------------------------------------------------------ weather (wind) sanity

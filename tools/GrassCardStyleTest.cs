@@ -341,10 +341,13 @@ public partial class GrassCardStyleTest : Node
     // ------------------------------------------------------------------ (e) origin uv
 
     private static double Frac(double v) => v - Math.Floor(v);
-    private static bool SameModOne(double a, double b, double tol = 2e-4) { double d = Frac(a - b); return d < tol || d > 1 - tol; }
+    // Texture uv repeats every 200 (1000 m at the 0.2 scale): the ground anti-tiling lattice is periodic in 200 uv, and the card origin uv is metres mod 1000 times 0.2.
+    private const double UvPeriod = 200.0;
+    private static bool SameModUv(double a, double b, double tol = 2e-4) { double d = Frac((a - b) / UvPeriod) * UvPeriod; return d < tol || d > UvPeriod - tol; }
+    private static bool SameModOne(double a, double b, double tol = 2e-4) { double d = Frac(a - b); return d < tol || d > 1 - tol; } // the macro-shadow uv (around / circumference) wraps at 1
 
     /// <summary>Cards grouping (S6 C): a group renderer's own uniforms (origin uv, gust origin, covectors from the group bounds) give
-    /// the same terrain uv as the leaf's for every grouped instance (mod one texture period), including a group beside the ring wrap
+    /// the same terrain uv as the leaf's for every grouped instance (mod the 200 uv anti-tiling period), including a group beside the ring wrap
     /// with the unwrap reference on either side of it.</summary>
     private void TestGroupUv()
     {
@@ -403,7 +406,7 @@ public partial class GrassCardStyleTest : Node
                     double lu = leafOrigin.X + ld.Dot(leafAround) * .2, lv = leafOrigin.Y + ld.Dot(leafAcross) * .2;
                     double gu = groupOrigin.X + gd.Dot(groupAround) * .2, gv = groupOrigin.Y + gd.Dot(groupAcross) * .2;
                     double du = gu - lu, dv = gv - lv;
-                    worstUv = Math.Max(worstUv, Math.Max(Math.Abs(du - Math.Round(du)), Math.Abs(dv - Math.Round(dv))));
+                    worstUv = Math.Max(worstUv, Math.Max(Math.Abs(du - UvPeriod * Math.Round(du / UvPeriod)), Math.Abs(dv - UvPeriod * Math.Round(dv / UvPeriod))));
                     double ls = leafOrigin.Z + ld.Dot(leafAround) / (Math.Tau * radius), gs = groupOrigin.Z + gd.Dot(groupAround) / (Math.Tau * radius);
                     double lc = leafOrigin.W + ld.Dot(leafAcross) / Width, gc = groupOrigin.W + gd.Dot(groupAcross) / Width;
                     worstShadow = Math.Max(worstShadow, Math.Max(Math.Abs(gs - ls), Math.Abs(gc - lc)));
@@ -447,7 +450,7 @@ public partial class GrassCardStyleTest : Node
                 // For the wrap pair, evaluate the shared edge on the branch of the focus: end tile at `edge`, start tile at `edge` as well.
                 var ua = UvAt(ta, focus, edge, across);
                 var ub = UvAt(tb, focus, edge, across);
-                Check(SameModOne(ua.u, ub.u) && SameModOne(ua.v, ub.v), $"circ={circumference} uv seam between tiles {ia}->{ib} focus={focus:F0}: {ua.u:F5} vs {ub.u:F5} (v {ua.v:F5} vs {ub.v:F5})");
+                Check(SameModUv(ua.u, ub.u) && SameModUv(ua.v, ub.v), $"circ={circumference} uv seam between tiles {ia}->{ib} focus={focus:F0}: {ua.u:F5} vs {ub.u:F5} (v {ua.v:F5} vs {ub.v:F5})");
                 Check(SameModOne(ua.sa, ub.sa, 1e-6) && SameModOne(ua.sc, ub.sc, 1e-6), $"circ={circumference} shadow uv seam between tiles {ia}->{ib}");
                 checks++;
             }
@@ -458,13 +461,13 @@ public partial class GrassCardStyleTest : Node
                 double edge = ta.AcrossMax, aroundP = ta.AroundCenter + 5.5, focus = ta.AroundCenter;
                 var ua = UvAt(ta, focus, aroundP, edge);
                 var ub = UvAt(tb, focus, aroundP, edge);
-                Check(SameModOne(ua.u, ub.u) && SameModOne(ua.v, ub.v), $"circ={circumference} uv seam across tiles {j}->{j + 1}");
+                Check(SameModUv(ua.u, ub.u) && SameModUv(ua.v, ub.v), $"circ={circumference} uv seam across tiles {j}->{j + 1}");
                 checks++;
             }
             // Canonical away from the wrap: independent of the focus and of floating-origin rebases.
             RingGrassTileBounds mid = RingGrassCoordinates.Bounds(40_000, 300, 32, circumference, Width);
             Vector4 canonical = Origin(mid, mid.AroundCenter);
-            Check(canonical == Origin(mid, mid.AroundCenter + 250) && Math.Abs(canonical.X - (float)(Frac(mid.AroundCenter / 5.0) * 1.0)) < 1e-5,
+            Check(canonical == Origin(mid, mid.AroundCenter + 250) && Math.Abs(canonical.X - (float)(Frac(mid.AroundCenter / 1000.0) * UvPeriod)) < 1e-4,
                 "origin uv is not canonical away from the wrap");
             // Terrain3D shader: uv.x = (anchor mod 1000 + SignedAroundDeltaMeters(p)) * 0.2. Per-tile origin uv under that anchor,
             // with the focus on either side of the seam, must equal it at the tile centre (card uv = origin + offset * 0.2).
@@ -481,15 +484,15 @@ public partial class GrassCardStyleTest : Node
                     long centre = (long)Math.Round(tb.AroundCenter);
                     double terrainU = (((anchor % 1000) + 1000) % 1000 + frame.SignedAroundDeltaMeters(centre)) * .2;
                     Vector4 byAnchor = RingStandingGrassLayer.CardTerrainOriginUv(tb, radius, Width, circumference, anchor);
-                    Check(SameModOne(byAnchor.X, terrainU, 1e-4), $"circ={circumference} anchor={anchor} tile {index}: origin uv {byAnchor.X:F5} != terrain {Frac(terrainU):F5}");
+                    Check(SameModUv(byAnchor.X, terrainU, 1e-4), $"circ={circumference} anchor={anchor} tile {index}: origin uv {byAnchor.X:F5} != terrain {Frac(terrainU):F5}");
                     Vector4 byFocus = RingStandingGrassLayer.CardTerrainOriginUv(tb, radius, Width, circumference, focus);
-                    if (!SameModOne(byFocus.X, terrainU, 1e-4)) focusWouldMismatch = true;
+                    if (!SameModUv(byFocus.X, terrainU, 1e-4)) focusWouldMismatch = true;
                     anchorChecks++;
                 }
             }
-            if (circumference % 5 != 0) Check(focusWouldMismatch, "focus-relative unwrap never disagreed with the terrain anchor (the test is not sensitive)");
+            if (circumference % 32 == 0 && circumference % 1000 != 0) Check(focusWouldMismatch, "focus-relative unwrap never disagreed with the terrain anchor (the test is not sensitive)");
             _report.Add($"GRASS_CARD_STYLE[origin_uv_anchor] circumference={circumference} anchor-vs-terrain-shader checks={anchorChecks} ok (focus-relative would mismatch: {focusWouldMismatch})");
-            _report.Add($"GRASS_CARD_STYLE[origin_uv] circumference={circumference} (mod 5 = {circumference % 5}) seam checks={checks} ok");
+            _report.Add($"GRASS_CARD_STYLE[origin_uv] circumference={circumference} (mod 1000 = {circumference % 1000}) seam checks={checks} ok");
         }
     }
 

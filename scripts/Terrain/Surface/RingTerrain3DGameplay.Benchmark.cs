@@ -9,6 +9,13 @@ public partial class RingTerrain3DGameplay
 {
     private const string BenchmarkWorldDirectoryPrefix = "res://.godot/terrain-generation-tests/m6-";
 
+    /// <summary>Debug A/B for tools/perf_bench.ps1 -Variants ({"node":"Terrain3DGameplay","set":{"GroundAntiTilingDebug":false}}): forwards to <see cref="RingGroundAntiTiling.Enabled"/>. Not a setting.</summary>
+    public bool GroundAntiTilingDebug
+    {
+        get => RingGroundAntiTiling.Enabled;
+        set => RingGroundAntiTiling.Enabled = value;
+    }
+
     public bool EnableSynchronousBenchmarkMode()
     {
         if (IsInsideTree() || IsNodeReady() || _field != null || _surface != null) return false;

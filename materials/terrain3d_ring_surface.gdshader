@@ -10,6 +10,7 @@ render_mode blend_mix,depth_draw_opaque,cull_back,diffuse_burley,specular_schlic
 #include "res://materials/ring_terrain_grass_coverage.gdshaderinc"
 #include "res://materials/ring_surface_albedo_scale.gdshaderinc"
 #include "res://materials/ring_terrain_surface_albedo.gdshaderinc"
+#include "res://materials/ring_biome_antitile.gdshaderinc"
 #include "res://materials/ring_terrain_lighting.gdshaderinc"
 #include "res://materials/ring_canopy_shade.gdshaderinc"
 #include "res://materials/ring_wetness.gdshaderinc"
@@ -120,16 +121,6 @@ float height_or(ivec3 coord, float fallback) {
 
 vec4 color_or(ivec3 coord, vec4 fallback) {
     return coord.z < 0 ? fallback : texelFetch(_color_maps, coord, 0);
-}
-
-vec3 sample_biome_triplanar(sampler2D texture_map, vec3 position, vec3 normal, vec3 blend) {
-    vec2 x_uv = position.zy;
-    vec2 y_uv = position.xz;
-    vec2 z_uv = position.xy;
-    x_uv.x *= normal.x < 0.0 ? -1.0 : 1.0;
-    y_uv.x *= normal.y < 0.0 ? -1.0 : 1.0;
-    z_uv.x *= normal.z >= 0.0 ? -1.0 : 1.0;
-    return texture(texture_map, x_uv).rgb * blend.x + texture(texture_map, y_uv).rgb * blend.y + texture(texture_map, z_uv).rgb * blend.z;
 }
 
 void vertex() {
@@ -256,13 +247,18 @@ void fragment() {
             surface_height + ring_anchor_height,
             UV.y * _vertex_spacing * ring_across_direction + ring_texture_anchor_across_meters) * biome_texture_scale;
         float ground_facing = smoothstep(.45, .78, planar_normal.y);
-        vec3 dirt = ground_facing < 1.0 ? sample_biome_triplanar(biome_dirt_albedo, texture_position, texture_normal, blend) : vec3(0.0);
-        vec3 grass = sample_biome_triplanar(biome_grass_albedo, texture_position, texture_normal, blend);
-        grass = ring_terrain_grass_tint(grass);
-        vec3 desert = sample_biome_triplanar(biome_desert_albedo, texture_position, texture_normal, blend);
-        vec3 forest = sample_biome_triplanar(biome_forest_albedo, texture_position, texture_normal, blend);
-        vec3 tundra = sample_biome_triplanar(biome_tundra_albedo, texture_position, texture_normal, blend);
-        vec3 alpine = sample_biome_triplanar(biome_alpine_albedo, texture_position, texture_normal, blend);
+        // Ground anti-tiling (ring_biome_antitile.gdshaderinc): derivatives and the lattice in uniform control flow, every tap inside the branches is explicit-gradient.
+        vec3 dpdx = dFdx(texture_position);
+        vec3 dpdy = dFdy(texture_position);
+        blend = ring_triplanar_prune(blend);
+        RingAntiTile ty = ring_biome_antitile(texture_position, texture_normal, dpdx, dpdy);
+        vec3 dirt = ground_facing < 1.0 ? ring_biome_triplanar(biome_dirt_albedo, texture_position, texture_normal, blend, ty, dpdx, dpdy) : vec3(0.0);
+        vec3 grass = vec3(0.0), desert = vec3(0.0), forest = vec3(0.0), tundra = vec3(0.0), alpine = vec3(0.0);
+        if (grass_weight > 0.0) grass = ring_terrain_grass_tint(ring_biome_triplanar(biome_grass_albedo, texture_position, texture_normal, blend, ty, dpdx, dpdy));
+        if (packed.r > 0.0) desert = ring_biome_triplanar(biome_desert_albedo, texture_position, texture_normal, blend, ty, dpdx, dpdy);
+        if (packed.g > 0.0) forest = ring_biome_triplanar(biome_forest_albedo, texture_position, texture_normal, blend, ty, dpdx, dpdy);
+        if (packed.b > 0.0) tundra = ring_biome_triplanar(biome_tundra_albedo, texture_position, texture_normal, blend, ty, dpdx, dpdy);
+        if (packed.a > 0.0) alpine = ring_biome_triplanar(biome_alpine_albedo, texture_position, texture_normal, blend, ty, dpdx, dpdy);
         ground = mix(dirt, ring_terrain_biome_mix(grass, desert, forest, tundra, alpine, packed), ground_facing);
     }
     float ground_facing = smoothstep(.45, .78, planar_normal.y);

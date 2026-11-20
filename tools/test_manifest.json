@@ -571,6 +571,19 @@
       "profile": "own-runner",
       "runner": "tools/audio_studio_export_regression.ps1"
     },
+    "ground_antitile_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "terrain",
+        "vegetation",
+        "terrain-near"
+      ],
+      "marker": "GROUND_ANTITILE",
+      "expected_s": 20,
+      "timeout_s": 120
+    },
     "vegetation_work_trace_completion_test": {
       "kind": "test",
       "mode": "headless",

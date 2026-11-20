@@ -268,7 +268,7 @@ public partial class GrassCardShaderFixture : RefCounted
         Basis inverse = new Basis(ex, eh, ez).Inverse();
         Vector3 around = inverse.Row0, across = inverse.Row2 * _acrossDirection;
         float canonicalAround = _anchorAround + cx, canonicalAcross = _anchorAcross + cz * _acrossDirection;
-        float u = (float)(Mod(canonicalAround, 5.0) * .2), v = (float)(Mod(canonicalAcross, 5.0) * .2);
+        float u = (float)(Mod(canonicalAround, 1000.0) * .2), v = (float)(Mod(canonicalAcross, 1000.0) * .2);
         instance.SetInstanceShaderParameter("grass_gust_origin_world", origin);
         instance.SetInstanceShaderParameter("grass_gust_around_world", new Vector4(around.X, around.Y, around.Z, 1f / 48f));
         instance.SetInstanceShaderParameter("grass_gust_across_world", new Vector4(across.X, across.Y, across.Z, 1f / 48f));
@@ -442,6 +442,61 @@ public partial class GrassCardShaderFixture : RefCounted
         result["delta_e"] = DeltaE2000(ma, mb);
         result["lab_a"] = ma; result["lab_b"] = mb;
         return result;
+    }
+
+    // ---- ground anti-tiling metrics (tools/ground_antitile_gpu_test.gd) ----
+    private static float[] LinearLuma(Image image, out int width, out int height)
+    {
+        image.Convert(Image.Format.Rgba8);
+        width = image.GetWidth(); height = image.GetHeight();
+        byte[] d = image.GetData();
+        var lut = new float[256];
+        for (int i = 0; i < 256; i++) lut[i] = Lin((byte)i);
+        var luma = new float[width * height];
+        for (int i = 0; i < luma.Length; i++) luma[i] = 0.2126f * lut[d[i * 4]] + 0.7152f * lut[d[i * 4 + 1]] + 0.0722f * lut[d[i * 4 + 2]];
+        return luma;
+    }
+
+    /// <summary>Normalised autocorrelation of the linear luminance (about the image mean, over the overlap) at each pixel lag (lagsX[i], lagsY[i]).</summary>
+    public double[] LumaAutocorrelation(Image image, int[] lagsX, int[] lagsY)
+    {
+        float[] l = LinearLuma(image, out int w, out int h);
+        double mean = 0; foreach (float v in l) mean += v; mean /= l.Length;
+        double variance = 0; foreach (float v in l) variance += (v - mean) * (v - mean); variance /= l.Length;
+        var result = new double[lagsX.Length];
+        for (int k = 0; k < lagsX.Length; k++)
+        {
+            int lx = lagsX[k], ly = lagsY[k];
+            double sum = 0; long n = 0;
+            for (int y = Math.Max(0, -ly); y < Math.Min(h, h - ly); y++)
+                for (int x = Math.Max(0, -lx); x < Math.Min(w, w - lx); x++)
+                {
+                    sum += (l[y * w + x] - mean) * (l[(y + ly) * w + x + lx] - mean);
+                    n++;
+                }
+            result[k] = n == 0 || variance <= 1e-12 ? 0 : sum / n / variance;
+        }
+        return result;
+    }
+
+    /// <summary>Mean linear RGB of the image.</summary>
+    public Vector3 MeanLinearRgb(Image image)
+    {
+        image.Convert(Image.Format.Rgba8);
+        byte[] d = image.GetData();
+        double r = 0, g = 0, b = 0; int n = d.Length / 4;
+        for (int i = 0; i < n; i++) { r += Lin(d[i * 4]); g += Lin(d[i * 4 + 1]); b += Lin(d[i * 4 + 2]); }
+        return new Vector3((float)(r / n), (float)(g / n), (float)(b / n));
+    }
+
+    /// <summary>Largest per-channel 8-bit difference between two images of the same size.</summary>
+    public int MaxChannelDiff(Image a, Image b)
+    {
+        a.Convert(Image.Format.Rgba8); b.Convert(Image.Format.Rgba8);
+        byte[] da = a.GetData(), db = b.GetData();
+        int worst = 0;
+        for (int i = 0; i < da.Length; i++) if ((i & 3) != 3) worst = Math.Max(worst, Math.Abs(da[i] - db[i]));
+        return worst;
     }
 
     // ---- curve parity ----

@@ -2627,6 +2627,19 @@ static func run_grass_lod(ctx: Dictionary) -> Dictionary:
 	for i in 8:
 		await RenderingServer.frame_post_draw
 	tree.root.get_texture().get_image().save_png(out_dir.path_join("oblique_60m.png"))
+	if harness_flag("--grass-lod-stills"):
+		# Stills only (ground anti-tiling evidence): add an eye-level still (1.7 m, pitch -20, ground about 5 m ahead) and skip the dolly, control and flowers.
+		_teleport_to(ctx, around, across, ground + 1.7, yaw, -20.0)
+		await COMMON.wait_builds_idle(tree, game, 60.0)
+		await COMMON.settle(tree, 2.0)
+		for i in 8:
+			await RenderingServer.frame_post_draw
+		tree.root.get_texture().get_image().save_png(out_dir.path_join("eye_1p7m.png"))
+		var stills_record: Dictionary = (ctx["record"] as Dictionary).duplicate(true)
+		stills_record.merge({"marker": marker, "tool": "landscape_lod_switch_capture --grass-lod --grass-lod-stills", "output": out_dir, "label": label, "pose": pose["name"], "heights_m": heights, "status": "PASS"}, true)
+		_save_json(out_dir.path_join("grass_lod.json"), stills_record)
+		print("%s output: %s" % [marker, out_dir])
+		return stills_record
 	# 2. approach dolly and 3. control
 	var target_a := around + fwd_a * 105.0
 	var target_z := across + fwd_z * 105.0

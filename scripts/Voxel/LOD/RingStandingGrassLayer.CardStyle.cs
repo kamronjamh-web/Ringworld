@@ -259,7 +259,7 @@ public partial class RingStandingGrassLayer
     internal double CardUnwrapReferenceForTests => _cardFocusAroundMeters;
 
     /// <summary>Instance uniform <c>grass_terrain_origin_uv</c> of a tile: xy = Terrain3D texture uv of the tile's origin
-    /// (metres mod the 5 m texture period, times 0.2), zw = macro-shadow uv origin (around / circumference, across / ring
+    /// (canonical metres mod 1000, times 0.2: the ground anti-tiling lattice repeats every 200 uv = 1000 m, like the Terrain3D texture anchor), zw = macro-shadow uv origin (around / circumference, across / ring
     /// width). The around coordinate is unwrapped to the copy nearest <paramref name="focusAroundMeters"/> (the terrain frame anchor, else the focus), exactly like the
     /// terrain's anchor-relative frame, so the texture phase is continuous across the ring wrap (a circumference that is not
     /// a multiple of 5 m would otherwise leave a phase jump there). Away from the wrap it is canonical, so floating-origin
@@ -269,7 +269,7 @@ public partial class RingStandingGrassLayer
     {
         double around = bounds.AroundCenter;
         if (circumferenceMeters > 0) around += circumferenceMeters * Math.Round((focusAroundMeters - around) / circumferenceMeters);
-        return new((float)(Modulo(around, 5.0) * .2), (float)(Modulo(bounds.AcrossCenter, 5.0) * .2),
+        return new((float)(Modulo(around, 1000.0) * .2), (float)(Modulo(bounds.AcrossCenter, 1000.0) * .2),
             (float)(bounds.AroundCenter / (Math.Tau * Math.Max(1.0, ringRadiusMeters))), (float)(bounds.AcrossCenter / Math.Max(1.0, ringWidthMeters)));
     }
 

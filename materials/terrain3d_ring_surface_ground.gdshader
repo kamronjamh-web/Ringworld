@@ -13,14 +13,18 @@ render_mode blend_mix,depth_draw_opaque,cull_back,diffuse_burley,specular_schlic
 #include "res://materials/ring_terrain_grass_coverage.gdshaderinc"
 #include "res://materials/ring_surface_albedo_scale.gdshaderinc"
 #include "res://materials/ring_terrain_surface_albedo.gdshaderinc"
+#include "res://materials/ring_biome_antitile.gdshaderinc"
 #include "res://materials/ring_terrain_lighting.gdshaderinc"
 #include "res://materials/ring_wetness.gdshaderinc"
 #ifdef RING_GROUND_SURFACE
 #include "res://materials/ring_ground_surface.gdshaderinc"
 // Rock replaces dirt on steep ground in worlds with ground.surface: the dirt sample is skipped there.
 #define GROUND_NOT_ON && !ground_on
+// The alpine sample also serves rock and scree there, so it is taken even where the alpine weight is 0.
+#define GROUND_OR_ON || ground_on
 #else
 #define GROUND_NOT_ON
+#define GROUND_OR_ON
 #endif
 
 #define SKIP_PASS 0
@@ -138,16 +142,6 @@ vec4 color_or(ivec3 coord, vec4 fallback) {
     return coord.z < 0 ? fallback : texelFetch(_color_maps, coord, 0);
 }
 
-vec3 sample_biome_triplanar(sampler2D texture_map, vec3 position, vec3 normal, vec3 blend) {
-    vec2 x_uv = position.zy;
-    vec2 y_uv = position.xz;
-    vec2 z_uv = position.xy;
-    x_uv.x *= normal.x < 0.0 ? -1.0 : 1.0;
-    y_uv.x *= normal.y < 0.0 ? -1.0 : 1.0;
-    z_uv.x *= normal.z >= 0.0 ? -1.0 : 1.0;
-    return texture(texture_map, x_uv).rgb * blend.x + texture(texture_map, y_uv).rgb * blend.y + texture(texture_map, z_uv).rgb * blend.z;
-}
-
 #ifdef RING_GROUND_SURFACE
 // Height of the window at a (cell) position; found = false where the window does not hold it.
 float ground_tap(vec2 cell_uv, out bool found) {
@@ -246,17 +240,20 @@ void vertex() {
 #ifdef RING_GROUND_SURFACE
 // D6: the detail normal from the dominant projection of the albedo's triplanar (one tap), with the albedo's flips. Returns the normal in the texture frame (x around, y up, z across times the across direction).
 // The map is an OpenGL-convention tangent-space normal map: +x along u, +y toward the top of the image (decreasing v). The offset fades with the dominant blend weight, so it is continuous at a change of axis.
-vec3 ground_detail_normal(vec3 texture_position, vec3 texture_normal, vec3 blend, float weight) {
+vec3 ground_detail_normal(vec3 texture_position, vec3 texture_normal, vec3 blend, float weight, RingAntiTile ty, vec3 dpdx, vec3 dpdy) {
     float flip_x = texture_normal.x < 0.0 ? -1.0 : 1.0;
     float flip_y = texture_normal.y < 0.0 ? -1.0 : 1.0;
     float flip_z = texture_normal.z >= 0.0 ? -1.0 : 1.0;
     bool dom_x = blend.x >= blend.y && blend.x >= blend.z;
     bool dom_y = !dom_x && blend.y >= blend.z;
     vec2 uv = dom_x ? texture_position.zy : (dom_y ? texture_position.xz : texture_position.xy);
+    vec2 dx = dom_x ? dpdx.zy : (dom_y ? dpdx.xz : dpdx.xy);
+    vec2 dy = dom_x ? dpdy.zy : (dom_y ? dpdy.xz : dpdy.xy);
     float flip = dom_x ? flip_x : (dom_y ? flip_y : flip_z);
     float dom_blend = dom_x ? blend.x : (dom_y ? blend.y : blend.z);
-    uv.x *= flip;
-    vec2 t = texture(ringworld_ground_rock_detail_normal, uv).rg * 2.0 - 1.0;
+    uv.x *= flip; dx.x *= flip; dy.x *= flip;
+    // The top-down projection goes through the same anti-tiling taps as the albedo (ring_biome_antitile.gdshaderinc).
+    vec2 t = (dom_y ? ring_antitile_sample_grad_rg(ringworld_ground_rock_detail_normal, ty, dx, dy) : textureGrad(ringworld_ground_rock_detail_normal, uv, dx, dy).rg) * 2.0 - 1.0;
     t.x *= flip;
     vec3 offset = dom_x ? vec3(0.0, -t.y, t.x) : (dom_y ? vec3(t.x, 0.0, -t.y) : vec3(t.x, -t.y, 0.0));
     return normalize(texture_normal + weight * dom_blend * offset);
@@ -362,13 +359,18 @@ void fragment() {
             surface_height + ring_anchor_height,
             UV.y * _vertex_spacing * ring_across_direction + ring_texture_anchor_across_meters) * biome_texture_scale;
         float ground_facing = smoothstep(.45, .78, planar_normal.y);
-        vec3 dirt = ground_facing < 1.0 GROUND_NOT_ON ? sample_biome_triplanar(biome_dirt_albedo, texture_position, texture_normal, blend) : vec3(0.0);
-        vec3 grass = sample_biome_triplanar(biome_grass_albedo, texture_position, texture_normal, blend);
-        grass = ring_terrain_grass_tint(grass);
-        vec3 desert = sample_biome_triplanar(biome_desert_albedo, texture_position, texture_normal, blend);
-        vec3 forest = sample_biome_triplanar(biome_forest_albedo, texture_position, texture_normal, blend);
-        vec3 tundra = sample_biome_triplanar(biome_tundra_albedo, texture_position, texture_normal, blend);
-        vec3 alpine = sample_biome_triplanar(biome_alpine_albedo, texture_position, texture_normal, blend);
+        // Ground anti-tiling (ring_biome_antitile.gdshaderinc): derivatives and the lattice in uniform control flow, every tap inside the branches is explicit-gradient.
+        vec3 dpdx = dFdx(texture_position);
+        vec3 dpdy = dFdy(texture_position);
+        blend = ring_triplanar_prune(blend);
+        RingAntiTile ty = ring_biome_antitile(texture_position, texture_normal, dpdx, dpdy);
+        vec3 dirt = ground_facing < 1.0 GROUND_NOT_ON ? ring_biome_triplanar(biome_dirt_albedo, texture_position, texture_normal, blend, ty, dpdx, dpdy) : vec3(0.0);
+        vec3 grass = vec3(0.0), desert = vec3(0.0), forest = vec3(0.0), tundra = vec3(0.0), alpine = vec3(0.0);
+        if (grass_weight > 0.0) grass = ring_terrain_grass_tint(ring_biome_triplanar(biome_grass_albedo, texture_position, texture_normal, blend, ty, dpdx, dpdy));
+        if (packed.r > 0.0) desert = ring_biome_triplanar(biome_desert_albedo, texture_position, texture_normal, blend, ty, dpdx, dpdy);
+        if (packed.g > 0.0) forest = ring_biome_triplanar(biome_forest_albedo, texture_position, texture_normal, blend, ty, dpdx, dpdy);
+        if (packed.b > 0.0) tundra = ring_biome_triplanar(biome_tundra_albedo, texture_position, texture_normal, blend, ty, dpdx, dpdy);
+        if (packed.a > 0.0 GROUND_OR_ON) alpine = ring_biome_triplanar(biome_alpine_albedo, texture_position, texture_normal, blend, ty, dpdx, dpdy);
 #ifdef RING_GROUND_SURFACE
         vec3 biome_surface = ring_terrain_biome_mix(grass, desert, forest, tundra, alpine, packed);
         ground = mix(dirt, biome_surface, ground_facing);
@@ -391,7 +393,7 @@ void fragment() {
             // D6 detail normal on rock and scree within 60 m; the wet functions keep the macro ring_normal.
             if (ground_distance < GROUND_DETAIL_NORMAL_FADE_M.y && ground_rock + ground_scree > 0.0) {
                 ground_detail_weight = (ground_rock + 0.6 * ground_scree) * (1.0 - smoothstep(GROUND_DETAIL_NORMAL_FADE_M.x, GROUND_DETAIL_NORMAL_FADE_M.y, ground_distance));
-                vec3 detailed = ground_detail_normal(texture_position, texture_normal, blend, ground_detail_weight);
+                vec3 detailed = ground_detail_normal(texture_position, texture_normal, blend, ground_detail_weight, ty, dpdx, dpdy);
                 vec3 detailed_ring_normal = normalize(tangent * detailed.x + up * detailed.y + across * (detailed.z * ring_across_direction));
                 ground_detail_delta = length(detailed_ring_normal - ring_normal);
                 NORMAL = mat3(VIEW_MATRIX) * detailed_ring_normal;

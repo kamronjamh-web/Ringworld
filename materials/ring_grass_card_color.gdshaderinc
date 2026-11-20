@@ -5,10 +5,14 @@
 //   uv(p) = grass_terrain_origin_uv.xy + vec2(dot(p - o, around.xyz), dot(p - o, across.xyz)) * biome_texture_scale
 // with o = grass_gust_origin_world and the canonical ground covectors the gust field already uses. COLOR carries the
 // packed biome weights (r desert, g forest, b tundra, a alpine; grass is the remainder).
+// The top-down taps go through the ground anti-tiling lattice (ring_biome_antitile.gdshaderinc) exactly like the terrain's, so the
+// colour keeps matching the ground it grows from: that lattice is periodic in 1000 m, so the origin uv carries canonical metres
+// mod 1000 (not mod 5). The legacy world-uv path (voxel terrain) keeps the plain single tap, matching voxel_ring_terrain.
 #include "res://materials/ring_terrain_surface_albedo.gdshaderinc"
 #include "res://materials/ring_surface_albedo_scale.gdshaderinc"
+#include "res://materials/ring_biome_antitile.gdshaderinc"
 
-// Per-tile canonical terrain uv. xy = texture uv of the tile's gust origin (canonical around/across metres mod 5, times
+// Per-tile canonical terrain uv. xy = texture uv of the tile's gust origin (canonical around/across metres mod 1000, times
 // 0.2); zw = macro-shadow uv of the same origin (around / circumference, across / ring width). Written next to the gust
 // mapping, so it is canonical (floating-origin rebases leave it unchanged).
 instance uniform vec4 grass_terrain_origin_uv;
@@ -40,13 +44,24 @@ vec2 grass_card_terrain_uv(vec2 canonical_offset, vec4 origin_uv, vec3 world) {
 	return grass_card_world_uv ? world.xz * biome_texture_scale : origin_uv.xy + canonical_offset * biome_texture_scale;
 }
 
-// Biome albedo at one uv/mip. Index: 0 grass (already carries the terrain grass tint), 1 desert, 2 forest, 3 tundra, 4 alpine.
-vec3 grass_card_biome_sample(int index, vec2 uv, float lod) {
-	if (index == 0) return ring_terrain_albedo_scaled(ring_terrain_grass_tint(textureLod(biome_grass_albedo, uv, lod).rgb));
-	if (index == 1) return ring_terrain_albedo_scaled(textureLod(biome_desert_albedo, uv, lod).rgb);
-	if (index == 2) return ring_terrain_albedo_scaled(textureLod(biome_forest_albedo, uv, lod).rgb);
-	if (index == 3) return ring_terrain_albedo_scaled(textureLod(biome_tundra_albedo, uv, lod).rgb);
-	return ring_terrain_albedo_scaled(textureLod(biome_alpine_albedo, uv, lod).rgb);
+// The anti-tiling lattice of a card uv. footprint_lod is the mip the caller samples at (the uv footprint is 2^lod / texel width).
+RingAntiTile grass_card_antitile(vec2 uv, float lod, float texel_width) {
+	RingAntiTile a = ring_antitile_setup(uv, exp2(lod) / texel_width);
+	if (grass_card_world_uv) {
+		a.on = false;
+		a.uv0 = uv;
+		a.w = vec3(1.0, 0.0, 0.0);
+	}
+	return a;
+}
+
+// Biome albedo at one lattice/mip. Index: 0 grass (already carries the terrain grass tint), 1 desert, 2 forest, 3 tundra, 4 alpine.
+vec3 grass_card_biome_sample(int index, RingAntiTile a, float lod) {
+	if (index == 0) return ring_terrain_albedo_scaled(ring_terrain_grass_tint(ring_antitile_sample_lod(biome_grass_albedo, a, lod)));
+	if (index == 1) return ring_terrain_albedo_scaled(ring_antitile_sample_lod(biome_desert_albedo, a, lod));
+	if (index == 2) return ring_terrain_albedo_scaled(ring_antitile_sample_lod(biome_forest_albedo, a, lod));
+	if (index == 3) return ring_terrain_albedo_scaled(ring_antitile_sample_lod(biome_tundra_albedo, a, lod));
+	return ring_terrain_albedo_scaled(ring_antitile_sample_lod(biome_alpine_albedo, a, lod));
 }
 
 float grass_card_biome_weight(int index, vec4 weights) {
@@ -60,6 +75,7 @@ float grass_card_biome_weight(int index, vec4 weights) {
 // Far (vertex) path: only the two dominant biomes are sampled, renormalised. Uses a coarse mip (the caller passes the
 // footprint mip minus its bias) so light and dark ground patches survive.
 vec3 grass_card_ground_two_biomes(vec2 uv, float lod, vec4 weights) {
+	RingAntiTile a = grass_card_antitile(uv, lod, float(textureSize(biome_grass_albedo, 0).x));
 	int first = 0;
 	float first_weight = grass_card_biome_weight(0, weights);
 	for (int i = 1; i < 5; i++) {
@@ -74,18 +90,19 @@ vec3 grass_card_ground_two_biomes(vec2 uv, float lod, vec4 weights) {
 		if (w > second_weight) { second = i; second_weight = w; }
 	}
 	float total = first_weight + second_weight;
-	if (second_weight <= 0.001) return grass_card_biome_sample(first, uv, lod);
-	return (grass_card_biome_sample(first, uv, lod) * first_weight + grass_card_biome_sample(second, uv, lod) * second_weight) / total;
+	if (second_weight <= 0.001) return grass_card_biome_sample(first, a, lod);
+	return (grass_card_biome_sample(first, a, lod) * first_weight + grass_card_biome_sample(second, a, lod) * second_weight) / total;
 }
 
 // Near (fragment) path: every biome with weight > 0, combined by the terrain's own normalised mix.
 vec3 grass_card_ground_all_biomes(vec2 uv, float lod, vec4 weights) {
+	RingAntiTile a = grass_card_antitile(uv, lod, float(textureSize(biome_grass_albedo, 0).x));
 	vec3 grass = vec3(0.0), desert = vec3(0.0), forest = vec3(0.0), tundra = vec3(0.0), alpine = vec3(0.0);
-	if (ring_terrain_grass_weight(weights) > 0.001) grass = grass_card_biome_sample(0, uv, lod);
-	if (weights.r > 0.001) desert = grass_card_biome_sample(1, uv, lod);
-	if (weights.g > 0.001) forest = grass_card_biome_sample(2, uv, lod);
-	if (weights.b > 0.001) tundra = grass_card_biome_sample(3, uv, lod);
-	if (weights.a > 0.001) alpine = grass_card_biome_sample(4, uv, lod);
+	if (ring_terrain_grass_weight(weights) > 0.001) grass = grass_card_biome_sample(0, a, lod);
+	if (weights.r > 0.001) desert = grass_card_biome_sample(1, a, lod);
+	if (weights.g > 0.001) forest = grass_card_biome_sample(2, a, lod);
+	if (weights.b > 0.001) tundra = grass_card_biome_sample(3, a, lod);
+	if (weights.a > 0.001) alpine = grass_card_biome_sample(4, a, lod);
 	return ring_terrain_biome_mix(grass, desert, forest, tundra, alpine, weights);
 }
 
