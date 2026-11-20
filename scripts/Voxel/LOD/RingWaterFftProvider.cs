@@ -483,7 +483,7 @@ public sealed class RingWaterFftProvider : IDisposable
             float fetch = Math.Max(1000f, period.X * period.Y * .5f);
             float alpha = .076f * Mathf.Pow(s.WindSpeedMetersPerSecond * s.WindSpeedMetersPerSecond / (fetch * 9.81f), .22f);
             float peak = 22f * Mathf.Pow(9.81f * 9.81f / (s.WindSpeedMetersPerSecond * fetch), 1f / 3f);
-            Bind(list, _spectrumPipeline, _spectrumSet); Push(list, I(s.Seed + cascade * 7919), I(s.Seed * 31 + cascade * 104729), F(period.X), F(period.Y), F(alpha), F(peak), F(s.WindSpeedMetersPerSecond), F(Mathf.DegToRad(s.WindDirectionDegrees)), F(20), F(.8f), F(1), F(.2f), I(cascade)); _rd.ComputeListDispatch(list, (uint)(n / 16), (uint)(n / 16), 1); _rd.ComputeListAddBarrier(list);
+            Bind(list, _spectrumPipeline, _spectrumSet); Push(list, I(s.Seed + cascade * 7919), I(s.Seed * 31 + cascade * 104729), F(period.X), F(period.Y), F(alpha), F(peak), F(s.WindSpeedMetersPerSecond), F(SpectrumWindAngle(s.WindDirectionDegrees)), F(20), F(.8f), F(1), F(.2f), I(cascade)); _rd.ComputeListDispatch(list, (uint)(n / 16), (uint)(n / 16), 1); _rd.ComputeListAddBarrier(list);
         }
         Vector2 modulationPeriod = CascadePeriod(s, cascade);
         Bind(list, _modulatePipeline, _modulateSpectrumSet, _modulateFftSet); Push(list, F(modulationPeriod.X), F(modulationPeriod.Y), F(20), F(time), I(cascade)); _rd.ComputeListDispatch(list, (uint)(n / 16), (uint)(n / 16), 1); _rd.ComputeListAddBarrier(list);
@@ -555,6 +555,17 @@ public sealed class RingWaterFftProvider : IDisposable
         _createStage = 0;
     }
     private static Vector2 CascadePeriod(in RingWaterFftSettings s, int cascade) => cascade switch { 0 => s.Period0, 1 => s.Period1, 2 => s.Period2.X > .01f ? s.Period2 : s.Period1 * 4.0f, _ => s.Period3.X > .01f ? s.Period3 : s.Period1 * 16.0f };
+    /// <summary>
+    /// The spectrum angle for a wind direction (atan2(wind.y, wind.x) in the (around, across) frame of the FFT texture). spectrum_compute.glsl
+    /// measures theta = atan(k.x, k.y), and the FFT output is transposed (spatial x follows k.y, see the FIXME in spectrum_modulate.glsl), so theta
+    /// is the ordinary angle of the spatial wave vector. Synthesis is h0(k) e^{i(k.x + w t)} (+ the conjugate partner), so the energy at angle theta
+    /// travels towards theta + 180 degrees. The spectrum is therefore turned by 180 degrees so the waves travel with the wind (user 2026-11-20;
+    /// measured by tools/water_fft_travel_gpu_test.gd: offset 0 travelled 177-180 degrees against the wind, offset 180 within 4 degrees of it).
+    /// </summary>
+    public static float SpectrumWindAngle(float windDirectionDegrees) => Mathf.DegToRad(windDirectionDegrees + SpectrumTravelOffsetDegrees);
+    /// <summary>The shipped downwind offset; settable only for the travel test's control case.</summary>
+    public const float ShippedSpectrumTravelOffsetDegrees = 180.0f;
+    public static float SpectrumTravelOffsetDegrees { get; set; } = ShippedSpectrumTravelOffsetDegrees;
     private static RingWaterFftSettings Clamp(RingWaterFftSettings s) => s with { Resolution = s.Resolution is 128 or 256 or 512 or 1024 ? s.Resolution : 128, CascadeCount = Mathf.Clamp(s.CascadeCount, 1, 4), Period0 = Period(s.Period0, 12), Period1 = Period(s.Period1, 79), Period2 = Period(s.Period2, s.Period1.X * 4), Period3 = Period(s.Period3, s.Period1.X * 16), WindSpeedMetersPerSecond = float.IsFinite(s.WindSpeedMetersPerSecond) ? Mathf.Clamp(s.WindSpeedMetersPerSecond, .1f, 60) : 6, FoamAmount = float.IsFinite(s.FoamAmount) ? Mathf.Clamp(s.FoamAmount, 0, 10) : 3, Whitecap = float.IsFinite(s.Whitecap) ? Mathf.Clamp(s.Whitecap, 0, 2) : .5f, WindDirectionDegrees = float.IsFinite(s.WindDirectionDegrees) ? s.WindDirectionDegrees : 0 };
     private static Vector2 Period(Vector2 value, float fallback) => new(float.IsFinite(value.X) && value.X > .01f ? value.X : fallback, float.IsFinite(value.Y) && value.Y > .01f ? value.Y : fallback);
     private readonly record struct MipLevel(int Size, Rid Set);

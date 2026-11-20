@@ -373,10 +373,11 @@ void vertex() {
 		if (wave_fade > 0.001) {
 			bool vertex_wave_anchored = ring_water_anchor_active();
 			vec2 wave_coordinates = vertex_wave_anchored
-				? ring_water_anchor_coordinates(original_world_position, ring_center)
+				? ring_water_anchor_coordinates(original_world_position)
 				: ring_water_coordinates(original_world_position, ring_center, ring_radius_meters);
 			VERTEX += surface_up_local
 				* ring_water_profile_height(wave_coordinates, (water_wind_clock_enabled ? 1.0 : TIME), water_kind_profile, vertex_wave_anchored)
+				* water_mean_response // W-a: the wave size follows the sea-state wind
 				* wave_fade
 				* wave_geometry_strength;
 		}
@@ -432,9 +433,8 @@ void fragment() {
 	// ~1 m in float32 at 1e7 m round the ring), and their band-limiting derivatives always come from a local coordinate.
 	vec2 wave_coordinates = ring_water_coordinates(world_position, ring_center, ring_radius_meters);
 	bool wave_anchored = ring_water_anchor_active();
-	vec2 wave_phase_coordinates = wave_anchored ? ring_water_anchor_coordinates(world_position, ring_center) : wave_coordinates;
-	vec2 wave_derivative_coordinates = wave_anchored
-		? vec2(wave_phase_coordinates.x, world_position.y - ring_water_wave_anchor_world.y) : wave_coordinates;
+	vec2 wave_phase_coordinates = wave_anchored ? ring_water_anchor_coordinates(world_position) : wave_coordinates;
+	vec2 wave_derivative_coordinates = wave_phase_coordinates;
 	float water_gust_response = water_spatial_gust_enabled && ring_wind_field_enabled > 0.5 && water_mean_wind_speed > 0.01
         ? 1.0 + clamp(ring_wind_gust_at_world(world_position, 0.0) - 1.0, 0.0, 2.0) * water_gust_response_strength
         : 1.0;
@@ -460,8 +460,10 @@ void fragment() {
 			wave_coordinate_dx,
 			wave_coordinate_dy,
 			water_kind_profile,
-			wave_anchored);
-        filtered_gradient *= water_mean_response * water_gust_response;
+			wave_anchored,
+			water_gust_response);
+		// W-a / W-b (user 2026-11-20): the main slopes follow the sea-state wind; gusts only roughen the two shortest trains (short_gain above).
+		filtered_gradient *= water_mean_response;
 		vec3 detailed_water_normal_world = ring_water_normal_world_from_gradient(
 			world_position,
 			ring_center,
@@ -473,7 +475,7 @@ void fragment() {
 			wave_coordinate_dx,
 			wave_coordinate_dy,
 			water_kind_profile,
-			wave_anchored);
+			wave_anchored) * water_mean_response;
 		wave_slope_magnitude = length(filtered_gradient) * wave_normal_detail;
 	}
 	vec4 fft_detail = vec4(0.0);
@@ -537,7 +539,7 @@ void fragment() {
 		vec3 small_normal = normalize(water_normal_world - fft_around_axis * small.x * fft_normal_strength * water_gust_response
 			- fft_across_axis * small.y * fft_normal_strength * water_gust_response);
 		water_normal_world = normalize(mix(water_normal_world, small_normal, small_shading_fade));
-		wave_slope_magnitude += length(small.xy) * fft_normal_strength * water_gust_response * small_shading_fade;
+		wave_slope_magnitude += length(small.xy) * fft_normal_strength * small_shading_fade; // W-b: gusts roughen the small cascade but do not raise whitecaps
 		float small_residual = max(0.0, small.z - dot(small.xy, small.xy));
 		fft_detail.w += small_residual * fft_normal_strength * fft_normal_strength * water_gust_response * water_gust_response * small_shading_fade * small_shading_fade;
 	}
@@ -629,9 +631,8 @@ void fragment() {
 		* wave_normal_detail
 		* (water_kind_profile < 1.5 ? 1.0 : 0.18)
 		* (use_fft_surface ? 0.0 : 1.0);
-    float gust_whitecap = smoothstep(0.22, 0.70, wave_slope_magnitude)
-        * (water_gust_response - 1.0) * 0.20 * small_shading_fade;
-	float fft_foam = (fft_detail.z * water_gust_response + gust_whitecap) * fft_foam_strength * foam_breakup * distant_nonshore_foam;
+	// W-b (user 2026-11-20): gusts no longer add whitecaps or FFT foam; foam follows the sea state.
+	float fft_foam = fft_detail.z * fft_foam_strength * foam_breakup * distant_nonshore_foam;
 	crest_foam *= distant_nonshore_foam;
 	float foam = clamp(shore_foam * foam_breakup + crest_foam + fft_foam, 0.0, 1.0);
 	// Retain the established shallow/deep alpha controls as artist-facing volume
@@ -667,7 +668,9 @@ void fragment() {
 			+ wave_slope * 0.10 + sqrt(max(fft_detail.w, 0.0)) * 0.07,
 		0.02,
 		1.0);
-	base_roughness = clamp(base_roughness + 0.08 * rain_matte * smoothstep(30.0, 50.0, distance_to_camera) + 0.15 * hail_chop, 0.02, 1.0);
+	// W-b cat's paws: a gust roughens the surface (rougher, slightly darker reflection) where the waves are resolved.
+	float cats_paw = clamp((water_gust_response - 1.0) * 0.5, 0.0, 1.0) * max(wave_normal_detail, small_shading_fade);
+	base_roughness = clamp(base_roughness + 0.08 * rain_matte * smoothstep(30.0, 50.0, distance_to_camera) + 0.15 * hail_chop + 0.04 * cats_paw, 0.02, 1.0);
 	float ssr_step_ratio;
 	float ssr_hit_kind = 0.0;
 	float ssr_cloud_valid = 0.0;
@@ -686,8 +689,8 @@ void fragment() {
 	float storm_reflection = ring_storm_ambient(storm_water_level); // storm light: the sky reflection and the ambient follow the storm level
 	float final_roughness = max(base_roughness, specular_aa_roughness);
 	float n_dot_v = clamp(dot(water_normal_view, VIEW), 1e-4, 1.0); // engine: clamp(dot(normal, view), 1e-4, 1)
-	float reflectance = ring_water_env_reflectance(final_roughness, n_dot_v);
-	float haze_k = ring_haze_specular_scale(haze) * ringworld_sky_reflection;
+	float reflectance = ring_water_env_reflectance(final_roughness, n_dot_v) * (1.0 - 0.08 * cats_paw);
+	float haze_k = ring_haze_specular_scale(haze) * ringworld_sky_reflection * (1.0 - 0.08 * cats_paw);
 	float hit_weight = clamp(ssr.a, 0.0, 1.0) * mix(storm_ssr_keep, 1.0, ssr_cloud_valid); // the old strength, Fresnel and specular scales are ignored at model 1; R3a-3a: the storm fade (which hid
 	// the clear sky behind a closed storm) is lifted where the cloud image is composited over the hit
 	vec3 body = mix(optical_water, foam_color, foam);

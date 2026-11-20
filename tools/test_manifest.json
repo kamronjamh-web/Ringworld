@@ -7895,6 +7895,17 @@
       "expected_s": null,
       "timeout_s": 300
     },
+    "water_fft_travel_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "water"
+      ],
+      "marker": "WATER_FFT_TRAVEL",
+      "expected_s": 30,
+      "timeout_s": 120
+    },
     "water_fft_adaptive_test": {
       "kind": "test",
       "mode": "headless",

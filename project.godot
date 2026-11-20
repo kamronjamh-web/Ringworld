@@ -623,9 +623,29 @@ ring_water_wave_anchor_tangent={
 "type": "vec4",
 "value": Vector4(0, 0, 0, 0)
 }
-ring_water_wave_anchor_phase={
-"type": "vec4",
-"value": Vector4(0, 0, 0, 0)
+ring_water_trains_ocean_main={
+"type": "mat4",
+"value": Projection(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
+}
+ring_water_trains_ocean_warp={
+"type": "mat4",
+"value": Projection(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
+}
+ring_water_trains_lake_main={
+"type": "mat4",
+"value": Projection(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
+}
+ring_water_trains_lake_warp={
+"type": "mat4",
+"value": Projection(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
+}
+ring_water_trains_river_main={
+"type": "mat4",
+"value": Projection(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
+}
+ring_water_trains_river_warp={
+"type": "mat4",
+"value": Projection(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
 }
 ringworld_storm_map={
 "type": "sampler2DArray",

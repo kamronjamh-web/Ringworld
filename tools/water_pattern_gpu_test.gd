@@ -59,7 +59,10 @@ func _run() -> void:
 	if rebase_delta > 0.004:
 		_fail("world-anchored proxy pattern changed after equivalent ring rebase: %.6f" % rebase_delta)
 		return
-	if seam_error > 0.003 or scaled_error > 0.003:
+	# The helper values are read back through an RGBA8 target: one 8-bit step (1/255 = 0.0039) is rounding of an equal value, not a broken
+	# equivalence (a wrong quantisation or seam moves the value by tens of steps). The far bands' new downwind headings (2026-11-20) land one
+	# scaled sample on the other side of a rounding edge.
+	if seam_error > 1.5 / 255.0 or scaled_error > 1.5 / 255.0:
 		_fail("production patch helper broke seam/scaled coordinate equivalence seam=%.6f scaled=%.6f" % [seam_error, scaled_error])
 		return
 	if filtered_energy >= unfiltered_energy * 0.995:

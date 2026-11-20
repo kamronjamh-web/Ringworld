@@ -21,7 +21,8 @@ public sealed class RingWaterWindResponse
             Wind = meanWind;
         else
         {
-            double seconds = float.IsFinite(responseSeconds) ? Math.Clamp(responseSeconds, .1f, 120f) : 8;
+            // The sea-state time constant (WaterResponseSeconds, 60 to 3,600 s since 2026-11-20); the bound only guards non-sensical values.
+            double seconds = float.IsFinite(responseSeconds) ? Math.Clamp(responseSeconds, .1f, 3600f) : 600;
             Wind = Wind.Lerp(meanWind, (float)(1 - Math.Exp(-elapsed / seconds)));
         }
         if (rewind) _lastSpectrumTime = double.NegativeInfinity;

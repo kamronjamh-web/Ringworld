@@ -156,7 +156,11 @@ public partial class WaterSharedWindSmoke : RefCounted
         string fft = FileAccess.GetFileAsString("res://materials/ring_water_fft.gdshaderinc");
         Check(proxy.Contains("ring_wind_field_enabled > 0.5") && proxy.Contains("water_mean_wind_speed > 0.01"), "disabled/calm gust guards");
         Check(proxy.Contains("ring_wind_gust_at_world(world_position, 0.0)"), "shared moving gust sampling");
-        Check(proxy.Contains("fft_detail.z * water_gust_response") && proxy.Contains("filtered_gradient *= water_mean_response * water_gust_response"), "foam and analytic gust routes");
+        // W-b (user 2026-11-20): gusts roughen only the shortest ripples (the two shortest analytic trains via short_gain, the small FFT cascade,
+        // roughness and a slight darkening); the main slopes follow the sea state and gusts no longer add foam or whitecaps.
+        Check(!proxy.Contains("fft_detail.z * water_gust_response") && !proxy.Contains("gust_whitecap")
+            && proxy.Contains("filtered_gradient *= water_mean_response;") && proxy.Replace("\r\n", "\n").Contains("wave_anchored,\n\t\t\twater_gust_response);")
+            && proxy.Contains("cats_paw"), "gust routes: short ripples and roughness only");
         string controller = FileAccess.GetFileAsString("res://scripts/Voxel/LOD/RingWaterFftController.cs");
         Check(controller.Contains("QueryWindSnapshot(_explorer.CanonicalPosition).MeanWind")
             && controller.Contains("_localWeatherEffects.CurrentWindSnapshot") && !controller.Contains("InstantWind"), "FFT followed instantaneous gust wind");
