@@ -65,13 +65,21 @@ public partial class RingBiomeDecorationLayer
 		return random < maple ? TreeSpecies.Maple : random < maple + fir ? TreeSpecies.Fir : TreeSpecies.Pine;
 	}
 
-	/// <summary>The class from the species' table at effective age (hash salt + 8), then a variant uniformly inside the class (hash salt + 4, the generation 1 variant hash).</summary>
+	/// <summary>The class from the species' table at effective age (hash salt + 8), then a variant inside the class by <see cref="StructuredVariantWeight"/> (hash salt + 4, the generation 1 variant hash).</summary>
 	private static int SelectStructuredVariant(TreeSpecies species, float effectiveAge, float classRandom, float variantRandom)
 	{
 		TreeSizeClass sizeClass = ForestStructureSampler.SelectSizeClass(species, effectiveAge, classRandom);
 		var variants = ImportedTreeSourceTable.CanopyVariants(species, sizeClass);
-		return variants[Math.Clamp((int)(variantRandom * variants.Count), 0, variants.Count - 1)];
+		float total = 0f;
+		for (int i = 0; i < variants.Count; i++) total += StructuredVariantWeight(variants[i]);
+		float pick = variantRandom * total;
+		for (int i = 0; i < variants.Count - 1; i++) { pick -= StructuredVariantWeight(variants[i]); if (pick < 0f) return variants[i]; }
+		return variants[^1];
 	}
+
+	/// <summary>Within-class weights (forest variant survey 2026-11-20): inside a class the variants have about the same crown fill, so the lighter mesh of a pair is drawn twice as often
+	/// (large maple 5: 13k LOD0 triangles against 20-22k for 3 and 4; medium maples 7 and 8: 4.7-7.9k against 14.6k for 6). Every other variant weighs 1 (uniform, as before).</summary>
+	private static float StructuredVariantWeight(int variant) => variant is 5 or 7 or 8 ? 2f : 1f;
 
 	/// <summary>Bilinear W (WetnessTotal), R64 and X (RockExposure) at a root from the four surrounding COARSE nodes (around wraps, across clamps, as the grid does).</summary>
 	private static void SampleCoarseHabitat(RingHabitatFieldGrid grid, long circumference, int width, double around, double across,

@@ -178,8 +178,8 @@ public partial class ForestStructureTest : RefCounted
         Check(flat.ContrastedStandAge(123456, 54321) == 0.5f, "contrast 0 does not flatten the stand age to 0.5");
         Check(ForestStructureSampler.StemFactor(0) == 1.35f && Math.Abs(ForestStructureSampler.StemFactor(1) - 0.65f) < 1e-6f, "stem factor");
         Check(Math.Abs(ForestStructureSampler.TreelineDensity(0) - 0.15f) < 1e-6f && Math.Abs(ForestStructureSampler.TreelineDensity(0.5f) - 1f) < 1e-6f, "treeline density");
-        Check(ForestStructureSampler.SelectSizeClass(TreeSpecies.Maple, 0f, 0.9f) == TreeSizeClass.Medium && ForestStructureSampler.SelectSizeClass(TreeSpecies.Maple, 1f, 0.1f) == TreeSizeClass.Small
-            && ForestStructureSampler.SelectSizeClass(TreeSpecies.Pine, 0.5f, 0.95f) == TreeSizeClass.Large && ForestStructureSampler.SelectSizeClass(TreeSpecies.Fir, 0f, 0.99f) == TreeSizeClass.Medium, "class table anchors");
+        Check(ForestStructureSampler.SelectSizeClass(TreeSpecies.Maple, 0f, 0.9f) == TreeSizeClass.Medium && ForestStructureSampler.SelectSizeClass(TreeSpecies.Maple, 1f, 0.04f) == TreeSizeClass.Small
+            && ForestStructureSampler.SelectSizeClass(TreeSpecies.Pine, 0.5f, 0.95f) == TreeSizeClass.Large && ForestStructureSampler.SelectSizeClass(TreeSpecies.Fir, 0f, 0.85f) == TreeSizeClass.Medium && ForestStructureSampler.SelectSizeClass(TreeSpecies.Fir, 0f, 0.95f) == TreeSizeClass.Large, "class table anchors");
         var regional = new ForestRegionSample(ForestHabitat.DenseForest, 0.6f, 1f, 0f, 0.85f / 1.2f, 0.2f / 1.2f, 0.15f / 1.2f);
         ForestStructureSampler.SpeciesWeights(0.8f, 0.7f, 0.9f, 0f, 0f, 0f, regional, out float m, out float f, out float p);
         Check(Math.Abs(m + f + p - 1f) < 1e-5f && m > f && m > p, $"species weights {m} {f} {p}");

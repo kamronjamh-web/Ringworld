@@ -12,7 +12,7 @@ namespace RingworldTechDemo.Vegetation;
 /// </summary>
 public sealed class ForestStructureSampler
 {
-    public const int AlgorithmVersion = 1;
+    public const int AlgorithmVersion = 2; // 2: class tables shifted toward medium/large canopy trees (forest variant survey 2026-11-20)
 
     private const uint AgeBroadSalt = 0x5A6E1u, AgeFineSalt = 0x5A6E2u;
     private const int AgeBroadCell = 640, AgeFineCell = 192;
@@ -90,11 +90,12 @@ public sealed class ForestStructureSampler
 
     // Rows are the anchors at a = 0, 0.5 and 1 (design A2 table); classes in ascending height.
     private static readonly TreeSizeClass[] MapleClasses = { TreeSizeClass.Small, TreeSizeClass.Medium, TreeSizeClass.Large };
-    private static readonly float[,] MapleAnchors = { { .85f, .15f, 0f }, { .45f, .40f, .15f }, { .15f, .40f, .45f } };
+    // v2: the canopy layer holds about 50 stems/ha, a mature-stand density, so small maples (5 m crowns) give way to medium and large ones; small trees stay common in young stands and come back as saplings and shrubs (T6-4, T6-7).
+    private static readonly float[,] MapleAnchors = { { .70f, .25f, .05f }, { .25f, .50f, .25f }, { .05f, .45f, .50f } };
     private static readonly TreeSizeClass[] PineClasses = { TreeSizeClass.Small, TreeSizeClass.Medium, TreeSizeClass.Big, TreeSizeClass.Large };
-    private static readonly float[,] PineAnchors = { { .75f, .25f, 0f, 0f }, { .35f, .35f, .20f, .10f }, { .10f, .25f, .30f, .35f } };
+    private static readonly float[,] PineAnchors = { { .60f, .35f, .05f, 0f }, { .20f, .40f, .25f, .15f }, { .05f, .25f, .35f, .35f } };
     private static readonly TreeSizeClass[] FirClasses = { TreeSizeClass.Medium, TreeSizeClass.Large };
-    private static readonly float[,] FirAnchors = { { 1f, 0f }, { .6f, .4f }, { .3f, .7f } };
+    private static readonly float[,] FirAnchors = { { .9f, .1f }, { .5f, .5f }, { .25f, .75f } };
 
     /// <summary>The class drawn for a uniform <paramref name="random"/> from the species' table at effective age <paramref name="a"/> (linear between the anchors).</summary>
     public static TreeSizeClass SelectSizeClass(TreeSpecies species, float a, float random)
