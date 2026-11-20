@@ -7,7 +7,7 @@ using RingworldTechDemo.Terrain.Surface;
 namespace RingworldTechDemo.Vegetation.Scatter;
 
 /// <summary>T5 design A5: which meshes, LOD bands and draws a class feeds. Append-only; never reorder or remove.</summary>
-public enum RingScatterRenderGroup : byte { Outcrops = 1, Boulders = 2, Cobbles = 3, Saplings = 4, Shrubs = 5, DeadWood = 6 }
+public enum RingScatterRenderGroup : byte { Outcrops = 1, Boulders = 2, Cobbles = 3, Saplings = 4, Shrubs = 5, DeadWood = 6, StandFill = 7 }
 
 /// <summary>
 /// A5 response fields. Append-only. <c>NearestTreeM</c> is the distance to the nearest accepted tree root, capped at 50 m.
@@ -239,6 +239,21 @@ public sealed class RingScatterClassTable
             SizeMinM = 0.9f, SizeMaxM = 1.2f, SizeExponent = 1f,
             MeshCatalog = RingScatterMeshCatalog.Trees, MeshFirst = 40, MeshCount = 3, VariantSelector = RingScatterVariantSelector.BySpecies,
             Alignment = RingScatterAlignment.Upright, EmbedMin = 0.006f, EmbedMax = 0.006f, Collision = RingScatterCollision.Capsule, ShadowMinSizeM = float.PositiveInfinity, Far = RingScatterFar.None, ResidentCap = 200, BlockM = 0
+        },
+        // T6 stand filler (design T6-stand-filler-design.md section 2): near-only sub-canopy stems of the small maple and pine variants in dense forest, preferring canopy gaps (NearestTreeM). Records only until SF-3 draws and collides them.
+        new RingScatterClass
+        {
+            Id = 15, Key = "veg.standfill", FeatureBit = 6, RenderGroup = RingScatterRenderGroup.StandFill, ReachM = 150f, CellM = 8f, CandidatesPerCell = 4, BaseDensityPerHa = 255f,
+            Terms = new[]
+            {
+                new RingScatterTerm(1.0f, new[] { R(RingHabitatField.Dense, 0f, 1f), R(RingHabitatField.StandAge, 0f, 1f, 1f, 0.55f) }),
+                new RingScatterTerm(0.25f, new[] { R(RingHabitatField.OpenWoodland, 0f, 1f) }),
+            },
+            Multipliers = new[] { R(RingHabitatField.Treeline, 0f, 1f, 0.3f, 1f), R(RingHabitatField.Slope, 28f, 34f, 1f, 0f), R(RingHabitatField.NearestTreeM, 2.5f, 6f, 0.3f, 1f) },
+            SpacingM = 3f, SpacingSizeFactor = 0f, Avoid = new[] { new RingScatterAvoid(10, 2f, 0f), new RingScatterAvoid(12, 1f, 0f) }, TreeClearanceM = 2.5f, TreeClearanceSizeFactor = 0f, SizeMinM = 0.85f, SizeMaxM = 1.15f, SizeExponent = 1f,
+            MeshCatalog = RingScatterMeshCatalog.Trees, MeshFirst = 9, MeshCount = 21, VariantSelector = RingScatterVariantSelector.BySpecies,
+            Alignment = RingScatterAlignment.Upright, RandomTiltDeg = 2f, EmbedMin = 0.02f, EmbedMax = 0.03f, Collision = RingScatterCollision.None,
+            ShadowMinSizeM = float.PositiveInfinity, Far = RingScatterFar.None, ResidentCap = 1500, BlockM = 0
         },
     };
 

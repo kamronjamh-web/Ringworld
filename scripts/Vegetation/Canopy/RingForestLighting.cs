@@ -133,6 +133,8 @@ public partial class RingForestLighting : Node
         if (_job == null && now - _lastStartSeconds >= MinimumRebuildSeconds)
         {
             long signature = _layer.CanopyTileSignature();
+            long fillSignature = _layer.StandFillSignature();
+            if (fillSignature != 0) signature = unchecked(signature * 31 + fillSignature); // worlds without stand fillers keep today's signature
             bool changed = !_haveSignature || signature != _lastSignature;
             bool moved = _published == null;
             if (_published != null)
@@ -157,12 +159,19 @@ public partial class RingForestLighting : Node
         else PublishParams(new Vector4(0, 0, 0, 0));
     }
 
+    /// <summary>Stand fillers count fully within this distance of the build camera and fade linearly to nothing over the next <see cref="StandFillFadeMeters"/> (SF-4).</summary>
+    public const float StandFillFullMeters = 110f, StandFillFadeMeters = 40f;
+    public static float StandFillWeight(float distanceMeters) => Math.Clamp((StandFillFullMeters + StandFillFadeMeters - distanceMeters) / StandFillFadeMeters, 0f, 1f);
+    public static float FadedPorosity(float porosity, float weight) => 1f - (1f - porosity) * weight;
+
     private void StartBuild(in RingLodGeometrySnapshot geometry, RingCanonicalPosition camera, long circumference, long signature, double now)
     {
         long start = Stopwatch.GetTimestamp();
         TreeCrownHull[] hulls = TreeCrownHullTable.Get();
         _records.Clear();
         _layer!.CopyCanopyTrees(camera, CopyRadiusMeters, _records);
+        int canopyCount = _records.Count;
+        _layer.CopyStandFillTrees(camera, StandFillFullMeters + StandFillFadeMeters, _records); // SF-4: stand fillers near the eye, after the canopy trees
         int count = _records.Count;
         if (_trees.Length < count) _trees = new CanopyTree[Math.Max(count, _trees.Length * 2)];
         double altitudeSum = 0;
@@ -170,8 +179,17 @@ public partial class RingForestLighting : Node
         {
             CanopyTreeRecord t = _records[i];
             TreeCrownHull hull = hulls[t.Variant];
+            float porosity = hull.Porosity;
+            if (i >= canopyCount)
+            {
+                double da = t.Around - camera.AroundMeters;
+                double half = circumference * 0.5;
+                if (da > half) da -= circumference; else if (da < -half) da += circumference;
+                double dz = t.Across - camera.AcrossMeters;
+                porosity = FadedPorosity(porosity, StandFillWeight((float)Math.Sqrt(da * da + dz * dz)));
+            }
             // The raster uses the hull's own base and top (normalized * instance height), the same ellipsoid FL-2 feeds the tree shaders.
-            _trees[i] = new CanopyTree(t.Id, t.Around, t.Across, MathF.Max(0.05f, t.Width * 0.5f), t.RootAltitude + hull.Base * t.Height, t.RootAltitude + hull.Top * t.Height, hull.Porosity, hull.SpeciesFactor);
+            _trees[i] = new CanopyTree(t.Id, t.Around, t.Across, MathF.Max(0.05f, t.Width * 0.5f), t.RootAltitude + hull.Base * t.Height, t.RootAltitude + hull.Top * t.Height, porosity, hull.SpeciesFactor);
             altitudeSum += t.RootAltitude;
         }
         float reference = count > 0 ? MathF.Round((float)(altitudeSum / count)) : 0f;

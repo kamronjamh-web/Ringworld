@@ -10,7 +10,7 @@ namespace RingworldTechDemo.Vegetation.Understory;
 [GlobalClass]
 public partial class PreparedUnderstoryTextures : Resource
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
     [Export] public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     [Export] public string ToolVersion { get; set; } = "";
@@ -19,6 +19,8 @@ public partial class PreparedUnderstoryTextures : Resource
     [Export] public Godot.Collections.Array<Image> FoliageNormal { get; set; } = new();
     [Export] public Godot.Collections.Array<Image> BarkAlbedo { get; set; } = new();
     [Export] public Godot.Collections.Array<Image> BarkNormal { get; set; } = new();
+    /// <summary>Schema 2 (stand filler SF-1): the authored LOD3 billboard albedo (RGB colour, A cutout) of each UnderstoryCatalog.StandFillSources variant in that order, 512 x 512, DXT5 with a full mip chain. The caster carrier's billboard_albedo array.</summary>
+    [Export] public Godot.Collections.Array<Image> BillboardAlbedo { get; set; } = new();
     /// <summary>Per layer: mean green of the foliage metallic-roughness map (roughness), mean blue (metallic), then the same for bark: (foliage roughness, foliage metallic, bark roughness, bark metallic).</summary>
     [Export] public Vector4[] Constants { get; set; } = System.Array.Empty<Vector4>();
 }

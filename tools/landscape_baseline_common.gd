@@ -697,7 +697,8 @@ static func verify_case(state: Dictionary, full_label: String) -> String:
 	var understory_nodes: Array = state.get("understory_geometry", [])
 	for index in understory_nodes.size():
 		var node: Node = understory_nodes[index]
-		if is_instance_valid(node) and node.layers != (0 if label in ["understory_hidden", "understory_off"] else int(state["understory_layers"][index])):
+		var hidden := label in ["understory_hidden", "understory_off"] or (label == "standfill_hidden" and is_instance_valid(node) and String(node.name).contains("StandFill"))
+		if is_instance_valid(node) and node.layers != (0 if hidden else int(state["understory_layers"][index])):
 			return "understory render layer was not applied for " + label
 	for index in state["tree_geometry"].size():
 		var node: Variant = state["tree_geometry"][index]
@@ -729,7 +730,7 @@ const FEATURE_AB_FLAG_MS := 0.1
 ## T5-10: scatter_off = scatter_hidden plus the layer's _Process stopped (no cull request, so no compute dispatch); (scatter_hidden delta) - (scatter_off delta) is the layer's per-frame compute and CPU-side cost.
 ## T6-4b: understory_hidden hides every renderer and shadow caster under the node named "UnderstoryLayer" (a sibling of the decoration layer; "(no change)" in a world without it); understory_off is that plus the
 ## layer's _Process stopped (no cull request, so no compute dispatch). Select them with --extra-cases=understory_hidden,understory_off.
-const EXTRA_CASES := ["feature_off", "scatter_off", "understory_hidden", "understory_off", "clouds_off", "cloud_shadow_gen_off", "sun_map_off", "hs_receivers_off", "water_hidden", "ui_hidden", "clocks_running", "far_viewport_off", "env_post_off", "env_ssao_off", "env_ssr_off", "atlas_4096", "atlas_8192", "atlas_16384"]
+const EXTRA_CASES := ["feature_off", "scatter_off", "understory_hidden", "understory_off", "standfill_hidden", "clouds_off", "cloud_shadow_gen_off", "sun_map_off", "hs_receivers_off", "water_hidden", "ui_hidden", "clocks_running", "far_viewport_off", "env_post_off", "env_ssao_off", "env_ssr_off", "atlas_4096", "atlas_8192", "atlas_16384"]
 const ENV_POST_FLAGS := ["glow_enabled", "ssao_enabled", "ssil_enabled", "ssr_enabled", "sdfgi_enabled", "volumetric_fog_enabled", "adjustment_enabled"]
 
 
@@ -766,6 +767,11 @@ static func _apply_extra(state: Dictionary, base: String) -> bool:
 			# A world without the layer has nothing to hide: the case applies and changes nothing ("(no change)").
 			for node in state.get("understory_geometry", []):
 				if is_instance_valid(node):
+					node.layers = 0
+		"standfill_hidden":
+			# T6 stand filler (SF-6): hides only the stand-filler renderers and their shadow caster (UnderstoryStandFill_*); the rest of the understory draws. "(no change)" in a world without fillers.
+			for node in state.get("understory_geometry", []):
+				if is_instance_valid(node) and String(node.name).contains("StandFill"):
 					node.layers = 0
 		"understory_off":
 			var understory := _understory_layer({"trees": state["trees_root"]})

@@ -57,6 +57,24 @@ public sealed class UnderstoryShrubs
 }
 
 /// <summary>
+/// T6 stand filler (SF-1, docs/work-orders/terrain-vegetation/T6-stand-filler-design.md sections 3 and 4): the small maples and small pines of <see cref="UnderstoryCatalog.StandFillSources"/> (variant row = index there) as three carriers built like the
+/// saplings'. Lod0 and Lod2 are the base LOD0 and LOD2 meshes (bark and foliage of the species layers); Caster is the authored LOD3 billboard group of each variant (the proxy the tree layer already casts its LOD2 trees' shadows with), a foliage-only cutout
+/// whose vertices carry position.w = 8 + variant row, so ring_understory.gdshader reads its colour and cutout from the <c>billboard_albedo</c> array (the six billboard textures, layer = variant row). Nothing here draws; the carriers' variant is the MultiMesh custom data x, as for saplings.
+/// </summary>
+public sealed class UnderstoryStandFill
+{
+    public UnderstoryLodCarrier Lod0 = null!, Lod2 = null!, Caster = null!;
+    /// <summary>Authored LOD0 height in metres of each variant row (a record's instance scale is its Size times this).</summary>
+    public float[] HeightMeters = Array.Empty<float>();
+    /// <summary>Trunk radius of each variant row in the carrier's normalised tree space (1 = the tree's height): ImportedTreeVariant.TrunkRadiusMeters / HeightMeters. A collider's radius in metres is this times the instance height in metres (Size times HeightMeters).</summary>
+    public float[] TrunkRadiusMeters = Array.Empty<float>();
+    /// <summary>The crown hull of each variant row, equal to TreeCrownHullTable.Get()[source] (also in every carrier's parameter texture rows 8 to 10).</summary>
+    public TreeCrownHull[] Hulls = Array.Empty<TreeCrownHull>();
+    /// <summary>Bytes of the six billboard albedo layers (the only texture this adds to the understory's).</summary>
+    public long BillboardTextureBytes;
+}
+
+/// <summary>
 /// T6-4b (T6 design A7): the understory saplings as vertex-fetch carriers, built on the main thread at load from the base catalog (without editing it): per LOD (0 and 2) one carrier whose vertices are fetched by
 /// (VERTEX_ID, variant row) from data textures. Bark and foliage surfaces of a variant are merged into one unindexed triangle list, padded with degenerate triangles to the largest variant; the per-vertex layer index in
 /// position.w is the species (0 maple, 1 fir, 2 pine) plus 4 for a foliage vertex. Rows wrap at 4,096 texels (<see cref="MaximumTextureWidth"/>). The variant parameter texture carries what the material of each surface held
@@ -80,6 +98,7 @@ public sealed class UnderstoryCatalog
     private static UnderstoryCatalog? _cached;
     private static UnderstoryDeadWood? _deadWood;
     private static UnderstoryShrubs? _shrubs;
+    private static UnderstoryStandFill? _standFill;
     private static UnderstoryDeadWoodDimensions? _deadWoodDimensions;
     private static TextureSet? _textures;
 
@@ -93,6 +112,9 @@ public sealed class UnderstoryCatalog
 
     /// <summary>The variant row of a base catalog (ImportedTreeSourceTable) index, or -1.</summary>
     public static int VariantRowOf(int sourceIndex) => Array.IndexOf(SaplingSources, sourceIndex);
+    /// <summary>T6 stand filler (veg.standfill): the small maple and small pine canopy variants, in carrier row order (SF-1 builds the carriers).</summary>
+    public static readonly int[] StandFillSources = { 9, 10, 11, 27, 28, 29 };
+    public static int StandFillRowOf(int sourceIndex) => Array.IndexOf(StandFillSources, sourceIndex);
 
     /// <summary>The dead-wood variant row of a placeable index (30 to 42), or -1.</summary>
     public static int DeadWoodRowOf(int index) => index >= DeadWoodFirstIndex && index < DeadWoodFirstIndex + DeadWoodCount ? index - DeadWoodFirstIndex : -1;
@@ -104,6 +126,12 @@ public sealed class UnderstoryCatalog
 
     /// <summary>The shrub carriers (T6-7); main thread, cached.</summary>
     public static UnderstoryShrubs LoadShrubs() => _shrubs ??= BuildShrubs();
+
+    /// <summary>The stand-filler carriers (SF-1, <see cref="StandFillSources"/> row order); main thread, cached.</summary>
+    public static UnderstoryStandFill LoadStandFill() => _standFill ??= BuildStandFill();
+
+    /// <summary>First vertex layer value of a billboard vertex (position.w = this + the stand-filler row); bark is 0-2 and foliage 4-6 (species + 4).</summary>
+    public const float BillboardLayerBase = 8f;
 
     /// <summary>The first placeable index of the shrubs (DerivedTreeCatalog.ShrubFirstIndex) and how many there are.</summary>
     public const int ShrubFirstIndex = DerivedTreeCatalog.ShrubFirstIndex, ShrubCount = DerivedTreeCatalog.ShrubCount;
@@ -133,20 +161,23 @@ public sealed class UnderstoryCatalog
     }
 
     /// <summary>Test hook: forget the cached catalogs.</summary>
-    public static void Reset() { _cached = null; _deadWood = null; _shrubs = null; _deadWoodDimensions = null; _textures = null; }
+    public static void Reset() { _cached = null; _deadWood = null; _shrubs = null; _standFill = null; _deadWoodDimensions = null; _textures = null; }
 
-    private sealed record TextureSet(PreparedUnderstoryTextures Resource, Texture2DArray FoliageAlbedo, Texture2DArray FoliageNormal, Texture2DArray BarkAlbedo, Texture2DArray BarkNormal, long Bytes);
+    /// <summary>Bytes is the four species arrays; the billboard layers (stand filler caster only) are counted apart.</summary>
+    private sealed record TextureSet(PreparedUnderstoryTextures Resource, Texture2DArray FoliageAlbedo, Texture2DArray FoliageNormal, Texture2DArray BarkAlbedo, Texture2DArray BarkNormal, Texture2DArray BillboardAlbedo, long Bytes, long BillboardBytes);
 
     private static TextureSet Textures() => _textures ??= LoadTextures();
 
     private static TextureSet LoadTextures()
     {
         PreparedUnderstoryTextures resource = ResourceLoader.Load<PreparedUnderstoryTextures>(TexturesPath) ?? throw new InvalidOperationException("missing " + TexturesPath + " (run tools/prepare_understory_textures.gd)");
-        if (resource.SchemaVersion != PreparedUnderstoryTextures.CurrentSchemaVersion || resource.Constants.Length != 3 || resource.FoliageAlbedo.Count != 3 || resource.FoliageNormal.Count != 3 || resource.BarkAlbedo.Count != 3 || resource.BarkNormal.Count != 3)
+        if (resource.SchemaVersion != PreparedUnderstoryTextures.CurrentSchemaVersion || resource.Constants.Length != 3 || resource.FoliageAlbedo.Count != 3 || resource.FoliageNormal.Count != 3 || resource.BarkAlbedo.Count != 3 || resource.BarkNormal.Count != 3
+            || resource.BillboardAlbedo.Count != StandFillSources.Length)
             throw new InvalidOperationException("understory texture resource unreadable or unsupported");
-        long bytes = 0;
+        long bytes = 0, billboardBytes = 0;
         foreach (var images in new[] { resource.FoliageAlbedo, resource.FoliageNormal, resource.BarkAlbedo, resource.BarkNormal }) foreach (Image image in images) bytes += image.GetData().Length;
-        return new TextureSet(resource, TextureArray(resource.FoliageAlbedo), TextureArray(resource.FoliageNormal), TextureArray(resource.BarkAlbedo), TextureArray(resource.BarkNormal), bytes);
+        foreach (Image image in resource.BillboardAlbedo) billboardBytes += image.GetData().Length;
+        return new TextureSet(resource, TextureArray(resource.FoliageAlbedo), TextureArray(resource.FoliageNormal), TextureArray(resource.BarkAlbedo), TextureArray(resource.BarkNormal), TextureArray(resource.BillboardAlbedo), bytes, billboardBytes);
     }
 
     private readonly record struct SurfaceTerms(Color Tint, float Roughness, float Metallic, bool RoughnessMap, bool MetallicMap, float NormalScale, float Cutoff, int Mode, bool Attachments);
@@ -163,54 +194,59 @@ public sealed class UnderstoryCatalog
     {
         IReadOnlyList<ImportedTreeVariant> variants = ImportedTreeCatalog.Load();
         TextureSet textures = Textures();
-        PreparedUnderstoryTextures resource = textures.Resource;
-        Texture2DArray foliageAlbedo = textures.FoliageAlbedo, foliageNormal = textures.FoliageNormal, barkAlbedo = textures.BarkAlbedo, barkNormal = textures.BarkNormal;
-        long bytes = textures.Bytes;
-
-        var catalog = new UnderstoryCatalog { TextureBytes = bytes, TextureCount = 4, HeightMeters = new float[VariantCount] };
-        TreeCrownHull[] hulls = TreeCrownHullTable.Get();
+        var catalog = new UnderstoryCatalog { TextureBytes = textures.Bytes, TextureCount = 4, HeightMeters = new float[VariantCount] };
         for (int row = 0; row < VariantCount; row++) catalog.HeightMeters[row] = variants[SaplingSources[row]].HeightMeters;
+        catalog.Lods = BuildLodCarriers(SaplingSources, "UnderstorySapling", variants, textures);
+        return catalog;
+    }
+
+    /// <summary>The LOD0 and LOD2 carriers (<see cref="SourceLods"/>) of a list of base catalog variants (variant row = list index): the saplings' and the stand filler's builder.</summary>
+    private static UnderstoryLodCarrier[] BuildLodCarriers(int[] sources, string name, IReadOnlyList<ImportedTreeVariant> variants, TextureSet textures)
+    {
+        TreeCrownHull[] hulls = TreeCrownHullTable.Get();
         Shader shader = ResourceLoader.Load<Shader>(ShaderPath) ?? throw new InvalidOperationException("missing " + ShaderPath);
-        catalog.Lods = new UnderstoryLodCarrier[SourceLods.Length];
+        var carriers = new UnderstoryLodCarrier[SourceLods.Length];
         for (int l = 0; l < SourceLods.Length; l++)
         {
             int lod = SourceLods[l];
-            var geometries = new Geometry[VariantCount];
-            int maxVertices = 0;
-            for (int row = 0; row < VariantCount; row++)
+            var geometries = new Geometry[sources.Length];
+            for (int row = 0; row < sources.Length; row++)
             {
-                ImportedTreeVariant variant = variants[SaplingSources[row]];
+                ImportedTreeVariant variant = variants[sources[row]];
                 geometries[row] = Expand(variant.Lods[lod], (int)variant.Species);
-                maxVertices = Math.Max(maxVertices, geometries[row].Positions.Count);
             }
-            maxVertices = (maxVertices + 2) / 3 * 3;
-            int width = Math.Min(maxVertices, MaximumTextureWidth), rowsPerVariant = (maxVertices + width - 1) / width;
-            Vector3 min = new(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity), max = -min;
-            float radius = 0f;
-            foreach (Geometry g in geometries)
-                foreach (Vector4 p in g.Positions) { var v = new Vector3(p.X, p.Y, p.Z); min = min.Min(v); max = max.Max(v); radius = Math.Max(radius, v.Length()); }
-            var bounds = new Aabb(min, max - min);
-            var arrays = new Godot.Collections.Array(); arrays.Resize((int)Mesh.ArrayType.Max);
-            arrays[(int)Mesh.ArrayType.Vertex] = new Vector3[maxVertices];
-            var carrier = new ArrayMesh();
-            carrier.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
-            carrier.CustomAabb = bounds;
-            var material = new ShaderMaterial { Shader = shader, ResourceName = $"UnderstorySapling_L{lod}" };
-            material.SetShaderParameter("vertex_data", DataTexture(width, rowsPerVariant, maxVertices, geometries, g => g.Positions, Vector4.Zero));
-            material.SetShaderParameter("normal_data", DataTexture(width, rowsPerVariant, maxVertices, geometries, g => ToVector4(g.Normals), new Vector4(0, 1, 0, 1)));
-            material.SetShaderParameter("tangent_data", DataTexture(width, rowsPerVariant, maxVertices, geometries, g => g.Tangents, new Vector4(1, 0, 0, 1)));
-            material.SetShaderParameter("uv_data", DataTexture(width, rowsPerVariant, maxVertices, geometries, g => g.Uvs, Vector4.Zero));
-            material.SetShaderParameter("attachment_data", DataTexture(width, rowsPerVariant, maxVertices, geometries, g => g.Attachments, Vector4.Zero));
-            material.SetShaderParameter("fetch_width", width);
-            material.SetShaderParameter("fetch_rows_per_variant", rowsPerVariant);
-            material.SetShaderParameter("variant_parameters", ParameterTexture(geometries, hulls, resource.Constants, variants));
-            material.SetShaderParameter("foliage_albedo", foliageAlbedo); material.SetShaderParameter("foliage_alpha", foliageAlbedo); material.SetShaderParameter("foliage_normal", foliageNormal);
-            material.SetShaderParameter("bark_albedo", barkAlbedo); material.SetShaderParameter("bark_normal", barkNormal);
-            material.SetShaderParameter("leaf_alpha_max_lod", MathF.Log2(PreparedFoliageSize(resource)) - 2f);
-            CopySharedParameters(variants[SaplingSources[0]].Lods[lod], material);
-            catalog.Lods[l] = new UnderstoryLodCarrier { Carrier = carrier, Material = material, VertexCount = maxVertices, TriangleCount = maxVertices / 3, Bounds = bounds, UnitRadius = radius, SourceLod = lod };
+            carriers[l] = MakeCarrier($"{name}_L{lod}", lod, geometries, ParameterTexture(geometries, hulls, textures.Resource.Constants, variants, sources), textures, shader, variants[sources[0]].Lods[lod]);
         }
-        return catalog;
+        return carriers;
+    }
+
+    /// <summary>
+    /// SF-1: the stand filler's three carriers. LOD0 and LOD2 as the saplings'. The caster is each variant's authored LOD3 billboard group (one cutout surface, mode 2), its vertices re-tagged position.w = <see cref="BillboardLayerBase"/> + variant row
+    /// so the shader samples <c>billboard_albedo</c> layer = row; its parameter rows are the foliage terms of the billboard material (tint, cutoff, wind mode 2) and the source variant's crown hull rows.
+    /// </summary>
+    private static UnderstoryStandFill BuildStandFill()
+    {
+        IReadOnlyList<ImportedTreeVariant> variants = ImportedTreeCatalog.Load();
+        TextureSet textures = Textures();
+        int[] sources = StandFillSources;
+        TreeCrownHull[] hulls = TreeCrownHullTable.Get();
+        UnderstoryLodCarrier[] lods = BuildLodCarriers(sources, "UnderstoryStandFill", variants, textures);
+        var result = new UnderstoryStandFill { Lod0 = lods[0], Lod2 = lods[1], HeightMeters = new float[sources.Length], TrunkRadiusMeters = new float[sources.Length], Hulls = new TreeCrownHull[sources.Length], BillboardTextureBytes = textures.BillboardBytes };
+        var geometries = new Geometry[sources.Length];
+        for (int row = 0; row < sources.Length; row++)
+        {
+            ImportedTreeVariant variant = variants[sources[row]];
+            result.HeightMeters[row] = variant.HeightMeters;
+            result.TrunkRadiusMeters[row] = variant.TrunkRadiusMeters / variant.HeightMeters;
+            result.Hulls[row] = hulls[sources[row]];
+            Geometry g = geometries[row] = Expand(variant.Lods[3], (int)variant.Species);
+            if (g.Foliage is not { } terms || g.Bark != null || terms.Mode != 2) throw new InvalidOperationException($"stand filler variant {sources[row]} LOD3 is not a single billboard surface");
+            for (int i = 0; i < g.Positions.Count; i++) { Vector4 p = g.Positions[i]; g.Positions[i] = new Vector4(p.X, p.Y, p.Z, BillboardLayerBase + row); }
+        }
+        Shader shader = ResourceLoader.Load<Shader>(ShaderPath) ?? throw new InvalidOperationException("missing " + ShaderPath);
+        result.Caster = MakeCarrier("UnderstoryStandFill_Caster", 3, geometries, ParameterTexture(geometries, hulls, textures.Resource.Constants, variants, sources), textures, shader, variants[sources[0]].Lods[3]);
+        result.Caster.Material.SetShaderParameter("billboard_albedo", textures.BillboardAlbedo);
+        return result;
     }
 
     /// <summary>
@@ -421,12 +457,12 @@ public sealed class UnderstoryCatalog
     /// Rows (variant per column): 0 bark tint, 1 foliage tint, 2 (bark roughness, bark metallic, foliage roughness, foliage metallic) as the material would compute them (the map is replaced by its layer mean),
     /// 3 (bark normal scale, foliage normal scale, foliage alpha cutoff, 0), 4 (bark wind mode, bark attachments, foliage wind mode, foliage attachments), 8 crown hull, 9 hull extra, 10 leaf inclination (TreeCrownHullTable.Pack, the impostor's rows).
     /// </summary>
-    private static ImageTexture ParameterTexture(Geometry[] geometries, TreeCrownHull[] hulls, Vector4[] constants, IReadOnlyList<ImportedTreeVariant> variants)
+    private static ImageTexture ParameterTexture(Geometry[] geometries, TreeCrownHull[] hulls, Vector4[] constants, IReadOnlyList<ImportedTreeVariant> variants, int[] sources)
     {
         var image = Image.CreateEmpty(geometries.Length, ParameterRowCount, false, Image.Format.Rgbaf);
         for (int i = 0; i < geometries.Length; i++)
         {
-            int species = (int)variants[SaplingSources[i]].Species;
+            int species = (int)variants[sources[i]].Species;
             Vector4 layer = constants[species]; // (foliage roughness, foliage metallic, bark roughness, bark metallic)
             SurfaceTerms bark = geometries[i].Bark ?? geometries[i].Foliage ?? throw new InvalidOperationException("understory variant without surfaces");
             SurfaceTerms foliage = geometries[i].Foliage ?? bark;
@@ -435,7 +471,7 @@ public sealed class UnderstoryCatalog
             image.SetPixel(i, 2, new Color(Fold(bark.Roughness, bark.RoughnessMap, layer.Z), Fold(bark.Metallic, bark.MetallicMap, layer.W), Fold(foliage.Roughness, foliage.RoughnessMap, layer.X), Fold(foliage.Metallic, foliage.MetallicMap, layer.Y)));
             image.SetPixel(i, 3, new Color(bark.NormalScale, foliage.NormalScale, foliage.Cutoff, 0f));
             image.SetPixel(i, 4, new Color(bark.Mode, bark.Attachments ? 1f : 0f, foliage.Mode, foliage.Attachments ? 1f : 0f));
-            TreeCrownHullTable.Pack(hulls[SaplingSources[i]], out Vector4 hull, out Vector4 extra, out Vector4 lad);
+            TreeCrownHullTable.Pack(hulls[sources[i]], out Vector4 hull, out Vector4 extra, out Vector4 lad);
             image.SetPixel(i, 8, new Color(hull.X, hull.Y, hull.Z, hull.W));
             image.SetPixel(i, 9, new Color(extra.X, extra.Y, extra.Z, extra.W));
             image.SetPixel(i, 10, new Color(lad.X, lad.Y, lad.Z, lad.W));

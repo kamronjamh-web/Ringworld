@@ -20,7 +20,7 @@ public partial class RingLiveTuningDrawer
     private SpinBox? _treeCullingMovementThreshold, _treeCullingMaximumInterval;
     private SpinBox? _treeNearFadeStart, _treeNearFadeEnd, _treeBillboardFadeStart, _treeBillboardFadeEnd, _treeQuadStart, _treeMidFadeStart, _treeMidFadeEnd, _treeMidBatchTileSpan;
     private SpinBox? _rockDensity, _scatterDistanceScale;
-    private SpinBox? _foliageColourVariation, _groundCoverShare, _understoryDensity, _deadWoodDensity;
+    private SpinBox? _foliageColourVariation, _groundCoverShare, _understoryDensity, _deadWoodDensity, _standFillDensity;
     private Label? _treeStreamingStatus;
     private double _vegetationSaveDelay, _vegetationRetryDelay, _vegetationRefreshDelay;
     private string? _vegetationDefaultsPathOverride;
@@ -101,7 +101,7 @@ public partial class RingLiveTuningDrawer
 		_vegetation.MaximumTreeSunShadowBatches = _vegetationDefaults.MaximumTreeSunShadowBatches;
         _vegetation.ApplyScatterSettings(_vegetationDefaults.RockDensity, _vegetationDefaults.ScatterDistanceScale, _vegetationDefaults.ScatterCapScale);
         _vegetation.ApplyFoliageSettings(_vegetationDefaults.FoliageColourVariation);
-        _vegetation.ApplyUnderstorySettings(_vegetationDefaults.UnderstoryDensity, _vegetationDefaults.DeadWoodDensity, _vegetationDefaults.SaplingShadows);
+        _vegetation.ApplyUnderstorySettings(_vegetationDefaults.UnderstoryDensity, _vegetationDefaults.DeadWoodDensity, _vegetationDefaults.SaplingShadows, _vegetationDefaults.StandFillDensity, _vegetationDefaults.StandFillShadows);
     }
 
     private void ProcessVegetationTuning(double delta)
@@ -177,6 +177,7 @@ public partial class RingLiveTuningDrawer
         RefreshVegetationSpin(_groundCoverShare, _vegetationDefaults.GroundCoverShare, available);
         RefreshVegetationSpin(_understoryDensity, _vegetationDefaults.UnderstoryDensity, available);
         RefreshVegetationSpin(_deadWoodDensity, _vegetationDefaults.DeadWoodDensity, available);
+        RefreshVegetationSpin(_standFillDensity, _vegetationDefaults.StandFillDensity, available);
         if (_treeStreamingStatus != null)
             _treeStreamingStatus.Text = _vegetation == null ? "Tree streaming is unavailable."
                 : _vegetation.TreePreparationPending ? $"Preparation pending. Last slice: {_vegetation.LastTreePreparationMilliseconds:F2} ms."
@@ -259,6 +260,7 @@ public partial class RingLiveTuningDrawer
         _groundCoverShare = AddVegetationSpin(forest, "GroundCoverShare", "Ground cover share", 0, 1, .05, _vegetationDefaults.GroundCoverShare, "Applies in worlds with ground cover");
         _understoryDensity = AddVegetationSpin(forest, "UnderstoryDensity", "Understory density", 0, 1, .05, _vegetationDefaults.UnderstoryDensity, "Applies in worlds with forest structure");
         _deadWoodDensity = AddVegetationSpin(forest, "DeadWoodDensity", "Dead wood density", 0, 1, .05, _vegetationDefaults.DeadWoodDensity, "Applies in worlds with forest structure");
+        _standFillDensity = AddVegetationSpin(forest, "StandFillDensity", "Stand filler density", 0, 1, .05, _vegetationDefaults.StandFillDensity, "Applies in worlds with forest structure; gates the stand-filler trees near the eye and their colliders");
         VBoxContainer budgets = TuningMenuUi.CreateSection(tab, "Budgets");
         budgets.AddChild(new Label { Text = "Lower root and batch limits save memory but can reduce visible forest coverage. Nearby collision trees retain priority.",
             AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted });

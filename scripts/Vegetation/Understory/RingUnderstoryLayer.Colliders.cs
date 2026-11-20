@@ -11,7 +11,7 @@ namespace RingworldTechDemo.Vegetation.Understory;
 /// <summary>
 /// T6-6 (A7 "Colliders"): static colliders for dead wood near the player, from a pool that follows the rock pool (RingScatterLayer.Colliders.cs, itself the imported-forest trunk pool's logic): the same radius, altitude reach, hysteresis, focus quantisation,
 /// epoch copy and install budget, bodies keyed by record id under a collision root, layer defaults (collision layer 1, mask 1), never scaled (the size is baked into the shape). Fallen trees get a <see cref="CapsuleShape3D"/> along the log axis, snags and stumps a
-/// <see cref="CylinderShape3D"/> with the trunk radius (a stump is 0.6 m high). Saplings have none. Bodies follow the dead-wood rank gate (<see cref="RingUnderstoryLayer.DeadWoodDensity"/>), as the renderer's batches do.
+/// <see cref="CylinderShape3D"/> with the trunk radius (a stump is 0.6 m high). Saplings and shrubs have none. Stand fillers (T6 SF-3, selected by render group, whatever the row's Collision field) get a trunk <see cref="CylinderShape3D"/> from the ground to the crown base (the hull base times the instance height, at least 1.5 m), radius = the variant's normalised trunk radius times the instance height; they take part in the same radius and install budget, with their own cap of MaximumUnderstoryColliders (nearest first), so dead-wood selection is unchanged. Bodies follow their rank gates (<see cref="RingUnderstoryLayer.DeadWoodDensity"/> for dead wood, <see cref="RingUnderstoryLayer.StandFillDensity"/> for stand fillers), as the renderer's batches do.
 /// Gameplay only: independent of the GPU compute and the camera.
 /// </summary>
 internal sealed partial class RingUnderstoryLayer
@@ -34,7 +34,10 @@ internal sealed partial class RingUnderstoryLayer
     private const float ColliderTrackingResetHorizontalMeters = 500f;
     private const int ColliderShapeCacheLimit = 2048;
 
-    private readonly record struct ColliderWood(ScatterRecord Record, int Row, TreeFormKind Form);
+    private readonly record struct ColliderWood(ScatterRecord Record, int Row, TreeFormKind Form, bool StandFill = false);
+    /// <summary>Shape-key row offset of the stand-filler trunks (dead-wood form rows stay below it).</summary>
+    private const int ColliderStandFillRowBase = 1000;
+    private const float ColliderStandFillMinimumHeightMeters = 1.5f;
     private readonly record struct ColliderCandidate(int Index, double DistanceSquared);
     private readonly record struct ColliderPoseKey(ScatterRecord Record, Vector3 WorldProbe, Transform3D ParentGlobal);
     private readonly record struct ColliderShapeKey(int Row, int Centimetres);
@@ -57,13 +60,14 @@ internal sealed partial class RingUnderstoryLayer
     private readonly Dictionary<ushort, RingScatterClass> _colliderClasses = new();
     private Node3D? _colliderRoot;
     private UnderstoryDeadWoodDimensions? _colliderCatalog;
+    private UnderstoryStandFill? _colliderStandFill;
 
     private bool _colliderEverCopied;
     private Vector3 _colliderWorldProbe = new(float.NaN, 0, 0);
     private Transform3D _colliderParentGlobal;
     private long _colliderFocusAround = long.MinValue, _colliderFocusAcross = long.MinValue, _colliderEpoch = long.MinValue;
     private ulong _colliderLastCopyMsec;
-    private float _colliderRadius = float.NaN, _colliderEffectiveRadius = float.NaN, _colliderGate = float.NaN;
+    private float _colliderRadius = float.NaN, _colliderEffectiveRadius = float.NaN, _colliderGate = float.NaN, _colliderFillGate = float.NaN;
     private int _colliderMaximum = int.MinValue;
 
     private bool _colliderAltitudeValid;
@@ -108,7 +112,7 @@ internal sealed partial class RingUnderstoryLayer
     private void UpdateCollidersCore()
     {
         if (Host.Geometry() is not { } geometry || Host.Focus() is not { } focus) return;
-        float configured = UnderstoryCollisionRadiusMeters, gate = Mathf.Clamp(DeadWoodDensity, 0f, 1f);
+        float configured = UnderstoryCollisionRadiusMeters, gate = Mathf.Clamp(DeadWoodDensity, 0f, 1f), fillGate = Mathf.Clamp(StandFillDensity, 0f, 1f);
         int maximum = Math.Max(0, MaximumUnderstoryColliders);
         float predictedAltitude = TrackColliderAltitude(focus, Host.Altitude());
         float effective = configured;
@@ -135,13 +139,13 @@ internal sealed partial class RingUnderstoryLayer
         ulong now = Time.GetTicksMsec();
         bool recopy = epoch != _colliderEpoch && (!_colliderEverCopied || (now - _colliderLastCopyMsec) * .001 >= ColliderEpochCopySeconds);
         bool dirty = recopy || cellAround != _colliderFocusAround || cellAcross != _colliderFocusAcross || configured != _colliderRadius || effective != _colliderEffectiveRadius
-            || maximum != _colliderMaximum || gate != _colliderGate || worldProbe != _colliderWorldProbe || parentGlobal != _colliderParentGlobal;
+            || maximum != _colliderMaximum || gate != _colliderGate || fillGate != _colliderFillGate || worldProbe != _colliderWorldProbe || parentGlobal != _colliderParentGlobal;
         if (dirty)
         {
-            _colliderFocusAround = cellAround; _colliderFocusAcross = cellAcross; _colliderRadius = configured; _colliderEffectiveRadius = effective; _colliderMaximum = maximum; _colliderGate = gate;
+            _colliderFocusAround = cellAround; _colliderFocusAcross = cellAcross; _colliderRadius = configured; _colliderEffectiveRadius = effective; _colliderMaximum = maximum; _colliderGate = gate; _colliderFillGate = fillGate;
             _colliderWorldProbe = worldProbe; _colliderParentGlobal = parentGlobal;
             if (recopy) CopyColliderRecords(epoch, now);
-            SelectColliders(geometry, focus, effective, maximum, gate, worldProbe, parentGlobal);
+            SelectColliders(geometry, focus, effective, maximum, gate, fillGate, worldProbe, parentGlobal);
         }
         InstallPendingColliders(geometry, worldProbe, parentGlobal);
     }
@@ -153,18 +157,26 @@ internal sealed partial class RingUnderstoryLayer
         return root;
     }
 
-    /// <summary>Reads the resident records and keeps the dead-wood ones whose class collides; a later selection scans only these.</summary>
+    /// <summary>Reads the resident records and keeps the dead-wood ones whose class collides, and every stand filler; a later selection scans only these.</summary>
     private void CopyColliderRecords(long epoch, ulong nowMsec)
     {
         _colliderEpoch = epoch; _colliderEverCopied = true; _colliderLastCopyMsec = nowMsec;
         if (_colliderClasses.Count == 0) foreach (RingScatterClass row in RingScatterClassTable.Production.Rows) _colliderClasses[row.Id] = row;
         _colliderCatalog ??= UnderstoryCatalog.LoadDeadWoodDimensions();
+        _colliderStandFill ??= UnderstoryCatalog.LoadStandFill();
         _colliderRecordScratch.Clear();
         Host.CopyRecords(_colliderRecordScratch);
         _colliderEligible.Clear();
         foreach (ScatterRecord rec in _colliderRecordScratch)
         {
-            if (!_colliderClasses.TryGetValue(rec.ClassId, out RingScatterClass? cls) || cls.RenderGroup != RingScatterRenderGroup.DeadWood || cls.Collision == RingScatterCollision.None) continue;
+            if (!_colliderClasses.TryGetValue(rec.ClassId, out RingScatterClass? cls)) continue;
+            if (cls.RenderGroup == RingScatterRenderGroup.StandFill)
+            {
+                int fillRow = UnderstoryCatalog.StandFillRowOf(rec.Mesh);
+                if (fillRow >= 0 && fillRow < _colliderStandFill.HeightMeters.Length) _colliderEligible.Add(new ColliderWood(rec, fillRow, TreeFormKind.Tree, true));
+                continue;
+            }
+            if (cls.RenderGroup != RingScatterRenderGroup.DeadWood || cls.Collision == RingScatterCollision.None) continue;
             int row = UnderstoryCatalog.DeadWoodRowOf(rec.Mesh);
             if (row < 0) continue;
             _colliderEligible.Add(new ColliderWood(rec, row, _colliderCatalog.Forms[row]));
@@ -172,7 +184,7 @@ internal sealed partial class RingUnderstoryLayer
         _colliderRecordScratch.Clear();
     }
 
-    private void SelectColliders(in RingLodGeometrySnapshot geometry, in RingCanonicalPosition focus, float radius, int maximum, float gate, Vector3 worldProbe, in Transform3D parentGlobal)
+    private void SelectColliders(in RingLodGeometrySnapshot geometry, in RingCanonicalPosition focus, float radius, int maximum, float gate, float fillGate, Vector3 worldProbe, in Transform3D parentGlobal)
     {
         _colliderCandidates.Clear();
         _colliderPending.Clear();
@@ -183,14 +195,16 @@ internal sealed partial class RingUnderstoryLayer
             for (int i = 0; i < _colliderEligible.Count; i++)
             {
                 ScatterRecord rec = _colliderEligible[i].Record;
-                if (RankOf(rec) > gate) continue; // the dead-wood rank gate: a record the renderer culls has no body either
+                if (RankOf(rec) > (_colliderEligible[i].StandFill ? fillGate : gate)) continue; // the rank gate of the record's kind: a record the renderer culls has no body either
                 double da = Wrap(rec.AroundCm * .01 - focus.AroundMeters, circumference), dz = rec.AcrossCm * .01 - focus.AcrossMeters;
                 double d2 = da * da + dz * dz;
                 if (d2 <= radiusSquared) _colliderCandidates.Add(new ColliderCandidate(i, d2));
             }
             List<ColliderWood> wood = _colliderEligible;
             _colliderCandidates.Sort((a, b) => { int d = a.DistanceSquared.CompareTo(b.DistanceSquared); return d != 0 ? d : wood[a.Index].Record.Id.CompareTo(wood[b.Index].Record.Id); });
-            if (_colliderCandidates.Count > maximum) _colliderCandidates.RemoveRange(maximum, _colliderCandidates.Count - maximum);
+            // The cap applies per kind (nearest first), so the many stand fillers never push dead wood out of the pool.
+            int woodKept = 0, fillKept = 0;
+            _colliderCandidates.RemoveAll(c => wood[c.Index].StandFill ? ++fillKept > maximum : ++woodKept > maximum);
         }
         foreach (ColliderCandidate candidate in _colliderCandidates)
         {
@@ -219,7 +233,7 @@ internal sealed partial class RingUnderstoryLayer
             ColliderWood item = _colliderEligible[_colliderPending[0].Index];
             _colliderPending.RemoveAt(0);
             if (_colliderBodies.ContainsKey(item.Record.Id)) continue;
-            var body = new StaticBody3D { Name = $"DeadWood_{item.Record.Id:X}" };
+            var body = new StaticBody3D { Name = $"{(item.StandFill ? "StandFill" : "DeadWood")}_{item.Record.Id:X}" };
             var shape = new CollisionShape3D { Name = "Wood" };
             body.AddChild(shape);
             _colliderRoot!.AddChild(body);
@@ -239,10 +253,11 @@ internal sealed partial class RingUnderstoryLayer
         ScatterRecord rec = item.Record;
         RingScatterClass cls = _colliderClasses[rec.ClassId];
         (long anchorAround, long anchorAcross) = ColliderAnchorOf(rec);
-        (Basis rotation, Vector3 local) = RingScatterLayer.RecordPose(rec, cls, 0.0, rec.Size * _colliderCatalog!.HeightMeters[item.Row], geometry.CenteredAt(anchorAround, anchorAcross));
+        float instanceHeight = rec.Size * (item.StandFill ? _colliderStandFill!.HeightMeters[item.Row] : _colliderCatalog!.HeightMeters[item.Row]);
+        (Basis rotation, Vector3 local) = RingScatterLayer.RecordPose(rec, cls, 0.0, instanceHeight, geometry.CenteredAt(anchorAround, anchorAcross));
         entry.Pose = pose;
         entry.Body.GlobalTransform = AnchorTransform(geometry, anchorAround, anchorAcross) * new Transform3D(rotation, local);
-        var key = new ColliderShapeKey(item.Row, (int)Math.Round(rec.Size * 100f));
+        var key = new ColliderShapeKey(item.StandFill ? ColliderStandFillRowBase + item.Row : item.Row, (int)Math.Round(rec.Size * 100f));
         if (entry.ShapeKey != key || entry.Shape.Shape == null)
         {
             entry.Shape.Shape = ColliderShape(key, item.Form);
@@ -259,6 +274,16 @@ internal sealed partial class RingUnderstoryLayer
     {
         if (_colliderShapes.TryGetValue(key, out Shape3D? cached)) return cached;
         if (_colliderShapes.Count >= ColliderShapeCacheLimit) _colliderShapes.Clear(); // bodies keep the shapes they hold
+        if (key.Row >= ColliderStandFillRowBase)
+        {
+            // A stand-filler trunk: ground to the crown base, the normalised trunk radius and crown base scaled by the instance height.
+            UnderstoryStandFill fill = _colliderStandFill ??= UnderstoryCatalog.LoadStandFill();
+            int fillRow = key.Row - ColliderStandFillRowBase;
+            float instanceHeight = key.Centimetres * .01f * fill.HeightMeters[fillRow];
+            Shape3D trunk = new CylinderShape3D { Radius = Math.Max(.02f, fill.TrunkRadiusMeters[fillRow] * instanceHeight), Height = Math.Max(ColliderStandFillMinimumHeightMeters, fill.Hulls[fillRow].Base * instanceHeight) };
+            _colliderShapes[key] = trunk;
+            return trunk;
+        }
         UnderstoryDeadWoodDimensions catalog = _colliderCatalog ??= UnderstoryCatalog.LoadDeadWoodDimensions();
         float size = key.Centimetres * .01f, radius = Math.Max(.02f, catalog.TrunkRadiusMeters[key.Row] * size), length = catalog.LengthMeters[key.Row] * size;
         Shape3D shape = form == TreeFormKind.FallenTree

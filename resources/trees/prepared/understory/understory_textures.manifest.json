@@ -1,9 +1,10 @@
 {
-  "schema_version": 1,
-  "tool_version": "t6-4b-1",
+  "schema_version": 2,
+  "tool_version": "t6-4b-2",
   "catalog_fingerprint": "4736F0F395ED0010A438269B9C982689601C2CD50D5FAC7107017D7B5DA8D3F0",
   "leaf_mips_tool_version": "tr7c-2",
   "vram_bytes": 10486080,
+  "billboard_vram_bytes": 2097312,
   "layers": [
     {
       "species": "maple",
@@ -39,11 +40,44 @@
       "foliage_normal_format": "RgtcRg"
     }
   ],
+  "billboards": [
+    {
+      "variant": 9,
+      "name": "Acer_small_1",
+      "source": "res://resources/trees/lolipop/maple/textures/Acer_small_1_Billboard_Mat_baseColor.png"
+    },
+    {
+      "variant": 10,
+      "name": "Acer_small_2",
+      "source": "res://resources/trees/lolipop/maple/textures/Acer_small_2_Billboard_Mat_baseColor.png"
+    },
+    {
+      "variant": 11,
+      "name": "Acer_small_3",
+      "source": "res://resources/trees/lolipop/maple/textures/Acer_small_3_Billboard_Mat_baseColor.png"
+    },
+    {
+      "variant": 27,
+      "name": "Pine_small_1",
+      "source": "res://resources/trees/lolipop/pine/textures/Pine_small_1_Billboard_Mat_baseColor.png"
+    },
+    {
+      "variant": 28,
+      "name": "Pine_small_2",
+      "source": "res://resources/trees/lolipop/pine/textures/Pine_small_2_Billboard_Mat_baseColor.png"
+    },
+    {
+      "variant": 29,
+      "name": "Pine_small_3",
+      "source": "res://resources/trees/lolipop/pine/textures/Pine_small_3_Billboard_Mat_baseColor.png"
+    }
+  ],
   "outputs": {
-    "sha256": "977A74D0F9D2ECAE8D10F5608093207B9E45228239EC9BF50E4A5B4919DA909B",
-    "file_bytes": 10489241,
+    "sha256": "5C1BFC36648E937AE34357295596C0CC88FC701E5370E72630B2854B57E140AA",
+    "file_bytes": 12587797,
     "vram_bytes": 10486080,
     "foliage": "1024 px, 10 mips, Dxt5 / RgtcRg",
-    "bark": "512 px, 9 mips, Dxt5 / RgtcRg"
+    "bark": "512 px, 9 mips, Dxt5 / RgtcRg",
+    "billboard": "512 px x 6, 9 mips, Dxt5"
   }
 }

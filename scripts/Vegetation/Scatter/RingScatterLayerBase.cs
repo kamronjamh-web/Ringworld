@@ -102,7 +102,7 @@ internal abstract partial class RingScatterLayerBase : Node3D
     private ulong _lastBuildMsec;
     private readonly List<ScatterRecord> _recordScratch = new();
     private readonly List<RingGpuVegetationCompute.BatchFrameParameters> _frames = new();
-    private readonly uint[] _caps = new uint[5];
+    private uint[] _caps = Array.Empty<uint>(); // one budget per slot, sized from BaseCaps (rocks 5, understory 7 with the stand filler)
 
     // ------------------------------------------------------------------ build inputs and results
 
@@ -396,7 +396,8 @@ internal abstract partial class RingScatterLayerBase : Node3D
     {
         float scale = Mathf.Clamp(Host.DistanceScale(), .05f, 4f), shadow = ShadowDistance(), capScale = Math.Max(0f, CapScale);
         uint[] baseCaps = BaseCaps;
-        for (int i = 0; i < 5; i++) _caps[i] = (uint)Math.Round(baseCaps[i] * capScale);
+        if (_caps.Length != baseCaps.Length) _caps = new uint[baseCaps.Length];
+        for (int i = 0; i < baseCaps.Length; i++) _caps[i] = (uint)Math.Round(baseCaps[i] * capScale);
         _frames.Clear();
         // Near LOD first inside a group (the batches of a group share one budget slot), so a binding cap drops far rows first. The shown set leads.
         foreach (OutputSet? set in new[] { _active, _pending })

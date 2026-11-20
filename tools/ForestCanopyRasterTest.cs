@@ -6,6 +6,7 @@ using RingworldTechDemo.Shadows;
 using RingworldTechDemo.Vegetation;
 using RingworldTechDemo.Vegetation.Canopy;
 using RingworldTechDemo.Voxel.Core;
+using RingworldTechDemo.Voxel.LOD;
 using RingworldTechDemo.Voxel.Phase2;
 
 namespace RingworldTechDemo.Tools;
@@ -35,6 +36,7 @@ public partial class ForestCanopyRasterTest : RefCounted
             VerifyDeterminism();
             VerifyHullTable();
             VerifyTiming();
+            VerifyStandFill();
             GD.Print($"FOREST_CANOPY_RASTER=PASS checks={_checks}");
             return true;
         }
@@ -100,6 +102,28 @@ public partial class ForestCanopyRasterTest : RefCounted
         Require(Math.Abs(result.Texel(0, 256, 256, 1) / b - baseMean) < 0.02f, "coincident crowns: base mean");
         Require(Math.Abs(result.Texel(0, 256, 256, 2) / b - topMean) < 0.02f, "coincident crowns: top mean");
         Require(Math.Abs(result.Texel(0, 256, 256, 3) / b - speciesMean) < 1e-3f, "coincident crowns: species mean");
+    }
+
+    // ---- SF-4: stand fillers in the canopy raster ----
+
+    private void VerifyStandFill()
+    {
+        float porosity = 0.42f; // the small maple's measured porosity
+        float Blocked(float weight)
+        {
+            var result = Build(new[] { Tree(1, AnchorA + 1, AnchorB + 1, 1.2f, 1f, 4f, RingForestLighting.FadedPorosity(porosity, weight)) }, AnchorA, AnchorB);
+            return result.Texel(0, 256, 256, 0);
+        }
+        float none = Build(Array.Empty<CanopyTree>(), AnchorA, AnchorB).Texel(0, 256, 256, 0);
+        float full = Blocked(RingForestLighting.StandFillWeight(100f)), quarter = Blocked(RingForestLighting.StandFillWeight(140f)), gone = Blocked(RingForestLighting.StandFillWeight(150f));
+        Require(Math.Abs(RingForestLighting.StandFillWeight(110f) - 1f) < 1e-6f && Math.Abs(RingForestLighting.StandFillWeight(140f) - 0.25f) < 1e-6f && RingForestLighting.StandFillWeight(150f) == 0f, "stand filler fade weight: 1 at 110 m, 0.25 at 140 m, 0 at 150 m");
+        Require(full > none + 0.5f && Math.Abs(full - (1f - porosity)) < 1e-3f, $"a stand filler raises the blocked fraction under it ({full} vs {none})");
+        Require(Math.Abs(quarter / full - 0.25f) < 0.02f, $"fade weight at 140 m: effect {quarter / full:F3} of full, expected about 0.25");
+        Require(gone == none, "fade weight 0 at 150 m leaves the raster untouched");
+        var layer = new RingBiomeDecorationLayer();
+        var into = new List<CanopyTreeRecord>();
+        Require(layer.CopyStandFillTrees(default, 150.0, into) == 0 && into.Count == 0 && layer.StandFillSignature() == 0L, "a world without the understory layer copies 0 stand fillers");
+        layer.Free();
     }
 
     // ---- (c) ----

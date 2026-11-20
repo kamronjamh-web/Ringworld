@@ -405,14 +405,40 @@ public partial class RingBiomeDecorationLayer
 				return ok;
 			}
 
+			/// <summary>True when NearestTreeM appears only in the multipliers and each such response is non-decreasing with non-negative outputs and reaches its end by 50 m.</summary>
+			private static bool NearestOnlyRaisesDensity(RingScatterClass row)
+			{
+				foreach (RingScatterTerm term in row.Terms) foreach (RingScatterResponse r in term.Factors) if (r.Field == RingHabitatField.NearestTreeM) return false;
+				foreach (RingScatterResponse r in row.Multipliers)
+					if (r.Field == RingHabitatField.NearestTreeM && !(r.In0 < r.In1 && r.In1 <= 50f && r.Out0 >= 0f && r.Out1 >= r.Out0)) return false;
+				return true;
+			}
+
+			/// <summary>The distance beyond which the row's NearestTreeM responses are saturated (the largest edge of any of them, 0.5 to 50 m): a nearest distance capped here gives the same density as the true one.</summary>
+			private static double NearestCapM(RingScatterClass row)
+			{
+				double cap = 0.5;
+				foreach (RingScatterTerm term in row.Terms) foreach (RingScatterResponse r in term.Factors) if (r.Field == RingHabitatField.NearestTreeM) cap = Math.Max(cap, Math.Max(r.In0, r.In1));
+				foreach (RingScatterResponse r in row.Multipliers) if (r.Field == RingHabitatField.NearestTreeM) cap = Math.Max(cap, Math.Max(r.In0, r.In1));
+				return Math.Min(50.0, cap);
+			}
+
 			private bool ViableCore(RingScatterClass row, long cx, long cz, int k, in Geo g)
 			{
 				if (!InsideRims(g)) return false;
 				double a = g.A, z = g.Z;
 				RingHabitatSample f = Grid.Sample(a, z);
 				if ((f.Flags & (RingHabitatFlags.Water | RingHabitatFlags.SiteBlocked)) != 0) return false;
-				double nearest = row.UsesField(RingHabitatField.NearestTreeM) ? NearestTreeM(a, z) : 50.0;
 				var derived = new Derived();
+				bool usesNearest = row.UsesField(RingHabitatField.NearestTreeM);
+				double nearestCap = usesNearest ? NearestCapM(row) : 50.0;
+				if (usesNearest && NearestOnlyRaisesDensity(row))
+				{
+					// The tree-root query is the costly part of a candidate: when the row's density can only rise with the nearest tree distance, the value at the row's saturation distance bounds it, so most candidates are rejected without the query (same decision).
+					double bound = Math.Min(1.0, row.BaseDensityPerHa * Density(row, f, nearestCap, a, z, ref derived) * row.CellM * (double)row.CellM / 10000.0 / row.CandidatesPerCell);
+					if (!(Hash01(cx, cz, _c.Seed, Salt(row, k) + 2) < bound)) return false;
+				}
+				double nearest = usesNearest ? NearestTreeM(a, z, nearestCap) : 50.0;
 				double density = Density(row, f, nearest, a, z, ref derived);
 				double p = Math.Min(1.0, row.BaseDensityPerHa * density * row.CellM * (double)row.CellM / 10000.0 / row.CandidatesPerCell);
 				if (!(Hash01(cx, cz, _c.Seed, Salt(row, k) + 2) < p)) return false;
@@ -671,9 +697,8 @@ public partial class RingBiomeDecorationLayer
 				return _treeScratch.Count > 0;
 			}
 
-			private double NearestTreeM(double a, double z)
+			private double NearestTreeM(double a, double z, double cap)
 			{
-				const double cap = 50.0;
 				CollectTreeRoots(a, z, cap);
 				double best = cap * cap;
 				foreach ((double ta, int tz) in _treeScratch)
@@ -799,6 +824,7 @@ public partial class RingBiomeDecorationLayer
 				ForestRegionSample regional = RegionalOf(f);
 				ForestStructureSampler.SpeciesWeights(f.Moisture, f.Temperature, f.WetnessTotal, f.Relief64, f.RockExposure, f.SlopeDeg, in regional, out float maple, out float fir, out float pine);
 				double wm = maple, wf = dead || shrub ? fir : fir * 0.6, wp = dead || shrub ? pine : pine * (0.3 + 0.7 * (1.0 - derived.Dense));
+				if (row.RenderGroup == RingScatterRenderGroup.StandFill) wf = 0.0; // T6 stand filler: small maples and small pines only, no fir filler
 				if (shrub)
 				{
 					// T6-7 look overrides: where WetMeadow is the dominant community the shrub is broadleaf; where DryMeadow or RockyFell is, it is pine scrub. Elsewhere the plain A3 species weights pick the look (maple broadleaf, fir thicket, pine scrub).
@@ -830,7 +856,8 @@ public partial class RingBiomeDecorationLayer
 
 			private static List<int> VariantsOf(RingScatterClass row, TreeSpecies species, TreePlacementRole role)
 			{
-				IReadOnlyList<int> all = ImportedTreeSourceTable.Range(species, role);
+				// Stand filler: the small canopy variants of the species (maple 9-11, pine 27-29, fir none) instead of an Understory-role range.
+				IReadOnlyList<int> all = row.RenderGroup == RingScatterRenderGroup.StandFill ? ImportedTreeSourceTable.CanopyVariants(species, TreeSizeClass.Small) : ImportedTreeSourceTable.Range(species, role);
 				var list = new List<int>(all.Count);
 				foreach (int index in all) if (index >= row.MeshFirst && index < row.MeshFirst + row.MeshCount) list.Add(index);
 				return list;

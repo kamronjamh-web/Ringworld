@@ -7151,6 +7151,28 @@
         "vegetation"
       ],
       "marker": "UNDERSTORY_PLACEMENT",
+      "expected_s": 60,
+      "timeout_s": 180
+    },
+    "stand_fill_carrier_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "STAND_FILL_CARRIER",
+      "expected_s": 15,
+      "timeout_s": 90
+    },
+    "stand_filler_placement_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "STAND_FILLER_PLACEMENT",
       "expected_s": 30,
       "timeout_s": 90
     },

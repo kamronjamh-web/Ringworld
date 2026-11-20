@@ -23,6 +23,7 @@ namespace RingworldTechDemo.Tests;
 ///   d. cap: 200 synthetic records in range give exactly 128 bodies, the nearest.
 ///   e. rank gate: DeadWoodDensity 0 removes every body, 0.5 keeps exactly the records of rank 0.5 or lower; restoring 1 brings them back.
 ///   f. pose identity: for 20 records the body's transform scaled by size x source height equals the renderer's source row (BuildSources) in the layer's anchor frame; install rate at most 8 per frame.
+///   h. stand fillers (SF-3): a stem body from the ground to the crown base (min 1.5 m) with the trunk radius (rays), none beyond the radius, none for a sapling, StandFillDensity gates them; a and e also count class 15 (own cap, own gate).
 ///   g. feature off: generation 1 and a rocks-only world create no understory layer, hence no bodies.
 /// Headless: tools/run_tests.ps1 -Tests understory_collision_test.
 /// </summary>
@@ -192,6 +193,45 @@ public partial class UnderstoryCollisionTest : Node
         await Settle("gate 1");
         Check(_layer.ColliderCount == 128, $"e: {_layer.ColliderCount} bodies after restoring the gate, expected 128");
         _log.Add("e: DeadWoodDensity 0 -> 0 bodies, 0.5 -> " + half + ", 1 -> 128 again");
+
+        // h. stand fillers (SF-3): a trunk body from the ground to the crown base, none beyond the collider radius, the gate removes them
+        UnderstoryStandFill fill = UnderstoryCatalog.LoadStandFill();
+        int fillMesh = UnderstoryCatalog.StandFillSources[0];
+        float fillHeight = 1.1f * fill.HeightMeters[0], trunk = fill.TrunkRadiusMeters[0] * fillHeight, crownBase = fill.Hulls[0].Base * fillHeight, trunkHeight = Math.Max(1.5f, crownBase);
+        _records = new List<ScatterRecord>
+        {
+            Syn(IdOf(.1, 21), 15, _pose.Around + 10.0, _pose.Across, 1.1f, fillMesh, ground),
+            Syn(IdOf(.1, 22), 15, _pose.Around + 200.0, _pose.Across, 1.1f, fillMesh, ground), // beyond the 110 m radius
+            Syn(IdOf(.9, 23), 15, _pose.Around, _pose.Across + 15.0, 1.1f, fillMesh, ground),
+            Syn(IdOf(.1, 24), 12, _pose.Around, _pose.Across - 25.0, 1f, 0, ground), // a sapling: none
+        };
+        _epoch++;
+        await Settle("stand fillers");
+        Check(_layer.ColliderCount == 2, $"h: {_layer.ColliderCount} bodies for two stand fillers in range, a far one and a sapling, expected 2");
+        await Physics(3);
+        StaticBody3D stem = _layer.ColliderBodyMap[IdOf(.1, 21)];
+        Transform3D sx = stem.GlobalTransform;
+        Vector3 sup = sx.Basis.Y.Normalized(), sacross = sx.Basis.Z.Normalized();
+        var downward = Ray(sx.Origin + sup * (trunkHeight + 1f), sx.Origin + sup * (trunkHeight * .5f));
+        Check(downward.Count > 0 && downward["collider"].AsGodotObject() == stem, "h: a ray onto the stem top did not hit it");
+        float top = ((Vector3)downward["position"] - sx.Origin).Dot(sup);
+        Check(Math.Abs(top - trunkHeight) <= .05f, $"h: the stem top is at {top:0.000} m, expected {trunkHeight:0.000} m (crown base {crownBase:0.00} m, minimum 1.5 m)");
+        Vector3 midStem = sx.Origin + sup * (trunkHeight * .5f);
+        var sideRay = Ray(midStem - sacross * 3f, midStem + sacross * 3f);
+        Check(sideRay.Count > 0 && sideRay["collider"].AsGodotObject() == stem, "h: a horizontal ray through the stem did not hit it");
+        float hitDistance = ((Vector3)sideRay["position"]).DistanceTo(midStem);
+        Check(Math.Abs(hitDistance - trunk) <= .05f, $"h: the horizontal ray hit the stem {hitDistance:0.000} m from its axis, expected the trunk radius {trunk:0.000} m");
+        var above = Ray(sx.Origin + sup * (trunkHeight + 3f) - sacross * 3f, sx.Origin + sup * (trunkHeight + 3f) + sacross * 3f);
+        Check(above.Count == 0, "h: a ray through the crown above the stem hit a body");
+        Check(!_layer.ColliderBodyMap.ContainsKey(IdOf(.1, 22)), "h: a stand filler beyond the collider radius has a body");
+        _layer.StandFillDensity = .5f;
+        await Settle("fill gate 0.5");
+        Check(_layer.ColliderCount == 1 && _layer.ColliderBodyMap.ContainsKey(IdOf(.1, 21)), $"h: {_layer.ColliderCount} bodies with StandFillDensity 0.5, expected only the rank-0.1 stem");
+        _layer.StandFillDensity = 0f;
+        await Settle("fill gate 0");
+        Check(_layer.ColliderCount == 0, $"h: {_layer.ColliderCount} bodies with StandFillDensity 0");
+        _layer.StandFillDensity = 1f;
+        _log.Add($"h: stand filler stem body {trunkHeight:0.00} m tall (crown base {crownBase:0.00} m), radius {trunk:0.000} m by rays; none at 200 m or for the sapling; StandFillDensity 0.5 -> 1 body, 0 -> none");
     }
 
     // ------------------------------------------------------------------ g
@@ -211,7 +251,10 @@ public partial class UnderstoryCollisionTest : Node
     private bool Eligible(ScatterRecord r)
     {
         RingScatterClass? cls = _table.Find(r.ClassId);
-        return cls != null && cls.RenderGroup == RingScatterRenderGroup.DeadWood && cls.Collision != RingScatterCollision.None && (float)(r.Id >> 40) / 16777215f <= _layer.DeadWoodDensity;
+        if (cls == null) return false;
+        float rank = (float)(r.Id >> 40) / 16777215f;
+        if (cls.RenderGroup == RingScatterRenderGroup.StandFill) return rank <= _layer.StandFillDensity; // SF-3: stand-filler trunks, own gate
+        return cls.RenderGroup == RingScatterRenderGroup.DeadWood && cls.Collision != RingScatterCollision.None && rank <= _layer.DeadWoodDensity;
     }
 
     /// <summary>The bodies must be exactly the reference selection: dead-wood records within the radius and the rank gate, nearest first, capped.</summary>
@@ -226,12 +269,14 @@ public partial class UnderstoryCollisionTest : Node
             double d2 = da * da + dz * dz;
             if (d2 <= r2) inRange.Add((rec, d2));
         }
-        var expected = inRange.OrderBy(x => x.D2).ThenBy(x => x.Rec.Id).Take(_layer.MaximumUnderstoryColliders).Select(x => x.Rec.Id).ToHashSet();
+        // The cap applies per kind (dead wood, stand fillers), nearest first.
+        var expected = inRange.Where(x => x.Rec.ClassId != 15).OrderBy(x => x.D2).ThenBy(x => x.Rec.Id).Take(_layer.MaximumUnderstoryColliders)
+            .Concat(inRange.Where(x => x.Rec.ClassId == 15).OrderBy(x => x.D2).ThenBy(x => x.Rec.Id).Take(_layer.MaximumUnderstoryColliders)).Select(x => x.Rec.Id).ToHashSet();
         HashSet<ulong> actual = _layer.ColliderBodyMap.Keys.ToHashSet();
         Check(expected.Count > 0, name + ": the reference selection is empty, so the check would prove nothing");
         Check(actual.SetEquals(expected), $"{name}: {actual.Count} bodies, expected {expected.Count} (missing {expected.Except(actual).Count()}, extra {actual.Except(expected).Count()})");
         var byId = records.GroupBy(x => x.Id).ToDictionary(g => g.Key, g => g.First());
-        foreach (ulong id in actual) Check(byId[id].ClassId is 10 or 13 or 14, $"{name}: a body exists for a record of class {byId[id].ClassId}");
+        foreach (ulong id in actual) Check(byId[id].ClassId is 10 or 13 or 14 or 15, $"{name}: a body exists for a record of class {byId[id].ClassId}");
         Check(records.Where(x => x.ClassId == 12).All(x => !actual.Contains(x.Id)), name + ": a sapling has a body");
         string classes = string.Join("/", new ushort[] { 10, 13, 14 }.Select(c => expected.Count(id => byId[id].ClassId == c)));
         if (name.StartsWith("a "))
@@ -254,7 +299,7 @@ public partial class UnderstoryCollisionTest : Node
         var byId = records.GroupBy(x => x.Id).ToDictionary(g => g.Key, g => g.First());
         float worst = 0f;
         int checkedCount = 0;
-        foreach (ulong id in bodies.Keys.OrderBy(x => x).Take(20))
+        foreach (ulong id in bodies.Keys.Where(k => byId[k].ClassId != 15).OrderBy(x => x).Take(20)) // dead wood only; stand fillers are checked in h
         {
             ScatterRecord rec = byId[id];
             (long anchorAround, long anchorAcross) = RingUnderstoryLayer.ColliderAnchorOf(rec);

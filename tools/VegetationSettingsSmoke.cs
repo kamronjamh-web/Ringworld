@@ -133,7 +133,7 @@ public partial class VegetationSettingsSmoke : Node
         }
         finally { forestLayer.Free(); }
         // T6-6 dead-wood keys: the rank gates of the understory and dead-wood batches (clamp, nonfinite, default 1 at every preset, round trip, apply).
-        foreach (string gateKey in new[] { "UnderstoryDensity", "DeadWoodDensity" })
+        foreach (string gateKey in new[] { "UnderstoryDensity", "DeadWoodDensity", "StandFillDensity" })
         {
             if (!GameplayVegetationDefaults.TryValidate(gateKey, 7, out Variant gateHigh) || !Mathf.IsEqualApprox((float)gateHigh.AsDouble(), 1)) throw new InvalidOperationException(gateKey + " high range was not clamped to 1");
             if (!GameplayVegetationDefaults.TryValidate(gateKey, -3, out Variant gateLow) || !Mathf.IsEqualApprox((float)gateLow.AsDouble(), 0)) throw new InvalidOperationException(gateKey + " low range was not clamped to 0");
@@ -145,6 +145,12 @@ public partial class VegetationSettingsSmoke : Node
             gates.Preset = preset;
             if (!Mathf.IsEqualApprox(gates.UnderstoryDensity, 1) || !Mathf.IsEqualApprox(gates.DeadWoodDensity, 1)) throw new InvalidOperationException($"understory and dead wood defaults are not 1 at the {preset} preset");
         }
+        // T6 SF-5 stand-fill default follows the preset: Low 0.5, Medium 0.75, High and up 1; an override wins.
+        foreach (var (preset, fillExpected) in new[] { (RingTerrainLodCoordinator.QualityPreset.Low, 0.5f), (RingTerrainLodCoordinator.QualityPreset.Medium, 0.75f), (RingTerrainLodCoordinator.QualityPreset.High, 1f), (RingTerrainLodCoordinator.QualityPreset.VeryHigh, 1f), (RingTerrainLodCoordinator.QualityPreset.UltraVideo, 1f), (RingTerrainLodCoordinator.QualityPreset.Cinematic5090, 1f) })
+        {
+            gates.Preset = preset;
+            if (!Mathf.IsEqualApprox(gates.StandFillDensity, fillExpected)) throw new InvalidOperationException($"stand fill density default is not {fillExpected} at the {preset} preset");
+        }
         // T6 sapling shadows follow the preset only: off at Low, Medium and High, on at Very High and up.
         foreach (var preset in new[] { RingTerrainLodCoordinator.QualityPreset.Low, RingTerrainLodCoordinator.QualityPreset.Medium, RingTerrainLodCoordinator.QualityPreset.High, RingTerrainLodCoordinator.QualityPreset.VeryHigh, RingTerrainLodCoordinator.QualityPreset.UltraVideo, RingTerrainLodCoordinator.QualityPreset.Cinematic5090 })
         {
@@ -152,10 +158,10 @@ public partial class VegetationSettingsSmoke : Node
             bool expected = preset >= RingTerrainLodCoordinator.QualityPreset.VeryHigh;
             if (gates.SaplingShadows != expected || RingGraphicsQualityController.PresetSaplingShadows(preset) != expected) throw new InvalidOperationException($"sapling shadows are {(expected ? "off" : "on")} at the {preset} preset");
         }
-        gates.Set("UnderstoryDensity", 0.45); gates.Set("DeadWoodDensity", 0.2);
+        gates.Set("UnderstoryDensity", 0.45); gates.Set("DeadWoodDensity", 0.2); gates.Set("StandFillDensity", 0.35);
         if (!gates.Save()) throw new InvalidOperationException("understory settings did not save");
         var gatesBack = new GameplayVegetationDefaults(path); gatesBack.Load();
-        if (!Mathf.IsEqualApprox(gatesBack.UnderstoryDensity, 0.45f) || !Mathf.IsEqualApprox(gatesBack.DeadWoodDensity, 0.2f)) throw new InvalidOperationException("understory settings did not round-trip");
+        if (!Mathf.IsEqualApprox(gatesBack.UnderstoryDensity, 0.45f) || !Mathf.IsEqualApprox(gatesBack.DeadWoodDensity, 0.2f) || !Mathf.IsEqualApprox(gatesBack.StandFillDensity, 0.35f)) throw new InvalidOperationException("understory settings did not round-trip");
         gatesBack.Reset(); gatesBack.Save();
         var gateLayer = new RingBiomeDecorationLayer();
         try

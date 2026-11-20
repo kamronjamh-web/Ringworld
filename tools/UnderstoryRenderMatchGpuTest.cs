@@ -74,9 +74,11 @@ public partial class UnderstoryRenderMatchGpuTest : Node
             await MatchChecks();
             await SnagChecks();
             await ShrubChecks();
+            await StandFillCasterChecks();
             await LayerChecks();
             await SaplingCasterChecks();
             await ShrubLayerChecks();
+            await StandFillLayerChecks();
             await DeadWoodLayerChecks();
             FeatureOffChecks();
             Result = "PASS " + string.Join("; ", _log);
@@ -486,6 +488,82 @@ public partial class UnderstoryRenderMatchGpuTest : Node
         _log.Add("shrub 43 (broadleaf LOD0) through the shrub carrier matches the derived mesh with the maple foliage material in 5 cases (front, back, cloud, haze, shade)");
     }
 
+    // ------------------------------------------------------------------ the stand filler caster (SF-1)
+
+    /// <summary>One shot of a stand filler billboard (the authored LOD3 of base variant <paramref name="source"/>): the tree material's own mesh (the reference) or the caster carrier's variant row, front-lit, switches off.</summary>
+    private async Task<Stats> StandFillShot(int source, bool useCarrier, float yawDegrees)
+    {
+        UnderstoryStandFill fill = UnderstoryCatalog.LoadStandFill();
+        ImportedTreeVariant variant = _variants[source];
+        int row = UnderstoryCatalog.StandFillRowOf(source);
+        Mesh billboard = variant.Lods[3];
+        foreach (ShaderMaterial material in ImportedTreeRenderMaterials.ShaderMaterials(billboard)) ConfigureMaterial(material, false, false, false);
+        ConfigureMaterial(fill.Caster.Material, false, false, false);
+        RenderingServer.GlobalShaderParameterSet("ringworld_forest_lighting", SwitchesOff);
+        float elevation = Mathf.DegToRad(20f);
+        Vector3 toSun = (Up * Mathf.Sin(elevation) + AroundDir * Mathf.Cos(elevation)).Normalized();
+        _sun.Transform = new Transform3D(Basis.LookingAt(-toSun, AcrossDir), Vector3.Zero);
+        foreach (ShaderMaterial material in ImportedTreeRenderMaterials.ShaderMaterials(billboard).Append(fill.Caster.Material)) { material.SetShaderParameter("sun_direction", toSun); material.SetShaderParameter("ring_atmosphere_to_sun", toSun); }
+        RenderingServer.GlobalShaderParameterSet("ring_atmosphere_to_sun", toSun);
+        float height = variant.HeightMeters, distance = 6f * height;
+        _cam.Fov = Mathf.RadToDeg(2f * MathF.Atan(.6f * height / distance));
+        Vector3 middle = Up * height * .5f;
+        Vector3 position = middle + AroundDir * distance;
+        _cam.LookAtFromPosition(position, middle, Up);
+        ApplyShade("front", toSun, middle);
+        foreach (ShaderMaterial material in ImportedTreeRenderMaterials.ShaderMaterials(billboard).Append(fill.Caster.Material)) SetCameraUniforms(material, position);
+        RenderingServer.GlobalShaderParameterSet("ring_atmosphere_camera_world_position", position);
+        RenderingServer.GlobalShaderParameterSet("ring_atmosphere_camera_height_meters", -position.X);
+        var basis = (new Basis(Up, Mathf.DegToRad(yawDegrees)) * new Basis(Vector3.Back, Mathf.Pi * .5f)).Scaled(Vector3.One * height);
+        var placement = new Transform3D(basis, Vector3.Zero);
+        _reference.Visible = !useCarrier; _carrier.Visible = useCarrier;
+        if (useCarrier)
+        {
+            _carrierMulti.Mesh = fill.Caster.Carrier;
+            _carrier.MaterialOverride = fill.Caster.Material;
+            _carrierMulti.SetInstanceTransform(0, placement);
+            _carrierMulti.SetInstanceCustomData(0, new Color(row, 1f, 0f, 0f));
+        }
+        else
+        {
+            _reference.Mesh = billboard;
+            _reference.Transform = placement;
+            TreeCrownHullTable.Pack(TreeCrownHullTable.Get()[source], out Vector4 hull, out Vector4 extra, out Vector4 lad);
+            _reference.SetInstanceShaderParameter("tree_crown_hull", hull);
+            _reference.SetInstanceShaderParameter("tree_crown_hull_extra", extra);
+            _reference.SetInstanceShaderParameter("tree_crown_lad", lad);
+        }
+        await Frames(1);
+        for (int i = 0; i < 3; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+        Image image = _vp.GetTexture().GetImage();
+        if (image == null || image.IsEmpty()) throw new InvalidOperationException("empty capture");
+        return Measure(image);
+    }
+
+    /// <summary>Each of the six stand filler variants' billboards through the caster carrier covers the same pixels as the tree material's own billboard mesh (the cutout from billboard_albedo's alpha); the colour is only bounded (the caster has no billboard normal map).</summary>
+    private async Task StandFillCasterChecks()
+    {
+        const float CasterColourTolerance = 0.5f; // the caster has no billboard normal map and takes the species roughness and metallic constants, so it is brighter than the tree material (measured 14 to 40 %); the cutout (coverage) is the contract
+        var failures = new List<string>();
+        foreach (int source in UnderstoryCatalog.StandFillSources)
+            foreach (float yaw in new[] { 0f, 40f })
+            {
+                Stats reference = await StandFillShot(source, false, yaw);
+                Stats carrier = await StandFillShot(source, true, yaw);
+                string tag = $"stand filler caster {source} yaw {yaw:0}";
+                if (reference.Covered < 500) { failures.Add($"{tag}: the reference covers only {reference.Covered} px"); continue; }
+                float coverage = MathF.Abs(carrier.Covered - reference.Covered) / (float)reference.Covered;
+                float lum = MathF.Abs(carrier.Luminance - reference.Luminance) / MathF.Max(reference.Luminance, 1e-6f);
+                Vector3 delta = (carrier.Mean - reference.Mean).Abs() / MathF.Max(reference.Luminance, 1e-6f);
+                float channel = MathF.Max(delta.X, MathF.Max(delta.Y, delta.Z));
+                GD.Print($"UNDERSTORY_RENDER_MATCH {tag}: ref {reference.Covered} px lum {reference.Luminance:0.0000}; carrier {carrier.Covered} px lum {carrier.Luminance:0.0000}; coverage {coverage * 100f:0.00} %, lum {lum * 100f:0.00} %, channel {channel * 100f:0.00} %");
+                if (coverage > CoverageTolerance) failures.Add($"{tag}: coverage differs by {coverage * 100f:0.0} % (> {CoverageTolerance * 100f:0} %)");
+                if (lum > CasterColourTolerance || channel > CasterColourTolerance) failures.Add($"{tag}: mean colour differs by {lum * 100f:0.0} % luminance, {channel * 100f:0.0} % channel (> {CasterColourTolerance * 100f:0} %)");
+            }
+        if (failures.Count > 0) throw new InvalidOperationException(string.Join(" ; ", failures));
+        _log.Add("stand filler caster carrier (LOD3 billboards of 9-11 and 27-29) matches the tree material's billboard mesh in coverage (colour within 50 %: no billboard normal map)");
+    }
+
     // ------------------------------------------------------------------ the layer
 
     /// <summary>Shrubs through the layer: L0 (0 to 45 m) and L1 (30 to 150 m), no caster, the sapling rows untouched (a sapling and a boulder alongside).</summary>
@@ -539,6 +617,61 @@ public partial class UnderstoryRenderMatchGpuTest : Node
         // L0 (0 to 45 m): the shrubs at 10 and 40 m. L1 (30 to 150 m): 40 and 100 m. The one at 200 m is beyond both.
         if (counts[0] != 2 || counts[1] != 2) throw new InvalidOperationException($"shrub layer: L0 draws {counts[0]} and L1 {counts[1]} instances, expected 2 and 2");
         _log.Add($"shrub layer: L0 {counts[0]} / L1 {counts[1]} instances of 4 shrub records, no caster");
+        layer.Free();
+    }
+
+    /// <summary>T6 SF-3: stand fillers through the layer. Slot 5 holds the four class-15 records, the L0 (0 to 35 m) and L2 (25 to 150 m) outputs draw 2 and 2 of them; with StandFillShadows slot 6 holds them again and one ShadowsOnly "UnderstoryStandFill_Shadow" caster appears (absent with it off, switched at runtime).</summary>
+    private async Task StandFillLayerChecks()
+    {
+        RenderingServer.GlobalShaderParameterSet("ringworld_forest_lighting", SwitchesOff);
+        const double Circ = LandscapeWorld.Circumference;
+        double ringRadius = Circ / Math.Tau;
+        LandscapePose pose = LandscapePoseFinder.ReadFixture(ProjectSettings.GlobalizePath("res://tools/fixtures/landscape_poses_dressing_s1337.json")).Poses.First(p => p.Name == "steep_eye");
+        ScatterRecord Fill(ulong id, double distance, float size)
+            => new(id, (long)Math.Round((pose.Around + distance) * 100.0), (int)Math.Round(pose.Across * 100.0), (float)pose.Ground, 15, (ushort)UnderstoryCatalog.StandFillSources[0], size, .3f, ScatterRecord.EncodeUpOct(0, 1, 0), 0);
+        var records = new List<ScatterRecord> { Fill(0xC000, 10, 1f), Fill(0xC001, 30, 1f), Fill(0xC002, 100, 1f), Fill(0xC003, 200, 1f) };
+        var focus = new RingCanonicalPosition(pose.Around, pose.Ground, pose.Across);
+        var geometry = new RingLodGeometrySnapshot(Transform3D.Identity, Vector3.Zero, Vector3.Zero, ringRadius, 0.0, 0.0, Circ, 0.0, 0.0, focus);
+        Vector3 camera = geometry.CanonicalToWorld(focus.AroundMeters, focus.VerticalMeters, focus.AcrossMeters);
+        double angle = pose.Around / ringRadius;
+        Vector3 forward = new Vector3((float)-Math.Sin(angle), 0f, (float)Math.Cos(angle)), up = new Vector3((float)-Math.Cos(angle), 0f, (float)-Math.Sin(angle));
+        _cam.Fov = 70f; _cam.Far = 6000f;
+        _cam.LookAtFromPosition(camera, camera + forward * 100f, up);
+        _reference.Visible = false; _carrier.Visible = false;
+        var layer = new RingUnderstoryLayer
+        {
+            Name = "UnderstoryLayer", FrustumCulling = false, StandFillShadows = true,
+            Host = new ScatterLayerHost
+            {
+                Geometry = () => geometry, Focus = () => focus, Epoch = () => 1, CopyRecords = into => into.AddRange(records),
+                RingAcrossWidthMeters = () => LandscapeWorld.Width, Sun = () => _sun,
+            },
+        };
+        _vp.AddChild(layer);
+        await WaitUntil(() => layer.OutputInfo().Count == 3 && layer.DrawOutputs == 3 && !layer.SetPending);
+        if (layer.DrawOutputs != 3) throw new InvalidOperationException($"stand fill layer: {layer.DrawOutputs} draw outputs, expected 3 (batches {layer.BatchCount}, failed {layer.Failed})");
+        int[] rows = layer.SourceRows;
+        if (rows[5] != 4 || rows[6] != 4 || rows[0] != 0) throw new InvalidOperationException($"stand fill layer: rows {string.Join("/", rows)}, expected 4 in slot 5 and 4 in slot 6");
+        var info = layer.OutputInfo();
+        var fill = info.Where(o => !o.Caster).OrderBy(o => o.Name).ToList(); // "UnderstoryStandFill_L0", "UnderstoryStandFill_L2"
+        if (fill.Count != 2 || fill[0].Name != "UnderstoryStandFill_L0" || fill[1].Name != "UnderstoryStandFill_L2" || fill.Any(o => o.Group != 5)) throw new InvalidOperationException("stand fill layer: expected the L0 and L2 outputs of group 5");
+        var caster = info.Where(o => o.Caster).ToList();
+        if (caster.Count != 1 || caster[0].Name != "UnderstoryStandFill_Shadow" || caster[0].Group != 6) throw new InvalidOperationException("stand fill layer: expected one UnderstoryStandFill_Shadow caster of group 6");
+        if (layer.FindChild("UnderstoryStandFill_Shadow", true, false) is not GeometryInstance3D shadow || shadow.CastShadow != GeometryInstance3D.ShadowCastingSetting.ShadowsOnly) throw new InvalidOperationException("stand fill layer: the caster does not draw ShadowsOnly");
+        uint[] counts = new uint[2];
+        for (int l = 0; l < 2; l++)
+        {
+            var done = new TaskCompletionSource<uint[]>();
+            layer.Compute!.RequestCameraReadbackForTests(fill[l].BatchId, (c, _) => done.TrySetResult(c));
+            uint[] commands = await done.Task;
+            counts[l] = commands.Length >= 2 ? commands[1] : 0u;
+        }
+        // L0 (0 to 35 m): 10 and 30 m. L2 (25 to 150 m): 30 and 100 m. 200 m is beyond both.
+        if (counts[0] != 2 || counts[1] != 2) throw new InvalidOperationException($"stand fill layer: L0 draws {counts[0]} and L2 {counts[1]} instances, expected 2 and 2");
+        layer.StandFillShadows = false;
+        await WaitUntil(() => layer.OutputInfo().Count == 2 && !layer.SetPending);
+        if (layer.OutputInfo().Count != 2 || layer.OutputInfo().Any(o => o.Caster) || layer.SourceRows[6] != 0) throw new InvalidOperationException("stand fill layer: the caster remained after StandFillShadows was switched off");
+        _log.Add($"stand fill layer: slot 5 holds 4 rows, L0 {counts[0]} / L2 {counts[1]} instances, ShadowsOnly caster present with StandFillShadows and gone without");
         layer.Free();
     }
 

@@ -25,7 +25,7 @@ public partial class UnderstoryPlacementTest : RefCounted
     private const long Circ = LandscapeWorld.Circumference;
     private const int Width = LandscapeWorld.Width;
     private const string DressingFixture = "res://tools/fixtures/landscape_poses_dressing_s1337.json";
-    private const ushort Sapling = 12, Snag = 10, Fallen = 13, Stump = 14, Shrub = 11;
+    private const ushort Sapling = 12, Snag = 10, Fallen = 13, Stump = 14, Shrub = 11, StandFill = 15;
     private static readonly long Cells = (long)Math.Ceiling(Circ / 30.0);
     private static readonly double AroundCell = Circ / Math.Ceiling(Circ / 30.0);
     private static readonly string[] ForestPoses = { "forest_interior_eye", "forest_edge_eye", "forest_clearing_eye" };
@@ -86,7 +86,7 @@ public partial class UnderstoryPlacementTest : RefCounted
         Check((_root.WorldFeatureMask & (1 << 6)) != 0 && (_root.WorldFeatureMask & (1 << 4)) == 0, "the test world must have bit 6 and not bit 4");
         Check(RingHabitatFieldGrid.IsEnabled(_root.WorldFeatureMask), "the grid is not enabled by bit 6");
         _ctx = Ctx.ForReview(LandscapeWorld.Seed, Circ, Width, RingScatterClassTable.Production, null, _root.WorldFeatureMask);
-        Check(_ctx.Table.Rows.Select(r => (int)r.Id).OrderBy(i => i).SequenceEqual(new[] { 10, 11, 12, 13, 14 }), "the bit 6 table is not the snag, shrub, sapling, fallen tree and stump rows");
+        Check(_ctx.Table.Rows.Select(r => (int)r.Id).OrderBy(i => i).SequenceEqual(new[] { 10, 11, 12, 13, 14, 15 }), "the bit 6 table is not the snag, shrub, sapling, fallen tree, stump and stand filler rows");
         _tileA = _ctx.TileCells * _ctx.AroundCellMeters;
         _probe = _root.CreateIndependentCopy();
         _grid = new RingHabitatFieldGrid(_probe, _ctx.Edits, LandscapeWorld.Seed, Circ, Width);
@@ -164,7 +164,7 @@ public partial class UnderstoryPlacementTest : RefCounted
                 (int bin, bool usable) = BinAt(r.AroundCm * .01, r.AcrossCm * .01);
                 if (usable) count[bin]++;
             }
-            foreach (ScatterRecord r in t.Records.Where(r => r.ClassId != Sapling && r.ClassId != Shrub))
+            foreach (ScatterRecord r in t.Records.Where(r => r.ClassId != Sapling && r.ClassId != Shrub && r.ClassId != StandFill))
             {
                 (int bin, bool usable) = BinAt(r.AroundCm * .01, r.AcrossCm * .01);
                 if (usable) deadCount[r.ClassId][bin]++;
@@ -424,7 +424,7 @@ public partial class UnderstoryPlacementTest : RefCounted
         // (1) Roles and forms: each dead-wood row places only its own form, with the DeadWood role.
         var forms = new Dictionary<ushort, TreeFormKind> { [Snag] = TreeFormKind.Snag, [Fallen] = TreeFormKind.FallenTree, [Stump] = TreeFormKind.Stump };
         int wrongForm = 0, outside = 0, snagConstant = 0, snagTotal = 0, total = 0;
-        foreach (ScatterRecord r in _tiles.SelectMany(t => t.Records).Where(r => r.ClassId != Sapling && r.ClassId != Shrub))
+        foreach (ScatterRecord r in _tiles.SelectMany(t => t.Records).Where(r => r.ClassId != Sapling && r.ClassId != Shrub && r.ClassId != StandFill))
         {
             total++;
             ImportedTreeSourceRow row = ImportedTreeSourceTable.Row(r.Mesh);
@@ -667,7 +667,8 @@ public partial class UnderstoryPlacementTest : RefCounted
             Detail($"{pose}: saplings {n / ha:F1}/ha ({n} in {ha:F1} ha), shrubs {ts.Sum(t => ShrubRecords(t).Count()) / ha:F1}/ha, stage {stage:F2} ms/tile, BuildScatterRows {total:F2} ms/tile (worst {worst:F2}) of which the shrub row {shrubMs:F1} ms/tile (worst {shrubWorst:F1}), eye-level free path {free:F1} m (trees + saplings)");
             // T6-4 limited the whole scatter build of a tile (then saplings only) to 25 ms. T6-7: the shrub row (about 5,400 candidates per tile) and the sapling row's avoid scan over the shrubs raise it to 30 to 70 ms on a worker (measured: 7 to 15 ms before the shrubs); the limits are 150 ms per tile (the machine is shared and noisy) and 60 ms for the shrub row.
             if (pose != "plains_eye") Check(worst < 150.0, $"{pose}: the scatter build took {worst:F1} ms on a tile (limit 150 ms)");
-            if (pose != "plains_eye") Check(shrubWorst < 60.0, $"{pose}: the shrub stage took {shrubWorst:F1} ms on a tile (limit 60 ms)");
+            // Stand filler (user 2026-11-20): the shrub-stage limit is 75 ms (was 60); the stand-filler row in the same build pushed the shrub stage to about 60 ms at forest_interior_eye.
+            if (pose != "plains_eye") Check(shrubWorst < 75.0, $"{pose}: the shrub stage took {shrubWorst:F1} ms on a tile (limit 75 ms)");
         }
     }
 

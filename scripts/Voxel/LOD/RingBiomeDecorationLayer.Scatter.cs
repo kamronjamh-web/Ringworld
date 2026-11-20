@@ -42,9 +42,16 @@ public partial class RingBiomeDecorationLayer
 	/// <summary>Whether saplings cast into the sun shadow map (the graphics preset: Very High and up); changing it rebuilds the understory output set.</summary>
 	internal bool UnderstorySaplingShadows { get; set; }
 
-	internal void ApplyUnderstorySettings(float understoryDensity, float deadWoodDensity, bool saplingShadows = false)
+	/// <summary>The rank gate of the stand-filler batches and colliders (T6 SF-3); no rebuild.</summary>
+	internal float StandFillDensity { get; set; } = 1f;
+	/// <summary>Whether stand fillers cast into the sun shadow map (the graphics preset: High and up); changing it rebuilds the understory output set.</summary>
+	internal bool UnderstoryStandFillShadows { get; set; }
+
+	internal void ApplyUnderstorySettings(float understoryDensity, float deadWoodDensity, bool saplingShadows = false, float standFillDensity = 1f, bool standFillShadows = false)
 	{
 		UnderstorySaplingShadows = saplingShadows;
+		UnderstoryStandFillShadows = standFillShadows;
+		StandFillDensity = Math.Clamp(standFillDensity, 0f, 1f);
 		UnderstoryDensity = Math.Clamp(understoryDensity, 0f, 1f);
 		DeadWoodDensity = Math.Clamp(deadWoodDensity, 0f, 1f);
 	}
@@ -137,7 +144,7 @@ public partial class RingBiomeDecorationLayer
 		float height = (float)(focus.VerticalMeters - PresentationSurfaceHeight(_scatterEdits, sampler, focus.AroundMeters, focus.AcrossMeters));
 		// The look settings (T5-9): only worlds with scatter.rocks reach here, so everywhere else the ground world global stays (x, y, 0, 0).
 		if (_scatterLayer != null) { _scatterLayer.RockDensity = ScatterRockDensity; _scatterLayer.CapScale = ScatterCapScale; }
-		if (_understoryLayer != null) { _understoryLayer.CapScale = ScatterCapScale; _understoryLayer.UnderstoryDensity = UnderstoryDensity; _understoryLayer.DeadWoodDensity = DeadWoodDensity; _understoryLayer.SaplingShadows = UnderstorySaplingShadows; }
+		if (_understoryLayer != null) { _understoryLayer.CapScale = ScatterCapScale; _understoryLayer.UnderstoryDensity = UnderstoryDensity; _understoryLayer.DeadWoodDensity = DeadWoodDensity; _understoryLayer.SaplingShadows = UnderstorySaplingShadows; _understoryLayer.StandFillDensity = StandFillDensity; _understoryLayer.StandFillShadows = UnderstoryStandFillShadows; }
 		RingGroundSurfaceGlobals.PublishScatterLook(ScatterRockDensity, ScatterDistanceScale);
 		_scatter.DistanceScale = ScatterDistanceScale;
 		_scatter.Pump(focus.AroundMeters, focus.AcrossMeters, height, _scatterEdits, _scatterEdits.Version);

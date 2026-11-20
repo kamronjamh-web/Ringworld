@@ -58,12 +58,17 @@ public sealed class GameplayVegetationDefaults
     public float ScatterCapScale => RingGraphicsQualityController.PresetScatter(Preset).CapScale;
     /// <summary>Whether saplings cast into the sun shadow map (the preset's choice: Very High and up; no key, no menu row).</summary>
     public bool SaplingShadows => RingGraphicsQualityController.PresetSaplingShadows(Preset);
+    /// <summary>Whether stand fillers cast into the sun shadow map (T6 SF-3: the preset's choice, High and up; no key, no menu row).</summary>
+    public bool StandFillShadows => Preset >= RingTerrainLodCoordinator.QualityPreset.High;
     // T6-8 design A10: forest. Neither changes placement, so neither enters a cache key; no preset dependence.
     public float FoliageColourVariation => (float)Get("FoliageColourVariation", 1.0).AsDouble();
     public float GroundCoverShare => (float)Get("GroundCoverShare", 1.0).AsDouble();
     // T6-6 design A10: understory and dead-wood rank gates (no rebuild, no cache key, no preset dependence).
     public float UnderstoryDensity => (float)Get("UnderstoryDensity", 1.0).AsDouble();
     public float DeadWoodDensity => (float)Get("DeadWoodDensity", 1.0).AsDouble();
+    // T6 SF-5: stand-filler rank gate (filler batches and colliders; no rebuild, no cache key). The default follows the preset: Low 0.5, Medium 0.75, High and up 1.
+    public float StandFillDensity => (float)Get("StandFillDensity", PresetStandFillDensity(Preset)).AsDouble();
+    public static double PresetStandFillDensity(RingTerrainLodCoordinator.QualityPreset preset) => preset <= RingTerrainLodCoordinator.QualityPreset.Low ? 0.5 : preset == RingTerrainLodCoordinator.QualityPreset.Medium ? 0.75 : 1.0;
     public void Load()
     {
         Settings = new();
@@ -135,7 +140,7 @@ public sealed class GameplayVegetationDefaults
             clean = key == "RockDensity" ? Math.Clamp(value.AsDouble(), 0, 1) : Math.Clamp(value.AsDouble(), 0.5, 1.5);
             return true;
         }
-        if (key is "FoliageColourVariation" or "GroundCoverShare" or "UnderstoryDensity" or "DeadWoodDensity")
+        if (key is "FoliageColourVariation" or "GroundCoverShare" or "UnderstoryDensity" or "DeadWoodDensity" or "StandFillDensity")
         {
             if (value.VariantType is not (Variant.Type.Int or Variant.Type.Float) || !double.IsFinite(value.AsDouble())) return false;
             clean = Math.Clamp(value.AsDouble(), 0, 1);

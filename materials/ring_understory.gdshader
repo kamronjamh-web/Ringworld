@@ -23,6 +23,8 @@ uniform sampler2DArray foliage_alpha : filter_linear_mipmap, repeat_enable;
 uniform sampler2DArray foliage_normal : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2DArray bark_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2DArray bark_normal : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
+// SF-1: the stand filler caster's billboard layers (one per UnderstoryCatalog.StandFillSources row; RGB colour, A cutout). Set only on the caster carrier; every other carrier never reads it.
+uniform sampler2DArray billboard_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
 // The coarsest mip level the isotropic cutout read may use (the 4 x 4 level, as ImportedTreeLeafMipCatalog.MaxLod).
 uniform float leaf_alpha_max_lod = 8.0;
 uniform vec3 ring_center = vec3(0.0);
@@ -58,7 +60,7 @@ varying vec3 tree_model_position; // forest lighting switches on: the vertex in 
 varying flat vec3 tree_model_light; // forest lighting switches on: the unit direction to the sun in model space (vertex(): MODEL_MATRIX in fragment() lacks the MultiMesh instance transform)
 varying flat vec3 tree_model_camera; // forest lighting switches on: the camera in model space
 varying flat vec4 tree_flat; // (dither coverage, dither seed, foliage tint value factor, foliage tint hue term); the tint is written only while ring_foliage_tint_on()
-varying flat vec4 tree_surface; // (variant row, 1 = foliage surface, species layer, 0)
+varying flat vec4 tree_surface; // (variant row, 1 = foliage surface, layer: species, or the stand filler row for a billboard, 1 = billboard surface)
 
 float tree_dither_noise(vec2 pixel, float seed) {
 	return fract(sin(dot(pixel + vec2(seed * 17.0, seed * 43.0), vec2(12.9898, 78.233))) * 43758.5453);
@@ -80,9 +82,11 @@ void vertex() {
 	float dither_coverage = abs(INSTANCE_CUSTOM.w - 2.0) <= 0.25 ? INSTANCE_CUSTOM.y : 1.0;
 	ivec2 texel = ivec2(VERTEX_ID % fetch_width, VERTEX_ID / fetch_width + variant * fetch_rows_per_variant);
 	vec4 packed_vertex = texelFetch(vertex_data, texel, 0);
-	bool foliage = packed_vertex.w >= 3.5;
-	float layer = packed_vertex.w - (foliage ? 4.0 : 0.0);
-	tree_surface = vec4(float(variant), foliage ? 1.0 : 0.0, layer, 0.0);
+	// position.w: 0-2 bark of a species, 4-6 foliage of a species, 8 + row = a billboard of stand filler row (SF-1: the caster carrier; foliage terms, colour and cutout from billboard_albedo).
+	bool billboard = packed_vertex.w >= 7.5;
+	bool foliage = billboard || packed_vertex.w >= 3.5;
+	float layer = packed_vertex.w - (billboard ? 8.0 : foliage ? 4.0 : 0.0);
+	tree_surface = vec4(float(variant), foliage ? 1.0 : 0.0, layer, billboard ? 1.0 : 0.0);
 	VERTEX = packed_vertex.xyz;
 	NORMAL = normalize(texelFetch(normal_data, texel, 0).xyz);
 	vec4 packed_uv = texelFetch(uv_data, texel, 0);
@@ -143,7 +147,13 @@ void fragment() {
 	vec4 albedo;
 	vec4 surface_tint = texelFetch(variant_parameters, ivec2(variant, foliage ? 1 : 0), 0);
 	vec4 surface_scale = texelFetch(variant_parameters, ivec2(variant, 3), 0);
-	if (foliage) {
+	bool billboard = tree_surface.w > 0.5;
+	if (billboard) {
+		// SF-1 caster: colour and cutout from the one billboard layer of this variant row.
+		albedo = texture(billboard_albedo, array_uv) * surface_tint;
+		ALPHA = albedo.a;
+		ALPHA_SCISSOR_THRESHOLD = surface_scale.z;
+	} else if (foliage) {
 		albedo = texture(foliage_albedo, array_uv) * surface_tint;
 		float leaf_alpha_lod = min(textureQueryLod(foliage_alpha, UV).y, leaf_alpha_max_lod);
 		ALPHA = textureLod(foliage_alpha, array_uv, leaf_alpha_lod).a * surface_tint.a;
@@ -168,7 +178,8 @@ void fragment() {
 		METALLIC = 0.0;
 		ROUGHNESS = 0.9;
 	} else {
-		if (foliage) { NORMAL_MAP = texture(foliage_normal, array_uv).rgb; NORMAL_MAP_DEPTH = surface_scale.y; }
+		if (billboard) { /* no normal map: the billboard keeps its authored vertex normals */ }
+		else if (foliage) { NORMAL_MAP = texture(foliage_normal, array_uv).rgb; NORMAL_MAP_DEPTH = surface_scale.y; }
 		else { NORMAL_MAP = texture(bark_normal, array_uv).rgb; NORMAL_MAP_DEPTH = surface_scale.x; }
 		METALLIC = foliage ? material_terms.w : material_terms.y;
 		ROUGHNESS = foliage ? material_terms.z : material_terms.x;

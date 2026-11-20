@@ -51,6 +51,14 @@ public partial class RingBiomeDecorationLayer
         return (long)Mix(hash, sum);
     }
 
+    /// <summary>SF-4: appends the understory layer's stand fillers within the radius as canopy records (Variant = the base catalog variant); 0 when the world has no understory layer.</summary>
+    public int CopyStandFillTrees(RingCanonicalPosition focus, double radiusMeters, List<CanopyTreeRecord> into)
+        => _understoryLayer != null && IsInstanceValid(_understoryLayer) ? _understoryLayer.CopyStandFillTrees(focus, radiusMeters, into) : 0;
+
+    /// <summary>SF-4: identity of the current stand-filler set (0 without an understory layer or without fillers), folded into the canopy rebuild signature.</summary>
+    public long StandFillSignature()
+        => _understoryLayer != null && IsInstanceValid(_understoryLayer) ? _understoryLayer.StandFillSignature() : 0L;
+
     private static ulong Mix(ulong h, ulong v)
     {
         h ^= v + 0x9E3779B97F4A7C15UL + (h << 6) + (h >> 2);
