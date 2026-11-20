@@ -811,3 +811,9 @@ Fix found by the review: the activation rate counted the steam driver everywhere
 - Check on the slot 3 snapshot with the fix (`--clips=dawn_survey`, world drive at sun 7 deg rising and at a planet-lit night, `nf7/steam_activation_survey_report.json`): the steam-only states (mountain_eye dawn steam 0.168 and night 0.124, mountain_valley_eye 0.165 and 0.149, hill_forest_valley and plains at night, all with 0 water texels) stay off; before the fix the first four would have been on at 0.0012 to 0.0017 per metre. coast_eye (22 water texels) switches on for steam as intended; plains and forest_clearing at dawn are on for their small radiation term (0.024 to 0.063).
 
 Open after NF-7 (questions for the user): the activation threshold (1e-4 per metre is about 2 % opacity over the 220 m window; forest_clearing at night sat at 1.07e-4, paying +0.38 ms for an invisible veil; a threshold of about 5e-4, 10 %, would avoid that), and whether the review should be redone on the new live slot 3 world.
+
+### User sign-off (2026-11-20)
+- NF-7 look signed off on the review clips.
+- Activation threshold raised from 1e-4 to 5e-4 per metre (about 10 % opacity over the 220 m window).
+- Performance stays on the 11-16 snapshot of slot 3 (the live slot 3 is now a different world).
+

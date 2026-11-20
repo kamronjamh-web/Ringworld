@@ -11,9 +11,9 @@ using RingworldTechDemo.Voxel.Phase2;
 namespace RingworldTechDemo.Vegetation.Canopy;
 
 /// <summary>
-/// Forest lighting debug switches and the canopy raster publisher (docs/forest-lighting-plan.md sections 5 and 8). Debug switches, not menu settings. Defaults (user, 2026-11-19):
-/// leaf translucency and crown occlusion on, canopy shade off (it waits for the grass duplicated-terms gate and closed-stand stills); nothing is built, uploaded or published
-/// while canopy shade is off. Node name "ForestLighting", child of the game root; perf_bench node ops reach the three switches by that path.
+/// Forest lighting debug switches and the canopy raster publisher (docs/forest-lighting-plan.md sections 5 and 8). Debug switches, not menu settings. Defaults: leaf translucency
+/// and crown occlusion on (user, 2026-11-19), canopy shade on (user, 2026-11-20, after the grass blocked > 0 gate and the closed-stand stills, plan FL-6); nothing is built,
+/// uploaded or published while canopy shade is off. Node name "ForestLighting", child of the game root; perf_bench node ops reach the three switches by that path.
 /// RING_FOREST_LIGHTING=1 at start turns all three on, RING_FOREST_LIGHTING=0 all three off (the pre-forest-lighting picture, for A/B and identity checks).
 /// Globals: ringworld_forest_lighting = (translucency, tree sun-shadow distance m, canopy shade, crown occlusion); ringworld_canopy_frame = the 3x4 world -> anchor tangent
 /// frame of the published raster (same math as ringworld_height_shadow_frame; recomputed every frame), with the REFERENCE ALTITUDE in element [3][3] (the free w of the
@@ -30,7 +30,7 @@ public partial class RingForestLighting : Node
 
     [Export] public NodePath LayerPath { get; set; } = new("../BiomeDecorations");
     [Export] public bool TranslucencyEnabled { get; set; } = true;
-    [Export] public bool CanopyShadeEnabled { get; set; }
+    [Export] public bool CanopyShadeEnabled { get; set; } = true;
     [Export] public bool CrownOcclusionEnabled { get; set; } = true;
 
     /// <summary>Main-thread milliseconds of the last resident tree copy (including the hull lookup).</summary>

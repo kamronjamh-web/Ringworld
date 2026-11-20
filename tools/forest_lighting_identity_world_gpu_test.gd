@@ -422,8 +422,8 @@ func _stills_run() -> void:
 			if name == "forest_interior_eye" and (t == "noon" or t == "sun_12_low"):
 				sets = [["off", false, false, false], ["trans", true, false, false], ["shade", false, false, true], ["all", true, true, true]]
 			if args.has("default-pair"):
-				# The shipped default since 2026-11-19: translucency and crown occlusion on, canopy shade off.
-				sets = [["off", false, false, false], ["default", true, true, false]]
+				# The shipped default: translucency and crown occlusion on (2026-11-19), canopy shade on (2026-11-20).
+				sets = [["off", false, false, false], ["default", true, true, true]]
 			if args.has("shade-pair"):
 				# Canopy shade default decision: the shipped default against the default plus canopy shade.
 				sets = [["default", true, true, false], ["shade", true, true, true]]

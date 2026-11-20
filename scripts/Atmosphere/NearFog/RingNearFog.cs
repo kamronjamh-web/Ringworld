@@ -44,7 +44,8 @@ public partial class RingNearFog : Node
     public static bool OwnerRegistered { get; private set; }
     public static RingNearFog? Instance { get; private set; }
 
-    public const float ActivationThreshold = 1e-4f;
+    // User 2026-11-20 (NF-7): 5e-4 per metre (~10 % opacity over the 220 m window); at 1e-4 the fog was ~2 % opaque, an invisible veil for +0.38 ms.
+    public const float ActivationThreshold = 5e-4f;
     public const float FadeSeconds = 2.0f;
     public const float ProbeSeconds = 0.5f;
     public const float TeleportMeters = 200.0f;
