@@ -8,7 +8,6 @@ const TEST_SCENE := preload("res://scenes/VoxelRingIntegrationTest.tscn")
 const LAUNCHER_SCENE := preload("res://scenes/WorldSizeLauncher.tscn")
 const OUTPUT_PATHS := preload("res://tools/generated_output_paths.gd")
 const WATER_PROBE := preload("res://scripts/Tools/WaterRenderingProbe.cs")
-const REFLECTION_MODEL := preload("res://scripts/Voxel/LOD/RingReflectionModel.cs")
 const TIMEOUT_FRAMES := 2200
 const SETTLE_FRAMES := 150
 
@@ -29,8 +28,6 @@ var _paths := {}
 var _legacy_roughness := false
 var _medium_ssr := false
 var _legacy_shader: Shader
-var _model1 := false # --reflection-model=1 (R1-5a): the horizon march at model 1, plus a marker about 600 m ahead that must be hit
-var _model_switch: RefCounted
 var _far_marker_mirror := Vector3.ZERO
 var _far_marker_half_px := Vector2.ZERO
 
@@ -44,7 +41,6 @@ func _boot() -> void:
 	ProjectSettings.set_setting("ringworld/runtime/active_world_directory", "")
 	_legacy_roughness = OS.get_cmdline_user_args().has("--ssr-legacy-roughness")
 	_medium_ssr = OS.get_cmdline_user_args().has("--ssr-medium")
-	_model1 = OS.get_cmdline_user_args().has("--reflection-model=1")
 	if _legacy_roughness:
 		# A/B baseline only: modify the already-loaded resource for this process;
 		# never write a shader asset to disk.
@@ -99,13 +95,10 @@ func _process(_delta: float) -> bool:
 		if not bool(binding.get("controller_ready", false)) or int(binding.get("bound_materials", 0)) <= 0 or (int(binding.get("geometry_meshes", 0)) <= 0 and int(binding.get("covered_coarse_meshes", 0)) <= 0): return false
 		if _frame < _phase_frame + SETTLE_FRAMES: return false
 		_add_reflection_marker()
-		if _model1:
-			_model_switch = REFLECTION_MODEL.new()
-			_model_switch.call("SetModel", 1.0)
-			_add_far_marker()
+		_add_far_marker() # the 600 m marker the horizon march must hit
 		_freeze_presentation()
 		_drawer.call("SetBenchmarkDrawerOpen", false)
-		_set_ssr(false, 0, 0.0)
+		_set_ssr(false, 0)
 		_phase = "off"; _phase_frame = _frame
 		return false
 	if _phase == "capturing" or _frame < _phase_frame + 20: return false
@@ -121,11 +114,11 @@ func _capture_phase(capture_phase: String) -> void:
 		_fail("frame capture failed: " + capture_phase)
 		return
 	if capture_phase == "off":
-		_off = image; _set_ssr(true, 0, 1.0); _phase = "on"
+		_off = image; _set_ssr(true, 0); _phase = "on"
 	elif capture_phase == "on":
-		_on = image; _set_ssr(true, 2, 1.0); _phase = "hit"
+		_on = image; _set_ssr(true, 2); _phase = "hit"
 	elif capture_phase == "hit":
-		_hit = image; _set_ssr(false, 0, 0.0); _phase = "off_again"
+		_hit = image; _set_ssr(false, 0); _phase = "off_again"
 	else:
 		_off_again = image
 		_finish_comparison()
@@ -140,12 +133,11 @@ func _finish_comparison() -> void:
 	var restore := _mean_difference(_off, _off_again)
 	var hit := _bright_fraction(_hit)
 	print("WATER_SSR_LIVE_CONTROLS_GPU_TEST=METRICS legacy=%s response=%.5f hit=%.5f restore=%.5f captures=%s" % [_legacy_roughness, response, hit, restore, _paths])
-	if _model1:
-		var far := _far_marker_metrics()
-		print("WATER_SSR_LIVE_CONTROLS_GPU_TEST=FAR_MARKER_600M mirror_px=%s half_px=%s on_minus_off_r=%.4f on_minus_off_r_minus_b=%.4f" % [far["centre_px"], far["half_px"], far["dr"], far["drb"]])
-		# The marker is warm (red above blue) and the backdrop is not, so a rise in red minus blue between SSR off and on, at the mirror image of the marker, means the
-		# march found the marker 600 m away. The old march ends at the ray length and cannot.
-		if float(far["dr"]) < 0.04 or float(far["drb"]) < 0.02: _fail("600 m marker not hit at model 1 (on-off red %.4f, red-minus-blue %.4f)" % [far["dr"], far["drb"]]); return
+	var far := _far_marker_metrics()
+	print("WATER_SSR_LIVE_CONTROLS_GPU_TEST=FAR_MARKER_600M mirror_px=%s half_px=%s on_minus_off_r=%.4f on_minus_off_r_minus_b=%.4f" % [far["centre_px"], far["half_px"], far["dr"], far["drb"]])
+	# The marker is warm (red above blue) and the backdrop is not, so a rise in red minus blue between SSR off and on, at the mirror image of the marker, means the
+	# march found the marker 600 m away.
+	if float(far["dr"]) < 0.04 or float(far["drb"]) < 0.02: _fail("600 m marker not hit at model 1 (on-off red %.4f, red-minus-blue %.4f)" % [far["dr"], far["drb"]]); return
 	if response < 0.003: _fail("SSR on/off water ROI response too small %.5f" % response); return
 	if hit < 0.002: _fail("SSR hit-mask ROI has no measurable hits %.5f" % hit); return
 	if restore > maxf(0.02, response * 0.45): _fail("SSR off-again did not restore baseline %.5f" % restore); return
@@ -162,33 +154,28 @@ func _select_water_tab() -> bool:
 func _configure_through_controls() -> bool:
 	# These assignments emit the production signals rather than calling test hooks.
 	var enabled := _drawer.find_child("WaterSsrEnabled", true, false) as CheckButton
-	var strength := _drawer.find_child("WaterSsrStrength", true, false) as HSlider
 	var debug := _drawer.find_child("WaterSsrDebugMode", true, false) as OptionButton
 	var cutoff := _drawer.find_child("WaterSsrRoughnessCutoff", true, false) as HSlider
 	var coarse := _drawer.find_child("WaterSsrCoarseSteps", true, false) as HSlider
 	var refine := _drawer.find_child("WaterSsrRefinementSteps", true, false) as HSlider
 	var ray_distance := _drawer.find_child("WaterSsrMaxRayDistance", true, false) as HSlider
 	var camera_distance := _drawer.find_child("WaterSsrCameraDistance", true, false) as HSlider
-	var far_roughness := _drawer.find_child("WaterFarRoughness", true, false) as HSlider
 	var geometry := _drawer.find_child("FftGeometryHeightScale", true, false) as HSlider
 	var normal := _drawer.find_child("FftNormalStrength", true, false) as HSlider
-	if enabled == null or strength == null or debug == null or cutoff == null or coarse == null or refine == null or ray_distance == null or camera_distance == null or far_roughness == null or geometry == null or normal == null: return _fail("required SSR/FFT controls unavailable") == false
+	if enabled == null or debug == null or cutoff == null or coarse == null or refine == null or ray_distance == null or camera_distance == null or geometry == null or normal == null: return _fail("required SSR/FFT controls unavailable") == false
 	_fft.set("Enabled", true); _fft.set("Resolution", 128); _fft.set("CascadeCount", 2); _fft.set("UpdatesPerSecond", 24)
 	geometry.value = 0.0 # fixture-only deterministic geometry override
 	normal.value = 0.0 # fixture-only deterministic normal override
-	# Regression baseline: old FFT shading forced this .46 far roughness above
-	# the .32 SSR cutoff, regardless of the live SSR controls.
-	far_roughness.value = 0.46; cutoff.value = 0.32
+	cutoff.value = 0.32
 	if _medium_ssr:
 		cutoff.value = 0.25; coarse.value = 12; refine.value = 3; ray_distance.value = 120; camera_distance.value = 250
-	enabled.button_pressed = false; strength.value = 0.0; debug.select(0); debug.item_selected.emit(0)
+	enabled.button_pressed = false; debug.select(0); debug.item_selected.emit(0)
 	return true
 
-func _set_ssr(enabled_value: bool, debug_index: int, strength_value: float) -> void:
+func _set_ssr(enabled_value: bool, debug_index: int) -> void:
 	var enabled := _drawer.find_child("WaterSsrEnabled", true, false) as CheckButton
-	var strength := _drawer.find_child("WaterSsrStrength", true, false) as HSlider
 	var debug := _drawer.find_child("WaterSsrDebugMode", true, false) as OptionButton
-	enabled.button_pressed = enabled_value; strength.value = strength_value; debug.select(debug_index); debug.item_selected.emit(debug_index)
+	enabled.button_pressed = enabled_value; debug.select(debug_index); debug.item_selected.emit(debug_index)
 
 func _add_reflection_marker() -> void:
 	var camera := root.get_viewport().get_camera_3d()
@@ -302,7 +289,6 @@ func _bright_fraction(image: Image) -> float:
 	return float(bright) / max(1, count)
 
 func _cleanup() -> void:
-	if _model_switch != null: _model_switch.call("SetModel", 0.0)
 	if not _defaults.is_empty(): DirAccess.remove_absolute(_defaults)
 
 func _fail(reason: String) -> bool:

@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "note": "R1-5c (docs/work-orders/reflections/R1-2-R1-5-design.md): cost and look of the model-1 water march at a lake waterline, a lake from a cliff, open lake water, a river along its course and from its bank (the user's world, found with tools/InlandSwimProbe.cs) and the lifted coast. reflection_probe = stills at models 0 and 1; wm_* = model 1 against model 0; w1_* = at model 1 (baseline), the water SSR off, camera distance 400/600/800 m, max steps 12/16 against the user's values (32 steps, 8 refinements, 695 m). Run: tools/perf_bench.ps1 -Label r15c -ScenarioFile tools/fixtures/perf_bench_reflection_water.json",
+ "note": "R1-5c (docs/work-orders/reflections/R1-2-R1-5-design.md): cost and look of the model-1 water march at a lake waterline, a lake from a cliff, open lake water, a river along its course and from its bank (the user's world, found with tools/InlandSwimProbe.cs) and the lifted coast. reflection_probe = stills of the single reflection path (R1-8 removed model 0 and the wm_* model comparisons); w1_* = the baseline, the water SSR off, camera distance 400/600/800 m, max steps 12/16 against the user's values (32 steps, 8 refinements, 695 m). Run: tools/perf_bench.ps1 -Label r15c -ScenarioFile tools/fixtures/perf_bench_reflection_water.json",
  "defaults": {
   "window_s": 8,
   "rounds": 2,
@@ -110,27 +110,6 @@
    "pose": "river_bank"
   },
   {
-   "name": "wm_coast_lift",
-   "kind": "ab_matrix",
-   "pose": "coast_eye",
-   "window_s": 5,
-   "rounds": 3,
-   "hold_clocks": true,
-   "stills": false,
-   "variants": [
-    {
-     "name": "model1",
-     "ops": [
-      {
-       "reflection_model": 1
-      }
-     ]
-    }
-   ],
-   "lift_m": 25,
-   "pitch_deg": -6
-  },
-  {
    "name": "w1_coast_lift",
    "kind": "ab_matrix",
    "pose": "coast_eye",
@@ -138,11 +117,6 @@
    "rounds": 2,
    "hold_clocks": true,
    "stills": false,
-   "baseline": [
-    {
-     "reflection_model": 1
-    }
-   ],
    "variants": [
     {
      "name": "water_ssr_off",
@@ -243,25 +217,6 @@
    ],
    "lift_m": 25,
    "pitch_deg": -6
-  },
-  {
-   "name": "wm_lake_waterline",
-   "kind": "ab_matrix",
-   "pose": "lake_waterline",
-   "window_s": 5,
-   "rounds": 3,
-   "hold_clocks": true,
-   "stills": false,
-   "variants": [
-    {
-     "name": "model1",
-     "ops": [
-      {
-       "reflection_model": 1
-      }
-     ]
-    }
-   ]
   },
   {
    "name": "w1_lake_waterline",
@@ -271,11 +226,6 @@
    "rounds": 2,
    "hold_clocks": true,
    "stills": false,
-   "baseline": [
-    {
-     "reflection_model": 1
-    }
-   ],
    "variants": [
     {
      "name": "water_ssr_off",
@@ -370,25 +320,6 @@
        "node": "GraphicsQuality",
        "call": "ApplyWaterTuning",
        "args": []
-      }
-     ]
-    }
-   ]
-  },
-  {
-   "name": "wm_lake_cliff",
-   "kind": "ab_matrix",
-   "pose": "lake_cliff",
-   "window_s": 5,
-   "rounds": 3,
-   "hold_clocks": true,
-   "stills": false,
-   "variants": [
-    {
-     "name": "model1",
-     "ops": [
-      {
-       "reflection_model": 1
       }
      ]
     }
@@ -402,11 +333,6 @@
    "rounds": 2,
    "hold_clocks": true,
    "stills": false,
-   "baseline": [
-    {
-     "reflection_model": 1
-    }
-   ],
    "variants": [
     {
      "name": "water_ssr_off",
@@ -501,25 +427,6 @@
        "node": "GraphicsQuality",
        "call": "ApplyWaterTuning",
        "args": []
-      }
-     ]
-    }
-   ]
-  },
-  {
-   "name": "wm_lake_open",
-   "kind": "ab_matrix",
-   "pose": "lake_open",
-   "window_s": 5,
-   "rounds": 3,
-   "hold_clocks": true,
-   "stills": false,
-   "variants": [
-    {
-     "name": "model1",
-     "ops": [
-      {
-       "reflection_model": 1
       }
      ]
     }
@@ -533,11 +440,6 @@
    "rounds": 2,
    "hold_clocks": true,
    "stills": false,
-   "baseline": [
-    {
-     "reflection_model": 1
-    }
-   ],
    "variants": [
     {
      "name": "water_ssr_off",
@@ -632,25 +534,6 @@
        "node": "GraphicsQuality",
        "call": "ApplyWaterTuning",
        "args": []
-      }
-     ]
-    }
-   ]
-  },
-  {
-   "name": "wm_river_course",
-   "kind": "ab_matrix",
-   "pose": "river_course",
-   "window_s": 5,
-   "rounds": 3,
-   "hold_clocks": true,
-   "stills": false,
-   "variants": [
-    {
-     "name": "model1",
-     "ops": [
-      {
-       "reflection_model": 1
       }
      ]
     }
@@ -664,11 +547,6 @@
    "rounds": 2,
    "hold_clocks": true,
    "stills": false,
-   "baseline": [
-    {
-     "reflection_model": 1
-    }
-   ],
    "variants": [
     {
      "name": "water_ssr_off",
@@ -769,25 +647,6 @@
    ]
   },
   {
-   "name": "wm_river_bank",
-   "kind": "ab_matrix",
-   "pose": "river_bank",
-   "window_s": 5,
-   "rounds": 3,
-   "hold_clocks": true,
-   "stills": false,
-   "variants": [
-    {
-     "name": "model1",
-     "ops": [
-      {
-       "reflection_model": 1
-      }
-     ]
-    }
-   ]
-  },
-  {
    "name": "w1_river_bank",
    "kind": "ab_matrix",
    "pose": "river_bank",
@@ -795,11 +654,6 @@
    "rounds": 2,
    "hold_clocks": true,
    "stills": false,
-   "baseline": [
-    {
-     "reflection_model": 1
-    }
-   ],
    "variants": [
     {
      "name": "water_ssr_off",

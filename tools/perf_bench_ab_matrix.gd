@@ -8,7 +8,6 @@ extends RefCounted
 ##   {"node": "Path", "set": {prop: value}}          properties of a node below the game root
 ##   {"node": "Path", "call": "Method", "args": []}  a method call (re-run after the restore so an "apply" method pushes the old values again)
 ##   {"ssr_half_size": bool}                         RenderingServer.environment_set_ssr_half_size (restored to the effective state before the op: true when WetWorld.SsrHalfSizeActive, else the project setting)
-##   {"reflection_model": 0|1}                       RingReflectionModel.SetModel (the switch ringworld_reflection_model and the main reflected source; restored to the model before the op)
 ## A missing node, property or method is an error for that variant only. Results go to report["ab_matrices"]: per metric the baseline windows, the variant
 ## windows and the per-round delta X - (A before + A after) / 2.
 
@@ -16,7 +15,6 @@ const COMMON := preload("res://tools/shadow_harness_common.gd")
 const TVW := preload("res://tools/tree_visibility_world.gd")
 
 const HALF_SIZE_SETTING := "rendering/environment/screen_space_reflection/half_size"
-const REFLECTION_MODEL_SCRIPT := "res://scripts/Voxel/LOD/RingReflectionModel.cs"
 const BASE_METRICS := ["gpu_total_p50", "wall_p50", "wall_p95", "render_cpu_p50", "process_p50", "setup_p50", "draws_p50"]
 
 
@@ -85,13 +83,6 @@ static func _apply(b: Object, ops: Array, st: Dictionary) -> String:
 				st["half_prev"] = _effective_half(b)
 			st["half"] = true
 			RenderingServer.environment_set_ssr_half_size(bool(op["ssr_half_size"]))
-		if op.has("reflection_model"):
-			if not ResourceLoader.exists(REFLECTION_MODEL_SCRIPT):
-				return "RingReflectionModel missing"
-			if not st.has("model_inst"):
-				st["model_inst"] = load(REFLECTION_MODEL_SCRIPT).new()
-				st["model_prev"] = float(st["model_inst"].call("GetModel"))
-			st["model_inst"].call("SetModel", float(op["reflection_model"]))
 	return ""
 
 
@@ -114,10 +105,6 @@ static func _undo(st: Dictionary) -> void:
 	for c in st["calls"]:
 		if is_instance_valid(c[0]):
 			c[0].callv(c[1], c[2])
-	if st.has("model_inst"):
-		st["model_inst"].call("SetModel", float(st["model_prev"]))
-		st.erase("model_inst")
-		st.erase("model_prev")
 	st["undo"] = []
 	st["calls"] = []
 	st["half"] = false

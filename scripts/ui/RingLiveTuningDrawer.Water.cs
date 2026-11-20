@@ -94,13 +94,9 @@ public partial class RingLiveTuningDrawer
         AddWaterSlider(section, "WaterWaveGeometryFadeMeters", "Geometry detail distance (m)", 100, 50000, 100);
         AddWaterSlider(section, "WaterWaveNormalFadeStartMeters", "Normal fade start (m)", 100, 50000, 100);
         AddWaterSlider(section, "WaterWaveNormalFadeEndMeters", "Normal fade end (m)", 200, 100000, 100);
-        AddWaterSlider(section, "WaterFarRoughness", "Far roughness", .05, 1, .01);
-        AddWaterSlider(section, "WaterFresnelF0", "Fresnel base reflectance", 0, .12, .001);
-        AddWaterSlider(section, "WaterFresnelStrength", "Fresnel strength", 0, 1.5, .01);
         AddWaterSlider(section, "WaterSpecularAaStrength", "Specular AA", 0, 2, .01);
         section = AddWaterGroup(tab, "Water-only screen-space reflections", "Bounded view-space ray tracing. Misses retain the existing environment/grazing reflection; no temporal history is used.");
         AddWaterToggle(section, "WaterSsrEnabled", "Enable water SSR");
-        AddWaterSlider(section, "WaterSsrStrength", "SSR strength", 0, 1, .01);
         AddWaterSlider(section, "WaterSsrCoarseSteps", "SSR coarse steps", 1, 32, 1);
         AddWaterSlider(section, "WaterSsrRefinementSteps", "SSR refinement steps", 0, 8, 1);
         AddWaterSlider(section, "WaterSsrMaxRayDistance", "SSR max ray distance (m)", 10, 1000, 5);

@@ -64,7 +64,7 @@ void fragment() {
 	}
 	ROUGHNESS = surface_roughness;
 	// Dielectric F0 scales with SPECULAR^2, so sqrt(mean T) attenuates it linearly by T; at model 0 the mix is exactly 1 (today's look).
-	SPECULAR = surface_specular * mix(1.0, sqrt(dot(haze.T, vec3(1.0 / 3.0))), ringworld_reflection_model);
+	SPECULAR = surface_specular * sqrt(dot(haze.T, vec3(1.0 / 3.0)));
 	RADIANCE = ring_sky_reflection_radiance(1.0);
 	float cloud_occlusion = sample_local_cloud_shadow(world_position) * ring_day_factor;
 	// Storm light. No light() here, so AO_LIGHT_AFFECT = 1 makes AO dim every light; the megastorm darkness K goes on the albedo side instead of into

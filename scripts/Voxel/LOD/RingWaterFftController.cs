@@ -128,6 +128,7 @@ public partial class RingWaterFftController : Node
         _explorer = GetNodeOrNull<RingVoxelExplorerController>(ExplorerPath);
         _weather = GetNodeOrNull<global::RingworldTechDemo.RingVolumetricCloudLayer>(WeatherSourcePath);
         _localWeatherEffects = GetNodeOrNull<global::RingworldTechDemo.RingLocalWeatherEffects>(LocalWeatherEffectsPath);
+        if (_grid != null) _grid.CanonicalFloatingOriginAnchorChanged += HandleFloatingOriginAnchorChanged;
         _wasEnabled = Enabled;
         if (!Enabled)
             Status = "Disabled: analytic water";
@@ -148,6 +149,7 @@ public partial class RingWaterFftController : Node
         _wind = _windResponse.Step(ResolveWind(), now,
             global::RingworldTechDemo.Weather.RingWindSettings.Current.WaterResponseSeconds, FollowWeatherWind);
         RingWaterModel.UpdateWindClock(now, _wind, FollowWeatherWind);
+        RingWaterModel.UpdateWaveAnchor(_grid, _explorer?.CanonicalPosition);
         // Analytic, disabled and headless water share the same direction/clock.
         RingWaterModel.RefreshOceanMaterials();
         if (!Enabled) { if (_wasEnabled) { ClearSurfaceQueryCache(); _updateScheduler.Reset(); RingWaterModel.RefreshOceanMaterials(); _provider?.Dispose(); _provider = null; Status = "Disabled: analytic water"; } _wasEnabled = false; ActiveCascadeCount = 0; WaterDemandStatus = "dormant"; TargetGeometryUpdatesPerSecond = 0; TargetDetailUpdatesPerSecond = 0; return; }
@@ -220,7 +222,14 @@ public partial class RingWaterFftController : Node
         Status = _provider.Status; RingWaterModel.RefreshOceanMaterials();
         if (WaterDemandStatus != "dormant") RequestSurfaceQuery();
     }
-    public override void _ExitTree() { if (ReferenceEquals(Instance, this)) { Instance = null; RingWaterModel.ClearWindClock(); } ClearSurfaceQueryCache(); RingWaterModel.RefreshOceanMaterials(); _provider?.Dispose(); _provider = null; ActiveCascadeCount = 0; }
+    /// <summary>Debug A/B switch for perf tooling (W1 wave precision): false keeps the legacy absolute wave coordinate. Not a menu row.</summary>
+    public bool PreciseWavePhase { get => RingWaterModel.WaveAnchorEnabled; set => RingWaterModel.WaveAnchorEnabled = value; }
+    // A floating-origin shift moves every water vertex this frame, so the anchor (a world position) is republished at once.
+    private void HandleFloatingOriginAnchorChanged(RingLodGeometrySnapshot previous, RingLodGeometrySnapshot current, RingCanonicalPosition anchor)
+    {
+        if (ReferenceEquals(Instance, this)) RingWaterModel.UpdateWaveAnchor(_grid, _explorer?.CanonicalPosition);
+    }
+    public override void _ExitTree() { if (_grid != null && GodotObject.IsInstanceValid(_grid)) _grid.CanonicalFloatingOriginAnchorChanged -= HandleFloatingOriginAnchorChanged; if (ReferenceEquals(Instance, this)) { Instance = null; RingWaterModel.ClearWindClock(); } ClearSurfaceQueryCache(); RingWaterModel.RefreshOceanMaterials(); _provider?.Dispose(); _provider = null; ActiveCascadeCount = 0; }
     private void CreateProvider() { if (DisplayServer.GetName() == "headless") { Status = "Headless: analytic water fallback"; return; } _provider ??= new RingWaterFftProvider(); Status = "Preparing FFT water"; }
     private RingWaterFftSettings Settings(Vector2 wind)
     {

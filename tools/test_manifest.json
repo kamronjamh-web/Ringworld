@@ -454,9 +454,7 @@
         "scripts/**/*Resolution*",
         "scripts/**/*Fsr*",
         "scripts/**/*Compositor*",
-        "scripts/*AmbientOcclusion*",
-        "scripts/**/RingReflectionModel*",
-        "materials/ring_reflection_model*"
+        "scripts/*AmbientOcclusion*"
       ]
     },
     "perf-telemetry": {
@@ -8094,6 +8092,17 @@
       "expected_s": 1,
       "timeout_s": 60
     },
+    "water_wave_anchor_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "water"
+      ],
+      "marker": "WATER_WAVE_ANCHOR_TEST",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
     "water_ssr_contract_test": {
       "kind": "test",
       "mode": "headless",
@@ -8125,19 +8134,6 @@
       ],
       "world": "certified",
       "marker": "WATER_SSR_LIVE_CONTROLS_GPU_TEST",
-      "expected_s": null,
-      "timeout_s": 300
-    },
-    "water_ssr_live_controls_model1_gpu_test": {
-      "kind": "test",
-      "mode": "gpu",
-      "tier": "extended",
-      "tags": [
-        "water"
-      ],
-      "world": "certified",
-      "marker": "WATER_SSR_LIVE_CONTROLS_GPU_TEST",
-      "user_args": "--reflection-model=1",
       "expected_s": null,
       "timeout_s": 300
     },

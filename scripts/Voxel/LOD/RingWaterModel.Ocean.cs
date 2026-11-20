@@ -200,7 +200,7 @@ public static partial class RingWaterModel
 
     public static long CurrentWindClockVersion => _windClockVersion;
     public static double CurrentWindClock => _windClock;
-    public static void ClearWindClock() { _windClockEnabled = false; _windClockVersion++; }
+    public static void ClearWindClock() { _windClockEnabled = false; _windClockVersion++; InvalidateWaveAnchor(); }
 
     private static void ApplyWaterWind(ShaderMaterial material, float coordinateScale, string? path)
     {

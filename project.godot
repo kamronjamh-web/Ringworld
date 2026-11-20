@@ -259,10 +259,6 @@ ringworld_night_light_scale={
 "type": "float",
 "value": 1.0
 }
-ringworld_reflection_model={
-"type": "float",
-"value": 0.0
-}
 ringworld_sky_live0={
 "type": "vec4",
 "value": Vector4(-1, 0, 0, 1)
@@ -616,6 +612,18 @@ ring_water_far_group_translation_main={
 "value": Vector4(0, 0, 0, 0)
 }
 ring_water_far_group_translation_far={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+ring_water_wave_anchor_world={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+ring_water_wave_anchor_tangent={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+ring_water_wave_anchor_phase={
 "type": "vec4",
 "value": Vector4(0, 0, 0, 0)
 }

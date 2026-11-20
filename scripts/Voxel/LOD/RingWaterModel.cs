@@ -37,9 +37,6 @@ public static partial class RingWaterModel
     public static float WaveGeometryFadeMeters { get; private set; } = 8000.0f;
     public static float WaveNormalFadeStartMeters { get; private set; } = 500.0f;
     public static float WaveNormalFadeEndMeters { get; private set; } = 3000.0f;
-    public static float FarWaterRoughness { get; private set; } = 0.46f;
-    public static float FresnelF0 { get; private set; } = 0.020f;
-    public static float FresnelStrength { get; private set; } = 0.88f;
     public static float SpecularAaStrength { get; private set; } = 0.85f;
     public static float RefractionStrength { get; private set; } = 0.012f;
     public static float AbsorptionDensity { get; private set; } = 0.11f;
@@ -54,7 +51,6 @@ public static partial class RingWaterModel
     public static float ShallowAlpha { get; private set; } = 0.38f;
     public static float DeepAlpha { get; private set; } = 0.995f;
     public static bool SsrEnabled { get; private set; } = true;
-    public static float SsrStrength { get; private set; } = 0.65f;
     public static int SsrCoarseSteps { get; private set; } = 24;
     public static int SsrRefinementSteps { get; private set; } = 4;
     public static float SsrMaxRayDistance { get; private set; } = 250.0f;
@@ -110,9 +106,6 @@ public static partial class RingWaterModel
         float waveGeometryFadeMeters,
         float waveNormalFadeStartMeters,
         float waveNormalFadeEndMeters,
-        float farWaterRoughness,
-        float fresnelF0,
-        float fresnelStrength,
         float specularAaStrength,
         float refractionStrength,
         float absorptionDensity,
@@ -121,7 +114,7 @@ public static partial class RingWaterModel
         float crestTransmissionStrength,
         float shallowAlpha,
         float deepAlpha,
-        bool ssrEnabled, float ssrStrength, int ssrCoarseSteps, int ssrRefinementSteps,
+        bool ssrEnabled, int ssrCoarseSteps, int ssrRefinementSteps,
         float ssrMaxRayDistance, float ssrCameraDistance, float ssrDepthToleranceNear, float ssrRayBias,
         float ssrDepthToleranceFar, float ssrEdgeFade, float ssrRoughnessCutoff, int ssrDebugMode,
         float shoreFoamDepthMeters,
@@ -152,9 +145,6 @@ public static partial class RingWaterModel
         WaveGeometryFadeMeters = Mathf.Max(100.0f, waveGeometryFadeMeters);
         WaveNormalFadeStartMeters = Mathf.Max(100.0f, waveNormalFadeStartMeters);
         WaveNormalFadeEndMeters = Mathf.Max(WaveNormalFadeStartMeters + 1.0f, waveNormalFadeEndMeters);
-        FarWaterRoughness = Mathf.Clamp(farWaterRoughness, 0.05f, 1.0f);
-        FresnelF0 = Mathf.Clamp(fresnelF0, 0.0f, 0.12f);
-        FresnelStrength = Mathf.Clamp(fresnelStrength, 0.0f, 1.5f);
         SpecularAaStrength = Mathf.Clamp(specularAaStrength, 0.0f, 2.0f);
         RefractionStrength = Mathf.Clamp(refractionStrength, 0.0f, 0.08f);
         AbsorptionDensity = Mathf.Max(0.001f, absorptionDensity);
@@ -164,7 +154,6 @@ public static partial class RingWaterModel
         ShallowAlpha = Mathf.Clamp(shallowAlpha, 0.0f, 1.0f);
         DeepAlpha = Mathf.Clamp(deepAlpha, ShallowAlpha, 1.0f);
         SsrEnabled = ssrEnabled;
-        SsrStrength = Mathf.Clamp(ssrStrength, 0.0f, 1.0f);
         SsrCoarseSteps = Mathf.Clamp(ssrCoarseSteps, 1, 32);
         SsrRefinementSteps = Mathf.Clamp(ssrRefinementSteps, 0, 8);
         SsrMaxRayDistance = Mathf.Clamp(ssrMaxRayDistance, 10.0f, 1000.0f);
@@ -252,9 +241,6 @@ public static partial class RingWaterModel
         material.SetShaderParameter("wave_geometry_fade_meters", WaveGeometryFadeMeters * coordinateScale);
         material.SetShaderParameter("wave_normal_fade_start_meters", WaveNormalFadeStartMeters * coordinateScale);
         material.SetShaderParameter("wave_normal_fade_end_meters", WaveNormalFadeEndMeters * coordinateScale);
-        material.SetShaderParameter("far_water_roughness", FarWaterRoughness);
-        material.SetShaderParameter("fresnel_f0", FresnelF0);
-        material.SetShaderParameter("fresnel_strength", FresnelStrength);
         material.SetShaderParameter("specular_aa_strength", SpecularAaStrength);
         material.SetShaderParameter("refraction_strength", RefractionStrength);
         material.SetShaderParameter("absorption_density", AbsorptionDensity / coordinateScale);
@@ -266,7 +252,6 @@ public static partial class RingWaterModel
         material.SetShaderParameter("shallow_alpha", ShallowAlpha);
         material.SetShaderParameter("deep_alpha", DeepAlpha);
         material.SetShaderParameter("water_ssr_enabled", SsrEnabled);
-        material.SetShaderParameter("water_ssr_strength", SsrStrength);
         material.SetShaderParameter("water_ssr_coarse_steps", SsrCoarseSteps);
         material.SetShaderParameter("water_ssr_refinement_steps", SsrRefinementSteps);
         material.SetShaderParameter("water_ssr_max_ray_distance", SsrMaxRayDistance * coordinateScale);
@@ -320,8 +305,7 @@ public static partial class RingWaterModel
             $"Water surface synthesis ready: five warped sine/fBm bands, exponential crests "
             + $"{WaveCrestSharpness:0.00}/{WaveCrestBlend:0.00}, analytic-normal error={maximumError:0.000000}, "
             + $"bandlimit={WaveBandlimitStartRadians:0.00}-{WaveBandlimitEndRadians:0.00}rad/px, "
-            + $"breakingFoamSlope>={BreakingFoamSlopeStart:0.00}, specularAA={SpecularAaStrength:0.00}, "
-            + $"Schlick F0={FresnelF0:0.000}.");
+            + $"breakingFoamSlope>={BreakingFoamSlopeStart:0.00}, specularAA={SpecularAaStrength:0.00}.");
     }
 
     private static double ModifiedBesselI0Approx(double value)

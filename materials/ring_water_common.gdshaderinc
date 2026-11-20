@@ -21,6 +21,12 @@ global uniform float ring_water_river_advection_main;
 global uniform float ring_water_river_advection_far;
 global uniform vec4 ring_water_far_group_translation_main;
 global uniform vec4 ring_water_far_group_translation_far;
+// Wave precision (W1, 2026-11-20; scripts/Voxel/LOD/RingWaterModel.WaveAnchor.cs). An anchor near the observer in the main view's world frame:
+// world.xyz its position, world.w its distance from the ring axis; tangent.xyz the around direction there, tangent.w 1 when valid; phase.xy its around
+// fraction u_A split at 2^-20 into K and r (zw: the same with the river advection folded in). Only slot-0 materials (the main view, unscaled) use it.
+global uniform vec4 ring_water_wave_anchor_world;
+global uniform vec4 ring_water_wave_anchor_tangent;
+global uniform vec4 ring_water_wave_anchor_phase;
 
 uniform sampler2D water_screen_texture : hint_screen_texture, repeat_disable, filter_linear_mipmap;
 uniform sampler2D water_depth_texture : hint_depth_texture, repeat_disable, filter_nearest;
@@ -82,15 +88,41 @@ vec2 ring_water_wind_direction(vec2 direction) {
 }
 // Quantize every around-ring phase gradient (including domain warp) so changes
 // in wind bearing remain closed at atan's seam, including scaled-far rendering.
-vec2 ring_water_wave_direction(vec2 direction, float frequency, float kind_clock_scale) {
+// around_cycles is the integer n of cycles per turn (0 without the wind clock): the train's around phase is 2 pi n u for the around fraction u.
+vec2 ring_water_wave_direction(vec2 direction, float frequency, float kind_clock_scale, out float around_cycles) {
     vec2 rotated = ring_water_wind_direction(direction);
+    around_cycles = 0.0;
     if (!water_wind_clock_enabled) return rotated;
     float circumference = 6.28318530718 * max(ring_radius_meters, 1.0);
     float kind_coordinate_scale = kind_clock_scale > 0.8 ? 1.0 : (kind_clock_scale > 0.3 ? 1.65 : 2.15);
     circumference *= kind_coordinate_scale;
-    rotated.x = floor(rotated.x * frequency * circumference / 6.28318530718 + 0.5)
-        * 6.28318530718 / circumference / max(frequency, 0.000001);
+    around_cycles = floor(rotated.x * frequency * circumference / 6.28318530718 + 0.5);
+    rotated.x = around_cycles * 6.28318530718 / circumference / max(frequency, 0.000001);
     return rotated;
+}
+
+// W1: the anchored exact phase. Off without the wind clock, for scaled-far or per-material (slot -1) bindings and without a published anchor; those
+// keep the legacy absolute coordinate.
+bool ring_water_anchor_active() {
+    return water_wind_clock_enabled && water_wind_global_slot == 0 && ring_water_wave_anchor_tangent.w > 0.5;
+}
+// Local wave coordinate: x is the around angle from the anchor times the ring radius uniform (the metric of ring_water_coordinates), y the legacy
+// across coordinate. The angle comes from small anchor-relative offsets, so it keeps millimetre precision anywhere on the ring.
+vec2 ring_water_anchor_coordinates(vec3 sample_world_position, vec3 sample_ring_center) {
+    vec3 offset = sample_world_position - ring_water_wave_anchor_world.xyz;
+    vec3 tangent = ring_water_wave_anchor_tangent.xyz;
+    // The outward radial at the anchor is (t.z, 0, -t.x): the ring axis is world Y.
+    float local_angle = atan(dot(offset, tangent), ring_water_wave_anchor_world.w + offset.x * tangent.z - offset.z * tangent.x);
+    return vec2(local_angle * max(1.0, ring_radius_meters), sample_world_position.y - sample_ring_center.y);
+}
+// 2 pi frac(n u_A) with u_A = K 2^-20 + r: (n K) mod 2^20 is exact in 32-bit integer arithmetic (two's complement keeps it exact for n < 0), and
+// n r stays below about 12 cycles, so the float remainder keeps ~1e-6 of a cycle.
+float ring_water_anchor_phase(float around_cycles, vec2 split) {
+    uint whole = (uint(int(around_cycles)) * uint(split.x)) & 0xFFFFFu;
+    return 6.28318530718 * fract(float(whole) * (1.0 / 1048576.0) + around_cycles * split.y);
+}
+vec2 ring_water_anchor_split(float water_kind) {
+    return water_kind < 2.5 ? ring_water_wave_anchor_phase.xy : ring_water_wave_anchor_phase.zw;
 }
 
 vec2 ring_water_coordinates(vec3 sample_world_position, vec3 sample_ring_center, float radius_meters) {
@@ -170,7 +202,7 @@ float ring_water_profile_height_scale(float water_kind) {
 // Far-water roughness at reflection model 1 (docs/reflections-plan.md 10.7, user 2026-11-18): far away every wave is below a pixel, so the roughness is
 // that of the whole slope variance (Cox and Munk), matched to the sky reflection of Gaussian slopes at grazing view. Ocean: a constant for about 8 m/s
 // (first step; the wind-driven curve comes later). Lakes and rivers: their own calmer wave profile plus the capillary floor. The interpolated kind ramps
-// between them at river mouths as the inland optics do (1.05 to 2.0). Model 0 keeps the far_water_roughness uniform.
+// between them at river mouths as the inland optics do (1.05 to 2.0).
 const float RING_WATER_FAR_ROUGHNESS_OCEAN = 0.30;
 const float RING_WATER_FAR_ROUGHNESS_INLAND = 0.155;
 float ring_water_far_roughness_model1(float water_kind) {
@@ -238,75 +270,96 @@ float ring_water_band_weight(
 		effective_footprint);
 }
 
-float ring_water_wave_height_filtered(
+// One wave train of the near stack: its phase (domain warp included) and the phase gradient per unit of p. With the anchor, p is the local coordinate
+// and the anchor's exact around phase 2 pi frac(n u_A) is added to the train and to its warp (both are quantised around the ring).
+float ring_water_train_phase(
+	vec2 p,
+	float base_frequency,
+	float time_seconds,
+	bool anchored,
+	vec2 split,
+	vec2 direction,
+	float ratio,
+	int index,
+	float coefficient,
+	float offset,
+	vec2 warp_direction,
+	float warp_ratio,
+	float warp_coefficient,
+	float warp_offset,
+	float warp_scale,
+	out vec2 phase_gradient) {
+	float around_cycles;
+	float warp_around_cycles;
+	vec2 train_direction = ring_water_wave_direction(direction, base_frequency * ratio, time_seconds, around_cycles);
+	vec2 train_warp_direction = ring_water_wave_direction(warp_direction, base_frequency * warp_ratio, time_seconds, warp_around_cycles);
+	float warp_argument = dot(p, train_warp_direction) * base_frequency * warp_ratio + ring_water_phase(index + 5, warp_coefficient, time_seconds) + warp_offset;
+	float phase = dot(p, train_direction) * base_frequency * ratio;
+	if (anchored) {
+		warp_argument += ring_water_anchor_phase(warp_around_cycles, split);
+		phase += ring_water_anchor_phase(around_cycles, split);
+	}
+	phase_gradient = train_direction * base_frequency * ratio
+		+ train_warp_direction * base_frequency * warp_ratio * cos(warp_argument) * wave_domain_warp_strength * warp_scale;
+	return phase + sin(warp_argument) * wave_domain_warp_strength * warp_scale + ring_water_phase(index, coefficient, time_seconds) + offset;
+}
+
+// W2 (user, 2026-11-20): lake wind sea. The five trains spread within -37 to +31 degrees of the first (no two near perpendicular), and all travel the
+// way the first does (a direction is negated where the phase rate is negative). The ocean and rivers keep the original set.
+const vec2 RING_WATER_LAKE_DIRECTION_2 = vec2(-0.7588, -0.6513); // +17 degrees
+const vec2 RING_WATER_LAKE_DIRECTION_3 = vec2(0.9999, 0.0112);   // -23 degrees
+const vec2 RING_WATER_LAKE_DIRECTION_4 = vec2(-0.5787, -0.8156); // +31 degrees
+const vec2 RING_WATER_LAKE_DIRECTION_5 = vec2(0.9729, -0.2310);  // -37 degrees
+
+// The five trains of the near stack (ring_water_wave_height_core and ring_water_wave_gradient_core share it).
+void ring_water_wave_stack(
+	vec2 p,
+	float time_seconds,
+	float water_kind,
+	bool anchored,
+	vec2 split,
+	out vec4 phases,
+	out float fifth_phase,
+	out vec2 first_gradient,
+	out vec2 second_gradient,
+	out vec2 third_gradient,
+	out vec2 fourth_gradient,
+	out vec2 fifth_gradient) {
+	float base_frequency = 6.28318530718 / max(2.0, wave_length_meters);
+	bool lake = water_kind > 1.5 && water_kind < 2.5;
+	phases.x = ring_water_train_phase(p, base_frequency, time_seconds, anchored, split,
+		vec2(0.916, 0.401), 1.0, 0, 1.0, 0.0, vec2(-0.511, 0.860), 0.173, 0.071, 0.0, 1.0, first_gradient);
+	phases.y = ring_water_train_phase(p, base_frequency, time_seconds, anchored, split,
+		lake ? RING_WATER_LAKE_DIRECTION_2 : vec2(-0.349, 0.937), 1.431, 1, -1.173, 1.1, vec2(0.766, 0.643), 0.227, -0.053, 1.7, 0.87, second_gradient);
+	phases.z = ring_water_train_phase(p, base_frequency, time_seconds, anchored, split,
+		lake ? RING_WATER_LAKE_DIRECTION_3 : vec2(0.625, -0.781), 2.173, 2, 1.619, 2.4, vec2(-0.935, -0.355), 0.319, 0.041, 3.1, 0.74, third_gradient);
+	phases.w = ring_water_train_phase(p, base_frequency, time_seconds, anchored, split,
+		lake ? RING_WATER_LAKE_DIRECTION_4 : vec2(-0.829, -0.559), 3.117, 3, -2.071, 3.8, vec2(0.252, -0.968), 0.271, -0.063, 4.6, 0.63, fourth_gradient);
+	fifth_phase = ring_water_train_phase(p, base_frequency, time_seconds, anchored, split,
+		lake ? RING_WATER_LAKE_DIRECTION_5 : vec2(0.187, 0.982), 5.037, 4, 2.513, 5.2, vec2(0.982, -0.188), 0.413, 0.037, 0.8, 0.51, fifth_gradient);
+}
+
+float ring_water_wave_height_core(
 	vec2 p,
 	float time_seconds,
 	vec2 coordinate_dx,
-	vec2 coordinate_dy) {
-	float base_frequency = 6.28318530718 / max(2.0, wave_length_meters);
+	vec2 coordinate_dy,
+	float water_kind,
+	bool anchored,
+	vec2 split) {
 	float detail = wave_detail_strength;
 	float crest_mean = ring_water_i0_approx(wave_crest_sharpness);
 	float crest_scale = 1.0 / max(0.0001, exp(wave_crest_sharpness) - crest_mean);
-	vec2 first_direction = ring_water_wave_direction(vec2(0.916, 0.401), base_frequency * 1.0, time_seconds);
-	vec2 second_direction = ring_water_wave_direction(vec2(-0.349, 0.937), base_frequency * 1.431, time_seconds);
-	vec2 third_direction = ring_water_wave_direction(vec2(0.625, -0.781), base_frequency * 2.173, time_seconds);
-	vec2 fourth_direction = ring_water_wave_direction(vec2(-0.829, -0.559), base_frequency * 3.117, time_seconds);
-	vec2 fifth_direction = ring_water_wave_direction(vec2(0.187, 0.982), base_frequency * 5.037, time_seconds);
-	vec2 first_warp_direction = ring_water_wave_direction(vec2(-0.511, 0.860), base_frequency * 0.173, time_seconds);
-	vec2 second_warp_direction = ring_water_wave_direction(vec2(0.766, 0.643), base_frequency * 0.227, time_seconds);
-	vec2 third_warp_direction = ring_water_wave_direction(vec2(-0.935, -0.355), base_frequency * 0.319, time_seconds);
-	vec2 fourth_warp_direction = ring_water_wave_direction(vec2(0.252, -0.968), base_frequency * 0.271, time_seconds);
-	vec2 fifth_warp_direction = ring_water_wave_direction(vec2(0.982, -0.188), base_frequency * 0.413, time_seconds);
-	float first_warp_argument = dot(p, first_warp_direction) * base_frequency * 0.173 + ring_water_phase(5, 0.071, time_seconds);
-	float second_warp_argument = dot(p, second_warp_direction) * base_frequency * 0.227 + ring_water_phase(6, -0.053, time_seconds) + 1.7;
-	float third_warp_argument = dot(p, third_warp_direction) * base_frequency * 0.319 + ring_water_phase(7, 0.041, time_seconds) + 3.1;
-	float fourth_warp_argument = dot(p, fourth_warp_direction) * base_frequency * 0.271 + ring_water_phase(8, -0.063, time_seconds) + 4.6;
-	float fifth_warp_argument = dot(p, fifth_warp_direction) * base_frequency * 0.413 + ring_water_phase(9, 0.037, time_seconds) + 0.8;
-	float first_warp = sin(first_warp_argument);
-	float second_warp = sin(second_warp_argument);
-	float third_warp = sin(third_warp_argument);
-	float fourth_warp = sin(fourth_warp_argument);
-	float fifth_warp = sin(fifth_warp_argument);
-	float first_phase = dot(p, first_direction) * base_frequency
-		+ first_warp * wave_domain_warp_strength + ring_water_phase(0, 1.0, time_seconds);
-	float second_phase = dot(p, second_direction) * base_frequency * 1.431
-		+ second_warp * wave_domain_warp_strength * 0.87 + ring_water_phase(1, -1.173, time_seconds) + 1.1;
-	float third_phase = dot(p, third_direction) * base_frequency * 2.173
-		+ third_warp * wave_domain_warp_strength * 0.74 + ring_water_phase(2, 1.619, time_seconds) + 2.4;
-	float fourth_phase = dot(p, fourth_direction) * base_frequency * 3.117
-		+ fourth_warp * wave_domain_warp_strength * 0.63 + ring_water_phase(3, -2.071, time_seconds) + 3.8;
-	float fifth_phase = dot(p, fifth_direction) * base_frequency * 5.037
-		+ fifth_warp * wave_domain_warp_strength * 0.51 + ring_water_phase(4, 2.513, time_seconds) + 5.2;
-	float first = ring_water_wave_profile(
-		first_phase,
-		crest_mean,
-		crest_scale);
-	float second = ring_water_wave_profile(
-		second_phase,
-		crest_mean,
-		crest_scale);
-	float third = ring_water_wave_profile(
-		third_phase,
-		crest_mean,
-		crest_scale);
-	float fourth = ring_water_wave_profile(
-		fourth_phase,
-		crest_mean,
-		crest_scale);
-	float fifth = ring_water_wave_profile(
-		fifth_phase,
-		crest_mean,
-		crest_scale);
-	vec2 first_phase_gradient = first_direction * base_frequency
-		+ first_warp_direction * base_frequency * 0.173 * cos(first_warp_argument) * wave_domain_warp_strength;
-	vec2 second_phase_gradient = second_direction * base_frequency * 1.431
-		+ second_warp_direction * base_frequency * 0.227 * cos(second_warp_argument) * wave_domain_warp_strength * 0.87;
-	vec2 third_phase_gradient = third_direction * base_frequency * 2.173
-		+ third_warp_direction * base_frequency * 0.319 * cos(third_warp_argument) * wave_domain_warp_strength * 0.74;
-	vec2 fourth_phase_gradient = fourth_direction * base_frequency * 3.117
-		+ fourth_warp_direction * base_frequency * 0.271 * cos(fourth_warp_argument) * wave_domain_warp_strength * 0.63;
-	vec2 fifth_phase_gradient = fifth_direction * base_frequency * 5.037
-		+ fifth_warp_direction * base_frequency * 0.413 * cos(fifth_warp_argument) * wave_domain_warp_strength * 0.51;
+	vec4 phases;
+	float fifth_phase;
+	vec2 first_phase_gradient, second_phase_gradient, third_phase_gradient, fourth_phase_gradient, fifth_phase_gradient;
+	ring_water_wave_stack(p, time_seconds, water_kind, anchored, split, phases, fifth_phase,
+		first_phase_gradient, second_phase_gradient, third_phase_gradient, fourth_phase_gradient, fifth_phase_gradient);
+	float first = ring_water_wave_profile(phases.x, crest_mean, crest_scale);
+	float second = ring_water_wave_profile(phases.y, crest_mean, crest_scale);
+	float third = ring_water_wave_profile(phases.z, crest_mean, crest_scale);
+	float fourth = ring_water_wave_profile(phases.w, crest_mean, crest_scale);
+	float fifth = ring_water_wave_profile(fifth_phase, crest_mean, crest_scale);
 	float first_filter = ring_water_band_weight(first_phase_gradient, coordinate_dx, coordinate_dy);
 	float second_filter = ring_water_band_weight(second_phase_gradient, coordinate_dx, coordinate_dy);
 	float third_filter = ring_water_band_weight(third_phase_gradient, coordinate_dx, coordinate_dy);
@@ -320,55 +373,33 @@ float ring_water_wave_height_filtered(
 		+ fifth * 0.04 * detail * fifth_filter);
 }
 
-float ring_water_wave_height(vec2 p, float time_seconds) {
-	return ring_water_wave_height_filtered(p, time_seconds, vec2(0.0), vec2(0.0));
-}
-
-vec2 ring_water_wave_gradient_filtered(
+float ring_water_wave_height_filtered(
 	vec2 p,
 	float time_seconds,
 	vec2 coordinate_dx,
 	vec2 coordinate_dy) {
-	float base_frequency = 6.28318530718 / max(2.0, wave_length_meters);
+	return ring_water_wave_height_core(p, time_seconds, coordinate_dx, coordinate_dy, 1.0, false, vec2(0.0));
+}
+
+float ring_water_wave_height(vec2 p, float time_seconds) {
+	return ring_water_wave_height_filtered(p, time_seconds, vec2(0.0), vec2(0.0));
+}
+
+vec2 ring_water_wave_gradient_core(
+	vec2 p,
+	float time_seconds,
+	vec2 coordinate_dx,
+	vec2 coordinate_dy,
+	float water_kind,
+	bool anchored,
+	vec2 split) {
 	float crest_mean = ring_water_i0_approx(wave_crest_sharpness);
 	float crest_scale = 1.0 / max(0.0001, exp(wave_crest_sharpness) - crest_mean);
-	vec2 first_direction = ring_water_wave_direction(vec2(0.916, 0.401), base_frequency * 1.0, time_seconds);
-	vec2 second_direction = ring_water_wave_direction(vec2(-0.349, 0.937), base_frequency * 1.431, time_seconds);
-	vec2 third_direction = ring_water_wave_direction(vec2(0.625, -0.781), base_frequency * 2.173, time_seconds);
-	vec2 fourth_direction = ring_water_wave_direction(vec2(-0.829, -0.559), base_frequency * 3.117, time_seconds);
-	vec2 fifth_direction = ring_water_wave_direction(vec2(0.187, 0.982), base_frequency * 5.037, time_seconds);
-	vec2 first_warp_direction = ring_water_wave_direction(vec2(-0.511, 0.860), base_frequency * 0.173, time_seconds);
-	vec2 second_warp_direction = ring_water_wave_direction(vec2(0.766, 0.643), base_frequency * 0.227, time_seconds);
-	vec2 third_warp_direction = ring_water_wave_direction(vec2(-0.935, -0.355), base_frequency * 0.319, time_seconds);
-	vec2 fourth_warp_direction = ring_water_wave_direction(vec2(0.252, -0.968), base_frequency * 0.271, time_seconds);
-	vec2 fifth_warp_direction = ring_water_wave_direction(vec2(0.982, -0.188), base_frequency * 0.413, time_seconds);
-
-	float first_warp_argument = dot(p, first_warp_direction) * base_frequency * 0.173 + ring_water_phase(5, 0.071, time_seconds);
-	float second_warp_argument = dot(p, second_warp_direction) * base_frequency * 0.227 + ring_water_phase(6, -0.053, time_seconds) + 1.7;
-	float third_warp_argument = dot(p, third_warp_direction) * base_frequency * 0.319 + ring_water_phase(7, 0.041, time_seconds) + 3.1;
-	float fourth_warp_argument = dot(p, fourth_warp_direction) * base_frequency * 0.271 + ring_water_phase(8, -0.063, time_seconds) + 4.6;
-	float fifth_warp_argument = dot(p, fifth_warp_direction) * base_frequency * 0.413 + ring_water_phase(9, 0.037, time_seconds) + 0.8;
-	float first_phase = dot(p, first_direction) * base_frequency
-		+ sin(first_warp_argument) * wave_domain_warp_strength + ring_water_phase(0, 1.0, time_seconds);
-	float second_phase = dot(p, second_direction) * base_frequency * 1.431
-		+ sin(second_warp_argument) * wave_domain_warp_strength * 0.87 + ring_water_phase(1, -1.173, time_seconds) + 1.1;
-	float third_phase = dot(p, third_direction) * base_frequency * 2.173
-		+ sin(third_warp_argument) * wave_domain_warp_strength * 0.74 + ring_water_phase(2, 1.619, time_seconds) + 2.4;
-	float fourth_phase = dot(p, fourth_direction) * base_frequency * 3.117
-		+ sin(fourth_warp_argument) * wave_domain_warp_strength * 0.63 + ring_water_phase(3, -2.071, time_seconds) + 3.8;
-	float fifth_phase = dot(p, fifth_direction) * base_frequency * 5.037
-		+ sin(fifth_warp_argument) * wave_domain_warp_strength * 0.51 + ring_water_phase(4, 2.513, time_seconds) + 5.2;
-
-	vec2 first_phase_gradient = first_direction * base_frequency
-		+ first_warp_direction * base_frequency * 0.173 * cos(first_warp_argument) * wave_domain_warp_strength;
-	vec2 second_phase_gradient = second_direction * base_frequency * 1.431
-		+ second_warp_direction * base_frequency * 0.227 * cos(second_warp_argument) * wave_domain_warp_strength * 0.87;
-	vec2 third_phase_gradient = third_direction * base_frequency * 2.173
-		+ third_warp_direction * base_frequency * 0.319 * cos(third_warp_argument) * wave_domain_warp_strength * 0.74;
-	vec2 fourth_phase_gradient = fourth_direction * base_frequency * 3.117
-		+ fourth_warp_direction * base_frequency * 0.271 * cos(fourth_warp_argument) * wave_domain_warp_strength * 0.63;
-	vec2 fifth_phase_gradient = fifth_direction * base_frequency * 5.037
-		+ fifth_warp_direction * base_frequency * 0.413 * cos(fifth_warp_argument) * wave_domain_warp_strength * 0.51;
+	vec4 phases;
+	float fifth_phase;
+	vec2 first_phase_gradient, second_phase_gradient, third_phase_gradient, fourth_phase_gradient, fifth_phase_gradient;
+	ring_water_wave_stack(p, time_seconds, water_kind, anchored, split, phases, fifth_phase,
+		first_phase_gradient, second_phase_gradient, third_phase_gradient, fourth_phase_gradient, fifth_phase_gradient);
 	float first_filter = ring_water_band_weight(first_phase_gradient, coordinate_dx, coordinate_dy);
 	float second_filter = ring_water_band_weight(second_phase_gradient, coordinate_dx, coordinate_dy);
 	float third_filter = ring_water_band_weight(third_phase_gradient, coordinate_dx, coordinate_dy);
@@ -378,56 +409,71 @@ vec2 ring_water_wave_gradient_filtered(
 	// exponentially shaped fBm stack used for displacement. No texture lookup or
 	// central-difference resampling is required for the per-pixel normal. Each
 	// derivative is then band-limited independently for the current pixel.
-	vec2 gradient = ring_water_wave_profile_derivative(first_phase, crest_scale)
+	vec2 gradient = ring_water_wave_profile_derivative(phases.x, crest_scale)
 		* first_phase_gradient * 0.42 * first_filter;
-	gradient += ring_water_wave_profile_derivative(second_phase, crest_scale)
+	gradient += ring_water_wave_profile_derivative(phases.y, crest_scale)
 		* second_phase_gradient * 0.30 * second_filter;
-	gradient += ring_water_wave_profile_derivative(third_phase, crest_scale)
+	gradient += ring_water_wave_profile_derivative(phases.z, crest_scale)
 		* third_phase_gradient * 0.16 * wave_detail_strength * third_filter;
-	gradient += ring_water_wave_profile_derivative(fourth_phase, crest_scale)
+	gradient += ring_water_wave_profile_derivative(phases.w, crest_scale)
 		* fourth_phase_gradient * 0.08 * wave_detail_strength * fourth_filter;
 	gradient += ring_water_wave_profile_derivative(fifth_phase, crest_scale)
 		* fifth_phase_gradient * 0.04 * wave_detail_strength * fifth_filter;
 	return gradient * wave_height_meters;
 }
 
+vec2 ring_water_wave_gradient_filtered(
+	vec2 p,
+	float time_seconds,
+	vec2 coordinate_dx,
+	vec2 coordinate_dy) {
+	return ring_water_wave_gradient_core(p, time_seconds, coordinate_dx, coordinate_dy, 1.0, false, vec2(0.0));
+}
+
 vec2 ring_water_wave_gradient(vec2 p, float time_seconds) {
 	return ring_water_wave_gradient_filtered(p, time_seconds, vec2(0.0), vec2(0.0));
 }
 
+// p is ring_water_coordinates (legacy) or ring_water_anchor_coordinates when `anchored` (ring_water_anchor_active()); the derivatives come from a
+// local coordinate either way. With the anchor the river advection is in the anchor's river split, not in p.
 float ring_water_profile_height_filtered(
 	vec2 p,
 	float time_seconds,
 	vec2 coordinate_dx,
 	vec2 coordinate_dy,
-	float water_kind) {
+	float water_kind,
+	bool anchored) {
+	vec2 split = ring_water_anchor_split(water_kind);
 	if (water_kind < 1.5) {
-		return ring_water_wave_height_filtered(p, time_seconds, coordinate_dx, coordinate_dy);
+		return ring_water_wave_height_core(p, time_seconds, coordinate_dx, coordinate_dy, water_kind, anchored, split);
 	}
 	if (water_kind < 2.5) {
 		const float lake_scale = 1.65;
-		return ring_water_wave_height_filtered(
+		return ring_water_wave_height_core(
 			p * lake_scale,
 			water_wind_clock_enabled ? 0.42 : time_seconds * 0.42,
 			coordinate_dx * lake_scale,
-			coordinate_dy * lake_scale) * 0.24;
+			coordinate_dy * lake_scale,
+			water_kind, anchored, split) * 0.24;
 	}
 	const float river_scale = 2.15;
-	vec2 advected = p * river_scale + vec2(water_wind_clock_enabled ? ring_water_river_advection_value() : time_seconds * wave_speed * 1.8, 0.0);
-	return ring_water_wave_height_filtered(
+	vec2 advected = p * river_scale + vec2(anchored ? 0.0 : (water_wind_clock_enabled ? ring_water_river_advection_value() : time_seconds * wave_speed * 1.8), 0.0);
+	return ring_water_wave_height_core(
 		advected,
 		water_wind_clock_enabled ? 0.18 : time_seconds * 0.18,
 		coordinate_dx * river_scale,
-		coordinate_dy * river_scale) * 0.11;
+		coordinate_dy * river_scale,
+		water_kind, anchored, split) * 0.11;
 }
 
-float ring_water_profile_height(vec2 p, float time_seconds, float water_kind) {
+float ring_water_profile_height(vec2 p, float time_seconds, float water_kind, bool anchored) {
 	return ring_water_profile_height_filtered(
 		p,
 		time_seconds,
 		vec2(0.0),
 		vec2(0.0),
-		water_kind);
+		water_kind,
+		anchored);
 }
 
 vec2 ring_water_profile_gradient_filtered(
@@ -435,25 +481,29 @@ vec2 ring_water_profile_gradient_filtered(
 	float time_seconds,
 	vec2 coordinate_dx,
 	vec2 coordinate_dy,
-	float water_kind) {
+	float water_kind,
+	bool anchored) {
+	vec2 split = ring_water_anchor_split(water_kind);
 	if (water_kind < 1.5) {
-		return ring_water_wave_gradient_filtered(p, time_seconds, coordinate_dx, coordinate_dy);
+		return ring_water_wave_gradient_core(p, time_seconds, coordinate_dx, coordinate_dy, water_kind, anchored, split);
 	}
 	if (water_kind < 2.5) {
 		const float lake_scale = 1.65;
-		return ring_water_wave_gradient_filtered(
+		return ring_water_wave_gradient_core(
 			p * lake_scale,
 			water_wind_clock_enabled ? 0.42 : time_seconds * 0.42,
 			coordinate_dx * lake_scale,
-			coordinate_dy * lake_scale) * (0.24 * lake_scale);
+			coordinate_dy * lake_scale,
+			water_kind, anchored, split) * (0.24 * lake_scale);
 	}
 	const float river_scale = 2.15;
-	vec2 advected = p * river_scale + vec2(water_wind_clock_enabled ? ring_water_river_advection_value() : time_seconds * wave_speed * 1.8, 0.0);
-	return ring_water_wave_gradient_filtered(
+	vec2 advected = p * river_scale + vec2(anchored ? 0.0 : (water_wind_clock_enabled ? ring_water_river_advection_value() : time_seconds * wave_speed * 1.8), 0.0);
+	return ring_water_wave_gradient_core(
 		advected,
 		water_wind_clock_enabled ? 0.18 : time_seconds * 0.18,
 		coordinate_dx * river_scale,
-		coordinate_dy * river_scale) * (0.11 * river_scale);
+		coordinate_dy * river_scale,
+		water_kind, anchored, split) * (0.11 * river_scale);
 }
 
 // The opaque global water only needs moving highlights. Two broad analytic

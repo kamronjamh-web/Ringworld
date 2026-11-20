@@ -1,8 +1,6 @@
 #ifndef RING_SKY_REFLECTION_GDSHADERINC
 #define RING_SKY_REFLECTION_GDSHADERINC
 
-#include "res://materials/ring_reflection_model.gdshaderinc"
-
 // Camera sky access (underground, underwater), published by day_side_atmosphere.gd; 1 = the open sky.
 global uniform float ringworld_sky_reflection;
 

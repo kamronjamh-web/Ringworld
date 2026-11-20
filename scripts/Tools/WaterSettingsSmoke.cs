@@ -22,7 +22,7 @@ public partial class WaterSettingsSmoke : RefCounted
             var seed = new GameplayWaterDefaults(path);
             seed.Initialize(seedGraphics, null);
             seed.SetOverride(seedGraphics, null, "WaterSsrEnabled", false);
-            seed.SetOverride(seedGraphics, null, "WaterSsrStrength", .81f);
+            seed.SetOverride(seedGraphics, null, "WaterSsrRoughnessCutoff", .81f);
             seed.SetOverride(seedGraphics, null, "WaterSsrCoarseSteps", 7);
             seed.Save();
         }
@@ -31,21 +31,21 @@ public partial class WaterSettingsSmoke : RefCounted
         using var drawerFirst = new RingGraphicsQualityController();
         new GameplayWaterDefaults(path).Initialize(drawerFirst, null);
         drawerFirst.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.Medium, false);
-        bool startup = !drawerFirst.WaterSsrEnabled && Near(drawerFirst.WaterSsrStrength, .81f) && drawerFirst.WaterSsrCoarseSteps == 7
+        bool startup = !drawerFirst.WaterSsrEnabled && Near(drawerFirst.WaterSsrRoughnessCutoff, .81f) && drawerFirst.WaterSsrCoarseSteps == 7
             && Near(drawerFirst.WaterSsrCameraDistance, 250f) && drawerFirst.WaterSsrRefinementSteps == 3;
 
         // Runtime preset changes keep the overrides and still move untouched fields.
         drawerFirst.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.Low, false);
-        bool low = !drawerFirst.WaterSsrEnabled && Near(drawerFirst.WaterSsrStrength, .81f) && drawerFirst.WaterSsrCoarseSteps == 7;
+        bool low = !drawerFirst.WaterSsrEnabled && Near(drawerFirst.WaterSsrRoughnessCutoff, .81f) && drawerFirst.WaterSsrCoarseSteps == 7;
         drawerFirst.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.Cinematic5090, false);
-        bool high = !drawerFirst.WaterSsrEnabled && Near(drawerFirst.WaterSsrStrength, .81f) && drawerFirst.WaterSsrCoarseSteps == 7
+        bool high = !drawerFirst.WaterSsrEnabled && Near(drawerFirst.WaterSsrRoughnessCutoff, .81f) && drawerFirst.WaterSsrCoarseSteps == 7
             && Near(drawerFirst.WaterSsrCameraDistance, 450f) && drawerFirst.WaterSsrRefinementSteps == 4;
 
         // Reverse order: preset first, then saved tuning.
         using var presetFirst = new RingGraphicsQualityController();
         presetFirst.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.Medium, false);
         new GameplayWaterDefaults(path).Initialize(presetFirst, null);
-        bool reverse = !presetFirst.WaterSsrEnabled && Near(presetFirst.WaterSsrStrength, .81f) && presetFirst.WaterSsrCoarseSteps == 7
+        bool reverse = !presetFirst.WaterSsrEnabled && Near(presetFirst.WaterSsrRoughnessCutoff, .81f) && presetFirst.WaterSsrCoarseSteps == 7
             && Near(presetFirst.WaterSsrCameraDistance, 250f);
 
         // Nothing saved: preset defaults are unchanged.
@@ -54,15 +54,15 @@ public partial class WaterSettingsSmoke : RefCounted
         using var plain = new RingGraphicsQualityController();
         new GameplayWaterDefaults(emptyPath).Initialize(plain, null);
         plain.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.Medium, false);
-        bool medium = !plain.WaterSsrEnabled && Near(plain.WaterSsrStrength, .5f) && plain.WaterSsrCoarseSteps == 12;
+        bool medium = !plain.WaterSsrEnabled && Near(plain.WaterSsrRoughnessCutoff, .25f) && plain.WaterSsrCoarseSteps == 12;
         plain.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.Low, false);
         bool lowDefault = !plain.WaterSsrEnabled;
         plain.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.Cinematic5090, false);
-        bool highDefault = plain.WaterSsrEnabled && Near(plain.WaterSsrStrength, .65f) && plain.WaterSsrCoarseSteps == 24;
+        bool highDefault = plain.WaterSsrEnabled && Near(plain.WaterSsrRoughnessCutoff, .32f) && plain.WaterSsrCoarseSteps == 24;
 
-        // WO-3: High 12 steps / 120 m / 250 m, Ultra 32 steps / 400 m / 600 m.
+        // WO-3 / R1-8: High 12 steps / 120 m / 600 m, Ultra 32 steps / 400 m / 600 m.
         plain.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.High, false);
-        bool highPreset = plain.WaterSsrEnabled && plain.WaterSsrCoarseSteps == 12 && Near(plain.WaterSsrMaxRayDistance, 120f) && Near(plain.WaterSsrCameraDistance, 250f);
+        bool highPreset = plain.WaterSsrEnabled && plain.WaterSsrCoarseSteps == 12 && Near(plain.WaterSsrMaxRayDistance, 120f) && Near(plain.WaterSsrCameraDistance, 600f) && plain.WaterSsrRefinementSteps == 4;
         plain.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.UltraVideo, false);
         bool ultraPreset = plain.WaterSsrEnabled && plain.WaterSsrCoarseSteps == 32 && Near(plain.WaterSsrMaxRayDistance, 400f) && Near(plain.WaterSsrCameraDistance, 600f);
 
@@ -132,6 +132,94 @@ public partial class WaterSettingsSmoke : RefCounted
         return constants && defaults && set && invalid && clamp && roundTrip && reset && absent;
     }
 
+    private static void WriteSeedFile(string path, Godot.Collections.Dictionary overrides)
+    {
+        var seed = new GameplayWaterSettings { Overrides = overrides };
+        if (ResourceSaver.Save(seed, path) != Error.Ok) throw new InvalidOperationException("cannot write " + path);
+    }
+
+    private static Godot.Collections.Dictionary ReadOverrides(string path) =>
+        ResourceLoader.Load<GameplayWaterSettings>(path, cacheMode: ResourceLoader.CacheMode.Ignore).Overrides;
+
+    /// <summary>R1-8: a retired key (WaterSsrStrength) loads without an error and is dropped by the next save; the one-time migration resets the saved SSR steps, refinement and distances to the preset.</summary>
+    private static bool RunRetiredKeysAndMigration(string path, out string detail)
+    {
+        string scratch = path.Replace(".tres", $"_reflection_{System.Environment.ProcessId}.tres");
+        string globalScratch = ProjectSettings.GlobalizePath(scratch);
+        try
+        {
+            // (i) A file that already carries the marker: only the retired key goes; the explicit SSR value is honoured.
+            WriteSeedFile(scratch, new Godot.Collections.Dictionary { { "WaterReflectionMigration", 1 }, { "WaterSsrStrength", 1.0f }, { "WaterSsrCoarseSteps", 9 }, { "WaterWaveSpeed", 2f } });
+            using var retiredGraphics = new RingGraphicsQualityController();
+            var retired = new GameplayWaterDefaults(scratch);
+            retired.Initialize(retiredGraphics, null);
+            bool retiredLoad = retired.LastError == "" && retired.Dirty && retiredGraphics.WaterSsrCoarseSteps == 9 && Near(retiredGraphics.WaterWaveSpeed, 2f);
+            bool retiredSaved = retired.Save() && !retired.Dirty;
+            var afterRetired = ReadOverrides(scratch);
+            bool retiredGone = retiredSaved && !afterRetired.ContainsKey("WaterSsrStrength") && afterRetired.ContainsKey("WaterReflectionMigration") && afterRetired.ContainsKey("WaterSsrCoarseSteps");
+            bool retiredRejected = !retired.SetOverride(retiredGraphics, null, "WaterReflectionMigration", 1);
+
+            // (ii) The live file shape before the migration: the four SSR values follow the preset, the retired key is gone, Dirty is set; a reload changes nothing.
+            WriteSeedFile(scratch, new Godot.Collections.Dictionary
+            {
+                { "WaterSsrCoarseSteps", 32 }, { "WaterSsrRefinementSteps", 8 }, { "WaterSsrCameraDistance", 695f }, { "WaterSsrMaxRayDistance", 1000f },
+                { "WaterSsrStrength", 1.0f }, { "WaterWaveSpeed", 2f },
+            });
+            using var migratedGraphics = new RingGraphicsQualityController();
+            migratedGraphics.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.High, false);
+            var migrated = new GameplayWaterDefaults(scratch);
+            migrated.Initialize(migratedGraphics, null);
+            bool migratedLoad = migrated.LastError == "" && migrated.Dirty && migratedGraphics.WaterSsrCoarseSteps == 12 && migratedGraphics.WaterSsrRefinementSteps == 4
+                && Near(migratedGraphics.WaterSsrCameraDistance, 600f) && Near(migratedGraphics.WaterSsrMaxRayDistance, 120f) && Near(migratedGraphics.WaterWaveSpeed, 2f);
+            bool migratedSaved = migrated.Save();
+            var afterMigration = ReadOverrides(scratch);
+            bool migratedFile = migratedSaved && afterMigration.ContainsKey("WaterReflectionMigration") && afterMigration["WaterReflectionMigration"].AsInt32() == 1
+                && afterMigration.ContainsKey("WaterWaveSpeed")
+                && !afterMigration.ContainsKey("WaterSsrStrength") && !afterMigration.ContainsKey("WaterSsrCoarseSteps") && !afterMigration.ContainsKey("WaterSsrRefinementSteps")
+                && !afterMigration.ContainsKey("WaterSsrCameraDistance") && !afterMigration.ContainsKey("WaterSsrMaxRayDistance");
+            using var reloadedGraphics = new RingGraphicsQualityController();
+            reloadedGraphics.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.High, false);
+            var reloaded = new GameplayWaterDefaults(scratch);
+            reloaded.Initialize(reloadedGraphics, null);
+            bool reloadStable = reloaded.LastError == "" && !reloaded.Dirty && reloadedGraphics.WaterSsrCoarseSteps == 12 && Near(reloadedGraphics.WaterSsrCameraDistance, 600f);
+            // A value chosen after the migration is kept and survives the next load.
+            bool chosen = reloaded.SetOverride(reloadedGraphics, null, "WaterSsrCoarseSteps", 20) && reloaded.Save();
+            var again = new GameplayWaterDefaults(scratch);
+            using var againGraphics = new RingGraphicsQualityController();
+            again.Initialize(againGraphics, null);
+            bool chosenKept = chosen && againGraphics.WaterSsrCoarseSteps == 20 && !again.Dirty;
+            detail = $"retiredLoad={retiredLoad} retiredGone={retiredGone} markerRejected={retiredRejected} migratedLoad={migratedLoad} migratedFile={migratedFile} reloadStable={reloadStable} chosenKept={chosenKept}";
+            return retiredLoad && retiredGone && retiredRejected && migratedLoad && migratedFile && reloadStable && chosenKept;
+        }
+        finally { try { System.IO.File.Delete(globalScratch); } catch { } }
+    }
+
+    /// <summary>
+    /// R1-8 check on a COPY of a real settings file (never the live one): load it at High, save it back to the same path, reload it, and report what the
+    /// migration did. Used by hand by the lead on a copied user file; not part of Run().
+    /// </summary>
+    public Godot.Collections.Dictionary MigrateCopy(string copyPath)
+    {
+        var report = new Godot.Collections.Dictionary();
+        using var graphics = new RingGraphicsQualityController();
+        graphics.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.High, false);
+        var loaded = new GameplayWaterDefaults(copyPath);
+        loaded.Initialize(graphics, null);
+        report["load_last_error"] = loaded.LastError;
+        report["load_dirty"] = loaded.Dirty;
+        report["effective"] = $"steps={graphics.WaterSsrCoarseSteps} refine={graphics.WaterSsrRefinementSteps} camera={graphics.WaterSsrCameraDistance} ray={graphics.WaterSsrMaxRayDistance} cutoff={graphics.WaterSsrRoughnessCutoff} edge={graphics.WaterSsrEdgeFade}";
+        report["saved"] = loaded.Save();
+        report["saved_keys"] = string.Join(",", System.Linq.Enumerable.Select(ReadOverrides(copyPath).Keys, k => k.AsString()));
+        using var again = new RingGraphicsQualityController();
+        again.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.High, false);
+        var reloaded = new GameplayWaterDefaults(copyPath);
+        reloaded.Initialize(again, null);
+        report["reload_last_error"] = reloaded.LastError;
+        report["reload_dirty"] = reloaded.Dirty;
+        report["reload_effective"] = $"steps={again.WaterSsrCoarseSteps} refine={again.WaterSsrRefinementSteps} camera={again.WaterSsrCameraDistance} ray={again.WaterSsrMaxRayDistance}";
+        return report;
+    }
+
     public Godot.Collections.Dictionary Run(string path)
     {
         var result = new Godot.Collections.Dictionary();
@@ -174,7 +262,6 @@ public partial class WaterSettingsSmoke : RefCounted
             && settings.SetOverride(graphics, fft, "WaterRiverVisibilityMeters", 3.5f)
             && settings.SetOverride(graphics, fft, "WaterLakeVisibilityMeters", 9f);
         bool setSsr = settings.SetOverride(graphics, fft, "WaterSsrEnabled", true)
-            && settings.SetOverride(graphics, fft, "WaterSsrStrength", .73f)
             && settings.SetOverride(graphics, fft, "WaterSsrCoarseSteps", 19)
             && settings.SetOverride(graphics, fft, "WaterSsrRefinementSteps", 5)
             && settings.SetOverride(graphics, fft, "WaterSsrMaxRayDistance", 310f)
@@ -205,7 +292,6 @@ public partial class WaterSettingsSmoke : RefCounted
             && Math.Abs(nearMaterial.GetShaderParameter("shallow_inscatter_strength").AsSingle() - .71f) < .001f
             && Math.Abs(nearMaterial.GetShaderParameter("crest_transmission_strength").AsSingle() - .63f) < .001f
             && nearMaterial.GetShaderParameter("water_ssr_enabled").AsBool()
-            && Math.Abs(nearMaterial.GetShaderParameter("water_ssr_strength").AsSingle() - .73f) < .001f
             && nearMaterial.GetShaderParameter("water_ssr_coarse_steps").AsInt32() == 19
             && nearMaterial.GetShaderParameter("water_ssr_refinement_steps").AsInt32() == 5
             && Math.Abs(nearMaterial.GetShaderParameter("water_ssr_max_ray_distance").AsSingle() - 310f) < .001f
@@ -317,7 +403,7 @@ public partial class WaterSettingsSmoke : RefCounted
             && Math.Abs(reloadedFft.FullRateAreaSquareKilometers - 16f) < .001f
             && Math.Abs(reloadedFft.IdleGraceSeconds - 5f) < .001f
             && Math.Abs(reloadedGraphics.WaterWaveHeightMeters - 10f) < .001f
-            && reloadedGraphics.WaterSsrEnabled && Math.Abs(reloadedGraphics.WaterSsrStrength - .73f) < .001f
+            && reloadedGraphics.WaterSsrEnabled
             && reloadedGraphics.WaterSsrCoarseSteps == 19 && reloadedGraphics.WaterSsrRefinementSteps == 5
             && Math.Abs(reloadedGraphics.WaterSsrMaxRayDistance - 310f) < .001f && Math.Abs(reloadedGraphics.WaterSsrCameraDistance - 540f) < .001f
             && Math.Abs(reloadedGraphics.WaterSsrDepthToleranceNear - .42f) < .001f && Math.Abs(reloadedGraphics.WaterSsrDepthToleranceFar - 2.7f) < .001f
@@ -337,7 +423,7 @@ public partial class WaterSettingsSmoke : RefCounted
             && Math.Abs(reloadedGraphics.WaterFoamPatchiness - .65f) < .001f
             && Math.Abs(reloadedGraphics.WaterDistantFoamVisibility - .20f) < .001f
             && Math.Abs(reloadedGraphics.WaterDetailFilteringStrength - 1f) < .001f
-            && Math.Abs(reloadedGraphics.WaterSsrStrength - .65f) < .001f
+            && Math.Abs(reloadedGraphics.WaterSsrRoughnessCutoff - .32f) < .001f
             && Math.Abs(reloadedFft.LargeWaveLengthMeters - 79f) < .001f
             && reloadedFft.AdaptiveUpdatesEnabled
             && Math.Abs(reloadedFft.MinimumUpdatesPerSecond - 5f) < .001f
@@ -346,14 +432,15 @@ public partial class WaterSettingsSmoke : RefCounted
             && Math.Abs(reloadedFft.IdleGraceSeconds - 1f) < .001f;
         bool bodyColors = RunBodyColors(path.Replace(".tres", "_body.tres"), out string bodyDetail);
         bool ssrPresetPersistence = RunSsrPresetPersistence(path.Replace(".tres", "_ssr.tres"), out string ssrDetail);
+        bool reflectionMigration = RunRetiredKeysAndMigration(path, out string reflectionDetail);
         const double circumference = 1495000000.0;
         double tile = RingWaterFftController.PeriodicLength(12, circumference);
         double phaseA = RingWaterFftController.PositiveModulo(circumference - .125, tile) / tile;
         double phaseB = RingWaterFftController.PositiveModulo(-.125, tile) / tile;
         bool periodic = double.IsFinite(tile) && Math.Abs(phaseA - phaseB) < 1e-5
             && RingWaterFftController.PositiveModulo(-circumference * 3.0 - .5, tile) >= 0;
-        result["pass"] = setFalse && setFloat && setColor && setOptics && setVariation && setSsr && materialBinding && unchangedMaterialCache && newMaterialClearsDisabledProvider && setSavedLargePatch && setGeometry && deepWaterOrdering && setAdaptiveDemand && adaptiveClamps && setExpandedLimits && invalid && saved && roundTrip && setTrue && failedWriteStaysDirty && reset && periodic && ssrPresetPersistence && bodyColors;
-        result["detail"] = $"ssrPresets={ssrPresetPersistence}({ssrDetail})false={setFalse} float={setFloat} color={setColor} optics={setOptics} variation={setVariation} ssr={setSsr} productionShaders={productionShaders} material={materialBinding} cache={unchangedMaterialCache} newMaterialClear={newMaterialClearsDisabledProvider} savedLargePatch={setSavedLargePatch} geometry={setGeometry} deepOrdering={deepWaterOrdering} adaptive={setAdaptiveDemand} adaptiveClamps={adaptiveClamps} expanded={setExpandedLimits} invalid={invalid} save={saved} roundTrip={roundTrip} true={setTrue} failedWrite={failedWriteStaysDirty} reset={reset} periodic={periodic} bodyColors={bodyColors}({bodyDetail})";
+        result["pass"] = setFalse && setFloat && setColor && setOptics && setVariation && setSsr && materialBinding && unchangedMaterialCache && newMaterialClearsDisabledProvider && setSavedLargePatch && setGeometry && deepWaterOrdering && setAdaptiveDemand && adaptiveClamps && setExpandedLimits && invalid && saved && roundTrip && setTrue && failedWriteStaysDirty && reset && periodic && ssrPresetPersistence && reflectionMigration && bodyColors;
+        result["detail"] = $"ssrPresets={ssrPresetPersistence}({ssrDetail}) reflectionMigration={reflectionMigration}({reflectionDetail})false={setFalse} float={setFloat} color={setColor} optics={setOptics} variation={setVariation} ssr={setSsr} productionShaders={productionShaders} material={materialBinding} cache={unchangedMaterialCache} newMaterialClear={newMaterialClearsDisabledProvider} savedLargePatch={setSavedLargePatch} geometry={setGeometry} deepOrdering={deepWaterOrdering} adaptive={setAdaptiveDemand} adaptiveClamps={adaptiveClamps} expanded={setExpandedLimits} invalid={invalid} save={saved} roundTrip={roundTrip} true={setTrue} failedWrite={failedWriteStaysDirty} reset={reset} periodic={periodic} bodyColors={bodyColors}({bodyDetail})";
         return result;
     }
 }

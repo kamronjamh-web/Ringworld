@@ -1,22 +1,19 @@
 extends RefCounted
-## Scenario kind "reflection_probe" of tools/perf_bench.gd (docs/reflections-plan.md 2.5 / 10.2, R1-1-0): byte-comparable stills of the reflections model switch
-## (model 0 = main Environment reflects Background, model 1 = Sky). Still names <out>/reflection_probe/<name>_m<model>_<ssr>[_spheres].png.
-## Optional scenario keys: "models" [0, 1] (default both), "ssr" ["game" | "on" | "off"] (default ["game"]: no override, the WetWorld policy as the game runs it;
+## Scenario kind "reflection_probe" of tools/perf_bench.gd (docs/reflections-plan.md 2.5 / 10.2, R1-1-0): byte-comparable stills of the reflections. R1-8: reflection model 1 is the only path (the main
+## Environment reflects the Sky), so there is no model switch. Still names <out>/reflection_probe/<name>_<ssr>[_spheres].png.
+## Optional scenario keys: "ssr" ["game" | "on" | "off"] (default ["game"]: no override, the WetWorld policy as the game runs it;
 ## "on"/"off" = WetWorld.SsrPolicyWeightOverride 1.0 / 0.0, or env.ssr_enabled when that property is missing), "spheres" [false, true] (two metallic test spheres, default [false]),
 ## "exposure" "frozen" (default: auto exposure stays as the game has it; capture mode stops time) or "manual" (storm_auto_exposure_enabled = false on every node that has it,
 ## restored at the end), "force_wet" [film, soak, standing, rain] (WetWorld.ForceUniform).
-## Per ssr x spheres group: apply with time running, TVW.capture_begin once, then per model: set the model, capture_begin again (pair self-check after the switch), grab, save.
-## After the last model, model 0 again as a "repeat" frame compared with the group's first model-0 image (saved as <group>_repeat_m0.png only with "save_repeat": true).
-## The repeat is not byte-identical at landscape poses even with models [0, 0]: a thin band of distant terrain at the horizon keeps updating in capture mode
-## (2026-11-18, about 3,000 px, SSIM 0.99999). Judge model differences by the heatmap away from that band. Models are switched through RingReflectionModel.SetModel
-## when that class exists in the assembly, else through env.reflected_light_source ("env_fallback"). result["env"] records the main/far/regional environment configuration
+## Per ssr x spheres group: apply with time running, TVW.capture_begin once, then grab and save, then a second frame as a "repeat" compared with the first (saved as <group>_repeat.png only with "save_repeat": true).
+## The repeat is not byte-identical at landscape poses: a thin band of distant terrain at the horizon keeps updating in capture mode (2026-11-18, about 3,000 px, SSIM 0.99999).
+## result["env"] records the main/far/regional environment configuration
 ## per still; result["captures"] the capture_begin verdicts. Everything is restored at the end, also on an error path.
 
 const COMMON := preload("res://tools/shadow_harness_common.gd")
 const TVW := preload("res://tools/tree_visibility_world.gd")
 
 const HALF_SIZE_SETTING := "rendering/environment/screen_space_reflection/half_size"
-const MODEL_SCRIPT := "res://scripts/Voxel/LOD/RingReflectionModel.cs"
 
 
 ## Returns the result entry for report["reflection_probes"]. `b` is the perf_bench.gd SceneTree script (its helpers and state are reused).
@@ -33,7 +30,7 @@ static func run(b: Object, sc: Dictionary) -> Dictionary:
 	var found_source := -1
 	var found_ssr := false
 	var has_override := wet != null and TVW.has_property(wet, "SsrPolicyWeightOverride")
-	var state := {"model_inst": null, "ae": {}}
+	var state := {"ae": {}}
 	if env != null:
 		found_source = int(env.reflected_light_source)
 		found_ssr = env.ssr_enabled
@@ -42,7 +39,6 @@ static func run(b: Object, sc: Dictionary) -> Dictionary:
 	TVW.capture_end(b.game)  # no-op when not in capture mode
 	if env != null:
 		if found_source >= 0:
-			_set_model(env, 0, found_source, state)
 			env.reflected_light_source = found_source as Environment.ReflectionSource
 		if not has_override:
 			env.ssr_enabled = found_ssr  # the fallback path wrote it directly; with the override the WetWorld policy owns ssr_enabled
@@ -87,22 +83,6 @@ static func _config(env: Environment, wet: Node) -> Dictionary:
 	return cfg
 
 
-## Switches the reflection model; returns the API used. state["model_inst"] holds the RingReflectionModel instance (created once per scenario) or null.
-static func _set_model(env: Environment, m: int, found_source: int, state: Dictionary) -> String:
-	if not state.has("model_checked"):
-		state["model_checked"] = true
-		if ResourceLoader.exists(MODEL_SCRIPT):
-			var scr = load(MODEL_SCRIPT)
-			if scr != null and scr.has_method("can_instantiate") and scr.can_instantiate():
-				state["model_inst"] = scr.new()
-	var inst = state.get("model_inst")
-	if inst != null:
-		inst.call("SetModel", float(m))
-		return "RingReflectionModel"
-	if env != null and found_source >= 0:
-		env.reflected_light_source = (found_source as Environment.ReflectionSource) if m == 0 else Environment.REFLECTION_SOURCE_SKY
-	return "env_fallback"
-
 
 static func _env_entry(game: Node, env: Environment, state: Dictionary) -> Dictionary:
 	var e := {"main": {"background_mode": int(env.background_mode), "reflected_light_source": int(env.reflected_light_source), "ambient_light_source": int(env.ambient_light_source)}}
@@ -110,8 +90,6 @@ static func _env_entry(game: Node, env: Environment, state: Dictionary) -> Dicti
 		var node := game.find_child(String(pair[1]), true, false)
 		var we_env: Environment = node.get("environment") as Environment if node != null else null
 		e[pair[0]] = {"background_mode": int(we_env.background_mode), "reflected_light_source": int(we_env.reflected_light_source)} if we_env != null else null
-	var inst = state.get("model_inst")
-	e["model"] = inst.call("GetModel") if inst != null else null
 	var atmo := game.find_child("DaySideAtmosphere", true, false)
 	if atmo != null:
 		for prop in ["published_sky_reflection", "PublishedSkyReflection"]:
@@ -168,17 +146,12 @@ static func _body(b: Object, sc: Dictionary, result: Dictionary, name: String, p
 		result["setup"]["force_wet"] = fw
 		await COMMON.settle(b, 2.0)
 	result["setup"]["ssr_override_property"] = has_override
-	var models: Array = sc.get("models", [0, 1])
 	var ssr_list: Array = sc.get("ssr", ["game"])
 	var sphere_list: Array = sc.get("spheres", [false])
 	var exposure := String(sc.get("exposure", "frozen"))
-	result["setup"]["models"] = models
 	result["setup"]["ssr"] = ssr_list
 	result["setup"]["spheres"] = sphere_list
 	result["setup"]["exposure"] = exposure
-	result["setup"]["model_api"] = _set_model(env, 0 if models.has(0) else int(models[0]), found_source, state)  # also creates the instance
-	if found_source >= 0:
-		_set_model(env, 0, found_source, state)  # start from the game's model
 	# Test spheres, placed from the main camera.
 	var cam: Camera3D = b.root.get_viewport().get_camera_3d()
 	if cam == null:
@@ -231,30 +204,22 @@ static func _body(b: Object, sc: Dictionary, result: Dictionary, name: String, p
 				TVW.hold_wind()
 				await b.process_frame
 			var group := "%s_%s%s" % [name, String(ssr), "_spheres" if with_spheres else ""]
-			var first_m0: Image = null
 			var cap: Dictionary = await TVW.capture_begin(b, b.game)
-			for m in models:
-				var api := _set_model(env, int(m), found_source, state)
-				cap = await TVW.capture_begin(b, b.game)  # pair self-check after the switch
-				await RenderingServer.frame_post_draw
-				var img: Image = TVW.grab(b)
-				var stem := "%s_m%d_%s%s" % [name, int(m), String(ssr), "_spheres" if with_spheres else ""]
-				var path := dir.path_join(stem + ".png")
-				if img.save_png(path) != OK:
-					result["error"] = "save_png failed (%s)" % path
-				result["stills"].append(path)
-				result["captures"].append({"path": path, "model": int(m), "ssr": String(ssr), "spheres": bool(with_spheres), "capture": cap, "model_api": api})
-				result["env"][stem] = _env_entry(b.game, env, state)
-				if int(m) == 0 and first_m0 == null:
-					first_m0 = img
-			if first_m0 != null:
-				_set_model(env, 0, found_source, state)
-				var rcap: Dictionary = await TVW.capture_begin(b, b.game)
-				await RenderingServer.frame_post_draw
-				var rimg: Image = TVW.grab(b)
-				var same := rimg.get_data() == first_m0.get_data()
-				if bool(sc.get("save_repeat", false)):
-					rimg.save_png(dir.path_join(group + "_repeat_m0.png"))
-				repeats[group] = {"repeat_identical": same, "repeat_differing_px": 0 if same else _differing_px(rimg, first_m0), "repeat_capture": rcap}
+			await RenderingServer.frame_post_draw
+			var img: Image = TVW.grab(b)
+			var stem := group
+			var path := dir.path_join(stem + ".png")
+			if img.save_png(path) != OK:
+				result["error"] = "save_png failed (%s)" % path
+			result["stills"].append(path)
+			result["captures"].append({"path": path, "ssr": String(ssr), "spheres": bool(with_spheres), "capture": cap})
+			result["env"][stem] = _env_entry(b.game, env, state)
+			var rcap: Dictionary = await TVW.capture_begin(b, b.game)
+			await RenderingServer.frame_post_draw
+			var rimg: Image = TVW.grab(b)
+			var same := rimg.get_data() == img.get_data()
+			if bool(sc.get("save_repeat", false)):
+				rimg.save_png(dir.path_join(group + "_repeat.png"))
+			repeats[group] = {"repeat_identical": same, "repeat_differing_px": 0 if same else _differing_px(rimg, img), "repeat_capture": rcap}
 			TVW.capture_end(b.game)
 	result["repeat"] = repeats

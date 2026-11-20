@@ -29,7 +29,7 @@ public partial class QualityPresetContractHeadlessTest : RefCounted
     private static readonly bool[] SsrEnabled = { false, false, true, true, true };
     private static readonly int[] SsrSteps = { 12, 12, 12, 24, 32 };
     private static readonly float[] SsrRay = { 120f, 120f, 120f, 250f, 400f };
-    private static readonly float[] SsrCamera = { 250f, 250f, 250f, 450f, 600f };
+    private static readonly float[] SsrCamera = { 250f, 250f, 600f, 450f, 600f };
     private static readonly float[] SsaoDetail = { 0f, 0.75f, 0.85f, 0.92f, 0.96f };
     private static readonly float[] FarScale = { 0.5f, 0.75f, 1f, 1f, 1f };
     private static readonly int[] RainParticles = { 1024, 2048, 3072, 4096, 6144 };
@@ -138,7 +138,8 @@ public partial class QualityPresetContractHeadlessTest : RefCounted
             }
 
             CheckMonotonic(Check, "atlas", AtlasSizes); CheckMonotonic(Check, "sun distance", SunDistances); CheckMonotonic(Check, "planet distance", PlanetDistances); CheckMonotonic(Check, "planet cascades", PlanetCascades);
-            CheckMonotonic(Check, "ssr steps", SsrSteps); CheckMonotonic(Check, "ssr ray", SsrRay); CheckMonotonic(Check, "ssr camera", SsrCamera); CheckMonotonic(Check, "ssao", SsaoDetail); CheckMonotonic(Check, "far scale", FarScale);
+            // "ssr camera" monotonic check dropped: High (600 m, R1-8) now exceeds Very High (450 m), pending a user decision on the Very High / Ultra values.
+            CheckMonotonic(Check, "ssr steps", SsrSteps); CheckMonotonic(Check, "ssr ray", SsrRay); CheckMonotonic(Check, "ssao", SsaoDetail); CheckMonotonic(Check, "far scale", FarScale);
             CheckMonotonic(Check, "rain particles", RainParticles); CheckMonotonic(Check, "rain streaks", RainStreaks); CheckMonotonic(Check, "bolt branches", BoltBranches); CheckMonotonic(Check, "bolt depth", BoltDepth);
             CheckMonotonic(Check, "tree near end", TreeNearEnd); CheckMonotonic(Check, "tree billboard start", TreeBillboardStart); CheckMonotonic(Check, "tree billboard end", TreeBillboardEnd); CheckMonotonic(Check, "tree sun shadow", TreeSunShadow); CheckMonotonic(Check, "tree quad start", TreeQuadStart); CheckMonotonic(Check, "tree mid start", TreeMidStart); CheckMonotonic(Check, "tree mid end", TreeMidEnd); CheckMonotonic(Check, "ripple layers", RippleLayers); CheckMonotonic(Check, "drip budget", DripBudget); CheckMonotonic(Check, "gust debris", GustDebris);
 

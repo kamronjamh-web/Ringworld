@@ -1,6 +1,6 @@
 extends SceneTree
 
-## R1-0: main reflected source follows ringworld_reflection_model; far pins stay Background (see tools/ReflectionEnvironmentContractTest.cs). Headless.
+## R1-0: main reflected source is Sky unconditionally; far pins stay Background (see tools/ReflectionEnvironmentContractTest.cs). Headless.
 const TEST := preload("res://tools/ReflectionEnvironmentContractTest.cs")
 
 func _init() -> void:

@@ -193,7 +193,7 @@ func _select_water_tab() -> bool:
 	return false
 
 func _verify_controls() -> bool:
-	for name in ["FftEnabled", "FftResolution", "FftCascadeCount", "FftUpdatesPerSecond", "FftGeometryUpdatesPerSecond", "FftGeometryHeightScale", "FftGeometryChoppiness", "FftGeometryDistanceMeters", "FftGeometryFilterMeters", "FftCrestLightingStrength", "FftDeepWaterWaveDepthMeters", "WaterSwellVariation", "WaterFoamPatchiness", "WaterDistantFoamVisibility", "WaterDetailFilteringStrength", "WaterSsrEnabled", "WaterSsrStrength", "WaterSsrCoarseSteps", "WaterSsrRefinementSteps", "WaterSsrMaxRayDistance", "WaterSsrCameraDistance", "WaterSsrDepthToleranceNear", "WaterSsrDepthToleranceFar", "WaterSsrRayBias", "WaterSsrEdgeFade", "WaterSsrRoughnessCutoff", "WaterSsrDebugMode", "WaterRuntimeStatus"]:
+	for name in ["FftEnabled", "FftResolution", "FftCascadeCount", "FftUpdatesPerSecond", "FftGeometryUpdatesPerSecond", "FftGeometryHeightScale", "FftGeometryChoppiness", "FftGeometryDistanceMeters", "FftGeometryFilterMeters", "FftCrestLightingStrength", "FftDeepWaterWaveDepthMeters", "WaterSwellVariation", "WaterFoamPatchiness", "WaterDistantFoamVisibility", "WaterDetailFilteringStrength", "WaterSsrEnabled", "WaterSsrCoarseSteps", "WaterSsrRefinementSteps", "WaterSsrMaxRayDistance", "WaterSsrCameraDistance", "WaterSsrDepthToleranceNear", "WaterSsrDepthToleranceFar", "WaterSsrRayBias", "WaterSsrEdgeFade", "WaterSsrRoughnessCutoff", "WaterSsrDebugMode", "WaterRuntimeStatus"]:
 		if _drawer.find_child(name, true, false) == null:
 			_fail("missing Water selector " + name); return false
 	return true
@@ -202,18 +202,18 @@ func _verify_controls() -> bool:
 # This catches a disconnected widget or a property/material propagation break.
 func _verify_ui_callbacks() -> bool:
 	var quality := _scene.get_node_or_null("GraphicsQuality")
-	var strength := _drawer.find_child("WaterSsrStrength", true, false) as HSlider
+	var cutoff := _drawer.find_child("WaterSsrRoughnessCutoff", true, false) as HSlider
 	var enabled := _drawer.find_child("WaterSsrEnabled", true, false) as CheckButton
 	var steps := _drawer.find_child("WaterSsrCoarseSteps", true, false) as HSlider
 	var debug := _drawer.find_child("WaterSsrDebugMode", true, false) as OptionButton
-	if quality == null or strength == null or enabled == null or steps == null or debug == null:
+	if quality == null or cutoff == null or enabled == null or steps == null or debug == null:
 		return _fail("SSR UI callback controls are unavailable")
 	enabled.button_pressed = true
-	strength.value = .73
+	cutoff.value = .73
 	steps.value = 19
 	debug.select(3)
 	debug.item_selected.emit(3)
-	if not bool(quality.get("WaterSsrEnabled")) or not is_equal_approx(float(quality.get("WaterSsrStrength")), .73) or int(quality.get("WaterSsrCoarseSteps")) != 19 or int(quality.get("WaterSsrDebugMode")) != 3:
+	if not bool(quality.get("WaterSsrEnabled")) or not is_equal_approx(float(quality.get("WaterSsrRoughnessCutoff")), .73) or int(quality.get("WaterSsrCoarseSteps")) != 19 or int(quality.get("WaterSsrDebugMode")) != 3:
 		return _fail("Water UI signals did not update GraphicsQualityController")
 	var found_uniform := false
 	for node in _scene.find_children("*", "MeshInstance3D", true, false):
@@ -222,7 +222,7 @@ func _verify_ui_callbacks() -> bool:
 		for surface in mesh.mesh.get_surface_count():
 			var material := mesh.get_active_material(surface) as ShaderMaterial
 			if material != null and material.shader != null and material.shader.resource_path == "res://materials/ring_ocean_proxy.gdshader":
-				if is_equal_approx(float(material.get_shader_parameter("water_ssr_strength")), .73) and int(material.get_shader_parameter("water_ssr_coarse_steps")) == 19:
+				if is_equal_approx(float(material.get_shader_parameter("water_ssr_roughness_cutoff")), .73) and int(material.get_shader_parameter("water_ssr_coarse_steps")) == 19:
 					found_uniform = true
 					break
 		if found_uniform: break
@@ -238,7 +238,7 @@ func _verify_isolated_defaults_contract() -> bool:
 	_drawer.call("SetWaterTuningValue", "FftGeometryUpdatesPerSecond", 999.0)
 	_drawer.call("SetWaterTuningValue", "FftDeepWaterWaveDepthMeters", 999.0)
 	_drawer.call("SetWaterTuningValue", "FftShorelineShallowDepthMeters", 20.0)
-	_drawer.call("SetWaterTuningValue", "WaterFresnelF0", NAN)
+	_drawer.call("SetWaterTuningValue", "WaterSsrEdgeFade", NAN)
 	if int(_fft.get("Resolution")) != resolution_before:
 		_fail("defaults accepted an invalid FFT resolution or non-finite value")
 		return false

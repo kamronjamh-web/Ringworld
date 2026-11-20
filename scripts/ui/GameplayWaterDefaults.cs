@@ -19,6 +19,12 @@ public sealed class GameplayWaterDefaults
     public bool Initialized { get; private set; }
     public GameplayWaterDefaults(string? pathOverride = null) => _pathOverride = pathOverride;
     public string GetPath() => _pathOverride ?? UserPath;
+    // R1-8: reflection model 1 became the only path. These rows were removed; a saved file may still hold them, and the SSR steps/refinement/distances saved under the old defaults are reset once to the presets.
+    private static readonly HashSet<string> RetiredKeys = new() { "WaterFarRoughness", "WaterFresnelF0", "WaterFresnelStrength", "WaterSsrStrength" };
+    // Must not start with "WaterSsr": Apply forwards every WaterSsr* key to SetWaterSsrOverrides.
+    private const string ReflectionMigrationKey = "WaterReflectionMigration";
+    private static readonly string[] ReflectionMigrationResetKeys = { "WaterSsrCoarseSteps", "WaterSsrRefinementSteps", "WaterSsrCameraDistance", "WaterSsrMaxRayDistance" };
+    private bool _retiredKeySeen;
 
     public void Initialize(Node? graphics, Node? fft)
     {
@@ -28,12 +34,14 @@ public sealed class GameplayWaterDefaults
     public void LoadAndApply(Node? graphics, Node? fft) { Load(); Apply(graphics, fft); }
     public void Load()
     {
-        Settings = new(); LastError = "";
+        Settings = new(); LastError = ""; _retiredKeySeen = false;
         if (_pathOverride != null) LoadInto(_pathOverride); else { LoadInto(FactoryPath); LoadInto(UserPath); }
-        Dirty = false;
+        bool migrated = MigrateWaterReflection();
+        Dirty = _retiredKeySeen || migrated;
     }
     public bool SetOverride(Node? graphics, Node? fft, string key, Variant value)
     {
+        if (key == ReflectionMigrationKey) return false;
         if (!TryValidate(key, value, out Variant clean)) return false;
         Node? target = Target(key, graphics, fft); string property = Property(key);
         if (target == null) return false;
@@ -48,7 +56,7 @@ public sealed class GameplayWaterDefaults
     }
     public void Reset(Node? graphics, Node? fft)
     {
-        Settings = new(); LastError = "";
+        Settings = new(); LastError = ""; Settings.Overrides[ReflectionMigrationKey] = 1;
         foreach (var item in _baseline) { Node? target = Target(item.Key, graphics, fft); if (target != null) target.Set(Property(item.Key), item.Value); }
         Apply(graphics, fft); Dirty = true;
     }
@@ -73,6 +81,7 @@ public sealed class GameplayWaterDefaults
         foreach (Variant item in Settings.Overrides.Keys)
         {
             string key = item.AsString();
+            if (key == ReflectionMigrationKey) continue;
             if (!TryValidate(key, Settings.Overrides[item], out Variant clean)) continue;
             Node? target = Target(key, graphics, fft);
             if (target != null) target.Set(Property(key), clean);
@@ -87,27 +96,36 @@ public sealed class GameplayWaterDefaults
         graphics?.Call("SetWaterSsrOverrides", ssr);
         graphics?.Call("ApplyWaterTuning");
     }
+    private bool MigrateWaterReflection()
+    {
+        if (Settings.Overrides.ContainsKey(ReflectionMigrationKey)) return false;
+        bool removed = false;
+        foreach (string key in ReflectionMigrationResetKeys) removed |= Settings.Overrides.Remove(key);
+        Settings.Overrides[ReflectionMigrationKey] = 1;
+        return removed;
+    }
     private void LoadInto(string path)
     {
         if (!ResourceLoader.Exists(path)) return;
-        try { var loaded = ResourceLoader.Load<GameplayWaterSettings>(path, cacheMode: ResourceLoader.CacheMode.Ignore); if (loaded == null) { LastError = "Invalid gameplay water defaults"; return; } foreach (Variant k in loaded.Overrides.Keys) if (k.VariantType == Variant.Type.String && TryValidate(k.AsString(), loaded.Overrides[k], out Variant v)) Settings.Overrides[k.AsString()] = v; else LastError = "Ignored invalid gameplay water override"; }
+        try { var loaded = ResourceLoader.Load<GameplayWaterSettings>(path, cacheMode: ResourceLoader.CacheMode.Ignore); if (loaded == null) { LastError = "Invalid gameplay water defaults"; return; } foreach (Variant k in loaded.Overrides.Keys) if (k.VariantType == Variant.Type.String && RetiredKeys.Contains(k.AsString())) _retiredKeySeen = true; else if (k.VariantType == Variant.Type.String && TryValidate(k.AsString(), loaded.Overrides[k], out Variant v)) Settings.Overrides[k.AsString()] = v; else LastError = "Ignored invalid gameplay water override"; }
         catch (Exception error) { LastError = error.Message; }
     }
     private static bool Same(Variant a, Variant b) => a.VariantType == b.VariantType && a.VariantType switch { Variant.Type.Bool => a.AsBool() == b.AsBool(), Variant.Type.Color => a.AsColor() == b.AsColor(), Variant.Type.Int => a.AsInt64() == b.AsInt64(), Variant.Type.Float => a.AsDouble() == b.AsDouble(), _ => false };
     private static Node? Target(string key, Node? graphics, Node? fft) => key.StartsWith("Fft", StringComparison.Ordinal) ? fft : graphics;
     private static string Property(string key) => key.StartsWith("Fft", StringComparison.Ordinal) ? key[3..] : key;
     private static readonly string[] BaseKeys = {
-        "WaterWaveHeightMeters", "WaterWaveLengthMeters", "WaterWaveSpeed", "WaterWaveDetailStrength", "WaterWaveDomainWarpStrength", "WaterWaveCrestSharpness", "WaterWaveCrestBlend", "WaterWaveNormalStrength", "WaterWaveBandlimitStartRadians", "WaterWaveBandlimitEndRadians", "WaterRefractionStrength", "WaterAbsorptionDensity", "WaterAbsorptionCoefficients", "WaterShallowInscatterStrength", "WaterCrestTransmissionStrength", "WaterShallowAlpha", "WaterDeepAlpha", "WaterSsrEnabled", "WaterSsrStrength", "WaterSsrCoarseSteps", "WaterSsrRefinementSteps", "WaterSsrMaxRayDistance", "WaterSsrCameraDistance", "WaterSsrDepthToleranceNear", "WaterSsrDepthToleranceFar", "WaterSsrEdgeFade", "WaterSsrRoughnessCutoff", "WaterSsrDebugMode", "WaterShallowTint", "WaterDeepTint", "WaterFoamColor", "WaterRiverColor", "WaterLakeColor", "WaterTurbidity", "WaterRiverVisibilityMeters", "WaterLakeVisibilityMeters", "WaterShoreFoamDepthMeters", "WaterShoreFoamStrength", "WaterBreakingFoamStrength", "WaterBreakingFoamSlopeStart", "WaterBreakingFoamSlopeEnd", "WaterSwellVariation", "WaterFoamPatchiness", "WaterDistantFoamVisibility", "WaterDetailFilteringStrength", "WaterWaveGeometryFadeMeters", "WaterWaveNormalFadeStartMeters", "WaterWaveNormalFadeEndMeters", "WaterFarRoughness", "WaterFresnelF0", "WaterFresnelStrength", "WaterSpecularAaStrength", "FftEnabled", "FftResolution", "FftCascadeCount", "FftUpdatesPerSecond", "FftAdaptiveUpdatesEnabled", "FftMinimumUpdatesPerSecond", "FftFullRateDistanceMeters", "FftFullRateAreaSquareKilometers", "FftIdleGraceSeconds", "FftNormalStrength", "FftFoamStrength", "FftFoamAmount", "FftWhitecap", "FftWindSpeedMetersPerSecond", "FftWindDirectionDegrees", "FftFollowWeatherWind", "FftSmallWaveLengthMeters", "FftLargeWaveLengthMeters", "FftDetailDistanceMeters", "FftGeometryHeightScale", "FftGeometryChoppiness", "FftGeometryDistanceMeters", "FftGeometryFilterMeters", "FftCrestLightingStrength", "FftShorelineFadeDistanceMeters", "FftShorelineChopFadeDistanceMeters", "FftShorelineShallowDepthMeters", "FftDeepWaterWaveDepthMeters" };
+        "WaterWaveHeightMeters", "WaterWaveLengthMeters", "WaterWaveSpeed", "WaterWaveDetailStrength", "WaterWaveDomainWarpStrength", "WaterWaveCrestSharpness", "WaterWaveCrestBlend", "WaterWaveNormalStrength", "WaterWaveBandlimitStartRadians", "WaterWaveBandlimitEndRadians", "WaterRefractionStrength", "WaterAbsorptionDensity", "WaterAbsorptionCoefficients", "WaterShallowInscatterStrength", "WaterCrestTransmissionStrength", "WaterShallowAlpha", "WaterDeepAlpha", "WaterSsrEnabled", "WaterSsrCoarseSteps", "WaterSsrRefinementSteps", "WaterSsrMaxRayDistance", "WaterSsrCameraDistance", "WaterSsrDepthToleranceNear", "WaterSsrDepthToleranceFar", "WaterSsrEdgeFade", "WaterSsrRoughnessCutoff", "WaterSsrDebugMode", "WaterShallowTint", "WaterDeepTint", "WaterFoamColor", "WaterRiverColor", "WaterLakeColor", "WaterTurbidity", "WaterRiverVisibilityMeters", "WaterLakeVisibilityMeters", "WaterShoreFoamDepthMeters", "WaterShoreFoamStrength", "WaterBreakingFoamStrength", "WaterBreakingFoamSlopeStart", "WaterBreakingFoamSlopeEnd", "WaterSwellVariation", "WaterFoamPatchiness", "WaterDistantFoamVisibility", "WaterDetailFilteringStrength", "WaterWaveGeometryFadeMeters", "WaterWaveNormalFadeStartMeters", "WaterWaveNormalFadeEndMeters", "WaterSpecularAaStrength", "FftEnabled", "FftResolution", "FftCascadeCount", "FftUpdatesPerSecond", "FftAdaptiveUpdatesEnabled", "FftMinimumUpdatesPerSecond", "FftFullRateDistanceMeters", "FftFullRateAreaSquareKilometers", "FftIdleGraceSeconds", "FftNormalStrength", "FftFoamStrength", "FftFoamAmount", "FftWhitecap", "FftWindSpeedMetersPerSecond", "FftWindDirectionDegrees", "FftFollowWeatherWind", "FftSmallWaveLengthMeters", "FftLargeWaveLengthMeters", "FftDetailDistanceMeters", "FftGeometryHeightScale", "FftGeometryChoppiness", "FftGeometryDistanceMeters", "FftGeometryFilterMeters", "FftCrestLightingStrength", "FftShorelineFadeDistanceMeters", "FftShorelineChopFadeDistanceMeters", "FftShorelineShallowDepthMeters", "FftDeepWaterWaveDepthMeters" };
     public static readonly string[] Keys = BaseKeys.Concat(new[] { "FftGeometryUpdatesPerSecond", "WaterSsrRayBias" }).ToArray();
     private static readonly Dictionary<string, (float min, float max, bool integral)> Limits = new() {
-        ["WaterTurbidity"]=(0,1,false), ["WaterRiverVisibilityMeters"]=(.1f,100,false), ["WaterLakeVisibilityMeters"]=(.1f,200,false), ["WaterSsrStrength"]=(0,1,false), ["WaterSsrCoarseSteps"]=(1,32,true), ["WaterSsrRefinementSteps"]=(0,8,true),
+        ["WaterTurbidity"]=(0,1,false), ["WaterRiverVisibilityMeters"]=(.1f,100,false), ["WaterLakeVisibilityMeters"]=(.1f,200,false), ["WaterSsrCoarseSteps"]=(1,32,true), ["WaterSsrRefinementSteps"]=(0,8,true),
         ["WaterSsrMaxRayDistance"]=(10,1000,false), ["WaterSsrCameraDistance"]=(10,1000,false),
         ["WaterSsrDepthToleranceNear"]=(.01f,2,false), ["WaterSsrDepthToleranceFar"]=(.1f,8,false),
         ["WaterSsrRayBias"]=(.01f,1,false), ["FftMinimumUpdatesPerSecond"]=(1,30,false), ["FftFullRateDistanceMeters"]=(25,1000,false), ["FftFullRateAreaSquareKilometers"]=(.01f,16,false), ["FftIdleGraceSeconds"]=(0,5,false),
         ["WaterSsrEdgeFade"]=(.01f,.4f,false), ["WaterSsrRoughnessCutoff"]=(.02f,1,false), ["WaterSsrDebugMode"]=(0,3,true),
-        ["WaterWaveHeightMeters"]=(0,10,false), ["WaterWaveLengthMeters"]=(2,200,false), ["WaterWaveSpeed"]=(0,10,false), ["WaterWaveDetailStrength"]=(0,1,false), ["WaterWaveDomainWarpStrength"]=(0,1.5f,false), ["WaterWaveCrestSharpness"]=(.05f,4,false), ["WaterWaveCrestBlend"]=(0,1,false), ["WaterWaveNormalStrength"]=(0,2,false), ["WaterWaveBandlimitStartRadians"]=(.05f,2,false), ["WaterWaveBandlimitEndRadians"]=(.1f,3,false), ["WaterRefractionStrength"]=(0,.08f,false), ["WaterAbsorptionDensity"]=(.001f,2,false), ["WaterShallowInscatterStrength"]=(0,2,false), ["WaterCrestTransmissionStrength"]=(0,2,false), ["WaterShallowAlpha"]=(0,1,false), ["WaterDeepAlpha"]=(0,1,false), ["WaterShoreFoamDepthMeters"]=(.1f,20,false), ["WaterShoreFoamStrength"]=(0,2,false), ["WaterBreakingFoamStrength"]=(0,2,false), ["WaterBreakingFoamSlopeStart"]=(.05f,1.5f,false), ["WaterBreakingFoamSlopeEnd"]=(.1f,2,false), ["WaterSwellVariation"]=(0,1,false), ["WaterFoamPatchiness"]=(0,1,false), ["WaterDistantFoamVisibility"]=(0,1,false), ["WaterDetailFilteringStrength"]=(0,2,false), ["WaterWaveGeometryFadeMeters"]=(100,50000,false), ["WaterWaveNormalFadeStartMeters"]=(100,50000,false), ["WaterWaveNormalFadeEndMeters"]=(200,100000,false), ["WaterFarRoughness"]=(.05f,1,false), ["WaterFresnelF0"]=(0,.12f,false), ["WaterFresnelStrength"]=(0,1.5f,false), ["WaterSpecularAaStrength"]=(0,2,false), ["FftResolution"]=(128,1024,true), ["FftCascadeCount"]=(1,4,true), ["FftUpdatesPerSecond"]=(5,120,false), ["FftNormalStrength"]=(0,1,false), ["FftFoamStrength"]=(0,1,false), ["FftWhitecap"]=(0,2,false), ["FftWindSpeedMetersPerSecond"]=(.1f,60,false), ["FftWindDirectionDegrees"]=(-180,180,false), ["FftSmallWaveLengthMeters"]=(4,256,false), ["FftLargeWaveLengthMeters"]=(16,2048,false), ["FftDetailDistanceMeters"]=(25,4000,false), ["FftGeometryHeightScale"]=(0,10,false), ["FftGeometryChoppiness"]=(0,3,false), ["FftGeometryDistanceMeters"]=(25,2000,false), ["FftGeometryFilterMeters"]=(1,8,false), ["FftCrestLightingStrength"]=(0,1,false), ["FftShorelineFadeDistanceMeters"]=(1,64,false), ["FftShorelineChopFadeDistanceMeters"]=(1,64,false), ["FftShorelineShallowDepthMeters"]=(.1f,20,false), ["FftDeepWaterWaveDepthMeters"]=(5,500,false) };
+        ["WaterWaveHeightMeters"]=(0,10,false), ["WaterWaveLengthMeters"]=(2,200,false), ["WaterWaveSpeed"]=(0,10,false), ["WaterWaveDetailStrength"]=(0,1,false), ["WaterWaveDomainWarpStrength"]=(0,1.5f,false), ["WaterWaveCrestSharpness"]=(.05f,4,false), ["WaterWaveCrestBlend"]=(0,1,false), ["WaterWaveNormalStrength"]=(0,2,false), ["WaterWaveBandlimitStartRadians"]=(.05f,2,false), ["WaterWaveBandlimitEndRadians"]=(.1f,3,false), ["WaterRefractionStrength"]=(0,.08f,false), ["WaterAbsorptionDensity"]=(.001f,2,false), ["WaterShallowInscatterStrength"]=(0,2,false), ["WaterCrestTransmissionStrength"]=(0,2,false), ["WaterShallowAlpha"]=(0,1,false), ["WaterDeepAlpha"]=(0,1,false), ["WaterShoreFoamDepthMeters"]=(.1f,20,false), ["WaterShoreFoamStrength"]=(0,2,false), ["WaterBreakingFoamStrength"]=(0,2,false), ["WaterBreakingFoamSlopeStart"]=(.05f,1.5f,false), ["WaterBreakingFoamSlopeEnd"]=(.1f,2,false), ["WaterSwellVariation"]=(0,1,false), ["WaterFoamPatchiness"]=(0,1,false), ["WaterDistantFoamVisibility"]=(0,1,false), ["WaterDetailFilteringStrength"]=(0,2,false), ["WaterWaveGeometryFadeMeters"]=(100,50000,false), ["WaterWaveNormalFadeStartMeters"]=(100,50000,false), ["WaterWaveNormalFadeEndMeters"]=(200,100000,false), ["WaterSpecularAaStrength"]=(0,2,false), ["FftResolution"]=(128,1024,true), ["FftCascadeCount"]=(1,4,true), ["FftUpdatesPerSecond"]=(5,120,false), ["FftNormalStrength"]=(0,1,false), ["FftFoamStrength"]=(0,1,false), ["FftWhitecap"]=(0,2,false), ["FftWindSpeedMetersPerSecond"]=(.1f,60,false), ["FftWindDirectionDegrees"]=(-180,180,false), ["FftSmallWaveLengthMeters"]=(4,256,false), ["FftLargeWaveLengthMeters"]=(16,2048,false), ["FftDetailDistanceMeters"]=(25,4000,false), ["FftGeometryHeightScale"]=(0,10,false), ["FftGeometryChoppiness"]=(0,3,false), ["FftGeometryDistanceMeters"]=(25,2000,false), ["FftGeometryFilterMeters"]=(1,8,false), ["FftCrestLightingStrength"]=(0,1,false), ["FftShorelineFadeDistanceMeters"]=(1,64,false), ["FftShorelineChopFadeDistanceMeters"]=(1,64,false), ["FftShorelineShallowDepthMeters"]=(.1f,20,false), ["FftDeepWaterWaveDepthMeters"]=(5,500,false) };
     private static bool TryValidate(string key, Variant value, out Variant clean)
     {
+        if (key == ReflectionMigrationKey) { clean = 1; return value.VariantType is Variant.Type.Int or Variant.Type.Float && value.AsDouble() == 1.0; }
         clean = default; if (key is "FftEnabled" or "FftAdaptiveUpdatesEnabled" or "FftFollowWeatherWind" or "WaterSsrEnabled") { if (value.VariantType != Variant.Type.Bool) return false; clean = value.AsBool(); return true; }
         if (key == "FftGeometryUpdatesPerSecond") { if (value.VariantType is not (Variant.Type.Int or Variant.Type.Float) || !double.IsFinite(value.AsDouble())) return false; clean = Mathf.Clamp((float)value.AsDouble(), 5, 120); return true; }
         if (key is "WaterShallowTint" or "WaterDeepTint" or "WaterFoamColor" or "WaterRiverColor" or "WaterLakeColor" or "WaterAbsorptionCoefficients") { if (value.VariantType != Variant.Type.Color) return false; Color c = value.AsColor(); if (!float.IsFinite(c.R)||!float.IsFinite(c.G)||!float.IsFinite(c.B)||!float.IsFinite(c.A) || c.R < 0 || c.R > 1 || c.G < 0 || c.G > 1 || c.B < 0 || c.B > 1 || c.A < 0 || c.A > 1) return false; clean=c; return true; }

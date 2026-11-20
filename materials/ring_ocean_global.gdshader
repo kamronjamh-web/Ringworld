@@ -27,7 +27,6 @@ uniform float ring_width_meters = 20000.0;
 #include "res://materials/ring_color_space.gdshaderinc"
 #include "res://materials/ring_atmosphere.gdshaderinc"
 #include "res://materials/ring_water_common.gdshaderinc"
-#include "res://materials/ring_reflection_model.gdshaderinc"
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
 #include "res://materials/ring_terrain_macro_shadow.gdshaderinc"
 #include "res://materials/ring_shadow_compose.gdshaderinc"
@@ -103,9 +102,6 @@ void fragment() {
 		far_gradient);
 	if (!FRONT_FACING) animated_water_normal_world *= -1.0;
 	NORMAL = normalize((VIEW_MATRIX * vec4(animated_water_normal_world, 0.0)).xyz);
-	float fresnel = ring_water_schlick_fresnel(
-		clamp(dot(normalize(NORMAL), normalize(VIEW)), 0.0, 1.0));
-	float reflection_weight = clamp(fresnel * fresnel_strength, 0.0, 1.0);
 	float hemisphere_brightness = mix(night_brightness, 1.0, ring_day_factor);
 	vec3 seeded_tint = ring_vertex_color_to_linear(COLOR.rgb);
 	float shallow_hint = clamp(COLOR.g * 2.6, 0.0, 1.0);
@@ -113,9 +109,7 @@ void fragment() {
 	water_tint = mix(seeded_tint, water_tint, 0.35)
 		* mix(night_tint, vec3(1.0), ring_day_factor)
 		* hemisphere_brightness;
-	vec3 grazing_color = mix(water_tint, vec3(0.12, 0.28, 0.42), reflection_weight * 0.55);
 	RingHaze haze = ring_haze_sample(camera_world_position, world_position, ring_center, ring_day_factor);
-	ALBEDO = grazing_color * haze.T;
 	EMISSION = ring_haze_inscatter(haze);
 	float rain_matte = 0.0;
 	if (wet_world_receiver && ring_wet_params.w > 0.5) {
@@ -124,21 +118,16 @@ void fragment() {
 		rain_matte = 0.08 * rain_state.rain + 0.15 * ring_wet_events.y;
 	}
 	// Model 1: the far roughness of the water kind alone (plan 10.7); this mesh is never within the detail distance, so the near ocean_roughness floor does not apply.
-	float far_roughness = ringworld_reflection_model >= 0.5 ? ring_water_far_roughness_model1(water_kind_profile) : max(ocean_roughness, far_water_roughness);
+	float far_roughness = ring_water_far_roughness_model1(water_kind_profile);
 	ROUGHNESS = clamp(far_roughness
 		+ sqrt(max(filtered_far_wave.z * wave_normal_strength * wave_normal_strength, 0.0)) * 0.10 + rain_matte, 0.02, 1.0);
 	// Physical haze also attenuates the environment reflection; exactly 1 in Legacy.
 	float storm_water_level = ring_storm_level_far(world_position, camera_world_position, ring_center, ring_atmosphere_coordinate_scale);
 	float storm_reflection = ring_storm_ambient(storm_water_level); // storm light: the sky reflection and the ambient follow the storm level
-	// Storm light: a closed overcast has no sun to mirror, so the reflection also fades by the sun fade F(D) (the sun disc in the radiance map is a sharp glint otherwise).
-	SPECULAR = ring_water_dielectric_specular() * ocean_specular * ring_haze_specular_scale(haze) * storm_reflection
-		* mix(1.0, 0.02, ring_storm_shadow_fade(storm_water_level) * ringworld_storm_light.x);
-	if (ringworld_reflection_model >= 0.5) {
-		// Same reflection model as the near water (R1-2a): no fixed blue, physical F0, sky term through the engine.
-		float n_dot_v = clamp(dot(NORMAL, VIEW), 1e-4, 1.0);
-		ALBEDO = water_tint * (1.0 - ring_water_env_reflectance(ROUGHNESS, n_dot_v)) * haze.T;
-		SPECULAR = RING_WATER_SPECULAR * sqrt(ring_haze_specular_scale(haze));
-	}
+	// Same reflection model as the near water (R1-2a): no fixed blue, physical F0, sky term through the engine.
+	float n_dot_v = clamp(dot(NORMAL, VIEW), 1e-4, 1.0);
+	ALBEDO = water_tint * (1.0 - ring_water_env_reflectance(ROUGHNESS, n_dot_v)) * haze.T;
+	SPECULAR = RING_WATER_SPECULAR * sqrt(ring_haze_specular_scale(haze));
 	METALLIC = 0.0;
 	combined_cloud_shadow_occlusion = sample_combined_cloud_shadow(world_position, ring_day_factor);
 	AO = min(1.0 - combined_cloud_shadow_occlusion * 0.60, storm_reflection); // storm light: ambient follows the storm level
