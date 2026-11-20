@@ -6137,8 +6137,8 @@
       ],
       "world": "integration",
       "marker": "STORM_ARRIVAL_PRODUCTION",
-      "expected_s": 15,
-      "timeout_s": 60
+      "expected_s": 45,
+      "timeout_s": 120
     },
     "storm_arrival_settings_smoke_test": {
       "kind": "test",

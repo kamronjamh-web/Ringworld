@@ -59,24 +59,45 @@ public partial class RingVolumetricCloudLayer
         if (!current.InheritWind) return current;
         var natural = QueryRawWeatherAtTime(position, time, false, true);
         var target = ResolveSurfaceWind(natural, time);
-        // Finite history quadrature: deterministic at arbitrary positions and capture times,
-        // including rewind. Eight exponentially weighted samples bound work and state.
+        // Finite history quadrature: deterministic at arbitrary positions and capture times, including rewind.
+        // Twelve samples feed two exponential filters: speed (tauS) and direction (tauD = 3 tauS), so the sustained wind
+        // settles over minutes. Storm-arrival fronts and the megastorm override are applied after, and keep their fast turns.
         float currentFactor = StormFactor(natural);
         float envelopeBlend = currentFactor * currentFactor * (3 - 2 * currentFactor);
-        double tau = Math.Max(.1, Mathf.Lerp(WindSettings.StormDecaySeconds, WindSettings.StormRiseSeconds, envelopeBlend));
-        Vector2 mean = Vector2.Zero;
-        float total = 0;
-        for (int i = 0; i < 8; i++)
+        double tauS = Math.Max(10.0, Mathf.Lerp(WindSettings.StormDecaySeconds, WindSettings.StormRiseSeconds, envelopeBlend));
+        double tauD = 3.0 * tauS;
+        const int SampleCount = 12;
+        Span<double> lags = stackalloc double[SampleCount];
+        Span<Vector2> winds = stackalloc Vector2[SampleCount];
+        for (int i = 0; i < SampleCount; i++)
         {
-            double lag = tau * i * .5;
-            float weight = (float)Math.Exp(-lag / tau);
-            var past = i == 0 ? target : ResolveSurfaceWind(QueryRawWeatherAtTime(position, time - lag, false, true), time - lag);
-            mean += past.WindMetersPerSecond * weight;
-            total += weight;
+            double f = i / (double)(SampleCount - 1);
+            lags[i] = 3.0 * tauD * f * f;
+            winds[i] = i == 0 ? target.WindMetersPerSecond : ResolveSurfaceWind(QueryRawWeatherAtTime(position, time - lags[i], false, true), time - lags[i]).WindMetersPerSecond;
         }
-        Vector2 resolved = ResolveManualEnvelope(position, natural, mean / total, time);
-        // Storm arrival (B1): applied once, after the history smoothing, so the front edge stays sharp and every consumer agrees. Strength 0 skips it entirely.
-        if (current.SystemId == natural.SystemId) resolved = ApplyStormArrivalWind(position, time, resolved, out _, out _);
+        Vector2 dirSum = Vector2.Zero;
+        double speedSum = 0, weightS = 0;
+        for (int i = 0; i < SampleCount; i++)
+        {
+            double d = (lags[Math.Min(i + 1, SampleCount - 1)] - lags[Math.Max(i - 1, 0)]) * .5;
+            double wS = Math.Exp(-lags[i] / tauS) * d, wD = Math.Exp(-lags[i] / tauD) * d;
+            dirSum += winds[i] * (float)wD;
+            speedSum += wS * winds[i].Length();
+            weightS += wS;
+        }
+        Vector2 smoothed = target.WindMetersPerSecond;
+        if (weightS > 0)
+        {
+            Vector2 baseWind = WeatherWindMetersPerSecond * WindSettings.BaseWindMultiplier;
+            Vector2 direction = dirSum.Length() >= 1e-4f ? dirSum.Normalized()
+                : target.WindMetersPerSecond.LengthSquared() > 1e-8f ? target.WindMetersPerSecond.Normalized()
+                : baseWind.IsFinite() && baseWind.LengthSquared() > 1e-8f ? baseWind.Normalized() : Vector2.Right;
+            smoothed = direction * (float)(speedSum / weightS);
+        }
+        Vector2 resolved = ResolveManualEnvelope(position, natural, smoothed, time);
+        // Storm arrival (B1): applied once, after the history smoothing, so every consumer agrees. Strength 0 skips it entirely. The front's speed jump stays
+        // sharp; its turn is spread over minutes (user 2026-11-20: a separate, rare, fast turn of 30-90 degrees over minutes), see ApplyStormArrivalTurn.
+        if (current.SystemId == natural.SystemId) resolved = ApplyStormArrivalTurn(position, time, resolved);
         var result = current with { WindMetersPerSecond = resolved };
         lock (_windStateLock)
         {
@@ -97,6 +118,38 @@ public partial class RingVolumetricCloudLayer
             && MegastormHazardMath.WindOverride(model, position.AroundMeters, position.AcrossMeters, time, out Vector2 target, out float weight))
             result = result.Lerp(target, weight);
         return result;
+    }
+    /// <summary>Time scale of the storm-arrival turn (seconds): the front's new direction is reached over about four of these (a gamma kernel).</summary>
+    public const double StormArrivalTurnSeconds = 40.0;
+    /// <summary>
+    /// The storm-arrival modifier with its direction change spread over minutes (user 2026-11-20: a separate, rare, fast turn of 30-90 degrees over
+    /// minutes): the direction is the mean of the modified wind's unit direction over the last four minutes (25 samples, 10 s apart) under a gamma
+    /// kernel lag e^(-lag / tau) (zero weight at lag 0, so a sharp front turns the wind smoothly instead of stepping), evaluated against the current
+    /// steady wind; the speed is the current modified speed (the gust-front jump stays sharp). The megastorm override is applied after, unsmoothed.
+    /// </summary>
+    private Vector2 ApplyStormArrivalTurn(RingCanonicalPosition position, double time, Vector2 mean)
+    {
+        Vector2 now = ApplyStormArrivalWindCore(position, time, mean, out _, out _);
+        // Also smooth while a front has just left (its turn must ease back, not snap): probe the far end of the kernel too.
+        bool active = now != mean || ApplyStormArrivalWindCore(position, time - 120.0, mean, out _, out _) != mean
+            || ApplyStormArrivalWindCore(position, time - 240.0, mean, out _, out _) != mean;
+        if (active && now.LengthSquared() > 1e-8f)
+        {
+            Vector2 sum = Vector2.Zero;
+            for (int i = 1; i <= 24; i++)
+            {
+                double lag = 10.0 * i;
+                Vector2 past = ApplyStormArrivalWindCore(position, time - lag, mean, out _, out _);
+                if (past.LengthSquared() > 1e-8f) sum += past.Normalized() * (float)(lag * Math.Exp(-lag / StormArrivalTurnSeconds));
+            }
+            // A sliver of the present keeps the direction defined when every past sample is calm.
+            sum += now.Normalized() * 1e-3f;
+            if (sum.LengthSquared() > 1e-8f) now = sum.Normalized() * now.Length();
+        }
+        if (MegastormSource != null && WindSettings.Enabled && MegastormHazardModel is MegastormModel model
+            && MegastormHazardMath.WindOverride(model, position.AroundMeters, position.AcrossMeters, time, out Vector2 target, out float weight))
+            now = now.Lerp(target, weight);
+        return now;
     }
     private MegastormModel? MegastormHazardModel => MegastormSource switch { RingMegastorm node => node.Model, MegastormModel model => model, _ => null };
     private Vector2 ApplyStormArrivalWindCore(RingCanonicalPosition position, double time, Vector2 mean, out float gustStrengthScale, out float gustBaseAdd)
@@ -136,7 +189,7 @@ public partial class RingVolumetricCloudLayer
                 double midpoint = (previous.Value + stamp) * .5;
                 var state = ApplyManualWeather(position, natural, midpoint);
                 Vector2 target = state.SystemId == natural.SystemId ? baseline : ResolveSurfaceWind(state, midpoint).WindMetersPerSecond;
-                double seconds = target.LengthSquared() > mean.LengthSquared() ? WindSettings.StormRiseSeconds : WindSettings.StormDecaySeconds;
+                double seconds = target.LengthSquared() > mean.LengthSquared() ? RingWindSettings.ManualWindRiseSeconds : RingWindSettings.ManualWindDecaySeconds;
                 mean = mean.Lerp(target, (float)(1 - Math.Exp(-(stamp - previous.Value) / Math.Max(.1, seconds))));
             }
             previous = stamp;

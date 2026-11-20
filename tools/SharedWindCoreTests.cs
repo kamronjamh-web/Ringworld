@@ -20,13 +20,12 @@ public partial class SharedWindCoreTests : RefCounted
         weather.RegisterManualWeather("wind-core", state);
         var rising = weather.QueryWindSnapshotAtTime(position, 1000);
         var strong = weather.QueryWindSnapshotAtTime(position, 1040);
-        weather.WindSettings.StormRiseSeconds = .5f;
-        var fastRise = weather.QueryWindSnapshotAtTime(position, 1005);
-        weather.WindSettings.StormRiseSeconds = 20;
-        var slowRise = weather.QueryWindSnapshotAtTime(position, 1005);
-        if (fastRise.MeanWind.Length() <= slowRise.MeanWind.Length() + 3)
-            throw new Exception("Storm rise control did not change buildup");
-        weather.WindSettings.StormRiseSeconds = 5;
+        // Manual weather uses the fixed manual envelope: the steady-wind knobs must not change it.
+        float steadyRise = weather.WindSettings.StormRiseSeconds;
+        weather.WindSettings.StormRiseSeconds = 1800;
+        var knobRise = weather.QueryWindSnapshotAtTime(position, 1040);
+        weather.WindSettings.StormRiseSeconds = steadyRise;
+        if (knobRise.MeanWind.DistanceTo(strong.MeanWind) > 1.5f) throw new Exception($"Manual storm rise followed the steady-wind knob: {strong.MeanWind} vs {knobRise.MeanWind}");
         if (strong.MeanWind.Length() < 20 || strong.MeanWind.Length() <= rising.MeanWind.Length() + 2) throw new Exception($"Spawned storm did not rise: {rising.MeanWind} -> {strong.MeanWind}");
         if (Math.Abs(strong.MeanWind.Angle() - weather.WeatherWindMetersPerSecond.Angle()) < .1) throw new Exception("Storm direction did not change");
         weather.CloudSimulationTimeSeconds = 1040;
@@ -37,13 +36,6 @@ public partial class SharedWindCoreTests : RefCounted
         var decaying = weather.QueryWindSnapshotAtTime(position, 1040);
         var next = weather.QueryWindSnapshotAtTime(position, 1040.016);
         var recovered = weather.QueryWindSnapshotAtTime(position, 1160);
-        weather.WindSettings.StormDecaySeconds = 1;
-        var fastDecay = weather.QueryWindSnapshotAtTime(position, 1050);
-        weather.WindSettings.StormDecaySeconds = 60;
-        var slowDecay = weather.QueryWindSnapshotAtTime(position, 1050);
-        if (slowDecay.MeanWind.Length() <= fastDecay.MeanWind.Length() + 3)
-            throw new Exception("Storm decay control did not change recovery");
-        weather.WindSettings.StormDecaySeconds = 18;
         if (decaying.MeanWind.DistanceTo(strong.MeanWind) > .01f) throw new Exception($"Deletion jumped wind at unchanged clock: {strong.MeanWind} -> {decaying.MeanWind}");
         if (next.MeanWind.DistanceTo(decaying.MeanWind) > .1f || next.MeanWind.Length() > decaying.MeanWind.Length() + .001f) throw new Exception("First decay frame was discontinuous or increased");
         if (decaying.MeanWind.Length() <= recovered.MeanWind.Length() + 2) throw new Exception($"Storm deletion failed decay: {decaying.MeanWind} -> {recovered.MeanWind}");
@@ -107,9 +99,41 @@ public partial class SharedWindCoreTests : RefCounted
             throw new Exception($"Storm gust patches did not move with resolved mean: {moved} vs {stormMean}");
         if (weather.SharedWindField.VelocityMetersPerSecond.DistanceTo(stormMean) > .001)
             throw new Exception("Published lag velocity did not follow storm mean direction");
+        // Natural path: the sustained mean wind settles over minutes. Storm-arrival fronts keep their fast turns, so they are switched off to isolate the mean.
+        var arrival = RingStormArrivalSettings.Current;
+        float arrivalStrength = arrival.GustFrontStrength;
+        arrival.GustFrontStrength = 0;
+        var steps = new System.Collections.Generic.List<float>();
+        float minSpeed = float.MaxValue, maxSpeed = 0, maxTurnDegrees = 0, p95Turn = 0;
+        double timePerQueryMs;
+        try
+        {
+            const double naturalStart = 50000;
+            Vector2 previousMean = Vector2.Zero;
+            for (int i = 0; i <= 720; i++)
+            {
+                double t = naturalStart + i * 10.0;
+                var a = weather.QueryWindSnapshotAtTime(position, t);
+                var b = weather.QueryWindSnapshotAtTime(position, t);
+                if (a.MeanWind != b.MeanWind) throw new Exception($"Natural mean wind is not deterministic at t={t}: {a.MeanWind} vs {b.MeanWind}");
+                float speed = a.MeanWind.Length();
+                minSpeed = Math.Min(minSpeed, speed); maxSpeed = Math.Max(maxSpeed, speed);
+                if (i > 0 && speed > .5f && previousMean.Length() > .5f)
+                    steps.Add(Mathf.RadToDeg(Math.Abs(previousMean.AngleTo(a.MeanWind))));
+                previousMean = a.MeanWind;
+            }
+            steps.Sort();
+            maxTurnDegrees = steps.Count > 0 ? steps[^1] : 0;
+            p95Turn = steps.Count > 0 ? steps[Math.Min(steps.Count - 1, (int)(steps.Count * .95))] : 0;
+            if (maxTurnDegrees >= 5f) throw new Exception($"Natural mean wind turned {maxTurnDegrees} degrees within 10 s");
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            for (int i = 0; i < 200; i++) weather.QueryLocalWeatherAtTime(position, naturalStart + 20000 + i * 7.31);
+            timePerQueryMs = stopwatch.Elapsed.TotalMilliseconds / 200;
+        }
+        finally { arrival.GustFrontStrength = arrivalStrength; }
         weather.SetProcess(false);
         world.SetProcess(false);
-        return new() { ["passed"] = true, ["spawn_wind"] = strong.MeanWind, ["decay_wind"] = decaying.MeanWind, ["recovered_wind"] = recovered.MeanWind, ["baseline_wind"] = baseline.MeanWind, ["external_rise"] = externalRise.MeanWind };
+        return new() { ["passed"] = true, ["natural_max_turn_deg_per_10s"] = maxTurnDegrees, ["natural_p95_turn_deg_per_10s"] = p95Turn, ["natural_speed_min"] = minSpeed, ["natural_speed_max"] = maxSpeed, ["ms_per_local_weather_query"] = timePerQueryMs, ["spawn_wind"] = strong.MeanWind, ["decay_wind"] = decaying.MeanWind, ["recovered_wind"] = recovered.MeanWind, ["baseline_wind"] = baseline.MeanWind, ["external_rise"] = externalRise.MeanWind };
     }
     public Godot.Collections.Dictionary ConfigureProductionProbe(Node world, int stage)
     {

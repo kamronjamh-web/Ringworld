@@ -32,8 +32,8 @@ public partial class RingLiveTuningDrawer
         AddWindNumber(group, "BaseWindMultiplier", "Mean breeze multiplier", .05);
         AddWindNumber(group, "StormWindSpeed", "Storm wind speed (m/s)", .5);
         AddWindNumber(group, "StormDirectionDegrees", "Storm direction variation (degrees)", 1);
-        AddWindNumber(group, "StormRiseSeconds", "Storm rise (seconds)", .1);
-        AddWindNumber(group, "StormDecaySeconds", "Storm decay (seconds)", .1);
+        AddWindNumber(group, "StormRiseSeconds", "Steady wind rise (seconds)", 1);
+        AddWindNumber(group, "StormDecaySeconds", "Steady wind decay (seconds)", 1);
         group = TuningMenuUi.CreateSection(tab, "Travelling gusts");
         AddWindNumber(group, "GustStrength", "Gust strength", .01);
         AddWindNumber(group, "GustScaleMeters", "Gust pattern size (m)", 10, "The repeating field span. Larger patterns produce larger gust patches; individual patches occupy part of this span.");
@@ -51,7 +51,7 @@ public partial class RingLiveTuningDrawer
         AddWindNumber(group, "TreeTrunkResponseSeconds", "Trunk response and recovery (seconds)", .05);
         AddWindNumber(group, "TreeCanopyResponseSeconds", "Canopy response and recovery (seconds)", .05);
         group = TuningMenuUi.CreateSection(tab, "Water response");
-        AddWindNumber(group, "WaterResponseSeconds", "Ocean mean wind response (seconds)", .1);
+        AddWindNumber(group, "WaterResponseSeconds", "Sea state response (seconds)", 1);
         AddWindNumber(group, "WaterGustResponseStrength", "Gust detail and foam response", .05);
         AddWindNumber(group, "AnalyticWaveResponseStrength", "Analytic wave response", .05);
         group = TuningMenuUi.CreateSection(tab, "Radar wind");

@@ -119,7 +119,7 @@ public partial class StormArrivalProductionTest : RefCounted
             if (verbose) Console.WriteLine($"fine continuity worst |dw| per 0.1 s = {fineJump:0.000} at {fineAt}");
             Check(fineJump <= 0.06, $"weights jump {fineJump:0.000} per 0.1 s outside the front edge ({fineAt})");
 
-            // B1 wind: at the default strength the surface wind jumps by 1.4x or more within 10 s at the front edge and turns by 30 degrees or more toward the outflow;
+            // B1 wind: at the default strength the surface wind jumps by 1.4x or more within 10 s at the front edge and turns by 30 degrees or more toward the outflow (over minutes since 2026-11-20);
             // at strength 0 nothing of the sort happens and the wind equals the unmodified quadrature (the modifier is skipped); a calm (arrival-free) point is bit-identical at any strength.
             if (!double.IsNaN(firstGust))
             {
@@ -142,7 +142,19 @@ public partial class StormArrivalProductionTest : RefCounted
                         if (b0 > 0.05f) bestRatioOff = Math.Max(bestRatioOff, b1 / b0);
                     }
                 if (verbose) Console.WriteLine($"wind jump within 10 s: x{bestRatio:0.00} with {bestAngle:0} deg turn (strength 0: x{bestRatioOff:0.00}); speeds on {string.Join(" ", on.Where((_, i) => i % 20 == 0).Select(v => v.Length().ToString("0.0")))}");
-                Check(bestRatio >= 1.4 && bestAngle >= 30.0, $"gust front wind jump x{bestRatio:0.00} / {bestAngle:0} deg at default strength (needs >= 1.4x and >= 30 deg within 10 s)");
+                // User 2026-11-20 (steady wind, docs/reflections-plan.md 10.9): the front's speed jump stays sharp (within 10 s), its turn is spread over minutes
+                // (RingVolumetricCloudLayer.ApplyStormArrivalTurn): 30 degrees or more within four minutes of the front, and no 10 s step of more than 35 degrees.
+                double turn = 0, worstStep = 0;
+                Vector2 prior = layer.QueryLocalWeatherAtTime(observer, firstGust - 10.0).WindMetersPerSecond, lastTurnSample = prior;
+                for (double tt = firstGust; tt <= firstGust + 240.0; tt += 10.0)
+                {
+                    Vector2 w = layer.QueryLocalWeatherAtTime(observer, tt).WindMetersPerSecond;
+                    if (w.LengthSquared() > 1e-4f && prior.LengthSquared() > 1e-4f) turn = Math.Max(turn, Mathf.RadToDeg(Mathf.Abs(Mathf.AngleDifference(prior.Angle(), w.Angle()))));
+                    if (w.LengthSquared() > 1e-4f && lastTurnSample.LengthSquared() > 1e-4f) worstStep = Math.Max(worstStep, Mathf.RadToDeg(Mathf.Abs(Mathf.AngleDifference(lastTurnSample.Angle(), w.Angle()))));
+                    lastTurnSample = w;
+                }
+                if (verbose) Console.WriteLine($"front turn within 240 s: {turn:0} deg, worst 10 s step {worstStep:0} deg (speed jump within 10 s: x{bestRatio:0.00}, {bestAngle:0} deg)");
+                Check(bestRatio >= 1.4 && turn >= 30.0 && worstStep <= 35.0, $"gust front wind jump x{bestRatio:0.00} within 10 s, turn {turn:0} deg within 240 s, worst 10 s step {worstStep:0} deg (needs >= 1.4x, >= 30 deg, <= 35 deg)");
                 Check(bestRatioOff < bestRatio, $"strength 0 must not show the front: x{bestRatioOff:0.00} vs x{bestRatio:0.00}");
                 // No calm gap: after the front the strong outflow persists through the fat drops and into the core (the wind never falls back below 60% of the front's peak until rain is well under way).
                 {

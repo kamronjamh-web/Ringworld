@@ -35,13 +35,16 @@ public sealed class GameplayWindDefaults
     {
         if (_baseline.Count > 0) return;
         foreach (string key in Keys) _baseline[key] = RingWindSettings.Current.Get(key);
+        Settings.SteadyWindMigrationCompleted = true;   // a missing file has nothing to migrate; a loaded file with the flag unset drops the old-scale keys below
         if (ResourceLoader.Exists(_path)) try
         {
             var loaded = ResourceLoader.Load<GameplayWindSettings>(_path, cacheMode: ResourceLoader.CacheMode.Ignore);
             if (loaded == null) { LastError = "Invalid wind preferences"; return; }
             Settings.LegacyGrassMigrationCompleted = loaded.LegacyGrassMigrationCompleted;
+            if (!loaded.SteadyWindMigrationCompleted) Dirty = true;
             foreach (Variant key in loaded.Overrides.Keys)
-                if (key.VariantType == Variant.Type.String && TryValidate(key.AsString(), loaded.Overrides[key], out Variant value))
+                if (!loaded.SteadyWindMigrationCompleted && key.VariantType == Variant.Type.String && key.AsString() is "StormRiseSeconds" or "StormDecaySeconds" or "WaterResponseSeconds") continue;   // scale changed from seconds to minutes
+                else if (key.VariantType == Variant.Type.String && TryValidate(key.AsString(), loaded.Overrides[key], out Variant value))
                 {
                     Settings.Overrides[key] = value;
                     RingWindSettings.Current.Set(key.AsString(), value);
@@ -79,7 +82,7 @@ public sealed class GameplayWindDefaults
     public void Reset()
     {
         foreach (var pair in _baseline) RingWindSettings.Current.Set(pair.Key, pair.Value);
-        Settings = new() { LegacyGrassMigrationCompleted = true }; Dirty = true; LastError = "";
+        Settings = new() { LegacyGrassMigrationCompleted = true, SteadyWindMigrationCompleted = true }; Dirty = true; LastError = "";
     }
     public void ApplyDramaticStormPreset()
     {
@@ -103,11 +106,11 @@ public sealed class GameplayWindDefaults
     public static readonly Dictionary<string, (float Min, float Max)> Limits = new()
     {
         ["BaseWindMultiplier"]=(0,4), ["StormWindSpeed"]=(0,80), ["StormDirectionDegrees"]=(0,90),
-        ["StormRiseSeconds"]=(.1f,120), ["StormDecaySeconds"]=(.1f,300),
+        ["StormRiseSeconds"]=(10,1800), ["StormDecaySeconds"]=(10,3600),
         ["GustStrength"]=(0,2), ["GustScaleMeters"]=(48,8000), ["GustTravelMultiplier"]=(0,4), ["GustBaseBreeze"]=(0,1),
         ["TreeBendStrength"]=(0,4), ["TreeMaximumBendRatio"]=(0,.6f), ["TreeTrunkResponseSeconds"]=(.05f,20), ["TreeCanopyResponseSeconds"]=(.05f,10),
         ["TreeTrunkBendStrength"]=(0,1), ["TreeCanopyFlexStrength"]=(0,3),
-        ["WaterResponseSeconds"]=(.1f,120), ["WaterGustResponseStrength"]=(0,3), ["AnalyticWaveResponseStrength"]=(0,4),
+        ["WaterResponseSeconds"]=(60,3600), ["WaterGustResponseStrength"]=(0,3), ["AnalyticWaveResponseStrength"]=(0,4),
         ["RadarWindCalmThreshold"]=(0,5)
     };
     public static IEnumerable<string> Keys { get { yield return "Enabled"; yield return "RadarWindArrowEnabled"; foreach (string key in Limits.Keys) yield return key; } }
@@ -125,10 +128,10 @@ public sealed class GameplayWindDefaults
     private static readonly Dictionary<string, Variant> DramaticStormPreset = new()
     {
         ["Enabled"]=true, ["BaseWindMultiplier"]=1f, ["StormWindSpeed"]=38f, ["StormDirectionDegrees"]=24f,
-        ["StormRiseSeconds"]=4f, ["StormDecaySeconds"]=22f, ["GustStrength"]=1.2f, ["GustScaleMeters"]=600f,
+        ["StormRiseSeconds"]=120f, ["StormDecaySeconds"]=300f, ["GustStrength"]=1.2f, ["GustScaleMeters"]=600f,
         ["GustTravelMultiplier"]=1.4f, ["GustBaseBreeze"]=.55f, ["TreeBendStrength"]=2.1f,
         ["TreeMaximumBendRatio"]=.36f, ["TreeTrunkResponseSeconds"]=2f, ["TreeCanopyResponseSeconds"]=.6f,
         ["TreeTrunkBendStrength"]=.15f, ["TreeCanopyFlexStrength"]=1f,
-        ["WaterResponseSeconds"]=8f, ["WaterGustResponseStrength"]=1.8f, ["AnalyticWaveResponseStrength"]=1.8f
+        ["WaterResponseSeconds"]=300f, ["WaterGustResponseStrength"]=1.8f, ["AnalyticWaveResponseStrength"]=1.8f
     };
 }

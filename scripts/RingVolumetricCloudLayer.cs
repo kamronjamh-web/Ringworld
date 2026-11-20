@@ -3393,6 +3393,8 @@ public partial class RingVolumetricCloudLayer : Node3D
             ["radii_meters"] = sample.SystemRadiiMeters,
             ["cloud_coverage"] = sample.CloudCoverage,
             ["precipitation"] = sample.PrecipitationPotential,
+            // The mean surface wind at the point: the history-smoothed steady wind with the storm-arrival front applied (no gusts).
+            ["wind"] = sample.WindMetersPerSecond,
             ["lifecycle_enabled"] = NaturalWeatherLifecyclesEnabled
         };
     }

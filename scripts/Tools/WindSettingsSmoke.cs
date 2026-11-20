@@ -52,8 +52,9 @@ public partial class WindSettingsSmoke : RefCounted
             bool migration = TestLegacyMigration(path, runtime);
             bool scopedGrass = TestScopedGrassReset(path);
             bool rainHaze = TestRainHazePreferences(path);
-            return new() { ["pass"] = oldMissingKeys && explicitValues && invalidRejected && bounded && saved && roundTrip && preset && reset && failureRetained && migration && scopedGrass && rainHaze,
-                ["detail"] = $"tree_defaults={oldMissingKeys} explicit={explicitValues} validation={invalidRejected} bounds={bounded} save={saved} roundtrip={roundTrip} preset={preset} reset={reset} failure_retry={failureRetained} migration={migration} scoped_grass={scopedGrass} rain_haze={rainHaze}" };
+            bool steady = TestSteadyWindMigration(path, runtime);
+            return new() { ["pass"] = oldMissingKeys && explicitValues && invalidRejected && bounded && saved && roundTrip && preset && reset && failureRetained && migration && scopedGrass && rainHaze && steady,
+                ["detail"] = $"tree_defaults={oldMissingKeys} explicit={explicitValues} validation={invalidRejected} bounds={bounded} save={saved} roundtrip={roundTrip} preset={preset} reset={reset} failure_retry={failureRetained} migration={migration} scoped_grass={scopedGrass} rain_haze={rainHaze} steady_migration={steady}" };
         }
         finally { RingWindSettings.Current = original; }
     }
@@ -133,6 +134,35 @@ public partial class WindSettingsSmoke : RefCounted
             return grassPreservesWind && roundtrip && windPreservesDensity;
         }
         finally { File.Delete(ProjectSettings.GlobalizePath(grassPath)); }
+    }
+    private static bool TestSteadyWindMigration(string path, RingWindSettings runtime)
+    {
+        string oldPath = path + ".steady-" + System.Environment.ProcessId + ".tres";
+        using var oldPreferences = new GameplayWindSettings();
+        oldPreferences.Overrides["StormRiseSeconds"] = 5f;
+        oldPreferences.Overrides["StormDecaySeconds"] = 18f;
+        oldPreferences.Overrides["WaterResponseSeconds"] = 27.1f;
+        oldPreferences.Overrides["StormWindSpeed"] = 33f;
+        try
+        {
+            if (ResourceSaver.Save(oldPreferences, oldPath) != Error.Ok) return false;
+            var loaded = new GameplayWindDefaults(oldPath); loaded.Initialize();
+            bool dropped = loaded.LastError.Length == 0 && runtime.StormRiseSeconds == 300f && runtime.StormDecaySeconds == 600f && runtime.WaterResponseSeconds == 600f
+                && runtime.StormWindSpeed == 33f && loaded.Settings.SteadyWindMigrationCompleted && loaded.Dirty
+                && !loaded.Settings.Overrides.ContainsKey("StormRiseSeconds") && !loaded.Settings.Overrides.ContainsKey("StormDecaySeconds") && !loaded.Settings.Overrides.ContainsKey("WaterResponseSeconds");
+            bool saved = loaded.Save();
+            loaded.Reset();
+            var again = new GameplayWindDefaults(oldPath); again.Initialize();
+            bool stable = again.LastError.Length == 0 && !again.Dirty && again.Settings.SteadyWindMigrationCompleted && runtime.StormWindSpeed == 33f && runtime.WaterResponseSeconds == 600f;
+            // New-scale values survive once the flag is set; limits follow the minutes scale.
+            bool kept = again.SetOverride("StormRiseSeconds", 450f) && again.SetOverride("WaterResponseSeconds", 1f) && runtime.StormRiseSeconds == 450f && runtime.WaterResponseSeconds == 60f
+                && again.Save();
+            var reloaded = new GameplayWindDefaults(oldPath); reloaded.Initialize();
+            bool keptAfterReload = runtime.StormRiseSeconds == 450f && runtime.WaterResponseSeconds == 60f && !reloaded.Dirty;
+            reloaded.Reset();
+            return dropped && saved && stable && kept && keptAfterReload;
+        }
+        finally { File.Delete(ProjectSettings.GlobalizePath(oldPath)); }
     }
     private static bool TestMissingTreeKeys(string path, RingWindSettings runtime)
     {

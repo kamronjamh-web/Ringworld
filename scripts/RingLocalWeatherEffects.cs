@@ -398,7 +398,7 @@ public partial class RingLocalWeatherEffects : Node3D
             double now = _weatherSource.CloudSimulationTimeSeconds;
             double elapsed = double.IsFinite(_externalWindTime) && now >= _externalWindTime ? now - _externalWindTime : 0;
             if (now < _externalWindTime) _externalFilteredMean = weather.WindMetersPerSecond;
-            float seconds = _externalWeatherOverrideActive ? _weatherSource.WindSettings.StormRiseSeconds : _weatherSource.WindSettings.StormDecaySeconds;
+            float seconds = _externalWeatherOverrideActive ? RingWindSettings.ManualWindRiseSeconds : RingWindSettings.ManualWindDecaySeconds;
             _externalFilteredMean = _externalFilteredMean.Lerp(weather.WindMetersPerSecond, (float)(1-Math.Exp(-elapsed/Math.Max(.1,seconds))));
             _externalWindTime = now;
             weather = weather with { WindMetersPerSecond = _externalFilteredMean, InheritWind = true };
