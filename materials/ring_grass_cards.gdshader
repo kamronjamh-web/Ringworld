@@ -15,8 +15,8 @@ shader_type spatial;
 //               grass_gust_origin_uv, grass_modifier_layer/_origin_world/_around_world/_across_world,
 //               grass_terrain_origin_uv.
 // Haze: per instance from the GPU haze atlas when available (ring_vegetation_haze.gdshaderinc), else per vertex.
-// Alpha-scissor: ALPHA comes from the atlas mask first; everything after it only feeds the colour pass, so the depth
-// prepass reads the mask alone. No shadow casting: set cast_shadow = OFF on the renderer.
+// Alpha-scissor: ALPHA comes from the atlas mask first (then the dissolve drops whole blades, a density fade); everything after
+// it only feeds the colour pass, so the depth prepass reads the mask and the dissolve alone. No shadow casting: set cast_shadow = OFF on the renderer.
 render_mode cull_disabled, diffuse_lambert, specular_disabled, skip_vertex_transform;
 #include "res://materials/ring_grass_card_common.gdshaderinc"
 #include "res://materials/ring_grass_card_color.gdshaderinc"
@@ -51,9 +51,9 @@ uniform float grass_card_normal_tip_start = 0.6; // height gradient where the no
 // Plan section 9 Q3: thin blades, T/R about 0.8. The off path keeps grass_card_backlight.
 const float GRASS_LEAF_TRANSMISSION_K = 0.8;
 // Ground-cover colours (T6 design B2): flower petals by atlas variant, fern leaf tint, tall-grass seed-head straw.
-// Petal hue (unit luminance) and its luminance relative to the blade it sits on (meadow ratios: white 4.5x, yellow 3x, violet and pink 1.25x), so petals follow the grass pipeline rather than an absolute albedo.
+// Petal hue (unit luminance) and its luminance relative to the blade it sits on (meadow ratios: white 4.5x, yellow 3x, violet and pink 2x; user 2026-11-19: flowers about twice as bright), so petals follow the grass pipeline rather than an absolute albedo.
 const vec3 GRASS_COVER_PETALS[4] = vec3[4](vec3(1.006, 1.006, 0.920), vec3(1.307, 0.998, 0.109), vec3(1.043, 0.869, 2.173), vec3(2.004, 0.656, 1.457));
-const vec4 GRASS_COVER_PETAL_RATIO = vec4(4.5, 3.0, 1.25, 1.25);
+const vec4 GRASS_COVER_PETAL_RATIO = vec4(4.5, 3.0, 2.0, 2.0);
 const vec3 GRASS_COVER_FERN_TINT = vec3(0.85, 1.0, 0.80);
 const vec3 GRASS_COVER_STRAW = vec3(1.106, 1.003, 0.664); // seed-head hue (unit luminance) at 2.5x the blade luminance
 
@@ -71,12 +71,12 @@ varying vec3 v_haze_S;
 varying vec4 v_modifier;
 varying vec3 v_ground_world;
 varying flat vec4 v_biome;
-varying float v_wet; // wet world, per vertex: darkening amount (cards only darken, they have no specular)
+varying vec2 v_wet_dissolve; // x: wet world, per vertex darkening amount (cards only darken, they have no specular); y: fraction of blades kept (grow-in x reach fade), constant per instance (packed: the shader is at the 32 varying limit)
 varying vec2 v_canopy; // forest lighting: (blocked, species factor) at the card root, per vertex (ring_canopy_shade.gdshaderinc)
 varying flat vec4 v_ground_hs; // per-instance heightfield term of the card root: visibility, weight, unknown, valid (S7b)
 
 void vertex() {
-	v_wet = 0.0;
+	v_wet_dissolve = vec2(0.0);
 	float k = UV2.y;
 	float lx = UV2.x;
 	float yv = VERTEX.y;
@@ -104,17 +104,21 @@ void vertex() {
 	bool cover = kind > 2.5;
 	float scale;
 	float near_width;
+	float dissolve;
 	if (low) {
 		scale = grass_card_low_scale(rank, dist);
 		near_width = 1.0;
+		dissolve = grass_card_low_dissolve(rank, dist);
 	} else {
 		float keep = grass_card_keep(dist);
 		float grow = rank < keep ? grass_card_grow_in(keep, rank) : 0.0;
-		scale = grow < grass_card_min_grow_in ? 0.0 : grass_card_compensation(dist) * grow;
+		scale = grow < grass_card_min_grow_in ? 0.0 : grass_card_compensation(dist);
 		near_width = grass_card_near_width_scale(dist);
+		// Size is constant with distance; grow-in and the reach fade thin the blades instead (fragment dissolve).
+		dissolve = clamp((grow - grass_card_min_grow_in) / (1.0 - grass_card_min_grow_in), 0.0, 1.0) * grass_card_fade(dist);
 	}
-	float fade = grass_card_fade(dist);
-	if (scale <= 0.0 || fade <= 0.0) {
+	v_wet_dissolve.y = dissolve;
+	if (scale <= 0.0 || dissolve <= 0.0) {
 		VERTEX = vec3(0.0); // culled: zero-area triangles
 	} else {
 	vec3 dh = d - ground_up * dot(d, ground_up);
@@ -140,8 +144,8 @@ void vertex() {
 	// Edge-on cards contribute only a sliver; shrink them instead of rasterising it.
 	wf *= 1.0 - smoothstep(grass_card_edge_on_start, 0.995, abs(dot(u, dh)));
 
-	float hh = hscale * scale * fade;
-	float ww = wscale * scale * near_width * wf * (0.4 + 0.6 * fade);
+	float hh = hscale * scale;
+	float ww = wscale * scale * near_width * wf;
 	vec3 offset_h = u * (lx * ww);
 	vec3 p = root + offset_h + up * (yv * hh) + tilt * (grass_card_tilt * yv * yv * hh);
 	float short_coeff;
@@ -184,7 +188,7 @@ void vertex() {
 	v_haze_T = haze.T;
 	v_haze_S = ring_haze_inscatter(haze);
 	v_modifier = grass_modifier_tint(root);
-	if (ring_wet_params.w > 0.5) v_wet = smoothstep(0.0, 0.5, ring_wet_sample_up(gp, ground_up).soak) * ring_wet_params.x;
+	if (ring_wet_params.w > 0.5) v_wet_dissolve.x = smoothstep(0.0, 0.5, ring_wet_sample_up(gp, ground_up).soak) * ring_wet_params.x;
 	}
 }
 
@@ -201,6 +205,14 @@ void fragment() {
 		cover_mask = mc.a;
 	}
 	ALPHA = m.r;
+	if (v_wet_dissolve.y < 0.999) {
+		// Density fade (grow-in, reach fade): atlas B at mip 0 is the per-blade (per-plant for ground cover) random, so near cards gain whole
+		// blades as they enter instead of changing size. Where the mip-0 tap misses a blade (far, minified) a screen-space dither does the
+		// same job. This is before the scissor threshold so the depth prepass sees it. The instance contract / CUSTOM is unchanged.
+		vec4 m0 = cover_id > -0.5 ? textureLod(grass_cover_atlas, vec3(v_atlas_uv.xy, cover_layer), 0.0) : textureLod(grass_card_atlas, v_atlas_uv.xy, 0.0);
+		float r = m0.r >= 0.5 ? m0.b : fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))));
+		if (r >= v_wet_dissolve.y) ALPHA = 0.0;
+	}
 	ALPHA_SCISSOR_THRESHOLD = grass_card_alpha_cutoff;
 	// Far colour (vertex path) is the blend target.
 	vec3 col = mix(v_base, v_tip, m.g) * (1.0 + v_shape.w + (m.b - 0.5) * 2.0 * grass_card_color_variation * 0.5);
@@ -222,7 +234,7 @@ void fragment() {
 		else col = mix(col, min(GRASS_COVER_STRAW * (dot(col, vec3(0.2126, 0.7152, 0.0722)) * 2.5), vec3(0.9)), cover_mask);
 	}
 	col = mix(col, v_modifier.rgb, clamp(v_modifier.a, 0.0, 1.0));
-	col *= 1.0 - 0.55 * 0.4 * min(v_wet, 1.0); // wet world: blades darken less than soil
+	col *= 1.0 - 0.55 * 0.4 * min(v_wet_dissolve.x, 1.0); // wet world: blades darken less than soil
 	vec3 emission;
 	ALBEDO = grass_card_finish_albedo(col, v_light.x, v_haze_T, v_haze_S, emission);
 	EMISSION = emission;

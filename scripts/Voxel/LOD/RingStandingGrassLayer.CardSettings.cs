@@ -21,8 +21,8 @@ public partial class RingStandingGrassLayer
     /// <summary>Low upright layer lattice density (rebuilds); 0 removes the layer.</summary>
     [Export(PropertyHint.Range, "0,30,0.5")] public float GrassCardLowLayerDensity { get; set; } = 18f;
     [Export(PropertyHint.Range, "10,60,1")] public float GrassCardLowLayerEndMeters { get; set; } = 22f;
-    /// <summary>Largest scale the survivors of thinning grow to; capped at 2.5 by the instance bounds.</summary>
-    [Export(PropertyHint.Range, "1,2.5,0.05")] public float GrassCardScaleCompensationMax { get; set; } = 2.5f;
+    /// <summary>Largest scale the survivors of thinning grow to; capped at 2.5 by the instance bounds. Default 1 keeps the card size constant with distance; above 1 the survivors grow with distance.</summary>
+    [Export(PropertyHint.Range, "1,2.5,0.05")] public float GrassCardScaleCompensationMax { get; set; } = 1f;
     [Export(PropertyHint.Range, "20,600,1")] public float GrassCardSingleCardStartMeters { get; set; } = 90f;
     [Export(PropertyHint.Range, "30,700,1")] public float GrassCardSingleCardEndMeters { get; set; } = 160f;
     [Export(PropertyHint.Range, "1,50,1")] public float GrassCardFadeBandPercent { get; set; } = 15f;
@@ -77,7 +77,7 @@ public partial class RingStandingGrassLayer
         GrassCardTileMeters = 32f;
         GrassCardBaseDensity = 2.5f; GrassCardFloorDensity = .15f; GrassCardDensityFalloff = 1.3f;
         GrassCardNearBoostStartMeters = 8f; GrassCardNearBoostEndMeters = 45f;
-        GrassCardLowLayerDensity = 18f; GrassCardLowLayerEndMeters = 22f; GrassCardScaleCompensationMax = 2.5f;
+        GrassCardLowLayerDensity = 18f; GrassCardLowLayerEndMeters = 22f; GrassCardScaleCompensationMax = 1f;
         GrassCardSingleCardStartMeters = 90f; GrassCardSingleCardEndMeters = 160f; GrassCardFadeBandPercent = 15f;
         GrassCardTallHeight = .6f; GrassCardShortHeight = .3f; GrassCardNearWidthScale = .7f; GrassCardLean = .12f; GrassCardTilt = .08f;
         GrassCardNormalOut = .45f; GrassCardNormalFace = .25f; GrassCardBacklight = .28f; GrassCardAlphaCutoff = .5f; GrassCardAtlasBlades = 56;

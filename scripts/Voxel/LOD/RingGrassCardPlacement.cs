@@ -33,7 +33,9 @@ internal sealed record RingGrassCardPlacement
     public const float BoundsHeightScale = 2.5f;
 }
 
-/// <summary>Bayer-stratified rank of a lattice cell. Every prefix [0, f) of the rank order is itself a jittered grid.</summary>
+/// <summary>Bayer-stratified rank of a lattice cell. Every prefix [0, f) of the rank order is itself a jittered grid. Generation-1 worlds use the
+/// fixed Bayer16 matrix, whose survivors at distance form a regular sub-lattice (a visible grid from above); worlds with vegetation.ground_cover
+/// use <c>RingGrassTileBuilder.ShuffledBayer16</c> (same digit structure and prefix property, random position inside each block), see RunCardLattice.</summary>
 internal static class RingGrassCardRank
 {
     private static readonly byte[] Bayer16Table = BuildBayer16();
@@ -58,7 +60,10 @@ internal static class RingGrassCardRank
     public static int Bayer16(long i, long j) => Bayer16Table[(int)(j & 15) * 16 + (int)(i & 15)];
 
     /// <summary>32-bit rank code: Bayer value in the top byte, 24 hash bits below. Monotone in the code.</summary>
-    public static uint Code(long i, long j, int bayerHashLow24) => ((uint)Bayer16(i, j) << 24) | (uint)(bayerHashLow24 & 0xFFFFFF);
+    public static uint Code(long i, long j, int bayerHashLow24) => CodeFromValue(Bayer16(i, j), bayerHashLow24);
+
+    /// <summary>The same 32-bit code layout from an already computed 0..255 rank value (the shuffled Bayer path).</summary>
+    public static uint CodeFromValue(int bayerValue, int bayerHashLow24) => ((uint)(bayerValue & 0xFF) << 24) | (uint)(bayerHashLow24 & 0xFFFFFF);
 
     /// <summary>(bayer + hash)/256 with the hash in [0,1): the plan's rank, exact from the code.</summary>
     public static float ToRank(uint code) => Math.Min((float)(code / 4294967296.0), MathF.BitDecrement(1f));

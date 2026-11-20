@@ -420,6 +420,9 @@ internal static class RingGrassTileBuilder
 
         // Card lattices sit on the global canonical lattice: the around count is a multiple of 16 that divides the ring
         // exactly, so lattice cells, Bayer ranks and hashes are continuous across the wrap seam.
+        // Rank: generation-1 worlds keep the fixed Bayer16 matrix byte for byte (its rank prefixes are regular sub-lattices, a grid seen from
+        // above). Worlds with vegetation.ground_cover use the shuffled Bayer rank: same strata and prefix property, but the survivor of each
+        // aligned block sits at a random position, so every prefix is a properly jittered grid at its own spacing.
         void RunCardLattice(float density, int salt, RingGrassCardKind kind, BoundedPlacements target)
         {
             sink = target;
@@ -437,7 +440,10 @@ internal static class RingGrassTileBuilder
                 ulong priority = Hash64(aroundCell, acrossCell, sampler.Seed, salt + 9);
                 // Bayer value of the LATTICE cell + a per-cell hash: every rank prefix is a jittered grid. The
                 // priority orders by the exact 32-bit rank code, so a cap truncation is a rank prefix.
-                uint code = RingGrassCardRank.Code(aroundCell, acrossCell, (int)(Hash64(aroundCell, acrossCell, sampler.Seed, salt + 97) >> 40));
+                int rankHash = (int)(Hash64(aroundCell, acrossCell, sampler.Seed, salt + 97) >> 40);
+                uint code = groundCover
+                    ? RingGrassCardRank.CodeFromValue(ShuffledBayer16(aroundCell, acrossCell, sampler.Seed, salt), rankHash)
+                    : RingGrassCardRank.Code(aroundCell, acrossCell, rankHash);
                 float rank = RingGrassCardRank.ToRank(code);
                 if (kind == RingGrassCardKind.Card && !(rank < sourceFraction)) continue;
                 priority = ((ulong)code << 32) | (priority & 0xFFFFFFFFUL);
@@ -753,6 +759,40 @@ internal static class RingGrassTileBuilder
             + .55 * Math.Sin(acrossPhase + Hash01(2, 0, seed, 915) * Math.Tau)
             + .25 * Math.Sin(aroundPhase * 2.0 - acrossPhase * .65);
         return Mathf.Clamp((float)(value / 3.6 + .5), 0, 1);
+    }
+
+    private static readonly byte[,] QuadrantPermutations = BuildQuadrantPermutations();
+
+    private static byte[,] BuildQuadrantPermutations()
+    {
+        // The 24 permutations of {0,1,2,3} in lexicographic order.
+        var table = new byte[24, 4];
+        int n = 0;
+        for (int a = 0; a < 4; a++) for (int b = 0; b < 4; b++) for (int c = 0; c < 4; c++) for (int d = 0; d < 4; d++)
+        {
+            if (a == b || a == c || a == d || b == c || b == d || c == d) continue;
+            table[n, 0] = (byte)a; table[n, 1] = (byte)b; table[n, 2] = (byte)c; table[n, 3] = (byte)d;
+            n++;
+        }
+        return table;
+    }
+
+    /// <summary>
+    /// Shuffled ("randomized quadrant") Bayer rank, 0..255, of lattice cell (i, j). Same digit structure as Bayer16 (4 base-4 digits, the digit
+    /// of coordinate bit 0 most significant), but at each bit level b the quadrant (bit b of i, bit b of j) maps to its digit through one of the
+    /// 24 permutations, picked per parent block (i >> b+1, j >> b+1). Every aligned 2^k block still holds exactly one cell per rank stratum of
+    /// size 4^-k (every prefix is a stratified set, and a permutation of 0..255 per aligned 16x16 block), at a uniformly random position.
+    /// </summary>
+    internal static int ShuffledBayer16(long i, long j, int seed, int salt)
+    {
+        int value = 0;
+        for (int bit = 0; bit < 4; bit++)
+        {
+            int quadrant = (int)((i >> bit) & 1) * 2 + (int)((j >> bit) & 1);
+            int permutation = (int)(Hash64(i >> (bit + 1), j >> (bit + 1), seed, salt + 211 + bit) % 24UL);
+            value = value * 4 + QuadrantPermutations[permutation, quadrant];
+        }
+        return value;
     }
 
     private static float Hash01(long x, long z, int seed, int salt) =>

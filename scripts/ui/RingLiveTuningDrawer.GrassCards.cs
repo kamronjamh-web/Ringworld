@@ -29,7 +29,7 @@ public partial class RingLiveTuningDrawer
         AddGrassSlider(form, "GrassCardShortHeight", "Short tuft height (m, rebuilds)", .1, 1, .01);
         AddGrassSlider(form, "GrassCardLean", "Lean (rebuilds)", 0, .5, .01);
         AddGrassSlider(form, "GrassCardAtlasBlades", "Blades per atlas tuft (rebuilds)", 4, 96, 1);
-        AddGrassSlider(form, "GrassCardNearWidthScale", "Near width scale", .3, 1, .01);
+        AddGrassSlider(form, "GrassCardNearWidthScale", "Card width scale", .3, 1, .01);
         AddGrassSlider(form, "GrassCardTilt", "Card tilt", 0, .4, .01);
         AddGrassSlider(form, "GrassCardNormalOut", "Normal outward", 0, 1, .01);
         AddGrassSlider(form, "GrassCardNormalFace", "Normal facing", 0, 1, .01);

@@ -35,8 +35,8 @@ var POSES := [
 	{"name": "day_haze", "cam": Vector2(-120, 0), "eye": 1.7, "look": Vector3(-60, 0, 0), "sun": Vector3(0.40, 0.75, 0.10), "haze": true, "target": 4.0, "block": 64},
 	{"name": "border_forest", "cam": Vector2(30, 0), "eye": 1.7, "look": Vector3(58, 0, 0), "sun": Vector3(0.30, 0.85, 0.20), "target": 3.0, "block": 64},
 	{"name": "border_desert", "cam": Vector2(125, 0), "eye": 1.7, "look": Vector3(125, 26, 0), "sun": Vector3(0.30, 0.85, 0.20), "target": 3.0, "block": 64},
-	{"name": "far", "cam": Vector2(-240, 0), "eye": 30.0, "look": Vector3(-90, 0, 0), "sun": Vector3(0.30, 0.85, 0.20), "target": 3.0, "block": 16},
-	{"name": "far_haze", "cam": Vector2(-240, 0), "eye": 30.0, "look": Vector3(-90, 0, 0), "sun": Vector3(0.40, 0.75, 0.10), "haze": true, "target": 4.0, "block": 16},
+	{"name": "far", "cam": Vector2(-240, 0), "eye": 30.0, "look": Vector3(-90, 0, 0), "sun": Vector3(0.30, 0.85, 0.20), "target": 3.0, "block": 16, "cover": 0.05},
+	{"name": "far_haze", "cam": Vector2(-240, 0), "eye": 30.0, "look": Vector3(-90, 0, 0), "sun": Vector3(0.40, 0.75, 0.10), "haze": true, "target": 4.0, "block": 16, "cover": 0.05},
 ]
 
 var failed := false
@@ -402,9 +402,9 @@ func _run_color() -> void:
 		_shot(pose, "production", production)
 		var full := Rect2i(Vector2i.ZERO, viewport.size)
 		var px: Dictionary = fixture.CompareMasked(neutral, ground, mask, full, MASK_THRESHOLD)
-		var r: Dictionary = fixture.CompareBlocks(neutral, ground, mask, full, MASK_THRESHOLD, int(pose.block), 0.5)
+		var r: Dictionary = fixture.CompareBlocks(neutral, ground, mask, full, MASK_THRESHOLD, int(pose.block), float(pose.get("cover", 0.5)))
 		var r16: Dictionary = fixture.CompareBlocks(neutral, ground, mask, full, MASK_THRESHOLD, 16, 0.5)
-		var p: Dictionary = fixture.CompareBlocks(production, ground, mask, full, MASK_THRESHOLD, int(pose.block), 0.5)
+		var p: Dictionary = fixture.CompareBlocks(production, ground, mask, full, MASK_THRESHOLD, int(pose.block), float(pose.get("cover", 0.5)))
 		var ok: bool = r.blocks > 8 and float(r.mean) <= float(pose.target)
 		if pose.name == "day_near" or pose.name == "day_down":
 			var hot := _speck_percent(production, ground, mask)
@@ -451,11 +451,11 @@ func _run_curve() -> void:
 	var image := Image.create_from_data(count, 1, false, Image.FORMAT_RGBAF, data.to_byte_array())
 	var texture := ImageTexture.create_from_image(image)
 	var vp := SubViewport.new()
-	vp.size = Vector2i(count * 4, 1)
+	vp.size = Vector2i(count * 6, 1)
 	vp.transparent_bg = true
 	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	var rect := ColorRect.new()
-	rect.size = Vector2(count * 4, 1)
+	rect.size = Vector2(count * 6, 1)
 	var material := ShaderMaterial.new()
 	material.shader = load("res://tools/shaders/grass_card_curve_parity.gdshader")
 	material.set_shader_parameter("samples", texture)
@@ -467,13 +467,13 @@ func _run_curve() -> void:
 	out.convert(Image.FORMAT_RGBA8)
 	var bytes := out.get_data()
 	var ref: Array = fixture.CurveReference(ranks, dists, 400.0)
-	var names := ["scale", "keep", "density", "low_scale"]
-	var worst := [0.0, 0.0, 0.0, 0.0]
+	var names := ["scale", "keep", "density", "low_scale", "dissolve", "low_dissolve"]
+	var worst := [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 	var flips := 0
 	var bad := 0
 	for i in count:
-		for field in 4:
-			var o := (i * 4 + field) * 4
+		for field in 6:
+			var o := (i * 6 + field) * 4
 			var bits := bytes[o] | (bytes[o + 1] << 8) | (bytes[o + 2] << 16) | (bytes[o + 3] << 24)
 			var tmp := PackedByteArray([bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3]])
 			var gpu := tmp.decode_float(0)
@@ -481,7 +481,11 @@ func _run_curve() -> void:
 			if is_nan(gpu) or is_inf(gpu):
 				bad += 1
 				continue
-			if (expected == 0.0 or gpu == 0.0) and maxf(absf(expected), absf(gpu)) < 0.25 and (field == 0 or field == 3):
+			# Scale fields are 0 or a constant now: a boundary sample may flip between culled and kept. The dissolve fields ramp from 0 at the boundary.
+			if (field == 0 or field == 3) and (expected == 0.0) != (gpu == 0.0):
+				flips += 1
+				continue
+			if (expected == 0.0 or gpu == 0.0) and maxf(absf(expected), absf(gpu)) < 0.25 and (field == 4 or field == 5):
 				if expected != gpu:
 					flips += 1
 				continue
@@ -491,7 +495,7 @@ func _run_curve() -> void:
 				bad += 1
 				if bad < 12:
 					print("  mismatch %s rank=%.5f dist=%.3f gpu=%.7f cpu=%.7f" % [names[field], ranks[i], dists[i], gpu, expected])
-	print("GRASS_S4_CURVE_PARITY samples=%d worst_rel_err(scale=%.7f keep=%.7f density=%.7f low=%.7f) boundary_flips=%d bad=%d" % [count, worst[0], worst[1], worst[2], worst[3], flips, bad])
+	print("GRASS_S4_CURVE_PARITY samples=%d worst_rel_err(scale=%.7f keep=%.7f density=%.7f low=%.7f dissolve=%.7f low_dissolve=%.7f) boundary_flips=%d bad=%d" % [count, worst[0], worst[1], worst[2], worst[3], worst[4], worst[5], flips, bad])
 	if bad > 0 or flips > 6:
 		_fail("curve parity")
 		return

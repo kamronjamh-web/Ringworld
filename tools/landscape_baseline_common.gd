@@ -11,6 +11,7 @@ extends RefCounted
 const H := preload("res://tools/landscape_harness_common.gd")
 const BANDS := preload("res://tools/landscape_audit_bands.gd")
 const TIMING := preload("res://tools/LandscapeTimingBridge.cs")
+const GRASS_PROBE := preload("res://tools/GrassLodCaptureProbe.cs")
 const PASS_EFFECT := preload("res://tools/landscape_pass_timestamp_effect.gd")
 const TREE_VIS := preload("res://tools/tree_visibility_world.gd")
 const FEATURE_AB := preload("res://tools/LandscapeFeatureAbBridge.cs")
@@ -2570,6 +2571,144 @@ static func run_t5_flyout(ctx: Dictionary) -> Dictionary:
 	_save_json(out_dir.path_join("t5_flyout.json"), record)
 	print("%s output: %s" % [marker, out_dir])
 	return record
+
+# ------------------------------------------------------------------ grass card LOD evidence
+
+## `--grass-lod` (landscape_lod_switch_capture.gd): evidence stills for the grass card fixes at `--pose=` (default plains_eye), noon; `--grass-lod-label=<name>` (default run) names the folder.
+## 1. top-down stills at 30, 80 and 200 m (pitch -89) plus an oblique at 60 m; 2. an approach dolly (300 frames, 100 m to 4 m before a point 105 m ahead, eye 1.7 m, looking 0.3 m above the ground there);
+## 3. a 120-frame control fixed 30 m from that point; 4. the nearest flower card (violet or pink preferred) within 150 m, seen from 2.5 m at eye height and from 1.5 m above.
+## Files: <out>/{topdown_<h>m,oblique_60m,flower_eye,flower_down}.png, approach/ and control/frame%08d.png, grass_lod.json. Test-only.
+static func _grass_lod_shot(tree: SceneTree, path: String) -> void:
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	tree.root.get_texture().get_image().save_png(path)
+
+
+static func run_grass_lod(ctx: Dictionary) -> Dictionary:
+	var tree: SceneTree = ctx["tree"]
+	var marker: String = ctx["marker"]
+	var game: Node = ctx["game"]
+	var world: RefCounted = ctx["booted"]["world_bridge"]
+	var pose := H.pose_by_name(COMMON.arg_value("--pose=", "plains_eye"))
+	if pose.is_empty():
+		return {"status": "FAIL", "failure": "pose missing from the fixture"}
+	var label := harness_arg("--grass-lod-label=", "run")
+	var out_dir := H.transient_dir("grass_lod", ctx["booted"]["world_tag"]).path_join(label)
+	DirAccess.make_dir_recursive_absolute(out_dir)
+	DirAccess.make_dir_recursive_absolute(out_dir.path_join("approach"))
+	DirAccess.make_dir_recursive_absolute(out_dir.path_join("control"))
+	var info: Dictionary = await H.go_pose(tree, game, pose, "noon", ctx["ground_model"])
+	if info.has("error"):
+		return {"status": "FAIL", "failure": str(info["error"])}
+	await _disable_auto_exposure(ctx)
+	for node in _all_nodes(game):
+		if node is CanvasLayer and (node.name == "TerrainMinimap" or (node.get_script() != null and "RingPresentationHud" in (node.get_script() as Script).resource_path)):
+			(node as CanvasLayer).visible = false
+	var yaw := float(pose["yaw_deg"])
+	var fwd_a := cos(deg_to_rad(yaw))
+	var fwd_z := sin(deg_to_rad(yaw))
+	var around := float(pose["around_m"])
+	var across := float(pose["across_m"])
+	var ground := float(world.call("GroundHeight", around, across))
+	await COMMON.wait_builds_idle(tree, game, 240.0)
+	await COMMON.settle(tree, 2.0)
+	# 1. top-down and oblique stills
+	var heights := [30, 80, 200]
+	for h in heights:
+		_teleport_to(ctx, around, across, ground + float(h), yaw, -89.0)
+		await COMMON.wait_builds_idle(tree, game, 60.0)
+		await COMMON.settle(tree, 2.0)
+		for i in 8:
+			await RenderingServer.frame_post_draw
+		tree.root.get_texture().get_image().save_png(out_dir.path_join("topdown_%dm.png" % h))
+	_teleport_to(ctx, around, across, ground + 60.0, yaw, -35.0)
+	await COMMON.wait_builds_idle(tree, game, 60.0)
+	await COMMON.settle(tree, 2.0)
+	for i in 8:
+		await RenderingServer.frame_post_draw
+	tree.root.get_texture().get_image().save_png(out_dir.path_join("oblique_60m.png"))
+	# 2. approach dolly and 3. control
+	var target_a := around + fwd_a * 105.0
+	var target_z := across + fwd_z * 105.0
+	var target_y := float(world.call("GroundHeight", target_a, target_z))
+	var approach_rows: Array = []
+	for step in 300:
+		var distance := 100.0 - 96.0 * float(step) / 299.0
+		var pose_now := _grass_lod_camera(ctx, world, target_a, target_z, target_y, fwd_a, fwd_z, distance, yaw)
+		_teleport_to(ctx, pose_now[0], pose_now[1], pose_now[2], yaw, pose_now[3])
+		if step == 0:
+			await COMMON.wait_builds_idle(tree, game, 240.0)
+			await COMMON.settle(tree, 2.0)
+			_teleport_to(ctx, pose_now[0], pose_now[1], pose_now[2], yaw, pose_now[3])
+		await COMMON.settle(tree, 0.05)
+		await COMMON.wait_builds_idle(tree, game, 1.0, 4)
+		await _grass_lod_shot(tree, out_dir.path_join("approach/frame%08d.png" % step))
+		approach_rows.append({"frame": step, "distance_to_target_m": distance, "pitch_deg": pose_now[3]})
+	var control_pose := _grass_lod_camera(ctx, world, target_a, target_z, target_y, fwd_a, fwd_z, 30.0, yaw)
+	for step in 120:
+		_teleport_to(ctx, control_pose[0], control_pose[1], control_pose[2], yaw, control_pose[3])
+		if step == 0:
+			await COMMON.wait_builds_idle(tree, game, 240.0)
+			await COMMON.settle(tree, 2.0)
+			_teleport_to(ctx, control_pose[0], control_pose[1], control_pose[2], yaw, control_pose[3])
+		await COMMON.settle(tree, 0.05)
+		await COMMON.wait_builds_idle(tree, game, 1.0, 4)
+		await _grass_lod_shot(tree, out_dir.path_join("control/frame%08d.png" % step))
+	# 4. flower stills
+	var finder: RefCounted = GRASS_PROBE.new()
+	var flower: Dictionary = finder.call("FindFlower", world, around, across, 150.0)
+	var flower_a := around
+	var flower_z := across
+	var eye_yaw := yaw
+	var eye_a := around
+	var eye_z := across
+	var eye_y := ground + 1.7
+	var flower_y := ground
+	var look_pitch := 0.0
+	if bool(flower.get("found", false)):
+		flower_a = float(flower["around"])
+		flower_z = float(flower["across"])
+		flower_y = float(world.call("GroundHeight", flower_a, flower_z))
+		eye_yaw = yaw
+		# stand 2.5 m away on the side of the pose so the flower is seen against the meadow, looking at the root + 0.15 m
+		var dx := around - flower_a
+		var dz := across - flower_z
+		var norm := maxf(sqrt(dx * dx + dz * dz), 0.001)
+		var back_a := dx / norm
+		var back_z := dz / norm
+		eye_a = flower_a + back_a * 2.5
+		eye_z = flower_z + back_z * 2.5
+		eye_y = float(world.call("GroundHeight", eye_a, eye_z)) + 1.2
+		eye_yaw = rad_to_deg(atan2(-back_z, -back_a))
+		look_pitch = rad_to_deg(atan2(flower_y + 0.15 - eye_y, 2.5))
+	else:
+		flower["note"] = "no flower found; stills taken at the pose"
+	_teleport_to(ctx, eye_a, eye_z, eye_y, eye_yaw, look_pitch)
+	await COMMON.wait_builds_idle(tree, game, 60.0)
+	await COMMON.settle(tree, 2.0)
+	for i in 8:
+		await RenderingServer.frame_post_draw
+	tree.root.get_texture().get_image().save_png(out_dir.path_join("flower_eye.png"))
+	_teleport_to(ctx, flower_a, flower_z, flower_y + 1.5, eye_yaw, -89.0)
+	await COMMON.wait_builds_idle(tree, game, 60.0)
+	await COMMON.settle(tree, 2.0)
+	for i in 8:
+		await RenderingServer.frame_post_draw
+	tree.root.get_texture().get_image().save_png(out_dir.path_join("flower_down.png"))
+	var record: Dictionary = (ctx["record"] as Dictionary).duplicate(true)
+	record.merge({"marker": marker, "tool": "landscape_lod_switch_capture --grass-lod", "output": out_dir, "label": label, "pose": pose["name"], "heights_m": heights, "approach": approach_rows, "control_distance_m": 30.0, "flower": flower, "status": "PASS"}, true)
+	_save_json(out_dir.path_join("grass_lod.json"), record)
+	print("%s output: %s" % [marker, out_dir])
+	return record
+
+
+## Camera [around, across, vertical, pitch] `distance` m before the target point along the heading, 1.7 m above the ground there, looking 0.3 m above the ground at the target.
+static func _grass_lod_camera(ctx: Dictionary, world: RefCounted, target_a: float, target_z: float, target_y: float, fwd_a: float, fwd_z: float, distance: float, yaw: float) -> Array:
+	var cam_a := target_a - fwd_a * distance
+	var cam_z := target_z - fwd_z * distance
+	var cam_y := float(world.call("GroundHeight", cam_a, cam_z)) + 1.7
+	var pitch := rad_to_deg(atan2(target_y + 0.3 - cam_y, distance))
+	return [cam_a, cam_z, cam_y, pitch]
 
 
 # ------------------------------------------------------------------ T5-10 scout: tors and outcrops on rocky ground

@@ -525,7 +525,7 @@ const CARD_KEYS := [
 	["GrassCardDensityFalloff", 1.3, 0.5, 2.5, 1.6, false],
 	["GrassCardNearBoostStartMeters", 8.0, 0.0, 100.0, 12.0, false],
 	["GrassCardNearBoostEndMeters", 45.0, 1.0, 200.0, 60.0, false],
-	["GrassCardScaleCompensationMax", 2.5, 1.0, 2.5, 2.0, false],
+	["GrassCardScaleCompensationMax", 1.0, 1.0, 2.5, 2.0, false],
 	["GrassCardFadeBandPercent", 15.0, 1.0, 50.0, 25.0, false],
 	["GrassCardSingleCardStartMeters", 90.0, 20.0, 600.0, 100.0, false],
 	["GrassCardSingleCardEndMeters", 160.0, 30.0, 700.0, 200.0, false],

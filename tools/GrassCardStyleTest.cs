@@ -309,7 +309,7 @@ public partial class GrassCardStyleTest : Node
             && Mathf.IsEqualApprox(material.GetShaderParameter("grass_card_near_width").AsSingle(), .8f) && Mathf.IsEqualApprox(material.GetShaderParameter("grass_card_comp_max").AsSingle(), 2f),
             "curve settings did not reach the card material uniforms");
         Check(layer.CardComputeFrame().BaseDensity == 3f, "curve settings did not reach the GPU card frame");
-        layer.GrassCardBaseDensity = 2.5f; layer.GrassCardFadeBandPercent = 15f; layer.GrassCardNearWidthScale = .7f; layer.GrassCardScaleCompensationMax = 2.5f;
+        layer.GrassCardBaseDensity = 2.5f; layer.GrassCardFadeBandPercent = 15f; layer.GrassCardNearWidthScale = .7f; layer.GrassCardScaleCompensationMax = 1f;
         await Drive(layer, sampler, clean, home, geometry, 300, untilIdle: true);
         Check(layer.GrassResetCount == resets, "restoring the curve reset the layer");
         // Placement class: one reset, a full rebuild.

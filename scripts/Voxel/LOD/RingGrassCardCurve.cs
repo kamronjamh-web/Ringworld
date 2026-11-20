@@ -7,7 +7,7 @@ namespace RingworldTechDemo.Voxel.LOD;
 internal readonly record struct RingGrassCardCurveParameters(
     float NearDensity = 14f, float BaseDensity = 2.5f, float FloorDensity = .15f, float FalloffExponent = 1.3f,
     float FalloffStartMeters = 20f, float NearBoostStartMeters = 8f, float NearBoostEndMeters = 45f,
-    float CompensationMax = 2.5f, float NearWidthScale = .7f, float ReachMeters = 400f, float FadeBandPercent = 15f,
+    float CompensationMax = 1f, float NearWidthScale = .7f, float ReachMeters = 400f, float FadeBandPercent = 15f,
     float LowLayerFullMeters = 8f, float LowLayerEndMeters = 22f)
 {
     /// <summary>Use this, not default(...): a record struct does not apply its parameter defaults to default.</summary>
@@ -15,7 +15,7 @@ internal readonly record struct RingGrassCardCurveParameters(
 }
 
 /// <summary>
-/// C# reference of the runtime card density / keep / grow-in / scale curve. This is the single source of truth: the
+/// C# reference of the runtime card density / keep / grow-in / scale / dissolve curve. This is the single source of truth: the
 /// compute accept branch and the card vertex shader must reproduce these values (parity-tested). Ranks are the
 /// per-instance Bayer-stratified values the tile builder stores in CUSTOM.x (fractional part) and TierKeys.
 /// </summary>
@@ -62,37 +62,47 @@ internal static class RingGrassCardCurve
     public static bool Accepts(in RingGrassCardCurveParameters p, float rank, float distance)
         => rank < Keep(p, distance) && GrowIn(Keep(p, distance), rank) >= MinimumGrowIn;
 
-    /// <summary>1/sqrt(density ratio), capped: thinned survivors grow so screen coverage stays roughly constant.</summary>
+    /// <summary>1/sqrt(density ratio), capped at CompensationMax. Default 1 = stable card size; above 1 the thinned survivors grow with distance (user opt-in).</summary>
     public static float Compensation(in RingGrassCardCurveParameters p, float distance)
         => Math.Min(1f / MathF.Sqrt(Math.Min(1f, Density(p, distance) / Math.Max(.01f, p.BaseDensity))), p.CompensationMax);
 
-    public static float NearWidth(in RingGrassCardCurveParameters p, float distance)
-        => Mathf.Lerp(p.NearWidthScale, 1f, Smooth(p.NearBoostStartMeters, p.NearBoostEndMeters, distance));
+    /// <summary>Card width factor, constant with distance (it used to follow the near boost, which made cards grow while walking in).</summary>
+    public static float NearWidth(in RingGrassCardCurveParameters p, float distance) => p.NearWidthScale;
 
-    /// <summary>Final collapse over the last FadeBandPercent of the reach.</summary>
+    /// <summary>Final collapse over the last FadeBandPercent of the reach (applied as a density fade, see Dissolve).</summary>
     public static float Fade(in RingGrassCardCurveParameters p, float distance)
         => 1f - Smooth(p.ReachMeters * (1f - p.FadeBandPercent * .01f), p.ReachMeters, distance);
 
-    /// <summary>Instance scale multiplier (0 = culled): the product the card shader applies to the baked transform.</summary>
+    /// <summary>Instance scale multiplier (0 = culled): the compensation of an accepted card, nothing else. Grow-in and the reach fade are
+    /// not sizes: they are the Dissolve density fade, so a card never changes size with distance (at the default compensation of 1).</summary>
     public static float Scale(in RingGrassCardCurveParameters p, float rank, float distance)
+        => Accepts(p, rank, distance) ? Compensation(p, distance) : 0f;
+
+    /// <summary>Fraction of a card's blades that are visible: grow-in (entry) times the reach fade, 0 when culled. The fragment shader drops
+    /// blades whose atlas random is at or above this value.</summary>
+    public static float Dissolve(in RingGrassCardCurveParameters p, float rank, float distance)
     {
-        float keep = Keep(p, distance);
-        if (rank >= keep) return 0f;
-        float grow = GrowIn(keep, rank);
-        if (grow < MinimumGrowIn) return 0f;
-        return Compensation(p, distance) * grow * NearWidth(p, distance) * Fade(p, distance);
+        if (!Accepts(p, rank, distance)) return 0f;
+        float grow = GrowIn(Keep(p, distance), rank);
+        return Math.Clamp((grow - MinimumGrowIn) / (1f - MinimumGrowIn), 0f, 1f) * Fade(p, distance);
     }
 
     /// <summary>Low upright layer: fully kept inside LowLayerFullMeters, gone by LowLayerEndMeters.</summary>
     public static float LowKeep(in RingGrassCardCurveParameters p, float distance)
         => 1f - Smooth(p.LowLayerFullMeters, p.LowLayerEndMeters, distance);
 
+    /// <summary>Low layer scale: 1 when accepted, else 0 (the entry and exit are the LowDissolve density fade).</summary>
     public static float LowScale(in RingGrassCardCurveParameters p, float rank, float distance)
     {
         float keep = LowKeep(p, distance);
-        if (rank >= keep) return 0f;
-        float grow = GrowIn(keep, rank);
-        return grow < MinimumGrowIn ? 0f : grow;
+        return rank < keep && GrowIn(keep, rank) >= MinimumGrowIn ? 1f : 0f;
+    }
+
+    public static float LowDissolve(in RingGrassCardCurveParameters p, float rank, float distance)
+    {
+        float keep = LowKeep(p, distance);
+        if (!(rank < keep) || GrowIn(keep, rank) < MinimumGrowIn) return 0f;
+        return Math.Clamp((GrowIn(keep, rank) - MinimumGrowIn) / (1f - MinimumGrowIn), 0f, 1f);
     }
 
     /// <summary>A tier whose nearest point is at or inside lowEnd + lookahead still needs the low layer.</summary>

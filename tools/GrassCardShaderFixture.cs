@@ -456,6 +456,7 @@ public partial class GrassCardShaderFixture : RefCounted
             rows.Add(new Godot.Collections.Array
             {
                 RingGrassCardCurve.Scale(p, r, d), RingGrassCardCurve.Keep(p, d), RingGrassCardCurve.Density(p, d), RingGrassCardCurve.LowScale(p, r, d),
+                RingGrassCardCurve.Dissolve(p, r, d), RingGrassCardCurve.LowDissolve(p, r, d),
             });
         }
         return rows;

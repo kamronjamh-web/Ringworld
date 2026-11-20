@@ -17,7 +17,7 @@ internal readonly record struct RingGrassCardTuning(
     /// <summary>Use this, not default(...): the all-zero struct means "not provided" (Blades inputs).</summary>
     public static readonly RingGrassCardTuning Default = new(
         14f, 18f, .6f, .3f, .12f, RingGrassCardAtlasParameters.VariantD.BladesPerVariant,
-        2.5f, .15f, 1.3f, 8f, 45f, 22f, 2.5f, .7f, 15f);
+        2.5f, .15f, 1.3f, 8f, 45f, 22f, 1f, .7f, 15f);
 
     /// <summary>Compensation above this would outgrow the instance bounds and the GPU frustum guard (both assume 2.5).</summary>
     public const float MaximumCompensation = RingGrassCardPlacement.BoundsHeightScale;

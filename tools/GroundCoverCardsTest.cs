@@ -55,6 +55,7 @@ public partial class GroundCoverCardsTest : RefCounted
             Detail($"atlas checks done at {clock.Elapsed.TotalSeconds:F1} s");
             Tiles();
             Detail($"tile checks done at {clock.Elapsed.TotalSeconds:F1} s");
+            PlacementRegularity();
             BuildCost();
         }
         catch (Exception e) { Console.Error.WriteLine("GROUND_COVER_CARDS=FAIL exception " + e); return 1; }
@@ -86,13 +87,13 @@ public partial class GroundCoverCardsTest : RefCounted
 
     private void AddTile(LandscapePose p) => _tiles.Add(new TileKey(p.Name, (long)Math.Floor(p.Around / Tile), (long)Math.Floor(p.Across / Tile)));
 
-    private RingGrassTileData BuildTile(RingTerrainSampler sampler, TileKey tile, float share = 1f)
+    private RingGrassTileData BuildTile(RingTerrainSampler sampler, TileKey tile, float share = 1f, float sourceFraction = 1f)
     {
         RingGrassTileBounds bounds = RingGrassCoordinates.Bounds(tile.A, tile.Z, Tile, Circ, Width);
         var geometry = new RingLodGeometrySnapshot(Transform3D.Identity, Vector3.Zero, Vector3.Zero, Circ / Math.Tau, 0, 0, Circ, -1000, 1000,
             new RingCanonicalPosition(bounds.AroundCenter, 0, bounds.AcrossCenter));
         return RingGrassTileBuilder.Build(new RingGrassTileKey(tile.A, tile.Z), bounds, 8f, 9, 0f, _mainCap, 25f, sampler, _clean, geometry, System.Threading.CancellationToken.None,
-            exclusions: null, appearance: RingGrassAppearanceSnapshot.Default, sourceFraction: 1f, sourceTier: 0, useGrassClumps: false, modifiers: null,
+            exclusions: null, appearance: RingGrassAppearanceSnapshot.Default, sourceFraction: sourceFraction, sourceTier: 0, useGrassClumps: false, modifiers: null,
             modifierDensityStrength: 1f, meadowTufts: false, meadowSpread: 1f, minimumHeight: .10f, maximumHeight: .20f, useConfiguredHeightRange: true, cards: _placement, groundCoverShare: share);
     }
 
@@ -403,6 +404,65 @@ public partial class GroundCoverCardsTest : RefCounted
             Check(Math.Abs(x.Canopy - y.Canopy) < 1e-3f && Math.Abs(x.Wetness - y.Wetness) < 1e-3f && Math.Abs(x.Memberships.ClosedBroadleaf - y.Memberships.ClosedBroadleaf) < 1e-3f, "the coarse fields jump across a tile edge");
             Check(x.Canopy == z.Canopy && x.Wetness == z.Wetness && x.Memberships.Sum == z.Memberships.Sum, "the coarse patch is not deterministic");
         }
+    }
+
+    // ------------------------------------------------------------------ g. placement regularity
+
+    /// <summary>
+    /// g. The thinned survivors of the card lattice (rank &lt; f) must not form a grid seen from above. Generation 1 keeps the fixed Bayer16 rank, whose prefixes are regular sub-lattices (its structure factor
+    /// at the lattice wave vectors is large); worlds with vegetation.ground_cover use the shuffled Bayer rank and must look like a jittered grid at the survivor spacing (S near 1).
+    /// Positions come from the instance buffer origins (x = across offset, z = around offset from the tile centre), the same for both worlds, since the placement probe only runs in the review world.
+    /// </summary>
+    private void PlacementRegularity()
+    {
+        TileKey first = _tiles[0];
+        float density = _placement.NearDensity;
+        long aroundCells = Math.Max(16L, (long)Math.Round(Circ * Math.Sqrt(density) / 16.0) * 16L);
+        double aroundSpacing = Circ / (double)aroundCells;
+        double acrossSpacing = 1.0 / (density * aroundSpacing);
+        var q = new (int a, int z)[] { (1, 0), (0, 1), (1, 1), (1, -1) };
+        float previousForce = RingGrassTileBuilder.ForceCardChanceForTests;
+        RingGrassTileBuilder.ForceCardChanceForTests = 1f;
+        try
+        {
+            foreach ((float fraction, int k) in new[] { (1f / 16f, 2), (1f / 64f, 3) })
+            {
+                double block = 1 << k;
+                var smax = new double[2];
+                var counts = new int[2];
+                for (int w = 0; w < 2; w++)
+                {
+                    RingTerrainSampler sampler = w == 0 ? _on : _off;
+                    var sum = new (double re, double im)[q.Length];
+                    int n = 0;
+                    for (int dz = 0; dz < 2; dz++) for (int da = 0; da < 2; da++)
+                    {
+                        var tile = new TileKey(first.Pose, first.A + da, first.Z + dz);
+                        RingGrassTileBounds bounds = RingGrassCoordinates.Bounds(tile.A, tile.Z, Tile, Circ, Width);
+                        RingGrassTileData data = BuildTile(sampler, tile, 1f, fraction);
+                        int main = data.InstanceCount - data.LowLayerInstanceCount;
+                        for (int i = 0; i < main; i++)
+                        {
+                            double around = bounds.AroundCenter + data.Buffer[i * Stride + 11], across = bounds.AcrossCenter + data.Buffer[i * Stride + 3];
+                            double u = around / (block * aroundSpacing), v = across / (block * acrossSpacing);
+                            for (int j = 0; j < q.Length; j++)
+                            {
+                                double phase = Math.Tau * (q[j].a * u + q[j].z * v);
+                                sum[j].re += Math.Cos(phase); sum[j].im += Math.Sin(phase);
+                            }
+                            n++;
+                        }
+                    }
+                    counts[w] = n;
+                    for (int j = 0; j < q.Length; j++) smax[w] = Math.Max(smax[w], (sum[j].re * sum[j].re + sum[j].im * sum[j].im) / Math.Max(1, n));
+                }
+                Detail($"g. placement regularity f=1/{(int)Math.Round(1f / fraction)} block {(int)block} cells: on S_max={F(smax[0])} (N={counts[0]}), off S_max={F(smax[1])} (N={counts[1]}); lattice {F(aroundSpacing)} x {F(acrossSpacing)} m");
+                Check(counts[0] >= 100 && counts[1] >= 100, $"g. f=1/{(int)Math.Round(1f / fraction)}: too few survivors (on {counts[0]}, off {counts[1]})");
+                Check(smax[0] < 6, $"g. f=1/{(int)Math.Round(1f / fraction)}: ground-cover world structure factor {F(smax[0])} >= 6 (the survivors still form a grid)");
+                Check(smax[1] > 20, $"g. f=1/{(int)Math.Round(1f / fraction)}: generation-1 structure factor {F(smax[1])} <= 20 (the root-cause grid is not visible in the numbers)");
+            }
+        }
+        finally { RingGrassTileBuilder.ForceCardChanceForTests = previousForce < 0 ? -1f : previousForce; }
     }
 
     // ------------------------------------------------------------------ cost (g)

@@ -12,6 +12,7 @@ extends SceneTree
 ## TR-8: --tr8-dolly (pull-back 100 to 400 m, old vs new renderer, shipped fades) and --tr8-shadow (shadow debug view at forest_clearing_eye, old vs new, noon and sun 8 degrees); --tree-set=Name:value adds overrides.
 ## T5-9: --t5-flyout [--t5-label=<name>] (pull-back and rise from 300 m to 5 km over breaks_300m, 300 frames; see run_t5_flyout); output .godot/captures/landscape/t0/t5_flyout/<stamp>/<label>/.
 ## T5-10: --t5-scout [--t5-radius=450] (outcrops near the --poses= poses with rock exposure, tors and camera spots; see run_t5_scout).
+## Grass LOD: --grass-lod [--grass-lod-label=<name>] [--pose=plains_eye] (top-down and oblique stills, approach dolly and fixed control, nearest flower stills; see run_grass_lod); output .godot/captures/landscape/t0/grass_lod/<stamp>/<label>/ with grass_lod.json.
 ## Test-only. The harness world directory is deleted at exit. Prints LANDSCAPE_LOD_SWITCH=PASS.
 const BASE := preload("res://tools/landscape_baseline_common.gd")
 const MARKER := "LANDSCAPE_LOD_SWITCH"
@@ -27,7 +28,7 @@ func _init() -> void:
 func _run() -> void:
 	var strip := BASE.harness_flag("--strip")
 	var tr6 := BASE.harness_flag("--tr6")
-	var limit := 2300.0 if (strip or tr6 or BASE.harness_flag("--t5-flyout") or BASE.harness_flag("--t5-scout") or BASE.harness_flag("--tr6-dolly") or BASE.harness_flag("--tr8-dolly") or BASE.harness_flag("--tr8-shadow")) else 1150.0
+	var limit := 2300.0 if (strip or tr6 or BASE.harness_flag("--t5-flyout") or BASE.harness_flag("--t5-scout") or BASE.harness_flag("--tr6-dolly") or BASE.harness_flag("--tr8-dolly") or BASE.harness_flag("--tr8-shadow") or BASE.harness_flag("--grass-lod")) else 1150.0
 	var watchdog := create_timer(limit)
 	watchdog.timeout.connect(func() -> void: _fail("watchdog timeout (%.1f s)" % limit))
 	ctx = await BASE.setup(self, MARKER)
@@ -35,7 +36,9 @@ func _run() -> void:
 		_finish_failed()
 		return
 	var report: Dictionary
-	if BASE.harness_flag("--t5-flyout"):
+	if BASE.harness_flag("--grass-lod"):
+		report = await BASE.run_grass_lod(ctx)
+	elif BASE.harness_flag("--t5-flyout"):
 		report = await BASE.run_t5_flyout(ctx)
 	elif BASE.harness_flag("--t5-scout"):
 		report = await BASE.run_t5_scout(ctx)

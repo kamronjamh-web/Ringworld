@@ -60,6 +60,7 @@ public partial class GrassCardPlacementTest : RefCounted
         {
             TestCurve();
             TestBayer();
+            TestShuffledRanks();
             using RingTerrainSampler sampler = EmitterSiteTestWorlds.CreateGen17(1337);
             TestBladeGolden(sampler);
             TestCardGolden(sampler);
@@ -171,9 +172,48 @@ public partial class GrassCardPlacementTest : RefCounted
         Check(RingGrassCardRank.ToRank(uint.MaxValue) < 1f && RingGrassCardRank.ToRank(0) == 0f, "ToRank must stay inside [0,1)");
     }
 
+    private void TestShuffledRanks()
+    {
+        const int seedA = 1337, saltA = 417;
+        static int Sh(long i, long j, int seed, int salt) => RingGrassTileBuilder.ShuffledBayer16(i, j, seed, salt);
+        foreach ((long bx, long by, int seed, int salt) in new[] { (0L, 0L, 1337, 417), (16L, 32L, 1337, 417), (-16L, -48L, 1337, 417), (-32L, 16L, 99, 417), (64L, 0L, 1337, 599) })
+        {
+            var seen = new bool[256];
+            for (int y = 0; y < 16; y++) for (int x = 0; x < 16; x++) seen[Sh(bx + x, by + y, seed, salt)] = true;
+            Check(seen.All(v => v), $"ShuffledBayer16 block ({bx},{by}) seed {seed} salt {salt} is not a permutation of 0..255");
+            for (int k = 1; k <= 4; k++)
+            {
+                int size = 1 << k, limit = 256 >> (2 * k);
+                for (int ay = 0; ay < 16; ay += size) for (int ax = 0; ax < 16; ax += size)
+                {
+                    int count = 0;
+                    for (int y = 0; y < size; y++) for (int x = 0; x < size; x++) if (Sh(bx + ax + x, by + ay + y, seed, salt) < limit) count++;
+                    Check(count == 1, $"ShuffledBayer16 aligned {size}x{size} block ({bx + ax},{by + ay}) holds {count} cells below {limit} (expected 1)");
+                }
+            }
+        }
+        bool deterministic = true;
+        int same = 0, total = 0;
+        for (long y = -20; y < 20; y++) for (long x = -20; x < 20; x++)
+        {
+            deterministic &= Sh(x, y, seedA, saltA) == Sh(x, y, seedA, saltA);
+            total++;
+            if (Sh(x, y, seedA, saltA) == RingGrassCardRank.Bayer16(x, y)) same++;
+        }
+        Check(deterministic, "ShuffledBayer16 is not deterministic");
+        Check(same < total / 4, $"ShuffledBayer16 equals Bayer16 on {same}/{total} cells");
+        var offsets = new HashSet<int>();
+        for (long by = 0; by < 8; by++) for (long bx = 0; bx < 8; bx++)
+            for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++)
+                if (Sh(bx * 4 + x, by * 4 + y, seedA, saltA) < 16) offsets.Add(y * 4 + x);
+        Check(offsets.Count >= 8, $"the sub-16 (rank prefix 1/16) cell sits at only {offsets.Count}/16 offsets of the 4x4 blocks over 64 blocks");
+        Check(RingGrassCardRank.CodeFromValue(Sh(5, 7, seedA, saltA), 0x123456) >> 24 == (uint)Sh(5, 7, seedA, saltA), "CodeFromValue does not put the rank value in the top byte");
+        GD.Print($"GRASS_CARD[shuffled_rank] ok same_as_bayer={same}/{total} zero_offsets={offsets.Count}/16");
+    }
+
     private void TestCurve()
     {
-        var p = RingGrassCardCurveParameters.Default;
+        var p = RingGrassCardCurveParameters.Default with { CompensationMax = 2.5f };
         void Near(string name, float actual, float expected, float tolerance = 1e-4f) => Check(Math.Abs(actual - expected) <= tolerance, $"curve {name}: {actual:R} != {expected:R}");
         static double S(double a, double b, double x) { double t = Math.Clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); }
         // Independent double-precision evaluation of the plan formulas.
@@ -187,10 +227,11 @@ public partial class GrassCardPlacementTest : RefCounted
             foreach (float rank in new[] { 0f, .01f, .05f, .3f, .9f })
             {
                 double grow = S(0, 1, (keep - rank) / Math.Max(.02, .2 * keep));
-                double expected = rank < keep && grow >= .08
-                    ? Math.Min(1 / Math.Sqrt(Math.Min(1, Dens(d) / 2.5)), 2.5) * grow * (.7 + .3 * S(8, 45, d)) * (1 - S(340, 400, d))
-                    : 0;
+                bool accepted = rank < keep && grow >= .08;
+                double expected = accepted ? Math.Min(1 / Math.Sqrt(Math.Min(1, Dens(d) / 2.5)), 2.5) : 0;
                 Near($"scale({d},{rank})", RingGrassCardCurve.Scale(p, rank, d), (float)expected, 3e-4f);
+                double dissolve = accepted ? Math.Clamp((grow - .08) / (1 - .08), 0, 1) * (1 - S(340, 400, d)) : 0;
+                Near($"dissolve({d},{rank})", RingGrassCardCurve.Dissolve(p, rank, d), (float)dissolve, 3e-4f);
                 Check(RingGrassCardCurve.Accepts(p, rank, d) == (rank < keep && grow >= .08), $"curve accepts({d},{rank})");
             }
         }
@@ -203,12 +244,44 @@ public partial class GrassCardPlacementTest : RefCounted
         Near("lowKeep(8)", RingGrassCardCurve.LowKeep(p, 8), 1f);
         Near("lowKeep(15)", RingGrassCardCurve.LowKeep(p, 15), .5f);
         Near("lowKeep(22)", RingGrassCardCurve.LowKeep(p, 22), 0f);
+        Near("nearWidth(any d)", RingGrassCardCurve.NearWidth(p, 3f), p.NearWidthScale);
+        Near("nearWidth(any d)", RingGrassCardCurve.NearWidth(p, 300f), p.NearWidthScale);
         Near("ladder(2)", RingGrassCardCurve.LadderFraction(2), .5f);
         Check(RingGrassCardCurve.LadderTierCount(p) == 14, $"ladder tier count {RingGrassCardCurve.LadderTierCount(p)} != 14");
         Check(RingGrassCardCurve.TierNeedsLowLayer(p, 25f, 4f) && !RingGrassCardCurve.TierNeedsLowLayer(p, 27f, 4f), "TierNeedsLowLayer boundary");
         // Monotone: the kept set at a farther distance is a subset (rank < keep falls with distance).
         float prev = 2;
         for (float d = 0; d <= 400; d += 5) { float k = RingGrassCardCurve.Keep(p, d); Check(k <= prev + 1e-6f, $"keep not monotone at {d}"); prev = k; }
+        // Default parameters: a card never changes size with distance; only the dissolve (density fade) moves, monotonically while walking in.
+        var def = RingGrassCardCurveParameters.Default;
+        Check(def.CompensationMax == 1f, "default CompensationMax must be 1");
+        int acceptedSamples = 0, lowAccepted = 0;
+        foreach (float rank in new[] { 0f, .01f, .05f, .3f, .9f })
+        {
+            float lastDissolve = -1f, lastLowDissolve = -1f;
+            for (float d = 400f; d >= 0f; d -= .25f)
+            {
+                Check(RingGrassCardCurve.Compensation(def, d) == 1f, $"default compensation({d}) != 1");
+                if (RingGrassCardCurve.Accepts(def, rank, d))
+                {
+                    acceptedSamples++;
+                    Check(RingGrassCardCurve.Scale(def, rank, d) == 1f, $"size_vs_distance: scale({d},{rank}) = {RingGrassCardCurve.Scale(def, rank, d):R} != 1");
+                }
+                float dissolve = RingGrassCardCurve.Dissolve(def, rank, d);
+                Check(dissolve >= lastDissolve - 1e-6f, $"size_vs_distance: dissolve({d},{rank}) fell to {dissolve:R} from {lastDissolve:R} while approaching");
+                lastDissolve = dissolve;
+                float lowKeep = RingGrassCardCurve.LowKeep(def, d);
+                if (rank < lowKeep && RingGrassCardCurve.GrowIn(lowKeep, rank) >= RingGrassCardCurve.MinimumGrowIn)
+                {
+                    lowAccepted++;
+                    Check(RingGrassCardCurve.LowScale(def, rank, d) == 1f, $"size_vs_distance: lowScale({d},{rank}) != 1");
+                }
+                float lowDissolve = RingGrassCardCurve.LowDissolve(def, rank, d);
+                Check(lowDissolve >= lastLowDissolve - 1e-6f, $"size_vs_distance: lowDissolve({d},{rank}) fell while approaching");
+                lastLowDissolve = lowDissolve;
+            }
+        }
+        GD.Print($"GRASS_CARD[size_vs_distance] ok accepted_samples={acceptedSamples} low_accepted_samples={lowAccepted} scale=1 dissolve_monotone");
     }
 
     private void TestBladeGolden(RingTerrainSampler sampler)
