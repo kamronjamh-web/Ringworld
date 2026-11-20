@@ -17,12 +17,15 @@ namespace RingworldTechDemo.Tools;
 /// </summary>
 public partial class PrepareDerivedTreeAssets : RefCounted
 {
-    public const int ToolVersion = 2;
+    /// <summary>3 (T6-11): fallen trees drop bark pieces no longer linked to the trunk (Geo.KeepNearAxis); snags, stumps, shrubs and the other logs are unchanged from version 2.</summary>
+    public const int ToolVersion = 3;
     public const int LodF = 3;
     public const float LogClip = 0.55f;
     public const float StumpMeters = 0.6f;
     /// <summary>Fallen-tree near forms keep only bark within this many trunk radii of the root axis (broken-off limbs leave stubs).</summary>
     public const float LogReach = 3f;
+    /// <summary>Tool version 3: two bark pieces of a fallen tree touch when a vertex lies within this many trunk radii of the other (or an edge crosses it); see Geo.KeepNearAxis.</summary>
+    public const float LinkEps = .1f;
     public const string ResourcePath = "res://resources/trees/prepared/lolipop_derived_catalog.res";
     public const string ManifestPath = "res://resources/trees/prepared/lolipop_derived_catalog.manifest.json";
     const string BaseManifestPath = "res://resources/trees/prepared/lolipop_catalog.manifest.json";
@@ -162,8 +165,8 @@ public partial class PrepareDerivedTreeAssets : RefCounted
                     break;
                 case TreeFormKind.FallenTree:
                     length[f] = LogClip * v.HeightMeters;
-                    ArrayMesh near = Geo.FromSurface(Bark(1)).KeepNearAxis(LogReach * r0).Clip(LogClip).LieAlongX(LogClip).ToMesh();
-                    ArrayMesh mid = Geo.FromSurface(Bark(2)).KeepNearAxis(LogReach * r0).Clip(LogClip).LieAlongX(LogClip).ToMesh();
+                    ArrayMesh near = Geo.FromSurface(Bark(1)).KeepNearAxis(LogReach * r0, LogClip, LinkEps * r0).Clip(LogClip).LieAlongX(LogClip).ToMesh();
+                    ArrayMesh mid = Geo.FromSurface(Bark(2)).KeepNearAxis(LogReach * r0, LogClip, LinkEps * r0).Clip(LogClip).LieAlongX(LogClip).ToMesh();
                     Put(0, near, Hash(1));
                     Put(1, mid, Hash(2));
                     meshes[f * lods + 2] = mid; hashes[f * lods + 2] = Hash(2); tris[f, 2] = tris[f, 1]; // LOD2 shares LOD1's mesh (same sub-resource, no extra bytes)
@@ -400,15 +403,110 @@ public partial class PrepareDerivedTreeAssets : RefCounted
             return g;
         }
 
-        /// <summary>Drops every triangle with a vertex farther than radius (horizontal, from the vertical axis through the root) from that axis; unused vertices are dropped by the Clip that follows.</summary>
-        public Geo KeepNearAxis(float radius)
+        /// <summary>Drops every triangle with a vertex farther than radius (horizontal, from the vertical axis through the root) from that axis, or wholly above yClip (the Clip that follows would
+        /// drop it anyway); unused vertices are dropped by that Clip. Tool version 3 (T6-11): the bark is a set of separate shells (trunk, branch segments) that touch or pierce one another; a
+        /// branch segment whose parent segment the radius removed would float beside the log (maple log 36 had a 6-triangle piece about 0.9 m off the trunk at LOD1/2). Of the pieces left
+        /// (welded connected components), only those linked to the trunk piece (the largest) through a chain of touching pieces are kept; two pieces touch when an edge of one crosses a
+        /// triangle of the other or a vertex lies within linkEps of it.</summary>
+        public Geo KeepNearAxis(float radius, float yClip, float linkEps)
         {
             float r2 = radius * radius;
             var kept = new List<int>();
             for (int t = 0; t + 2 < I.Count; t += 3)
-                if (I.Skip(t).Take(3).All(i => P[i].X * P[i].X + P[i].Z * P[i].Z <= r2)) { kept.Add(I[t]); kept.Add(I[t + 1]); kept.Add(I[t + 2]); }
-            I = kept;
+                if (I.Skip(t).Take(3).All(i => P[i].X * P[i].X + P[i].Z * P[i].Z <= r2) && I.Skip(t).Take(3).Any(i => P[i].Y <= yClip)) { kept.Add(I[t]); kept.Add(I[t + 1]); kept.Add(I[t + 2]); }
+            I = KeepLinkedToTrunk(kept, linkEps);
             return this;
+        }
+
+        /// <summary>The triangles of <paramref name="tris"/> whose piece is linked to the largest piece (see <see cref="KeepNearAxis"/>). Deterministic: pieces in first-triangle order.</summary>
+        List<int> KeepLinkedToTrunk(List<int> tris, float eps)
+        {
+            // Weld by position (1e-5 grid) and label pieces with a union-find over the triangles.
+            var first = new Dictionary<(long, long, long), int>();
+            var parent = new int[P.Count];
+            for (int i = 0; i < P.Count; i++)
+            {
+                var key = ((long)Math.Round(P[i].X * 1e5), (long)Math.Round(P[i].Y * 1e5), (long)Math.Round(P[i].Z * 1e5));
+                if (!first.TryGetValue(key, out int w)) { w = i; first[key] = i; }
+                parent[i] = w;
+            }
+            int Find(int x) { while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; }
+            for (int t = 0; t + 2 < tris.Count; t += 3)
+            {
+                int a = Find(tris[t]);
+                for (int e = 1; e < 3; e++) { int b = Find(tris[t + e]); if (b != a) parent[b] = a; }
+            }
+            var pieceOfTri = new int[tris.Count / 3];
+            var order = new List<int>();
+            var members = new Dictionary<int, List<int>>();
+            for (int t = 0; t < pieceOfTri.Length; t++)
+            {
+                int piece = pieceOfTri[t] = Find(tris[t * 3]);
+                if (!members.TryGetValue(piece, out List<int>? list)) { members[piece] = list = new List<int>(); order.Add(piece); }
+                list.Add(t);
+            }
+            if (order.Count <= 1) return tris;
+            var boxes = new Dictionary<int, Aabb>();
+            foreach (int piece in order)
+            {
+                var box = new Aabb(P[tris[members[piece][0] * 3]], Vector3.Zero);
+                foreach (int t in members[piece]) for (int e = 0; e < 3; e++) box = box.Expand(P[tris[t * 3 + e]]);
+                boxes[piece] = box.Grow(eps);
+            }
+            bool Crosses(int from, int to)
+            {
+                foreach (int t in members[from])
+                    for (int e = 0; e < 3; e++)
+                    {
+                        Vector3 u = P[tris[t * 3 + e]], v = P[tris[t * 3 + (e + 1) % 3]];
+                        foreach (int s in members[to])
+                        {
+                            Vector3 a = P[tris[s * 3]], b = P[tris[s * 3 + 1]], c = P[tris[s * 3 + 2]];
+                            if (Geometry3D.SegmentIntersectsTriangle(u, v, a, b, c).VariantType != Variant.Type.Nil) return true;
+                            if (u.DistanceTo(ClosestOnTriangle(u, a, b, c)) <= eps) return true;
+                        }
+                    }
+                return false;
+            }
+            int trunk = order.OrderByDescending(piece => members[piece].Count).First(); // OrderBy is stable: ties keep first-triangle order
+            var linked = new List<int> { trunk };
+            var isLinked = new HashSet<int> { trunk };
+            for (bool changed = true; changed;)
+            {
+                changed = false;
+                foreach (int piece in order)
+                {
+                    if (isLinked.Contains(piece)) continue;
+                    foreach (int other in linked)
+                        if (boxes[piece].Intersects(boxes[other]) && (Crosses(piece, other) || Crosses(other, piece)))
+                        {
+                            linked.Add(piece); isLinked.Add(piece); changed = true; break;
+                        }
+                }
+            }
+            var result = new List<int>(tris.Count);
+            for (int t = 0; t < pieceOfTri.Length; t++) if (isLinked.Contains(pieceOfTri[t])) { result.Add(tris[t * 3]); result.Add(tris[t * 3 + 1]); result.Add(tris[t * 3 + 2]); }
+            return result;
+        }
+
+        /// <summary>The point of triangle abc nearest p (Ericson, Real-Time Collision Detection 5.1.5).</summary>
+        static Vector3 ClosestOnTriangle(Vector3 p, Vector3 a, Vector3 b, Vector3 c)
+        {
+            Vector3 ab = b - a, ac = c - a, ap = p - a;
+            float d1 = ab.Dot(ap), d2 = ac.Dot(ap);
+            if (d1 <= 0 && d2 <= 0) return a;
+            Vector3 bp = p - b; float d3 = ab.Dot(bp), d4 = ac.Dot(bp);
+            if (d3 >= 0 && d4 <= d3) return b;
+            float vc = d1 * d4 - d3 * d2;
+            if (vc <= 0 && d1 >= 0 && d3 <= 0) return a + ab * (d1 / (d1 - d3));
+            Vector3 cp = p - c; float d5 = ab.Dot(cp), d6 = ac.Dot(cp);
+            if (d6 >= 0 && d5 <= d6) return c;
+            float vb = d5 * d2 - d1 * d6;
+            if (vb <= 0 && d2 >= 0 && d6 <= 0) return a + ac * (d2 / (d2 - d6));
+            float va = d3 * d6 - d5 * d4;
+            if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0) return b + (c - b) * ((d4 - d3) / (d4 - d3 + (d5 - d6)));
+            float denom = 1f / (va + vb + vc);
+            return a + ab * (vb * denom) + ac * (vc * denom);
         }
 
         // ---- generated far pole (LODF) ------------------------------------------------------------------------------

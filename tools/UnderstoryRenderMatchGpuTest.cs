@@ -520,7 +520,7 @@ public partial class UnderstoryRenderMatchGpuTest : Node
         };
         _vp.AddChild(layer);
         // Outputs: sapling L0 and L2 (1 sapling record), shrub L0 and L1 (4 shrub records).
-        for (int i = 0; i < 600 && !(layer.DrawOutputs == 4 && !layer.SetPending); i++) await Frames(1);
+        await WaitUntil(() => layer.DrawOutputs == 4 && !layer.SetPending);
         if (layer.DrawOutputs != 4) throw new InvalidOperationException($"shrub layer: {layer.DrawOutputs} draw outputs, expected 4 (batches {layer.BatchCount}, failed {layer.Failed})");
         int[] rows = layer.SourceRows;
         if (rows[0] != 1 || rows[1] != 4) throw new InvalidOperationException($"shrub layer: rows {string.Join("/", rows)}, expected 1 sapling and 4 shrubs (the boulder is ignored)");
@@ -573,7 +573,7 @@ public partial class UnderstoryRenderMatchGpuTest : Node
             },
         };
         _vp.AddChild(layer);
-        for (int i = 0; i < 600 && !(layer.DrawOutputs == 2 && !layer.SetPending); i++) await Frames(1);
+        await WaitUntil(() => layer.DrawOutputs == 2 && !layer.SetPending);
         if (layer.DrawOutputs != 2) throw new InvalidOperationException($"layer: {layer.DrawOutputs} draw outputs, expected 2 (batches {layer.BatchCount}, failed {layer.Failed})");
         if (layer.BatchCount != 2) throw new InvalidOperationException($"layer: {layer.BatchCount} batches, expected 2");
         if (layer.Compute!.GetType().Name != "RingGpuVegetationCompute" || layer.SourceRows[0] != 4) throw new InvalidOperationException($"layer: {layer.SourceRows[0]} sapling rows, expected 4 (the boulder is ignored)");
@@ -642,7 +642,7 @@ public partial class UnderstoryRenderMatchGpuTest : Node
             },
         };
         _vp.AddChild(layer);
-        for (int i = 0; i < 600 && !(layer.DrawOutputs == 3 && !layer.SetPending); i++) await Frames(1);
+        await WaitUntil(() => layer.DrawOutputs == 3 && !layer.SetPending);
         if (layer.DrawOutputs != 3) throw new InvalidOperationException($"sapling caster: {layer.DrawOutputs} draw outputs, expected 3 (batches {layer.BatchCount}, failed {layer.Failed})");
         if (layer.SourceRows[4] != 2) throw new InvalidOperationException($"sapling caster: {layer.SourceRows[4]} caster rows, expected 2");
         var info = layer.OutputInfo();
@@ -655,17 +655,21 @@ public partial class UnderstoryRenderMatchGpuTest : Node
             if (image == null || image.IsEmpty()) throw new InvalidOperationException("empty capture");
             return image;
         }
-        async Task WaitCasters(int expected)
+        // T6-11: the switch takes effect through a source rebuild (RequestRebuild, then the 0.25 s epoch throttle, an async build and the set promotion). Wait on wall-clock time for a build that
+        // STARTED after the switch to be installed and shown (SourceBuilds counts starts), not on a frame count: with VSync off 600 frames can pass inside the throttle alone (flaky both ways).
+        async Task WaitCasters(int expected, int buildsBefore)
         {
-            for (int i = 0; i < 600 && !(layer.OutputInfo().Count(o => o.Caster) == expected && !layer.SetPending); i++) await Frames(1);
+            await WaitUntil(() => layer.SourceBuilds > buildsBefore && !layer.SetPending);
             if (layer.OutputInfo().Count(o => o.Caster) != expected) throw new InvalidOperationException($"sapling caster: expected {expected} casters after the switch, found {layer.OutputInfo().Count(o => o.Caster)}");
         }
         Image shotA = await Capture();
+        int builds = layer.SourceBuilds;
         layer.SaplingShadows = false;
-        await WaitCasters(0);
+        await WaitCasters(0, builds);
         Image shotB = await Capture();
+        builds = layer.SourceBuilds;
         layer.SaplingShadows = true;
-        await WaitCasters(1);
+        await WaitCasters(1, builds);
         Image shotC = await Capture();
         static float Lum(Color c) => .2126f * c.R + .7152f * c.G + .0722f * c.B;
         int Darker(Image on, Image off)
@@ -726,7 +730,7 @@ public partial class UnderstoryRenderMatchGpuTest : Node
             },
         };
         _vp.AddChild(layer);
-        for (int i = 0; i < 600 && !(layer.DrawOutputs == 3 && !layer.SetPending); i++) await Frames(1);
+        await WaitUntil(() => layer.DrawOutputs == 3 && !layer.SetPending);
         if (layer.DrawOutputs != 3) throw new InvalidOperationException($"dead wood layer: {layer.DrawOutputs} draw outputs, expected 3 (near, far, caster; batches {layer.BatchCount}, failed {layer.Failed})");
         int[] rows = layer.SourceRows;
         if (rows[0] != 0 || rows[2] != 6 || rows[3] != 5) throw new InvalidOperationException($"dead wood layer: rows {string.Join("/", rows)}, expected 0 saplings, 6 dead wood and 5 casters (snags and logs; the stump casts nothing)");
@@ -765,4 +769,6 @@ public partial class UnderstoryRenderMatchGpuTest : Node
     }
 
     private async Task Frames(int count) { for (int i = 0; i < count; i++) await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame); }
+    /// <summary>T6-11: waits frames until the condition holds or 30 s of wall-clock time pass (frame counts are not a time budget with VSync off); the caller checks the outcome.</summary>
+    private async Task WaitUntil(Func<bool> done, double seconds = 30.0) { ulong end = Time.GetTicksMsec() + (ulong)(seconds * 1000.0); while (!done() && Time.GetTicksMsec() < end) await Frames(1); }
 }

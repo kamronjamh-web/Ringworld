@@ -1,6 +1,6 @@
 {
     "schema":  1,
-    "note":  "Mesh hashes of derived forms 30-42 (snags, fallen trees, stumps) as written by T6-5 (tool_version 1), before T6-7 appended the shrubs 43-54. tree_catalog_append_test requires the regenerated forms 30-42 to keep exactly these hashes.",
+    "note":  "Mesh hashes of derived forms 30-42 (snags, fallen trees, stumps) as written by T6-5 (tool_version 1), before T6-7 appended the shrubs 43-54. T6-11 (tool_version 3) updated form 36 LOD1 and LOD2 only (one LOD2 mesh shared by both): a 6-triangle bark piece floating about 0.9 m beside the log was dropped (KeepNearAxis keeps only pieces linked to the trunk); every other hash is unchanged. tree_catalog_append_test requires the regenerated forms 30-42 to keep exactly these hashes.",
     "forms":  [
                   {
                       "index":  30,
@@ -202,14 +202,14 @@
                                    {
                                        "lod":  "1",
                                        "source_hash":  "A259DC6C9663609015F50CBD59665CBEA48C707766289D8E0F8B2E064ADFDFA9",
-                                       "mesh_hash":  "FC5EADA7BC0716CD97D441185F1158FB049130716C091AFF149CB3DFE027A9EC",
-                                       "triangles":  140
+                                       "mesh_hash":  "4150091CD3C94BA994927B28CBA21F78E4EB92F4B34331FED37A69C7657B2CEA",
+                                       "triangles":  134
                                    },
                                    {
                                        "lod":  "2",
                                        "source_hash":  "A259DC6C9663609015F50CBD59665CBEA48C707766289D8E0F8B2E064ADFDFA9",
-                                       "mesh_hash":  "FC5EADA7BC0716CD97D441185F1158FB049130716C091AFF149CB3DFE027A9EC",
-                                       "triangles":  140
+                                       "mesh_hash":  "4150091CD3C94BA994927B28CBA21F78E4EB92F4B34331FED37A69C7657B2CEA",
+                                       "triangles":  134
                                    },
                                    {
                                        "lod":  "F",

@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
-  "tool_version": 2,
+  "tool_version": 3,
   "catalog_version": 1,
   "form_count": 25,
   "engine_identity": "4.8-dev7 (official)|c971f93e7",
   "base_catalog_artifact_sha256": "24FCAB9192BAB5359C41270630F606CADE6926D4C7E9A823BBC233ADA03BE16D",
   "artifact_path": "resources/trees/prepared/lolipop_derived_catalog.res",
-  "artifact_sha256": "D38370CDA711367B8CA77871BD27FA2A414CCF25A06F00F322D67DA2633BC69C",
-  "total_bytes": 1993562,
+  "artifact_sha256": "8E0BDD2402AF8211C3F7F95BEB67E06AD6A295A859698F03FDAE5FBFE76DA18F",
+  "total_bytes": 1993238,
   "shrub_clusters": [
     {
       "species": "Maple",
@@ -397,14 +397,14 @@
         {
           "lod": "1",
           "source_hash": "A259DC6C9663609015F50CBD59665CBEA48C707766289D8E0F8B2E064ADFDFA9",
-          "mesh_hash": "FC5EADA7BC0716CD97D441185F1158FB049130716C091AFF149CB3DFE027A9EC",
-          "triangles": 140
+          "mesh_hash": "4150091CD3C94BA994927B28CBA21F78E4EB92F4B34331FED37A69C7657B2CEA",
+          "triangles": 134
         },
         {
           "lod": "2",
           "source_hash": "A259DC6C9663609015F50CBD59665CBEA48C707766289D8E0F8B2E064ADFDFA9",
-          "mesh_hash": "FC5EADA7BC0716CD97D441185F1158FB049130716C091AFF149CB3DFE027A9EC",
-          "triangles": 140
+          "mesh_hash": "4150091CD3C94BA994927B28CBA21F78E4EB92F4B34331FED37A69C7657B2CEA",
+          "triangles": 134
         },
         {
           "lod": "F",

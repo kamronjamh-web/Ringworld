@@ -963,7 +963,7 @@ static func wait_scatter_idle(ctx: Dictionary, timeout_s: float) -> bool:
 	return false
 
 
-## T5-10: resident record counts per class, the scatter compute's bytes and the layer's drawn instance counts per output (readback of each batch's camera list); {} without scatter.rocks.
+## T5-10: resident record counts per class, the scatter compute's bytes and the layer's drawn instance counts per output (readback of each batch's camera list); {} without a scatter streamer.
 static func scatter_snapshot(ctx: Dictionary) -> Dictionary:
 	var trees: Node = ctx["trees"]
 	if not bool(trees.get("HasScatterStreamer")):
@@ -980,6 +980,19 @@ static func scatter_snapshot(ctx: Dictionary) -> Dictionary:
 				break
 			await (ctx["tree"] as SceneTree).process_frame
 		out["drawn"] = JSON.parse_string(text) if text != "" else null
+	# T6-11: the understory layer the same way (source rows per slot, caps, colliders and drawn instances per output); absent without vegetation.forest_structure.
+	var understory := _understory_layer(ctx)
+	if understory != null:
+		var u := {"compute": JSON.parse_string(str(understory.call("ComputeBytesJson")))}
+		understory.call("DrawnProbeBegin")
+		var drawn_text := ""
+		for i in 180:
+			drawn_text = str(understory.call("DrawnProbeTake"))
+			if drawn_text != "":
+				break
+			await (ctx["tree"] as SceneTree).process_frame
+		u["drawn"] = JSON.parse_string(drawn_text) if drawn_text != "" else null
+		out["understory"] = u
 	return out
 
 
@@ -1603,6 +1616,7 @@ static func _teleport_to(ctx: Dictionary, around: float, across: float, vertical
 
 
 ## Dolly 15 -> 60 m (0.25 m steps) toward the nearest tree ahead of forest_edge_eye, plus a fixed 15 m control. Frames go to .godot/captures/landscape/t0/lod_switch/<stamp>/{dolly,control}/.
+## T6-11 (LOD tail, P9): --lod-start=<m> --lod-end=<m> move the dolly range (180 frames, step (end - start) / 180; the control holds at the start distance). Defaults 15 and 60 (unchanged).
 static func run_lod(ctx: Dictionary) -> Dictionary:
 	var tree: SceneTree = ctx["tree"]
 	var marker: String = ctx["marker"]
@@ -1610,12 +1624,16 @@ static func run_lod(ctx: Dictionary) -> Dictionary:
 	if pose.is_empty():
 		return {"status": "FAIL", "failure": "pose missing from the fixture"}
 	var out_dir := H.transient_dir("lod_switch", ctx["booted"]["world_tag"])
+	var lod_start := float(harness_arg("--lod-start=", str(LOD_START_M)))
+	var lod_step := (float(harness_arg("--lod-end=", str(LOD_START_M + LOD_STEPS * LOD_STEP_M))) - lod_start) / float(LOD_STEPS)
+	if lod_step <= 0.0:
+		return {"status": "FAIL", "failure": "--lod-end must be above --lod-start"}
 	var info: Dictionary = await H.go_pose(tree, ctx["game"], pose, "noon", ctx["ground_model"])
 	if info.has("error"):
 		return {"status": "FAIL", "failure": str(info["error"])}
 	await _disable_auto_exposure(ctx)
 	var finder: RefCounted = TIMING.new()
-	var found: Dictionary = finder.call("NearestTreeAhead", ctx["booted"]["world_bridge"], float(pose["around_m"]), float(pose["across_m"]), float(pose["yaw_deg"]), 8.0, 150.0, 8.0, LOD_START_M + LOD_STEPS * LOD_STEP_M + 3.0)
+	var found: Dictionary = finder.call("NearestTreeAhead", ctx["booted"]["world_bridge"], float(pose["around_m"]), float(pose["across_m"]), float(pose["yaw_deg"]), 8.0, 150.0, 8.0, lod_start + LOD_STEPS * lod_step + 3.0)
 	if not bool(found.get("found", false)):
 		return {"status": "FAIL", "failure": str(found.get("error", "no tree found")), "tree_search": found}
 	var surface: Node = ctx["surface"]
@@ -1628,13 +1646,13 @@ static func run_lod(ctx: Dictionary) -> Dictionary:
 	var dir_z := sin(bearing)
 	var record: Dictionary = (ctx["record"] as Dictionary).duplicate(true)
 	record.merge({"marker": marker, "tool": "landscape_lod_switch_capture", "pose": pose["name"], "tree": found, "tree_ground_m": tree_ground, "target_height_above_ground_m": target_y - tree_ground,
-		"dolly": {"frames": LOD_STEPS, "start_m": LOD_START_M, "step_m": LOD_STEP_M}, "output": out_dir, "frames": {"dolly": [], "control": []}})
+		"dolly": {"frames": LOD_STEPS, "start_m": lod_start, "step_m": lod_step}, "output": out_dir, "frames": {"dolly": [], "control": []}})
 	for sequence in ["dolly", "control"]:
 		var dir_path := out_dir.path_join(sequence)
 		DirAccess.make_dir_recursive_absolute(dir_path)
 		# park at the first position and let the streaming and exposure settle before the sequence
 		for step in LOD_STEPS:
-			var distance := LOD_START_M + (step * LOD_STEP_M if sequence == "dolly" else 0.0)
+			var distance := lod_start + (step * lod_step if sequence == "dolly" else 0.0)
 			var cam_a := tree_a + dir_a * distance
 			var cam_z := tree_z + dir_z * distance
 			var cam_ground := float(surface.call("SampleHeight", cam_a, cam_z))
