@@ -284,6 +284,9 @@ public partial class RingGraphicsQualityController : Node
         _ => (25.0f, 40.0f, 300.0f, 350.0f, 480.0f, 900.0f, 130.0f, 150.0f),
     };
 
+    /// <summary>T6 design A Q5: saplings cast into the sun shadow map at Very High and up (no menu row).</summary>
+    public static bool PresetSaplingShadows(RingTerrainLodCoordinator.QualityPreset preset) => preset >= RingTerrainLodCoordinator.QualityPreset.VeryHigh;
+
     /// <summary>
     /// The preset's rock scatter scaling (T5 design B9): the rock density gate (never above 1, so the menu can only thin the designed density), the scatter distance scale and the cap scale of the
     /// per-LOD budgets (no menu row). Every preset is named; Very High equals High.

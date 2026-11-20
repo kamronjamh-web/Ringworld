@@ -188,6 +188,9 @@ internal abstract partial class RingScatterLayerBase : Node3D
 
     protected static long Snap(double meters) => (long)Math.Round(meters / AnchorMeters) * (long)AnchorMeters;
 
+    /// <summary>The next ServiceSources starts a new source build, subject to the epoch throttle; used when a layer's output set changes shape.</summary>
+    protected void RequestRebuild() => _builtEpoch = -1;
+
     private void ServiceSources(in RingLodGeometrySnapshot geometry, in RingCanonicalPosition focus)
     {
         if (_build is { IsCompleted: true })

@@ -145,6 +145,13 @@ public partial class VegetationSettingsSmoke : Node
             gates.Preset = preset;
             if (!Mathf.IsEqualApprox(gates.UnderstoryDensity, 1) || !Mathf.IsEqualApprox(gates.DeadWoodDensity, 1)) throw new InvalidOperationException($"understory and dead wood defaults are not 1 at the {preset} preset");
         }
+        // T6 sapling shadows follow the preset only: off at Low, Medium and High, on at Very High and up.
+        foreach (var preset in new[] { RingTerrainLodCoordinator.QualityPreset.Low, RingTerrainLodCoordinator.QualityPreset.Medium, RingTerrainLodCoordinator.QualityPreset.High, RingTerrainLodCoordinator.QualityPreset.VeryHigh, RingTerrainLodCoordinator.QualityPreset.UltraVideo, RingTerrainLodCoordinator.QualityPreset.Cinematic5090 })
+        {
+            gates.Preset = preset;
+            bool expected = preset >= RingTerrainLodCoordinator.QualityPreset.VeryHigh;
+            if (gates.SaplingShadows != expected || RingGraphicsQualityController.PresetSaplingShadows(preset) != expected) throw new InvalidOperationException($"sapling shadows are {(expected ? "off" : "on")} at the {preset} preset");
+        }
         gates.Set("UnderstoryDensity", 0.45); gates.Set("DeadWoodDensity", 0.2);
         if (!gates.Save()) throw new InvalidOperationException("understory settings did not save");
         var gatesBack = new GameplayVegetationDefaults(path); gatesBack.Load();
@@ -160,6 +167,16 @@ public partial class VegetationSettingsSmoke : Node
             if (!Mathf.IsEqualApprox(gateLayer.UnderstoryDensity, 1) || !Mathf.IsEqualApprox(gateLayer.DeadWoodDensity, 0)) throw new InvalidOperationException("understory gates were not clamped on apply");
         }
         finally { gateLayer.Free(); }
+        var saplingLayer = new RingBiomeDecorationLayer();
+        try
+        {
+            if (saplingLayer.UnderstorySaplingShadows) throw new InvalidOperationException("decoration layer sapling shadows default is not off");
+            saplingLayer.ApplyUnderstorySettings(1f, 1f, true);
+            if (!saplingLayer.UnderstorySaplingShadows) throw new InvalidOperationException("sapling shadows were not applied to the decoration layer");
+            saplingLayer.ApplyUnderstorySettings(1f, 1f, false);
+            if (saplingLayer.UnderstorySaplingShadows) throw new InvalidOperationException("sapling shadows were not cleared on apply");
+        }
+        finally { saplingLayer.Free(); }
         // The static the ground-cover selection reads (the drawer's apply writes it): clamped to 0-1, default 1, Revision counts every change.
         RingGroundCoverSettings.Share = 1f;
         int revision = RingGroundCoverSettings.Revision;

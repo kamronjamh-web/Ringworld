@@ -101,7 +101,7 @@ public partial class RingLiveTuningDrawer
 		_vegetation.MaximumTreeSunShadowBatches = _vegetationDefaults.MaximumTreeSunShadowBatches;
         _vegetation.ApplyScatterSettings(_vegetationDefaults.RockDensity, _vegetationDefaults.ScatterDistanceScale, _vegetationDefaults.ScatterCapScale);
         _vegetation.ApplyFoliageSettings(_vegetationDefaults.FoliageColourVariation);
-        _vegetation.ApplyUnderstorySettings(_vegetationDefaults.UnderstoryDensity, _vegetationDefaults.DeadWoodDensity);
+        _vegetation.ApplyUnderstorySettings(_vegetationDefaults.UnderstoryDensity, _vegetationDefaults.DeadWoodDensity, _vegetationDefaults.SaplingShadows);
     }
 
     private void ProcessVegetationTuning(double delta)

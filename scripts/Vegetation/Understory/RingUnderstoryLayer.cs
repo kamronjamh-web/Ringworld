@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading.Tasks;
 using Godot;
 using RingworldTechDemo.Diagnostics;
@@ -17,14 +18,14 @@ namespace RingworldTechDemo.Vegetation.Understory;
 /// Saplings draw through vertex-fetch carriers (<see cref="UnderstoryCatalog"/>): per LOD one carrier holding every sapling variant, with <c>materials/ring_understory.gdshader</c>, lit like tree meshes.
 /// Dead wood (snags, fallen trees, stumps; T6-6) draws through two carriers of <see cref="UnderstoryDeadWood"/> (near 0 to 70 m, far 50 m outwards, cross-fading across 50 to 70 m) and casts the sun shadow through a ShadowsOnly caster batch of the far carrier
 /// (snags and logs, within the sun near-map distance). Colliders: RingUnderstoryLayer.Colliders.cs.
-/// Shrubs (T6-7) draw through two vertex-fetch carriers of <see cref="UnderstoryShrubs"/> (LOD0 0 to 45 m, LOD1 30 m outwards, cross-fading across 30 to 45 m, fading out across 130 to 150 m), foliage only, lit like the saplings; they cast no shadow. Budget slots (five, as the design): 0 saplings, 1 shrubs, 2 dead wood, 3 dead-wood caster, 4 sapling caster; the sapling-caster slot is reserved (cap 0) until that group comes.
+/// Shrubs (T6-7) draw through two vertex-fetch carriers of <see cref="UnderstoryShrubs"/> (LOD0 0 to 45 m, LOD1 30 m outwards, cross-fading across 30 to 45 m, fading out across 130 to 150 m), foliage only, lit like the saplings; they cast no shadow. Casters: snags and logs at every preset (slot 3); saplings at Very High and up (slot 4, <see cref="SaplingShadows"/>, the far sapling carrier within the class reach); shrubs never. Budget slots (five, as the design): 0 saplings, 1 shrubs, 2 dead wood, 3 dead-wood caster, 4 sapling caster.
 /// </summary>
 internal sealed partial class RingUnderstoryLayer : RingScatterLayerBase
 {
     // Group index = LOD budget slot.
-    private const int Saplings = 0, ShrubSlot = 1, DeadWoodSlot = 2, DeadWoodCasterSlot = 3, SlotCount = 5;
+    private const int Saplings = 0, ShrubSlot = 1, DeadWoodSlot = 2, DeadWoodCasterSlot = 3, SaplingCasterSlot = 4, SlotCount = 5;
     // Dead wood: 400 fallen trees + 200 snags + 200 stumps in one slot; the caster slot holds the snags and logs (200 + 400).
-    private static readonly uint[] UnderstoryBaseCaps = { 1500, 3000, 800, 600, 0 };
+    private static readonly uint[] UnderstoryBaseCaps = { 1500, 3000, 800, 600, 1500 };
     // (near, far, fade-in start, fade-in end, fade-out start, fade-out end) at distance scale 1; -1 = none. L0 hands over to L2 across 20 to 30 m; L2 fades out at the class reach (130 to 150 m).
     private static readonly (float Near, float Far, float InStart, float InEnd, float OutStart, float OutEnd)[] SaplingBands =
     {
@@ -48,6 +49,14 @@ internal sealed partial class RingUnderstoryLayer : RingScatterLayerBase
     internal float UnderstoryDensity { get; set; } = 1f;
     /// <summary>The rank gate of the dead-wood batches and the filter of the dead-wood colliders (the "Dead wood density" setting).</summary>
     internal float DeadWoodDensity { get; set; } = 1f;
+
+    private bool _saplingShadows;
+    /// <summary>Whether saplings cast into the sun shadow map (the graphics preset: Very High and up). Changing it rebuilds the sources so the sapling caster slot is filled or emptied.</summary>
+    internal bool SaplingShadows
+    {
+        get => _saplingShadows;
+        set { if (_saplingShadows == value) return; _saplingShadows = value; RequestRebuild(); }
+    }
 
     protected override string DiagnosticCategory => RingPerformanceGpu.UnderstoryCulling;
     protected override string HiddenLabel => "Understory";
@@ -102,7 +111,8 @@ internal sealed partial class RingUnderstoryLayer : RingScatterLayerBase
         foreach (UnderstoryLodCarrier lod in _catalog.Lods) unitRadius = Math.Max(unitRadius, lod.UnitRadius);
         float[] shrubHeights = (float[])_shrubs!.HeightMeters.Clone();
         float shrubRadius = Math.Max(_shrubs.Lod0.UnitRadius, _shrubs.Lod1.UnitRadius);
-        return Task.Run<SourceBuildBase>(() => BuildSources(records, snapshot, anchorAround, anchorAcross, epoch, key, heights, unitRadius, deadHeights, deadRadius, shrubHeights, shrubRadius));
+        bool saplingCasters = SaplingShadows;
+        return Task.Run<SourceBuildBase>(() => BuildSources(records, snapshot, anchorAround, anchorAcross, epoch, key, heights, unitRadius, deadHeights, deadRadius, shrubHeights, shrubRadius, saplingCasters));
     }
 
     /// <summary>The budget slot a record draws in (0 saplings, 1 shrubs, 2 dead wood), or -1: rock groups.</summary>
@@ -110,9 +120,9 @@ internal sealed partial class RingUnderstoryLayer : RingScatterLayerBase
 
     /// <summary>
     /// Pure (worker): the sapling and dead-wood rows in the frame of the anchor, nearest first (ties by record id), so a binding LOD budget drops the farthest rows first. Snags and fallen trees (rows whose ShadowMinSizeM admits the record) are also copied to the
-    /// caster list (slot 3), which draws the far carrier into the sun shadow.
+    /// caster list (slot 3), which draws the far carrier into the sun shadow. With saplingCasters every sapling row is also copied to slot 4.
     /// </summary>
-    internal static SourceBuild BuildSources(IReadOnlyList<ScatterRecord> records, RingLodGeometrySnapshot live, long anchorAround, long anchorAcross, long epoch, GeometryKey key, float[] heightMeters, float unitRadius, float[] deadHeightMeters, float deadUnitRadius, float[]? shrubHeightMeters = null, float shrubUnitRadius = 0f)
+    internal static SourceBuild BuildSources(IReadOnlyList<ScatterRecord> records, RingLodGeometrySnapshot live, long anchorAround, long anchorAcross, long epoch, GeometryKey key, float[] heightMeters, float unitRadius, float[] deadHeightMeters, float deadUnitRadius, float[]? shrubHeightMeters = null, float shrubUnitRadius = 0f, bool saplingCasters = false)
     {
         shrubHeightMeters ??= new float[UnderstoryCatalog.ShrubCount];
         var watch = Stopwatch.StartNew();
@@ -134,6 +144,7 @@ internal sealed partial class RingUnderstoryLayer : RingScatterLayerBase
             if (variant < 0 || variant >= (slot == Saplings ? heightMeters.Length : slot == ShrubSlot ? shrubHeightMeters.Length : deadHeightMeters.Length)) continue;
             slotOf[i] = slot; variantOf[i] = variant;
             build.Count[slot]++;
+            if (slot == Saplings && saplingCasters) build.Count[SaplingCasterSlot]++;
             if (slot == DeadWoodSlot && records[i].Size >= row.ShadowMinSizeM) { casts[i] = true; build.Count[DeadWoodCasterSlot]++; }
         }
         var order = new int[records.Count];
@@ -176,6 +187,13 @@ internal sealed partial class RingUnderstoryLayer : RingScatterLayerBase
             Array.Copy(row16, 0, build.Rows[slot]!, at * RingGpuVegetationCompute.TreeCustomFloats, RingGpuVegetationCompute.TreeCustomFloats);
             build.Meta[slot]![at] = meta;
             minimum[slot] = minimum[slot].Min(position); maximum[slot] = maximum[slot].Max(position); maxScale[slot] = Math.Max(maxScale[slot], scale);
+            if (slot == Saplings && saplingCasters)
+            {
+                int sat = cursor[SaplingCasterSlot]++;
+                Array.Copy(row16, 0, build.Rows[SaplingCasterSlot]!, sat * RingGpuVegetationCompute.TreeCustomFloats, RingGpuVegetationCompute.TreeCustomFloats);
+                build.Meta[SaplingCasterSlot]![sat] = meta;
+                minimum[SaplingCasterSlot] = minimum[SaplingCasterSlot].Min(position); maximum[SaplingCasterSlot] = maximum[SaplingCasterSlot].Max(position); maxScale[SaplingCasterSlot] = Math.Max(maxScale[SaplingCasterSlot], scale);
+            }
             if (casts[i])
             {
                 int cat = cursor[DeadWoodCasterSlot]++;
@@ -185,7 +203,7 @@ internal sealed partial class RingUnderstoryLayer : RingScatterLayerBase
             }
         }
         for (int slot = 0; slot < SlotCount; slot++)
-            if (build.Count[slot] > 0) build.Bounds[slot] = new Aabb(minimum[slot], maximum[slot] - minimum[slot]).Grow(maxScale[slot] * (slot == Saplings ? unitRadius : slot == ShrubSlot ? shrubUnitRadius : deadUnitRadius) + 2f);
+            if (build.Count[slot] > 0) build.Bounds[slot] = new Aabb(minimum[slot], maximum[slot] - minimum[slot]).Grow(maxScale[slot] * (slot == Saplings || slot == SaplingCasterSlot ? unitRadius : slot == ShrubSlot ? shrubUnitRadius : deadUnitRadius) + 2f);
         build.BuildMs = watch.Elapsed.TotalMilliseconds;
         return build;
     }
@@ -213,6 +231,11 @@ internal sealed partial class RingUnderstoryLayer : RingScatterLayerBase
         }
         if (build.Count[DeadWoodCasterSlot] > 0)
             AddOutput(set, DeadWoodCasterSlot, -1, true, "UnderstoryDeadWood_Shadow", _deadWood!.Far.Carrier, _deadWood.Far.Material, build.Rows[DeadWoodCasterSlot]!, build.Meta[DeadWoodCasterSlot]!, build.Count[DeadWoodCasterSlot], build.Bounds[DeadWoodCasterSlot]);
+        if (build.Count[SaplingCasterSlot] > 0)
+        {
+            UnderstoryLodCarrier far = _catalog!.Lods.First(l => l.SourceLod >= 2);
+            AddOutput(set, SaplingCasterSlot, -1, true, "UnderstorySapling_Shadow", far.Carrier, far.Material, build.Rows[SaplingCasterSlot]!, build.Meta[SaplingCasterSlot]!, build.Count[SaplingCasterSlot], build.Bounds[SaplingCasterSlot]);
+        }
     }
 
     protected override void ApplyFrameUniforms(MultiMeshInstance3D renderer, OutputSet set, Vector3 origin) { }
@@ -220,6 +243,8 @@ internal sealed partial class RingUnderstoryLayer : RingScatterLayerBase
     protected override FrameTerms ResolveFrame(Output output, float scale, float shadowDistance)
     {
         // The caster draws every snag and log inside the sun near-map distance at every preset (the rock layer's ShadowDistance logic).
+        // Saplings are not drawn beyond their class reach, so they cast no further.
+        if (output.Caster && output.Group == SaplingCasterSlot) return new FrameTerms(SaplingCasterSlot, 0f, Math.Min(shadowDistance, SaplingBands[1].Far * scale), -1f, -1f, -1f, -1f);
         if (output.Caster) return new FrameTerms(DeadWoodCasterSlot, 0f, shadowDistance, -1f, -1f, -1f, -1f);
         var band = output.Group == DeadWoodSlot ? DeadWoodBands[output.Lod] : output.Group == ShrubSlot ? ShrubBands[output.Lod] : SaplingBands[output.Lod];
         float inStart = -1f, inEnd = -1f, outStart = -1f, outEnd = -1f;

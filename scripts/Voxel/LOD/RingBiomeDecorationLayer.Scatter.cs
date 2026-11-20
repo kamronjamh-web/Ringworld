@@ -39,8 +39,12 @@ public partial class RingBiomeDecorationLayer
 	/// <summary>The rank gate of the dead-wood batches and the filter of the dead-wood colliders (the Vegetation tab's "Dead wood density"); no rebuild.</summary>
 	internal float DeadWoodDensity { get; set; } = 1f;
 
-	internal void ApplyUnderstorySettings(float understoryDensity, float deadWoodDensity)
+	/// <summary>Whether saplings cast into the sun shadow map (the graphics preset: Very High and up); changing it rebuilds the understory output set.</summary>
+	internal bool UnderstorySaplingShadows { get; set; }
+
+	internal void ApplyUnderstorySettings(float understoryDensity, float deadWoodDensity, bool saplingShadows = false)
 	{
+		UnderstorySaplingShadows = saplingShadows;
 		UnderstoryDensity = Math.Clamp(understoryDensity, 0f, 1f);
 		DeadWoodDensity = Math.Clamp(deadWoodDensity, 0f, 1f);
 	}
@@ -133,7 +137,7 @@ public partial class RingBiomeDecorationLayer
 		float height = (float)(focus.VerticalMeters - PresentationSurfaceHeight(_scatterEdits, sampler, focus.AroundMeters, focus.AcrossMeters));
 		// The look settings (T5-9): only worlds with scatter.rocks reach here, so everywhere else the ground world global stays (x, y, 0, 0).
 		if (_scatterLayer != null) { _scatterLayer.RockDensity = ScatterRockDensity; _scatterLayer.CapScale = ScatterCapScale; }
-		if (_understoryLayer != null) { _understoryLayer.CapScale = ScatterCapScale; _understoryLayer.UnderstoryDensity = UnderstoryDensity; _understoryLayer.DeadWoodDensity = DeadWoodDensity; }
+		if (_understoryLayer != null) { _understoryLayer.CapScale = ScatterCapScale; _understoryLayer.UnderstoryDensity = UnderstoryDensity; _understoryLayer.DeadWoodDensity = DeadWoodDensity; _understoryLayer.SaplingShadows = UnderstorySaplingShadows; }
 		RingGroundSurfaceGlobals.PublishScatterLook(ScatterRockDensity, ScatterDistanceScale);
 		_scatter.DistanceScale = ScatterDistanceScale;
 		_scatter.Pump(focus.AroundMeters, focus.AcrossMeters, height, _scatterEdits, _scatterEdits.Version);

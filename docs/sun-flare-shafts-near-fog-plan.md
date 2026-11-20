@@ -777,3 +777,7 @@ Stills: `.godot/audit_baseline/common/atmosphere/nf5/` (v8 fixture) and `nf5/riv
 - Side observation for the water lane: the harness's resolved `river_bank_eye` in generation 1 put the camera at canonical height 97 m while the sampler reported River with exact level 836 m over the whole +-256 m field (the frame renders as underwater). Not investigated here.
 
 Open for the user: mist strength stays 0.002 per metre (physical) unless they choose 0.004. NF-7 (review pack on the slot 3 world) is next.
+
+### User answers after NF-6 (2026-11-19)
+- Mist density stays 0.002 per metre (physical); no move to 0.004.
+- Fixtures with no graphics controller keep the gate open (fog amount 1), so test scenes may show near fog in foggy weather. Tests that need clear air set it explicitly.

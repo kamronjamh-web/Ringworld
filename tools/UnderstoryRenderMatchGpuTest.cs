@@ -22,10 +22,14 @@ namespace RingworldTechDemo.Tests;
 /// same pose and light, 128 px frame, ambient off, linear tonemap, magenta background. Cases:
 ///   front-lit (sun behind the camera, forest lighting switches off), backlit (sun behind the sapling, translucency and crown occlusion on), cloud shadow (a full-field cloud map, front-lit),
 ///   and 500 m of haze (the camera at 500 m, the lens narrowed to keep the pixel size, air 30 times the default as in scatter_haze_shadow_gpu_test).
+/// Shadow receive (2026-11-19 play test): every plant also has a "shade" case, a shadow-only occluder between the sun and the plant (sun shadows on, ambient 0.35); the carrier must match the reference there, and both must darken by at least 30 %
+/// against the same light without the occluder ("sunamb"), so a carrier that ignores the sun shadow map fails (checked: ATTENUATION forced to 1 fails every shade case).
 /// Checks: the mean linear colour of the covered pixels agrees within 3 % (luminance, and each channel as a share of the reference luminance); the covered pixel count within 5 %; the backlit translucency term moves the reference by at least 5 %
 /// (so a carrier without it would fail the backlit check); T6-6 adds a snag (derived form 30, LOD1 bark) through the dead-wood near carrier against the derived mesh with its bark material (front, back, cloud, haze; same 3 %), and a dead-wood layer smoke
 /// (a snag, a log and a stump through the layer: near and far camera batches plus the snag-and-log caster); then a layer smoke (synthetic sapling records through RingUnderstoryLayer on a fixed host: 2 camera batches, L0 holds the records inside 0 to 30 m, L2 those inside 20 to 150 m, none beyond),
 /// and the feature-off rule (no understory layer for a world without bit 6, one for a world with it).
+/// T6 sapling caster (slot 4, Very High and up): a layer with SaplingShadows on holds the saplings twice (rows[4] == 2, camera batches plus one "UnderstorySapling_Shadow" caster), and the sun shadow map really carries them: on a lit ground plane, frames with the caster on, off and on again,
+/// pixels at least 25 % darker with the caster than without (at least 50, both times) and the two caster-on frames equal within 1 %.
 /// T6-7 adds a broadleaf shrub (derived form 43, LOD0) through the shrub carrier against the derived mesh with its maple foliage material (front, back with translucency, cloud, haze; colour within 3 %, coverage within 5 %), and a shrub layer smoke (L0 0 to 45 m, L1 30 to 150 m, no caster).
 /// Run windowed: godot --path . --script res://tools/understory_render_match_gpu_test.gd (or tools/run_tests.ps1 -Tests understory_render_match_gpu_test).
 /// World frame (as scatter_haze_shadow_gpu_test): the ring axis is +Y, the surface point is the origin, up is -X (the ring centre at x = -R), around is +Z, across is +Y.
@@ -41,7 +45,9 @@ public partial class UnderstoryRenderMatchGpuTest : Node
     private static readonly Vector3 Up = new(-1, 0, 0), AroundDir = new(0, 0, 1), AcrossDir = new(0, 1, 0);
     private static readonly Vector4 SwitchesOff = new(0, 0, 0, 0), SwitchesOn = new(1, 0, 0, 1); // translucency, tree shadow distance 0 (analytic crown), canopy shade, crown occlusion
     private static readonly int[] TestSources = { 0, 24 };
-    private static readonly string[] CaseNames = { "front", "back", "cloud", "haze" };
+    private static readonly string[] CaseNames = { "front", "back", "cloud", "haze", "shade" };
+    // Shadow receive: "shade" puts a shadow-only occluder between the sun and the plant (sun shadows on, a little ambient so the shaded plant is not black); "sunamb" is the same light and ambient without the occluder.
+    private const float ShadeAmbientEnergy = .35f, ShadeMinimumDrop = .3f;
 
     public string Result { get; private set; } = "RUNNING";
     private readonly List<string> _log = new();
@@ -55,6 +61,8 @@ public partial class UnderstoryRenderMatchGpuTest : Node
     private IReadOnlyList<ImportedTreeVariant> _variants = null!;
     private UnderstoryCatalog _catalog = null!;
     private Texture2D? _cloudMap;
+    private Godot.Environment _environment = null!;
+    private MeshInstance3D _occluder = null!;
 
     private readonly record struct Stats(int Covered, Vector3 Mean, float Luminance);
 
@@ -67,6 +75,7 @@ public partial class UnderstoryRenderMatchGpuTest : Node
             await SnagChecks();
             await ShrubChecks();
             await LayerChecks();
+            await SaplingCasterChecks();
             await ShrubLayerChecks();
             await DeadWoodLayerChecks();
             FeatureOffChecks();
@@ -101,7 +110,7 @@ public partial class UnderstoryRenderMatchGpuTest : Node
 
         _vp = new SubViewport { Size = new Vector2I(Size, Size), OwnWorld3D = true, RenderTargetUpdateMode = SubViewport.UpdateMode.Always };
         AddChild(_vp);
-        var environment = new Godot.Environment
+        var environment = _environment = new Godot.Environment
         {
             BackgroundMode = Godot.Environment.BGMode.Color, BackgroundColor = Background,
             AmbientLightSource = Godot.Environment.AmbientSource.Color, AmbientLightColor = Colors.White, AmbientLightEnergy = 0f,
@@ -112,6 +121,9 @@ public partial class UnderstoryRenderMatchGpuTest : Node
         _vp.AddChild(_cam);
         _sun = new DirectionalLight3D { ShadowEnabled = false, LightEnergy = 1f };
         _vp.AddChild(_sun);
+        // A thin square, shadow only (the camera never sees it); ApplyShade places it between the sun and the plant.
+        _occluder = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(40f, 40f, .2f) }, CastShadow = GeometryInstance3D.ShadowCastingSetting.ShadowsOnly, Visible = false };
+        _vp.AddChild(_occluder);
         _reference = new MeshInstance3D { CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
         _vp.AddChild(_reference);
         _carrierMulti = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, UseCustomData = true, InstanceCount = 1, CustomAabb = new Aabb(new Vector3(-50, -50, -50), new Vector3(100, 100, 100)) };
@@ -191,6 +203,7 @@ public partial class UnderstoryRenderMatchGpuTest : Node
         Vector3 middle = Up * height * .5f;
         Vector3 position = middle + horizontal * distance;
         _cam.LookAtFromPosition(position, middle, Up);
+        ApplyShade(caseName, toSun, middle);
         foreach (ShaderMaterial material in variant.Materials) SetCameraUniforms(material, position);
         foreach (UnderstoryLodCarrier carrier in _catalog.Lods) SetCameraUniforms(carrier.Material, position);
         RenderingServer.GlobalShaderParameterSet("ring_atmosphere_camera_world_position", position);
@@ -222,6 +235,28 @@ public partial class UnderstoryRenderMatchGpuTest : Node
         Image image = _vp.GetTexture().GetImage();
         if (image == null || image.IsEmpty()) throw new InvalidOperationException("empty capture");
         return Measure(image);
+    }
+
+    /// <summary>Shadow receive cases: "shade" and "sunamb" turn the sun shadow on and add ambient; "shade" also shows the occluder 12 m towards the sun from the plant's middle, facing the sun. Every other case: no shadow, no ambient, no occluder.</summary>
+    private void ApplyShade(string caseName, Vector3 toSun, Vector3 middle)
+    {
+        bool shade = caseName == "shade", lit = shade || caseName == "sunamb";
+        _sun.ShadowEnabled = lit;
+        _sun.DirectionalShadowMode = DirectionalLight3D.ShadowMode.Orthogonal;
+        _sun.DirectionalShadowMaxDistance = 200f;
+        _environment.AmbientLightEnergy = lit ? ShadeAmbientEnergy : 0f;
+        _occluder.Visible = shade;
+        _occluder.Transform = new Transform3D(Basis.LookingAt(-toSun, AcrossDir), middle + toSun * 12f);
+    }
+
+    /// <summary>Shadow receive sensitivity: the reference must darken by <see cref="ShadeMinimumDrop"/> in the occluder's shadow (else the shade match could not catch a carrier that ignores the shadow map), and so must the carrier.</summary>
+    private static void ShadeDrop(string tag, Stats referenceShade, Stats carrierShade, Stats referenceSun, Stats carrierSun, List<string> failures)
+    {
+        float referenceDrop = 1f - referenceShade.Luminance / MathF.Max(referenceSun.Luminance, 1e-6f);
+        float carrierDrop = 1f - carrierShade.Luminance / MathF.Max(carrierSun.Luminance, 1e-6f);
+        GD.Print($"UNDERSTORY_RENDER_MATCH {tag}: the occluder's shadow darkens the reference by {referenceDrop * 100f:0.0} % (lum {referenceSun.Luminance:0.0000} -> {referenceShade.Luminance:0.0000}), the carrier by {carrierDrop * 100f:0.0} % (lum {carrierSun.Luminance:0.0000} -> {carrierShade.Luminance:0.0000})");
+        if (referenceDrop < ShadeMinimumDrop) failures.Add($"{tag}: the occluder darkens the reference by only {referenceDrop * 100f:0.0} % (< {ShadeMinimumDrop * 100f:0} %): the shade check cannot detect a missing shadow");
+        if (carrierDrop < ShadeMinimumDrop) failures.Add($"{tag}: the carrier does not receive the sun shadow (darkens by {carrierDrop * 100f:0.0} %, < {ShadeMinimumDrop * 100f:0} %)");
     }
 
     private static bool UsesLod(ImportedTreeVariant variant, ShaderMaterial material, int lod)
@@ -277,6 +312,7 @@ public partial class UnderstoryRenderMatchGpuTest : Node
                     lines.Add($"{tag}: ref {reference.Covered} px lum {reference.Luminance:0.0000}; carrier {carrier.Covered} px lum {carrier.Luminance:0.0000}; coverage {coverage * 100f:0.00} %, lum {lum * 100f:0.00} %, channel {channel * 100f:0.00} %");
                     if (coverage > CoverageTolerance) failures.Add($"{tag}: coverage differs by {coverage * 100f:0.0} % (> {CoverageTolerance * 100f:0} %)");
                     if (lum > ColourTolerance || channel > ColourTolerance) failures.Add($"{tag}: mean colour differs by {lum * 100f:0.0} % luminance, {channel * 100f:0.0} % channel (> {ColourTolerance * 100f:0} %)");
+                    if (caseName == "shade") ShadeDrop(tag, reference, carrier, await Shot(source, l, "sunamb", false, false, yaw), await Shot(source, l, "sunamb", true, false, yaw), failures);
                     // Sensitivity of the backlit case: the translucency and crown terms must move the reference, or the check could not fail.
                     if (caseName == "back")
                     {
@@ -315,6 +351,7 @@ public partial class UnderstoryRenderMatchGpuTest : Node
         Vector3 middle = Up * height * .5f;
         Vector3 position = middle + horizontal * distance;
         _cam.LookAtFromPosition(position, middle, Up);
+        ApplyShade(caseName, toSun, middle);
         SetCameraUniforms(bark, position); SetCameraUniforms(dead.Near.Material, position);
         RenderingServer.GlobalShaderParameterSet("ring_atmosphere_camera_world_position", position);
         RenderingServer.GlobalShaderParameterSet("ring_atmosphere_camera_height_meters", -position.X);
@@ -359,9 +396,10 @@ public partial class UnderstoryRenderMatchGpuTest : Node
             // Luminance within 3 %. A snag is nothing but dark bark (linear blue about 0.03), where the 512 px DXT5 bark layer and the imported 2048 px bark quantise differently (5:6:5 endpoints): a single channel, as a share of the
             // reference luminance, is allowed 12 % (measured 4 to 11 %, hue only; the saplings, which are mostly foliage, hold 3 %).
             if (lum > ColourTolerance || channel > BarkChannelTolerance) failures.Add($"{tag}: mean colour differs by {lum * 100f:0.0} % luminance, {channel * 100f:0.0} % channel (> {ColourTolerance * 100f:0} % and {BarkChannelTolerance * 100f:0} %)");
+            if (caseName == "shade") ShadeDrop(tag, reference, carrier, await SnagShot("sunamb", false, false, 35f), await SnagShot("sunamb", true, false, 35f), failures);
         }
         if (failures.Count > 0) throw new InvalidOperationException(string.Join(" ; ", failures));
-        _log.Add("snag 30 (LOD1 bark) through the dead-wood near carrier matches the derived mesh with its bark material in 4 cases");
+        _log.Add("snag 30 (LOD1 bark) through the dead-wood near carrier matches the derived mesh with its bark material in 5 cases (front, back, cloud, haze, shade)");
     }
 
     // ------------------------------------------------------------------ the shrub (T6-7)
@@ -388,6 +426,7 @@ public partial class UnderstoryRenderMatchGpuTest : Node
         Vector3 middle = Up * height * .5f;
         Vector3 position = middle + horizontal * distance;
         _cam.LookAtFromPosition(position, middle, Up);
+        ApplyShade(caseName, toSun, middle);
         SetCameraUniforms(foliage, position); SetCameraUniforms(shrubs.Lod0.Material, position);
         RenderingServer.GlobalShaderParameterSet("ring_atmosphere_camera_world_position", position);
         RenderingServer.GlobalShaderParameterSet("ring_atmosphere_camera_height_meters", -position.X);
@@ -434,6 +473,7 @@ public partial class UnderstoryRenderMatchGpuTest : Node
             GD.Print($"UNDERSTORY_RENDER_MATCH {tag}: ref {reference.Covered} px lum {reference.Luminance:0.0000}; carrier {carrier.Covered} px lum {carrier.Luminance:0.0000}; coverage {coverage * 100f:0.00} %, lum {lum * 100f:0.00} %, channel {channel * 100f:0.00} %");
             if (coverage > CoverageTolerance) failures.Add($"{tag}: coverage differs by {coverage * 100f:0.0} % (> {CoverageTolerance * 100f:0} %)");
             if (lum > ColourTolerance || channel > ColourTolerance) failures.Add($"{tag}: mean colour differs by {lum * 100f:0.0} % luminance, {channel * 100f:0.0} % channel (> {ColourTolerance * 100f:0} %)");
+            if (caseName == "shade") ShadeDrop(tag, reference, carrier, await ShrubShot("sunamb", false, false, 35f), await ShrubShot("sunamb", true, false, 35f), failures);
             if (caseName == "back")
             {
                 Stats referenceOff = await ShrubShot(caseName, false, false, 35f);
@@ -443,7 +483,7 @@ public partial class UnderstoryRenderMatchGpuTest : Node
             }
         }
         if (failures.Count > 0) throw new InvalidOperationException(string.Join(" ; ", failures));
-        _log.Add("shrub 43 (broadleaf LOD0) through the shrub carrier matches the derived mesh with the maple foliage material in 4 cases");
+        _log.Add("shrub 43 (broadleaf LOD0) through the shrub carrier matches the derived mesh with the maple foliage material in 5 cases (front, back, cloud, haze, shade)");
     }
 
     // ------------------------------------------------------------------ the layer
@@ -552,6 +592,107 @@ public partial class UnderstoryRenderMatchGpuTest : Node
         if (layer.GetParent() != _vp || !layer.GetChildren().OfType<Node3D>().All(n => n.Name.ToString().StartsWith("UnderstorySet") || n.Name.ToString() == "UnderstoryColliders")) throw new InvalidOperationException("layer: renderers are not under the layer's set");
         _log.Add($"layer: 2 batches, L0 {counts[0]} / L2 {counts[1]} instances of 4 sapling records, boulder ignored");
         layer.Free();
+    }
+
+    /// <summary>Sapling caster: SaplingShadows adds slot 4 and the "UnderstorySapling_Shadow" output; the sun shadow map shows it on a lit ground plane, and switching it off and on again at runtime removes and restores it.</summary>
+    private async Task SaplingCasterChecks()
+    {
+        RenderingServer.GlobalShaderParameterSet("ringworld_forest_lighting", SwitchesOff);
+        const double Circ = LandscapeWorld.Circumference;
+        double ringRadius = Circ / Math.Tau;
+        LandscapePose pose = LandscapePoseFinder.ReadFixture(ProjectSettings.GlobalizePath("res://tools/fixtures/landscape_poses_dressing_s1337.json")).Poses.First(p => p.Name == "steep_eye");
+        ScatterRecord Syn(ulong id, double distance, float size, int source)
+            => new(id, (long)Math.Round((pose.Around + distance) * 100.0), (int)Math.Round(pose.Across * 100.0), (float)pose.Ground, 12, (ushort)source, size, .3f, ScatterRecord.EncodeUpOct(0, 1, 0), 0);
+        var records = new List<ScatterRecord> { Syn(0xC000, 15, 1f, 0), Syn(0xC001, 200, 1f, 0) };
+        var focus = new RingCanonicalPosition(pose.Around, pose.Ground, pose.Across);
+        var geometry = new RingLodGeometrySnapshot(Transform3D.Identity, Vector3.Zero, Vector3.Zero, ringRadius, 0.0, 0.0, Circ, 0.0, 0.0, focus);
+        Vector3 camera = geometry.CanonicalToWorld(focus.AroundMeters, focus.VerticalMeters, focus.AcrossMeters);
+        double angle = pose.Around / ringRadius;
+        Vector3 forward = new Vector3((float)-Math.Sin(angle), 0f, (float)Math.Cos(angle)), up = new Vector3((float)-Math.Cos(angle), 0f, (float)-Math.Sin(angle));
+        _cam.Fov = 70f; _cam.Far = 6000f;
+        _cam.LookAtFromPosition(camera, camera + forward * 100f, up);
+        _reference.Visible = false; _carrier.Visible = false;
+        // Sun 60 degrees above the horizon of the pose, shadow map on, a little ambient so the shaded ground is not black.
+        Vector3 toSun = (up * Mathf.Sin(Mathf.DegToRad(60f)) + forward * Mathf.Cos(Mathf.DegToRad(60f))).Normalized();
+        _sun.Transform = new Transform3D(Basis.LookingAt(-toSun, AcrossDir), Vector3.Zero);
+        _sun.ShadowEnabled = true;
+        _sun.DirectionalShadowMode = DirectionalLight3D.ShadowMode.Orthogonal;
+        _sun.DirectionalShadowMaxDistance = 200f;
+        _environment.AmbientLightEnergy = ShadeAmbientEnergy;
+        RenderingServer.GlobalShaderParameterSet("ring_atmosphere_to_sun", toSun);
+        foreach (UnderstoryLodCarrier carrier in _catalog.Lods) { ConfigureMaterial(carrier.Material, false, false, carrier.SourceLod >= 2); carrier.Material.SetShaderParameter("sun_direction", toSun); carrier.Material.SetShaderParameter("ring_atmosphere_to_sun", toSun); }
+        // The receiver: a 60 m square lit ground centred on the near sapling's root, +Y along the pose's up.
+        Vector3 root = geometry.CanonicalToWorld(pose.Around + 15, pose.Ground, pose.Across);
+        var ground = new MeshInstance3D { Mesh = new PlaneMesh { Size = new Vector2(60f, 60f) }, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
+        ground.Transform = new Transform3D(new Basis(forward, up, forward.Cross(up)), root);
+        _vp.AddChild(ground);
+        Vector3 shotPosition = root + up * 15f - forward * 5f;
+        _cam.Fov = 60f;
+        _cam.LookAtFromPosition(shotPosition, root, forward);
+        foreach (UnderstoryLodCarrier carrier in _catalog.Lods) SetCameraUniforms(carrier.Material, shotPosition);
+        RenderingServer.GlobalShaderParameterSet("ring_atmosphere_camera_world_position", shotPosition);
+        RenderingServer.GlobalShaderParameterSet("ring_atmosphere_camera_height_meters", (shotPosition - geometry.CanonicalToWorld(pose.Around, 0.0, pose.Across)).Dot(up));
+        var layer = new RingUnderstoryLayer
+        {
+            Name = "UnderstoryLayer", FrustumCulling = false, SaplingShadows = true,
+            Host = new ScatterLayerHost
+            {
+                Geometry = () => geometry, Focus = () => focus, Epoch = () => 1, CopyRecords = into => into.AddRange(records),
+                RingAcrossWidthMeters = () => LandscapeWorld.Width, Sun = () => _sun,
+            },
+        };
+        _vp.AddChild(layer);
+        for (int i = 0; i < 600 && !(layer.DrawOutputs == 3 && !layer.SetPending); i++) await Frames(1);
+        if (layer.DrawOutputs != 3) throw new InvalidOperationException($"sapling caster: {layer.DrawOutputs} draw outputs, expected 3 (batches {layer.BatchCount}, failed {layer.Failed})");
+        if (layer.SourceRows[4] != 2) throw new InvalidOperationException($"sapling caster: {layer.SourceRows[4]} caster rows, expected 2");
+        var info = layer.OutputInfo();
+        if (info.Count(o => !o.Caster) != 2 || info.Count(o => o.Caster) != 1 || info.First(o => o.Caster).Name != "UnderstorySapling_Shadow" || info.First(o => o.Caster).Group != 4) throw new InvalidOperationException("sapling caster: expected 2 camera outputs and one UnderstorySapling_Shadow caster of group 4");
+        async Task<Image> Capture()
+        {
+            await Frames(1);
+            for (int i = 0; i < 3; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+            Image image = _vp.GetTexture().GetImage();
+            if (image == null || image.IsEmpty()) throw new InvalidOperationException("empty capture");
+            return image;
+        }
+        async Task WaitCasters(int expected)
+        {
+            for (int i = 0; i < 600 && !(layer.OutputInfo().Count(o => o.Caster) == expected && !layer.SetPending); i++) await Frames(1);
+            if (layer.OutputInfo().Count(o => o.Caster) != expected) throw new InvalidOperationException($"sapling caster: expected {expected} casters after the switch, found {layer.OutputInfo().Count(o => o.Caster)}");
+        }
+        Image shotA = await Capture();
+        layer.SaplingShadows = false;
+        await WaitCasters(0);
+        Image shotB = await Capture();
+        layer.SaplingShadows = true;
+        await WaitCasters(1);
+        Image shotC = await Capture();
+        static float Lum(Color c) => .2126f * c.R + .7152f * c.G + .0722f * c.B;
+        int Darker(Image on, Image off)
+        {
+            int count = 0;
+            for (int y = 0; y < on.GetHeight(); y++)
+                for (int x = 0; x < on.GetWidth(); x++)
+                {
+                    float lit = Lum(off.GetPixel(x, y));
+                    if (lit > .02f && Lum(on.GetPixel(x, y)) <= lit * .75f) count++;
+                }
+            return count;
+        }
+        int darkerA = Darker(shotA, shotB), darkerC = Darker(shotC, shotB), different = 0, total = shotA.GetWidth() * shotA.GetHeight();
+        for (int y = 0; y < shotA.GetHeight(); y++)
+            for (int x = 0; x < shotA.GetWidth(); x++)
+            {
+                Color a = shotA.GetPixel(x, y), c = shotC.GetPixel(x, y);
+                if (Math.Abs(a.R - c.R) > 2f / 255f || Math.Abs(a.G - c.G) > 2f / 255f || Math.Abs(a.B - c.B) > 2f / 255f) different++;
+            }
+        string line = $"UNDERSTORY_RENDER_MATCH sapling caster: darker on {darkerA}, darker after re-enable {darkerC}, on-vs-on differing {different} of {total}";
+        GD.Print(line);
+        bool pass = darkerA >= 50 && darkerC >= 50 && different <= total / 100;
+        _sun.ShadowEnabled = false; _environment.AmbientLightEnergy = 0f;
+        ground.Free(); layer.Free();
+        if (!pass) throw new InvalidOperationException("sapling caster: " + line);
+        _log.Add($"sapling caster: slot 4 holds 2 rows, one UnderstorySapling_Shadow output; shadow-map darkening {darkerA} px (on), {darkerC} px (re-enabled), on-vs-on differing {different}/{total}");
     }
 
     /// <summary>A snag, a log and a stump through the layer: a near batch (0 to 70 m), a far batch (50 to 300 m) and the snag-and-log caster.</summary>

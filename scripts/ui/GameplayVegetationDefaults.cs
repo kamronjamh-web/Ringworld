@@ -56,6 +56,8 @@ public sealed class GameplayVegetationDefaults
     public float ScatterDistanceScale => (float)Get("ScatterDistanceScale", RingGraphicsQualityController.PresetScatter(Preset).DistanceScale).AsDouble();
     /// <summary>The preset's cap scale for the per-LOD scatter budgets (no key, no menu row).</summary>
     public float ScatterCapScale => RingGraphicsQualityController.PresetScatter(Preset).CapScale;
+    /// <summary>Whether saplings cast into the sun shadow map (the preset's choice: Very High and up; no key, no menu row).</summary>
+    public bool SaplingShadows => RingGraphicsQualityController.PresetSaplingShadows(Preset);
     // T6-8 design A10: forest. Neither changes placement, so neither enters a cache key; no preset dependence.
     public float FoliageColourVariation => (float)Get("FoliageColourVariation", 1.0).AsDouble();
     public float GroundCoverShare => (float)Get("GroundCoverShare", 1.0).AsDouble();
