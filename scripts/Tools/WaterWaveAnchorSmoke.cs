@@ -202,6 +202,8 @@ public partial class WaterWaveAnchorSmoke : RefCounted
         Has(block, "warp_argument += ring_water_anchor_phase(warp_around_cycles, split);", "ring_water_train_phase");
         Has(block, "phase += ring_water_anchor_phase(around_cycles, split);", "ring_water_train_phase");
         Has(common, "ring_water_wave_direction(vec2 direction, float frequency, float kind_clock_scale, out float around_cycles)", "ring_water_wave_direction");
+        Has(common, "const vec2 RING_WATER_LAKE_DIRECTION_1 = vec2(-0.916, -0.401);", "lake trains travel downwind (user 2026-11-20)");
+        Has(common, "lake ? RING_WATER_LAKE_DIRECTION_1 : vec2(0.916, 0.401)", "lake first train downwind");
         Has(common, "RING_WATER_LAKE_DIRECTION_2", "lake directions");
         Has(common, "RING_WATER_LAKE_DIRECTION_5", "lake directions");
 

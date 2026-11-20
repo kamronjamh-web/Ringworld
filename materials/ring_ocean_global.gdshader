@@ -22,7 +22,6 @@ uniform float night_direct_light_factor : hint_range(0.0, 1.0) = 0.0;
 uniform float day_direct_light_factor : hint_range(0.0, 2.0) = 1.0;
 uniform float shadow_floor : hint_range(0.0, 1.0) = 0.0;
 uniform float ocean_roughness : hint_range(0.02, 0.5) = 0.20;
-uniform float ocean_specular : hint_range(0.0, 1.0) = 0.88;
 uniform float ring_width_meters = 20000.0;
 #include "res://materials/ring_color_space.gdshaderinc"
 #include "res://materials/ring_atmosphere.gdshaderinc"

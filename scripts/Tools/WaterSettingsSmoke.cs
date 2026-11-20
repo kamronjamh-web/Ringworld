@@ -39,7 +39,7 @@ public partial class WaterSettingsSmoke : RefCounted
         bool low = !drawerFirst.WaterSsrEnabled && Near(drawerFirst.WaterSsrRoughnessCutoff, .81f) && drawerFirst.WaterSsrCoarseSteps == 7;
         drawerFirst.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.Cinematic5090, false);
         bool high = !drawerFirst.WaterSsrEnabled && Near(drawerFirst.WaterSsrRoughnessCutoff, .81f) && drawerFirst.WaterSsrCoarseSteps == 7
-            && Near(drawerFirst.WaterSsrCameraDistance, 450f) && drawerFirst.WaterSsrRefinementSteps == 4;
+            && Near(drawerFirst.WaterSsrCameraDistance, 800f) && drawerFirst.WaterSsrRefinementSteps == 4;
 
         // Reverse order: preset first, then saved tuning.
         using var presetFirst = new RingGraphicsQualityController();
@@ -58,17 +58,19 @@ public partial class WaterSettingsSmoke : RefCounted
         plain.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.Low, false);
         bool lowDefault = !plain.WaterSsrEnabled;
         plain.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.Cinematic5090, false);
-        bool highDefault = plain.WaterSsrEnabled && Near(plain.WaterSsrRoughnessCutoff, .32f) && plain.WaterSsrCoarseSteps == 24;
+        bool highDefault = plain.WaterSsrEnabled && Near(plain.WaterSsrRoughnessCutoff, .32f) && plain.WaterSsrCoarseSteps == 16;
 
-        // WO-3 / R1-8: High 12 steps / 120 m / 600 m, Ultra 32 steps / 400 m / 600 m.
+        // WO-3 / R1-8 / R1-8b: High 12 steps / 4 refinements / 600 m, Very High 16 / 4 / 800 m, Ultra 24 / 5 / 1000 m.
         plain.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.High, false);
-        bool highPreset = plain.WaterSsrEnabled && plain.WaterSsrCoarseSteps == 12 && Near(plain.WaterSsrMaxRayDistance, 120f) && Near(plain.WaterSsrCameraDistance, 600f) && plain.WaterSsrRefinementSteps == 4;
+        bool highPreset = plain.WaterSsrEnabled && plain.WaterSsrCoarseSteps == 12 && Near(plain.WaterSsrCameraDistance, 600f) && plain.WaterSsrRefinementSteps == 4;
         plain.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.UltraVideo, false);
-        bool ultraPreset = plain.WaterSsrEnabled && plain.WaterSsrCoarseSteps == 32 && Near(plain.WaterSsrMaxRayDistance, 400f) && Near(plain.WaterSsrCameraDistance, 600f);
+        bool ultraPreset = plain.WaterSsrEnabled && plain.WaterSsrCoarseSteps == 24 && plain.WaterSsrRefinementSteps == 5 && Near(plain.WaterSsrCameraDistance, 1000f);
+        plain.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.VeryHigh, false);
+        bool veryHighPreset = plain.WaterSsrEnabled && plain.WaterSsrCoarseSteps == 16 && plain.WaterSsrRefinementSteps == 4 && Near(plain.WaterSsrCameraDistance, 800f);
 
         System.IO.File.Delete(globalPath);
-        detail = $"startup={startup} low={low} high={high} reverse={reverse} medium={medium} lowDefault={lowDefault} highDefault={highDefault} highPreset={highPreset} ultraPreset={ultraPreset}";
-        return startup && low && high && reverse && medium && lowDefault && highDefault && highPreset && ultraPreset;
+        detail = $"startup={startup} low={low} high={high} reverse={reverse} medium={medium} lowDefault={lowDefault} highDefault={highDefault} highPreset={highPreset} ultraPreset={ultraPreset} veryHighPreset={veryHighPreset}";
+        return startup && low && high && reverse && medium && lowDefault && highDefault && highPreset && ultraPreset && veryHighPreset;
     }
 
     /// <summary>T2R-13: river colour, lake colour and turbidity. Defaults equal the constants the seeded colour path used before, so generation-1 and legacy pixels are unchanged.</summary>
@@ -149,14 +151,14 @@ public partial class WaterSettingsSmoke : RefCounted
         try
         {
             // (i) A file that already carries the marker: only the retired key goes; the explicit SSR value is honoured.
-            WriteSeedFile(scratch, new Godot.Collections.Dictionary { { "WaterReflectionMigration", 1 }, { "WaterSsrStrength", 1.0f }, { "WaterSsrCoarseSteps", 9 }, { "WaterWaveSpeed", 2f } });
+            WriteSeedFile(scratch, new Godot.Collections.Dictionary { { "WaterReflectionMigration", 1 }, { "WaterSsrStrength", 1.0f }, { "WaterSsrMaxRayDistance", 310f }, { "WaterSsrDepthToleranceFar", 2.7f }, { "WaterSsrCoarseSteps", 9 }, { "WaterWaveSpeed", 2f } });
             using var retiredGraphics = new RingGraphicsQualityController();
             var retired = new GameplayWaterDefaults(scratch);
             retired.Initialize(retiredGraphics, null);
             bool retiredLoad = retired.LastError == "" && retired.Dirty && retiredGraphics.WaterSsrCoarseSteps == 9 && Near(retiredGraphics.WaterWaveSpeed, 2f);
             bool retiredSaved = retired.Save() && !retired.Dirty;
             var afterRetired = ReadOverrides(scratch);
-            bool retiredGone = retiredSaved && !afterRetired.ContainsKey("WaterSsrStrength") && afterRetired.ContainsKey("WaterReflectionMigration") && afterRetired.ContainsKey("WaterSsrCoarseSteps");
+            bool retiredGone = retiredSaved && !afterRetired.ContainsKey("WaterSsrStrength") && !afterRetired.ContainsKey("WaterSsrMaxRayDistance") && !afterRetired.ContainsKey("WaterSsrDepthToleranceFar") && afterRetired.ContainsKey("WaterReflectionMigration") && afterRetired.ContainsKey("WaterSsrCoarseSteps");
             bool retiredRejected = !retired.SetOverride(retiredGraphics, null, "WaterReflectionMigration", 1);
 
             // (ii) The live file shape before the migration: the four SSR values follow the preset, the retired key is gone, Dirty is set; a reload changes nothing.
@@ -170,7 +172,7 @@ public partial class WaterSettingsSmoke : RefCounted
             var migrated = new GameplayWaterDefaults(scratch);
             migrated.Initialize(migratedGraphics, null);
             bool migratedLoad = migrated.LastError == "" && migrated.Dirty && migratedGraphics.WaterSsrCoarseSteps == 12 && migratedGraphics.WaterSsrRefinementSteps == 4
-                && Near(migratedGraphics.WaterSsrCameraDistance, 600f) && Near(migratedGraphics.WaterSsrMaxRayDistance, 120f) && Near(migratedGraphics.WaterWaveSpeed, 2f);
+                && Near(migratedGraphics.WaterSsrCameraDistance, 600f) && Near(migratedGraphics.WaterWaveSpeed, 2f);
             bool migratedSaved = migrated.Save();
             var afterMigration = ReadOverrides(scratch);
             bool migratedFile = migratedSaved && afterMigration.ContainsKey("WaterReflectionMigration") && afterMigration["WaterReflectionMigration"].AsInt32() == 1
@@ -207,7 +209,7 @@ public partial class WaterSettingsSmoke : RefCounted
         loaded.Initialize(graphics, null);
         report["load_last_error"] = loaded.LastError;
         report["load_dirty"] = loaded.Dirty;
-        report["effective"] = $"steps={graphics.WaterSsrCoarseSteps} refine={graphics.WaterSsrRefinementSteps} camera={graphics.WaterSsrCameraDistance} ray={graphics.WaterSsrMaxRayDistance} cutoff={graphics.WaterSsrRoughnessCutoff} edge={graphics.WaterSsrEdgeFade}";
+        report["effective"] = $"steps={graphics.WaterSsrCoarseSteps} refine={graphics.WaterSsrRefinementSteps} camera={graphics.WaterSsrCameraDistance} cutoff={graphics.WaterSsrRoughnessCutoff} edge={graphics.WaterSsrEdgeFade}";
         report["saved"] = loaded.Save();
         report["saved_keys"] = string.Join(",", System.Linq.Enumerable.Select(ReadOverrides(copyPath).Keys, k => k.AsString()));
         using var again = new RingGraphicsQualityController();
@@ -216,7 +218,7 @@ public partial class WaterSettingsSmoke : RefCounted
         reloaded.Initialize(again, null);
         report["reload_last_error"] = reloaded.LastError;
         report["reload_dirty"] = reloaded.Dirty;
-        report["reload_effective"] = $"steps={again.WaterSsrCoarseSteps} refine={again.WaterSsrRefinementSteps} camera={again.WaterSsrCameraDistance} ray={again.WaterSsrMaxRayDistance}";
+        report["reload_effective"] = $"steps={again.WaterSsrCoarseSteps} refine={again.WaterSsrRefinementSteps} camera={again.WaterSsrCameraDistance}";
         return report;
     }
 
@@ -264,10 +266,8 @@ public partial class WaterSettingsSmoke : RefCounted
         bool setSsr = settings.SetOverride(graphics, fft, "WaterSsrEnabled", true)
             && settings.SetOverride(graphics, fft, "WaterSsrCoarseSteps", 19)
             && settings.SetOverride(graphics, fft, "WaterSsrRefinementSteps", 5)
-            && settings.SetOverride(graphics, fft, "WaterSsrMaxRayDistance", 310f)
             && settings.SetOverride(graphics, fft, "WaterSsrCameraDistance", 540f)
             && settings.SetOverride(graphics, fft, "WaterSsrDepthToleranceNear", .42f)
-            && settings.SetOverride(graphics, fft, "WaterSsrDepthToleranceFar", 2.7f)
             && settings.SetOverride(graphics, fft, "WaterSsrRayBias", .18f)
             && settings.SetOverride(graphics, fft, "WaterSsrEdgeFade", .16f)
             && settings.SetOverride(graphics, fft, "WaterSsrRoughnessCutoff", .37f)
@@ -294,7 +294,7 @@ public partial class WaterSettingsSmoke : RefCounted
             && nearMaterial.GetShaderParameter("water_ssr_enabled").AsBool()
             && nearMaterial.GetShaderParameter("water_ssr_coarse_steps").AsInt32() == 19
             && nearMaterial.GetShaderParameter("water_ssr_refinement_steps").AsInt32() == 5
-            && Math.Abs(nearMaterial.GetShaderParameter("water_ssr_max_ray_distance").AsSingle() - 310f) < .001f
+            && Math.Abs(nearMaterial.GetShaderParameter("water_ssr_camera_distance").AsSingle() - 540f) < .001f
             && Math.Abs(nearMaterial.GetShaderParameter("water_ssr_ray_bias").AsSingle() - .18f) < .001f
             && nearMaterial.GetShaderParameter("water_ssr_debug_mode").AsInt32() == 3
             && Math.Abs(scaledFarMaterial.GetShaderParameter("water_coordinate_scale").AsSingle() - .001f) < .00001f;
@@ -405,8 +405,8 @@ public partial class WaterSettingsSmoke : RefCounted
             && Math.Abs(reloadedGraphics.WaterWaveHeightMeters - 10f) < .001f
             && reloadedGraphics.WaterSsrEnabled
             && reloadedGraphics.WaterSsrCoarseSteps == 19 && reloadedGraphics.WaterSsrRefinementSteps == 5
-            && Math.Abs(reloadedGraphics.WaterSsrMaxRayDistance - 310f) < .001f && Math.Abs(reloadedGraphics.WaterSsrCameraDistance - 540f) < .001f
-            && Math.Abs(reloadedGraphics.WaterSsrDepthToleranceNear - .42f) < .001f && Math.Abs(reloadedGraphics.WaterSsrDepthToleranceFar - 2.7f) < .001f
+            && Math.Abs(reloadedGraphics.WaterSsrCameraDistance - 540f) < .001f
+            && Math.Abs(reloadedGraphics.WaterSsrDepthToleranceNear - .42f) < .001f
             && Math.Abs(reloadedGraphics.WaterSsrRayBias - .18f) < .001f && Math.Abs(reloadedGraphics.WaterSsrEdgeFade - .16f) < .001f
             && Math.Abs(reloadedGraphics.WaterSsrRoughnessCutoff - .37f) < .001f && reloadedGraphics.WaterSsrDebugMode == 3
             && reloadedGraphics.WaterShallowTint.IsEqualApprox(new Color(.2f, .4f, .6f, 1));

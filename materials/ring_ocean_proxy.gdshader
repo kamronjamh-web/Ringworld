@@ -17,7 +17,6 @@ uniform float night_direct_light_factor : hint_range(0.0, 1.0) = 0.0;
 uniform float day_direct_light_factor : hint_range(0.0, 2.0) = 1.0;
 uniform float shadow_floor : hint_range(0.0, 1.0) = 0.0;
 uniform float ocean_roughness : hint_range(0.02, 0.5) = 0.16;
-uniform float ocean_specular : hint_range(0.0, 1.0) = 0.92;
 uniform float ring_width_meters = 20000.0;
 // Must remain the first instance uniform: terrain and ocean share one mesh,
 // and Godot requires this index to match the terrain material's index zero.
@@ -65,13 +64,6 @@ vec2 ring_fft_distant_ocean_factors(vec2 mesh_uv) {
 	float factor = smoothstep(max(0.0, fft_shoreline_shallow_depth_meters),
 		max(fft_shoreline_shallow_depth_meters + 0.01, fft_deep_water_wave_depth_meters), depth);
 	return vec2(factor);
-}
-
-float ring_water_view_depth_at_uv(vec2 uv, mat4 inverse_projection) {
-	float raw_depth = texture(water_depth_texture, uv).r;
-	if (raw_depth <= 0.0 || raw_depth > 1.0) return -1.0;
-	vec4 view_position = inverse_projection * vec4(uv * 2.0 - 1.0, raw_depth, 1.0);
-	return view_position.w > 0.0 ? -view_position.z / view_position.w : -1.0;
 }
 
 // Model 1 depth fetch: -1 for raw depth <= 0 or > 1 (sky and backdrop, which the march treats as infinitely far). Only the z and w rows of the

@@ -962,7 +962,6 @@
        "node": "GraphicsQuality",
        "set": {
         "WaterSsrCoarseSteps": 24,
-        "WaterSsrMaxRayDistance": 250.0,
         "WaterSsrCameraDistance": 450.0
        }
       },
@@ -980,7 +979,6 @@
        "node": "GraphicsQuality",
        "set": {
         "WaterSsrCoarseSteps": 12,
-        "WaterSsrMaxRayDistance": 60.0,
         "WaterSsrCameraDistance": 250.0
        }
       },
@@ -1046,7 +1044,6 @@
        "node": "GraphicsQuality",
        "set": {
         "WaterSsrCoarseSteps": 24,
-        "WaterSsrMaxRayDistance": 250.0,
         "WaterSsrCameraDistance": 450.0
        }
       },
@@ -1064,7 +1061,6 @@
        "node": "GraphicsQuality",
        "set": {
         "WaterSsrCoarseSteps": 12,
-        "WaterSsrMaxRayDistance": 60.0,
         "WaterSsrCameraDistance": 250.0
        }
       },

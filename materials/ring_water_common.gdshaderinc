@@ -306,10 +306,14 @@ float ring_water_train_phase(
 
 // W2 (user, 2026-11-20): lake wind sea. The five trains spread within -37 to +31 degrees of the first (no two near perpendicular), and all travel the
 // way the first does (a direction is negated where the phase rate is negative). The ocean and rivers keep the original set.
-const vec2 RING_WATER_LAKE_DIRECTION_2 = vec2(-0.7588, -0.6513); // +17 degrees
-const vec2 RING_WATER_LAKE_DIRECTION_3 = vec2(0.9999, 0.0112);   // -23 degrees
-const vec2 RING_WATER_LAKE_DIRECTION_4 = vec2(-0.5787, -0.8156); // +31 degrees
-const vec2 RING_WATER_LAKE_DIRECTION_5 = vec2(0.9729, -0.2310);  // -37 degrees
+// Downwind (user, 2026-11-20): the mean wind is a velocity (clouds drift along +wind), and a train with phase dot(p, d) k + rate t moves along -d for a
+// positive rate. The original first train (d = the wind, rate +1) therefore travelled upwind; the lake set is negated so every lake train travels with
+// the wind, still within -37 to +31 degrees of it.
+const vec2 RING_WATER_LAKE_DIRECTION_1 = vec2(-0.916, -0.401);   // the wind reference, negated
+const vec2 RING_WATER_LAKE_DIRECTION_2 = vec2(0.7588, 0.6513);   // +17 degrees
+const vec2 RING_WATER_LAKE_DIRECTION_3 = vec2(-0.9999, -0.0112); // -23 degrees
+const vec2 RING_WATER_LAKE_DIRECTION_4 = vec2(0.5787, 0.8156);   // +31 degrees
+const vec2 RING_WATER_LAKE_DIRECTION_5 = vec2(-0.9729, 0.2310);  // -37 degrees
 
 // The five trains of the near stack (ring_water_wave_height_core and ring_water_wave_gradient_core share it).
 void ring_water_wave_stack(
@@ -328,7 +332,7 @@ void ring_water_wave_stack(
 	float base_frequency = 6.28318530718 / max(2.0, wave_length_meters);
 	bool lake = water_kind > 1.5 && water_kind < 2.5;
 	phases.x = ring_water_train_phase(p, base_frequency, time_seconds, anchored, split,
-		vec2(0.916, 0.401), 1.0, 0, 1.0, 0.0, vec2(-0.511, 0.860), 0.173, 0.071, 0.0, 1.0, first_gradient);
+		lake ? RING_WATER_LAKE_DIRECTION_1 : vec2(0.916, 0.401), 1.0, 0, 1.0, 0.0, vec2(-0.511, 0.860), 0.173, 0.071, 0.0, 1.0, first_gradient);
 	phases.y = ring_water_train_phase(p, base_frequency, time_seconds, anchored, split,
 		lake ? RING_WATER_LAKE_DIRECTION_2 : vec2(-0.349, 0.937), 1.431, 1, -1.173, 1.1, vec2(0.766, 0.643), 0.227, -0.053, 1.7, 0.87, second_gradient);
 	phases.z = ring_water_train_phase(p, base_frequency, time_seconds, anchored, split,

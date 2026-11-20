@@ -151,11 +151,9 @@ public partial class RingGraphicsQualityController : Node
     [Export] public bool WaterSsrEnabled { get; set; } = true;
     [Export(PropertyHint.Range, "1,32,1")] public int WaterSsrCoarseSteps { get; set; } = 24;
     [Export(PropertyHint.Range, "0,8,1")] public int WaterSsrRefinementSteps { get; set; } = 4;
-    [Export(PropertyHint.Range, "10,1000,5")] public float WaterSsrMaxRayDistance { get; set; } = 250f;
     [Export(PropertyHint.Range, "10,1000,5")] public float WaterSsrCameraDistance { get; set; } = 450f;
     [Export(PropertyHint.Range, "0.01,2,0.01")] public float WaterSsrDepthToleranceNear { get; set; } = .35f;
     [Export(PropertyHint.Range, "0.01,1,0.01")] public float WaterSsrRayBias { get; set; } = .12f;
-    [Export(PropertyHint.Range, "0.1,8,0.01")] public float WaterSsrDepthToleranceFar { get; set; } = 2f;
     [Export(PropertyHint.Range, "0.01,0.4,0.01")] public float WaterSsrEdgeFade { get; set; } = .12f;
     [Export(PropertyHint.Range, "0.02,1,0.01")] public float WaterSsrRoughnessCutoff { get; set; } = .32f;
     [Export(PropertyHint.Range, "0,3,1")] public int WaterSsrDebugMode { get; set; }
@@ -713,7 +711,7 @@ public partial class RingGraphicsQualityController : Node
         WaterSpecularAaStrength, WaterRefractionStrength, WaterAbsorptionDensity, WaterAbsorptionCoefficients,
         WaterShallowInscatterStrength, WaterCrestTransmissionStrength, WaterShallowAlpha,
         WaterDeepAlpha, WaterSsrEnabled, WaterSsrCoarseSteps, WaterSsrRefinementSteps,
-        WaterSsrMaxRayDistance, WaterSsrCameraDistance, WaterSsrDepthToleranceNear, WaterSsrRayBias, WaterSsrDepthToleranceFar,
+        WaterSsrCameraDistance, WaterSsrDepthToleranceNear, WaterSsrRayBias,
         WaterSsrEdgeFade, WaterSsrRoughnessCutoff, WaterSsrDebugMode, WaterShoreFoamDepthMeters, WaterShoreFoamStrength, WaterBreakingFoamSlopeStart,
         WaterBreakingFoamSlopeEnd, WaterBreakingFoamStrength, WaterShallowTint, WaterDeepTint, WaterFoamColor,
         WaterSwellVariation, WaterFoamPatchiness, WaterDistantFoamVisibility, WaterDetailFilteringStrength, WaterRiverVisibilityMeters, WaterLakeVisibilityMeters);
@@ -784,15 +782,15 @@ public partial class RingGraphicsQualityController : Node
     private void ApplyWaterSsrPresetDefaults(RingTerrainLodCoordinator.QualityPreset preset)
     {
         // SSR is an allowed OFF on Low and Medium; the other fields still follow the preset so enabling it by hand gives a sane reduced setting.
-        (bool enabled, int coarse, int refinement, float rayMeters, float cameraMeters, float cutoff) = preset switch
+        (bool enabled, int coarse, int refinement, float cameraMeters, float cutoff) = preset switch
         {
-            RingTerrainLodCoordinator.QualityPreset.Low => (false, 12, 3, 120.0f, 250.0f, .25f),
-            RingTerrainLodCoordinator.QualityPreset.Medium => (false, 12, 3, 120.0f, 250.0f, .25f),
-            RingTerrainLodCoordinator.QualityPreset.High => (true, 12, 4, 120.0f, 600.0f, .32f),
-            RingTerrainLodCoordinator.QualityPreset.UltraVideo => (true, 32, 4, 400.0f, 600.0f, .32f),
-            _ => (true, 24, 4, 250.0f, 450.0f, .32f),
+            RingTerrainLodCoordinator.QualityPreset.Low => (false, 12, 3, 250.0f, .25f),
+            RingTerrainLodCoordinator.QualityPreset.Medium => (false, 12, 3, 250.0f, .25f),
+            RingTerrainLodCoordinator.QualityPreset.High => (true, 12, 4, 600.0f, .32f),
+            RingTerrainLodCoordinator.QualityPreset.UltraVideo => (true, 24, 5, 1000.0f, .32f),
+            _ => (true, 16, 4, 800.0f, .32f),
         };
-        WaterSsrEnabled = enabled; WaterSsrCoarseSteps = coarse; WaterSsrRefinementSteps = refinement; WaterSsrMaxRayDistance = rayMeters;
+        WaterSsrEnabled = enabled; WaterSsrCoarseSteps = coarse; WaterSsrRefinementSteps = refinement;
         WaterSsrCameraDistance = cameraMeters; WaterSsrRoughnessCutoff = cutoff;
     }
 

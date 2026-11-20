@@ -158,17 +158,16 @@ func _configure_through_controls() -> bool:
 	var cutoff := _drawer.find_child("WaterSsrRoughnessCutoff", true, false) as HSlider
 	var coarse := _drawer.find_child("WaterSsrCoarseSteps", true, false) as HSlider
 	var refine := _drawer.find_child("WaterSsrRefinementSteps", true, false) as HSlider
-	var ray_distance := _drawer.find_child("WaterSsrMaxRayDistance", true, false) as HSlider
 	var camera_distance := _drawer.find_child("WaterSsrCameraDistance", true, false) as HSlider
 	var geometry := _drawer.find_child("FftGeometryHeightScale", true, false) as HSlider
 	var normal := _drawer.find_child("FftNormalStrength", true, false) as HSlider
-	if enabled == null or debug == null or cutoff == null or coarse == null or refine == null or ray_distance == null or camera_distance == null or geometry == null or normal == null: return _fail("required SSR/FFT controls unavailable") == false
+	if enabled == null or debug == null or cutoff == null or coarse == null or refine == null or camera_distance == null or geometry == null or normal == null: return _fail("required SSR/FFT controls unavailable") == false
 	_fft.set("Enabled", true); _fft.set("Resolution", 128); _fft.set("CascadeCount", 2); _fft.set("UpdatesPerSecond", 24)
 	geometry.value = 0.0 # fixture-only deterministic geometry override
 	normal.value = 0.0 # fixture-only deterministic normal override
 	cutoff.value = 0.32
 	if _medium_ssr:
-		cutoff.value = 0.25; coarse.value = 12; refine.value = 3; ray_distance.value = 120; camera_distance.value = 250
+		cutoff.value = 0.25; coarse.value = 12; refine.value = 3; camera_distance.value = 250
 	enabled.button_pressed = false; debug.select(0); debug.item_selected.emit(0)
 	return true
 

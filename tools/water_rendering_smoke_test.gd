@@ -193,7 +193,7 @@ func _select_water_tab() -> bool:
 	return false
 
 func _verify_controls() -> bool:
-	for name in ["FftEnabled", "FftResolution", "FftCascadeCount", "FftUpdatesPerSecond", "FftGeometryUpdatesPerSecond", "FftGeometryHeightScale", "FftGeometryChoppiness", "FftGeometryDistanceMeters", "FftGeometryFilterMeters", "FftCrestLightingStrength", "FftDeepWaterWaveDepthMeters", "WaterSwellVariation", "WaterFoamPatchiness", "WaterDistantFoamVisibility", "WaterDetailFilteringStrength", "WaterSsrEnabled", "WaterSsrCoarseSteps", "WaterSsrRefinementSteps", "WaterSsrMaxRayDistance", "WaterSsrCameraDistance", "WaterSsrDepthToleranceNear", "WaterSsrDepthToleranceFar", "WaterSsrRayBias", "WaterSsrEdgeFade", "WaterSsrRoughnessCutoff", "WaterSsrDebugMode", "WaterRuntimeStatus"]:
+	for name in ["FftEnabled", "FftResolution", "FftCascadeCount", "FftUpdatesPerSecond", "FftGeometryUpdatesPerSecond", "FftGeometryHeightScale", "FftGeometryChoppiness", "FftGeometryDistanceMeters", "FftGeometryFilterMeters", "FftCrestLightingStrength", "FftDeepWaterWaveDepthMeters", "WaterSwellVariation", "WaterFoamPatchiness", "WaterDistantFoamVisibility", "WaterDetailFilteringStrength", "WaterSsrEnabled", "WaterSsrCoarseSteps", "WaterSsrRefinementSteps", "WaterSsrCameraDistance", "WaterSsrDepthToleranceNear", "WaterSsrRayBias", "WaterSsrEdgeFade", "WaterSsrRoughnessCutoff", "WaterSsrDebugMode", "WaterRuntimeStatus"]:
 		if _drawer.find_child(name, true, false) == null:
 			_fail("missing Water selector " + name); return false
 	return true

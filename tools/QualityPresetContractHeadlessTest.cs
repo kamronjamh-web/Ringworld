@@ -27,9 +27,9 @@ public partial class QualityPresetContractHeadlessTest : RefCounted
     private static readonly float[] PlanetDistances = { 2000f, 3000f, 4000f, 6000f, 6000f };
     private static readonly int[] PlanetCascades = { 2, 2, 3, 4, 4 };
     private static readonly bool[] SsrEnabled = { false, false, true, true, true };
-    private static readonly int[] SsrSteps = { 12, 12, 12, 24, 32 };
-    private static readonly float[] SsrRay = { 120f, 120f, 120f, 250f, 400f };
-    private static readonly float[] SsrCamera = { 250f, 250f, 600f, 450f, 600f };
+    private static readonly int[] SsrSteps = { 12, 12, 12, 16, 24 };
+    private static readonly int[] SsrRefine = { 3, 3, 4, 4, 5 };
+    private static readonly float[] SsrCamera = { 250f, 250f, 600f, 800f, 1000f };
     private static readonly float[] SsaoDetail = { 0f, 0.75f, 0.85f, 0.92f, 0.96f };
     private static readonly float[] FarScale = { 0.5f, 0.75f, 1f, 1f, 1f };
     private static readonly int[] RainParticles = { 1024, 2048, 3072, 4096, 6144 };
@@ -118,8 +118,8 @@ public partial class QualityPresetContractHeadlessTest : RefCounted
                 Check(Mathf.IsEqualApprox(sun.DirectionalShadowMaxDistance, SunDistances[p]), $"WO3 {tag} sun distance={sun.DirectionalShadowMaxDistance} want {SunDistances[p]}");
                 (float planetDistance, int planetCascades) = RingGraphicsQualityController.PresetPlanetLight(preset);
                 Check(planetDistance == PlanetDistances[p] && planetCascades == PlanetCascades[p], $"WO3 {tag} planet light {planetDistance}/{planetCascades} want {PlanetDistances[p]}/{PlanetCascades[p]}");
-                Check(controller.WaterSsrEnabled == SsrEnabled[p] && controller.WaterSsrCoarseSteps == SsrSteps[p] && controller.WaterSsrMaxRayDistance == SsrRay[p] && controller.WaterSsrCameraDistance == SsrCamera[p],
-                    $"WO3 {tag} SSR enabled={controller.WaterSsrEnabled} steps={controller.WaterSsrCoarseSteps} ray={controller.WaterSsrMaxRayDistance} camera={controller.WaterSsrCameraDistance}");
+                Check(controller.WaterSsrEnabled == SsrEnabled[p] && controller.WaterSsrCoarseSteps == SsrSteps[p] && controller.WaterSsrRefinementSteps == SsrRefine[p] && controller.WaterSsrCameraDistance == SsrCamera[p],
+                    $"WO3 {tag} SSR enabled={controller.WaterSsrEnabled} steps={controller.WaterSsrCoarseSteps} refine={controller.WaterSsrRefinementSteps} camera={controller.WaterSsrCameraDistance}");
                 Godot.Environment? environment = environmentNode!.Environment;
                 Check(environment != null && environment.SsaoEnabled == (SsaoDetail[p] > 0f) && Mathf.IsEqualApprox(environment.SsaoDetail, SsaoDetail[p]), $"WO3 {tag} SSAO enabled={environment?.SsaoEnabled} detail={environment?.SsaoDetail} want {SsaoDetail[p]}");
                 Check(Mathf.IsEqualApprox(RingGraphicsQualityController.PresetFarRendering(preset).scale, FarScale[p]), $"WO3 {tag} far viewport scale want {FarScale[p]}");
@@ -138,8 +138,7 @@ public partial class QualityPresetContractHeadlessTest : RefCounted
             }
 
             CheckMonotonic(Check, "atlas", AtlasSizes); CheckMonotonic(Check, "sun distance", SunDistances); CheckMonotonic(Check, "planet distance", PlanetDistances); CheckMonotonic(Check, "planet cascades", PlanetCascades);
-            // "ssr camera" monotonic check dropped: High (600 m, R1-8) now exceeds Very High (450 m), pending a user decision on the Very High / Ultra values.
-            CheckMonotonic(Check, "ssr steps", SsrSteps); CheckMonotonic(Check, "ssr ray", SsrRay); CheckMonotonic(Check, "ssao", SsaoDetail); CheckMonotonic(Check, "far scale", FarScale);
+            CheckMonotonic(Check, "ssr steps", SsrSteps); CheckMonotonic(Check, "ssr refinements", SsrRefine); CheckMonotonic(Check, "ssr camera", SsrCamera); CheckMonotonic(Check, "ssao", SsaoDetail); CheckMonotonic(Check, "far scale", FarScale);
             CheckMonotonic(Check, "rain particles", RainParticles); CheckMonotonic(Check, "rain streaks", RainStreaks); CheckMonotonic(Check, "bolt branches", BoltBranches); CheckMonotonic(Check, "bolt depth", BoltDepth);
             CheckMonotonic(Check, "tree near end", TreeNearEnd); CheckMonotonic(Check, "tree billboard start", TreeBillboardStart); CheckMonotonic(Check, "tree billboard end", TreeBillboardEnd); CheckMonotonic(Check, "tree sun shadow", TreeSunShadow); CheckMonotonic(Check, "tree quad start", TreeQuadStart); CheckMonotonic(Check, "tree mid start", TreeMidStart); CheckMonotonic(Check, "tree mid end", TreeMidEnd); CheckMonotonic(Check, "ripple layers", RippleLayers); CheckMonotonic(Check, "drip budget", DripBudget); CheckMonotonic(Check, "gust debris", GustDebris);
 

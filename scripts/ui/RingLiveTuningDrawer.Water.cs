@@ -99,11 +99,9 @@ public partial class RingLiveTuningDrawer
         AddWaterToggle(section, "WaterSsrEnabled", "Enable water SSR");
         AddWaterSlider(section, "WaterSsrCoarseSteps", "SSR coarse steps", 1, 32, 1);
         AddWaterSlider(section, "WaterSsrRefinementSteps", "SSR refinement steps", 0, 8, 1);
-        AddWaterSlider(section, "WaterSsrMaxRayDistance", "SSR max ray distance (m)", 10, 1000, 5);
         AddWaterSlider(section, "WaterSsrCameraDistance", "SSR camera distance (m)", 10, 1000, 5);
         AddWaterSlider(section, "WaterSsrDepthToleranceNear", "SSR near depth tolerance", .01, 2, .01);
         AddWaterSlider(section, "WaterSsrRayBias", "SSR ray bias", .01, 1, .01);
-        AddWaterSlider(section, "WaterSsrDepthToleranceFar", "SSR far depth tolerance", .1, 8, .01);
         AddWaterSlider(section, "WaterSsrEdgeFade", "SSR edge fade", .01, .4, .01);
         AddWaterSlider(section, "WaterSsrRoughnessCutoff", "SSR roughness cutoff", .02, 1, .01);
         AddWaterOption(section, "WaterSsrDebugMode", "SSR debug", new[] { "Off", "Confidence", "Hit mask", "Step ratio" }, new[] { 0, 1, 2, 3 });

@@ -53,11 +53,9 @@ public static partial class RingWaterModel
     public static bool SsrEnabled { get; private set; } = true;
     public static int SsrCoarseSteps { get; private set; } = 24;
     public static int SsrRefinementSteps { get; private set; } = 4;
-    public static float SsrMaxRayDistance { get; private set; } = 250.0f;
     public static float SsrCameraDistance { get; private set; } = 450.0f;
     public static float SsrDepthToleranceNear { get; private set; } = 0.35f;
     public static float SsrRayBias { get; private set; } = 0.12f;
-    public static float SsrDepthToleranceFar { get; private set; } = 2.0f;
     public static float SsrEdgeFade { get; private set; } = 0.12f;
     public static float SsrRoughnessCutoff { get; private set; } = 0.32f;
     public static int SsrDebugMode { get; private set; }
@@ -115,8 +113,8 @@ public static partial class RingWaterModel
         float shallowAlpha,
         float deepAlpha,
         bool ssrEnabled, int ssrCoarseSteps, int ssrRefinementSteps,
-        float ssrMaxRayDistance, float ssrCameraDistance, float ssrDepthToleranceNear, float ssrRayBias,
-        float ssrDepthToleranceFar, float ssrEdgeFade, float ssrRoughnessCutoff, int ssrDebugMode,
+        float ssrCameraDistance, float ssrDepthToleranceNear, float ssrRayBias,
+        float ssrEdgeFade, float ssrRoughnessCutoff, int ssrDebugMode,
         float shoreFoamDepthMeters,
         float shoreFoamStrength,
         float breakingFoamSlopeStart,
@@ -156,11 +154,9 @@ public static partial class RingWaterModel
         SsrEnabled = ssrEnabled;
         SsrCoarseSteps = Mathf.Clamp(ssrCoarseSteps, 1, 32);
         SsrRefinementSteps = Mathf.Clamp(ssrRefinementSteps, 0, 8);
-        SsrMaxRayDistance = Mathf.Clamp(ssrMaxRayDistance, 10.0f, 1000.0f);
         SsrCameraDistance = Mathf.Clamp(ssrCameraDistance, 10.0f, 1000.0f);
         SsrDepthToleranceNear = Mathf.Clamp(ssrDepthToleranceNear, 0.01f, 2.0f);
         SsrRayBias = Mathf.Clamp(ssrRayBias, 0.01f, 1.0f);
-        SsrDepthToleranceFar = Mathf.Clamp(ssrDepthToleranceFar, SsrDepthToleranceNear, 8.0f);
         SsrEdgeFade = Mathf.Clamp(ssrEdgeFade, 0.01f, 0.4f);
         SsrRoughnessCutoff = Mathf.Clamp(ssrRoughnessCutoff, 0.02f, 1.0f);
         SsrDebugMode = Mathf.Clamp(ssrDebugMode, 0, 3);
@@ -254,11 +250,9 @@ public static partial class RingWaterModel
         material.SetShaderParameter("water_ssr_enabled", SsrEnabled);
         material.SetShaderParameter("water_ssr_coarse_steps", SsrCoarseSteps);
         material.SetShaderParameter("water_ssr_refinement_steps", SsrRefinementSteps);
-        material.SetShaderParameter("water_ssr_max_ray_distance", SsrMaxRayDistance * coordinateScale);
         material.SetShaderParameter("water_ssr_camera_distance", SsrCameraDistance * coordinateScale);
         material.SetShaderParameter("water_ssr_depth_tolerance_near", SsrDepthToleranceNear * coordinateScale);
         material.SetShaderParameter("water_ssr_ray_bias", SsrRayBias * coordinateScale);
-        material.SetShaderParameter("water_ssr_depth_tolerance_far", SsrDepthToleranceFar * coordinateScale);
         material.SetShaderParameter("water_ssr_edge_fade", SsrEdgeFade);
         material.SetShaderParameter("water_ssr_roughness_cutoff", SsrRoughnessCutoff);
         material.SetShaderParameter("water_ssr_debug_mode", SsrDebugMode);
