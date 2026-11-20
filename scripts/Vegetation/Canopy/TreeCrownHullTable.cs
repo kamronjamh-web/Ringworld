@@ -17,8 +17,8 @@ namespace RingworldTechDemo.Vegetation.Canopy;
 /// <param name="CentreZ">Bounds centre z (normalized).</param>
 /// <param name="RadiusHorizontal">Horizontal semi-axis (normalized).</param>
 /// <param name="RadiusVertical">Vertical semi-axis (normalized).</param>
-/// <param name="Porosity">Crown porosity p: sky gap fraction through one crown (0.20 broadleaf, 0.30 conifer).</param>
-/// <param name="Kappa">Crown extinction per normalized unit: -ln(p) / (4/3 * r_mean), r_mean the mean of the three semi-axes. Per metre of a placed tree: Kappa / instanceHeight.</param>
+/// <param name="Porosity">Crown porosity p: sky gap fraction through one crown, measured per catalog variant (see <see cref="TreeCrownHullTable.MeasuredPorosity"/>; about 0.38 maple, 0.28 fir, 0.45 pine).</param>
+/// <param name="Kappa">Crown extinction per normalized unit: -ln(p_model) / (4/3 * r_mean), with p_model = <see cref="TreeCrownHullTable.CrownModelPorosity"/> (not the measured Porosity), r_mean the mean of the three semi-axes. Per metre of a placed tree: Kappa / instanceHeight.</param>
 /// <param name="KSpecies">Translucency T/R ratio in green (maple 0.9; fir, pine 0.35).</param>
 /// <param name="HeightMeters">Authored LOD0 height in metres (the divisor of the normalization).</param>
 /// <param name="LeafInclination">Leaf area fractions (sum 1) of four inclination classes measured from vertical, each 22.5 degrees wide (centred 11.25, 33.75, 56.25, 78.75 degrees): the area-weighted inclination acos(|n.y|) of the geometric triangle normals of the alpha-cutout surfaces of LOD2. Azimuth is taken as uniform by the shaders.</param>
@@ -40,7 +40,28 @@ public static class TreeCrownHullTable
 {
     private static TreeCrownHull[]? _table;
 
-    public static float Porosity(TreeSpecies species) => species == TreeSpecies.Maple ? 0.20f : 0.30f;
+    /// <summary>Species porosity (shrubs and any index outside <see cref="MeasuredPorosity"/>): the means of the measured canopy variants, rounded (forest variant survey 2026-11-20).</summary>
+    public static float Porosity(TreeSpecies species) => species switch { TreeSpecies.Maple => 0.38f, TreeSpecies.Fir => 0.28f, _ => 0.45f };
+
+    /// <summary>
+    /// Measured sky gap fraction of catalog variants 0-29: 1 minus the share of the hull's top-view disc covered by LOD0 foliage (alpha-tested at the material cutoff) or bark,
+    /// from a software top-down render at 384 px (forest variant survey 2026-11-20, .godot/audit_baseline/common/forest/variant_survey/raw/density.json, view 0, fill_hull_any).
+    /// Re-measure when a base variant's LOD0 or its foliage texture changes.
+    /// </summary>
+    public static readonly float[] MeasuredPorosity =
+    {
+        0.52f, 0.58f, 0.60f, 0.38f, 0.33f, 0.35f, 0.39f, 0.40f, 0.39f, 0.42f, 0.42f, 0.44f, // maple: saplings 0-2, large 3-5, medium 6-8, small 9-11
+        0.25f, 0.32f, 0.32f,                                                                // fir 12-14
+        0.42f, 0.47f, 0.46f, 0.49f, 0.48f, 0.48f, 0.44f, 0.44f, 0.47f,                     // pine big 15-17, large 18-20, medium 21-23
+        0.48f, 0.50f, 0.47f, 0.55f, 0.55f, 0.57f,                                          // pine saplings 24-26, small 27-29
+    };
+
+    /// <summary>The porosity of one hull row: the measured value for catalog variants 0-29, else the species value.</summary>
+    public static float PorosityOf(int variant, TreeSpecies species)
+        => variant >= 0 && variant < MeasuredPorosity.Length ? MeasuredPorosity[variant] : Porosity(species);
+    /// <summary>The porosity behind <see cref="TreeCrownHull.Kappa"/>, the per-fragment crown model of translucency and crown occlusion (FL-2, calibrated so mesh and cards agree): 0.20 broadleaf, 0.30 conifer.
+    /// Kept apart from the measured <see cref="PorosityOf"/>, which feeds only the canopy shade raster: with the measured pine gap the pine mesh/card backlit agreement fell outside FL-2's 10 % (0.898).</summary>
+    public static float CrownModelPorosity(TreeSpecies species) => species == TreeSpecies.Maple ? 0.20f : 0.30f;
     public static float KSpecies(TreeSpecies species) => species == TreeSpecies.Maple ? 0.9f : 0.35f;
     public static float SpeciesFactor(TreeSpecies species) => species == TreeSpecies.Maple ? 1.0f : 0.6f;
     public static float Kappa(float porosity, float meanRadius) => -MathF.Log(porosity) / (4f / 3f * MathF.Max(1e-4f, meanRadius));
@@ -50,9 +71,9 @@ public static class TreeCrownHullTable
     {
         float rv = MathF.Max(1e-4f, (max.Y - min.Y) * 0.5f);
         float rh = MathF.Max(1e-4f, ((max.X - min.X) * 0.5f + (max.Z - min.Z) * 0.5f) * 0.5f);
-        float p = Porosity(species);
+        float p = PorosityOf(variant, species);
         float mean = (2f * rh + rv) / 3f;
-        return new TreeCrownHull(variant, species, (min.X + max.X) * 0.5f, (min.Y + max.Y) * 0.5f, (min.Z + max.Z) * 0.5f, rh, rv, p, Kappa(p, mean), KSpecies(species), heightMeters, leafInclination ?? new Vector4(0.25f, 0.25f, 0.25f, 0.25f));
+        return new TreeCrownHull(variant, species, (min.X + max.X) * 0.5f, (min.Y + max.Y) * 0.5f, (min.Z + max.Z) * 0.5f, rh, rv, p, Kappa(CrownModelPorosity(species), mean), KSpecies(species), heightMeters, leafInclination ?? new Vector4(0.25f, 0.25f, 0.25f, 0.25f));
     }
 
     /// <summary>All 30 hulls, indexed by CachedTree.Variant. Main thread only (reads the catalog's meshes); built once.</summary>

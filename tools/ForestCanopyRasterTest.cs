@@ -265,8 +265,8 @@ public partial class ForestCanopyRasterTest : RefCounted
             Require(h.Base < h.Top && h.Top <= 1.0005f && h.Base >= -0.0005f, $"variant {i} base {h.Base} top {h.Top} within the unit tree");
             Require(Math.Abs(h.HeightMeters - catalog[i].HeightMeters) < 1e-4f, $"variant {i} height");
             bool maple = h.Species == TreeSpecies.Maple;
-            Require(h.Porosity == (maple ? 0.20f : 0.30f) && h.KSpecies == (maple ? 0.9f : 0.35f) && h.SpeciesFactor == (maple ? 1f : 0.6f), $"variant {i} species constants");
-            Require(Math.Abs(h.Kappa - (-MathF.Log(h.Porosity) / (4f / 3f * h.RadiusMean))) < 1e-4f * h.Kappa, $"variant {i} kappa");
+            Require(h.Porosity == TreeCrownHullTable.MeasuredPorosity[i] && h.KSpecies == (maple ? 0.9f : 0.35f) && h.SpeciesFactor == (maple ? 1f : 0.6f), $"variant {i} species constants");
+            Require(Math.Abs(h.Kappa - (-MathF.Log(TreeCrownHullTable.CrownModelPorosity(h.Species)) / (4f / 3f * h.RadiusMean))) < 1e-4f * h.Kappa, $"variant {i} kappa");
         }
         foreach (TreeSpecies species in new[] { TreeSpecies.Maple, TreeSpecies.Fir, TreeSpecies.Pine })
         {
