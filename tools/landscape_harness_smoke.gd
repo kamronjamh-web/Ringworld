@@ -99,6 +99,8 @@ func _run() -> void:
 		"non_empty_bands": non_empty, "mean_luma": mean_luma, "streaming_idle": bool(info.get("streaming_idle", false)) and bool(info.get("streaming_idle_after", false)),
 		"status": "RUNNING"}
 	report.merge(booted["world_record"])
+	if not HARNESS.rock_set_record.is_empty():
+		report["rock_set"] = HARNESS.rock_set_record
 	var failure := ""
 	if weather.has("error"):
 		failure = str(weather["error"])

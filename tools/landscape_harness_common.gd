@@ -6,6 +6,7 @@ extends RefCounted
 ## it used. Never calls or modifies COMMON.create_game, never writes to user:// settings.
 ## Flags understood here (after `--`):  --prefs=user|defaults|<dir>   --preset=medium|keep   --allow-blades   --res=WxH   --weather=clear|natural
 ## World selection: --generation=N [--review-features=a,b]. Generation 0 selects the pinned v8 world.
+## --rock-set=<absolute folder> (test-only, T8-R1): albedo.png + normal.png + rockset.json replace the rock texture on terrain rock, scatter rocks and (with mean_linear) the far rock tone, in memory only. See install_rock_set.
 ## Output layout: see docs/landscape-audit-t0-spec.md 2.7 (transient_dir / baseline_dir).
 
 const COMMON := preload("res://tools/shadow_harness_common.gd")
@@ -274,6 +275,8 @@ static func _weather_at_time(game: Node, clouds: Node, around: float, across: fl
 ## Boots the isolated gameplay world with the pinned generation 1 recipe and the user's preference files. Returns {game, world, prefs, fixture_root} or {} after push_error
 ## ("<marker>=FAIL ..."). The caller removes `fixture_root` (remove_dir_recursive on its globalized path) when it finishes.
 static func boot(tree: SceneTree, marker: String) -> Dictionary:
+	if rock_set_requested() and install_rock_set(marker).is_empty():
+		return {}
 	var bridge: RefCounted = BRIDGE.new()
 	var selection: Variant = bridge.call("ConfigureFromArgs", OS.get_cmdline_user_args())
 	if not selection is Dictionary or not selection.has("world_tag"):
@@ -353,8 +356,163 @@ static func boot(tree: SceneTree, marker: String) -> Dictionary:
 		push_error("%s=FAIL world mismatch: %s" % [marker, str(world.get("message", ""))])
 		return {}
 	var world_record: Dictionary = {} if world_tag.is_empty() else selection
+	if not rock_set_record.is_empty() and not _bind_rock_detail_normal(marker, "after boot"):
+		return {}
 	return {"game": game, "world": world, "prefs": prefs, "fixture_root": fixture_root, "world_bridge": bridge,
 		"world_tag": world_tag, "world_record": world_record}
+
+
+# ------------------------------------------------------------------ rock set (T8-R1, test only)
+
+const ROCK_SHADERS := {
+	"ground": "res://materials/terrain3d_ring_surface_ground.gdshader",
+	"proxy": "res://materials/ring_terrain_proxy_ground.gdshader",
+	"scatter": "res://materials/ring_scatter_rock.gdshader",
+	"far": "res://materials/ring_terrain_global_ground.gdshader",
+}
+const ROCK_DETAIL_GLOBAL := "ringworld_ground_rock_detail_normal"
+## The record of the installed rock set ({} when --rock-set was not given or failed); landscape_baseline_common.setup copies it into look.json.
+static var rock_set_record := {}
+## Strong references: the patched Shader resources and textures must outlive the run.
+static var _rock_shaders: Array = []
+static var _rock_textures: Array = []
+
+
+## `--rock-set=<folder>` from the real command line or LANDSCAPE_HARNESS_ARGS ("" when absent).
+static func _rock_set_arg() -> String:
+	var args := OS.get_cmdline_user_args()
+	for word in OS.get_environment("LANDSCAPE_HARNESS_ARGS").split(" ", false):
+		args.append(word)
+	for arg in args:
+		if arg.begins_with("--rock-set="):
+			return arg.trim_prefix("--rock-set=")
+	return ""
+
+
+static func rock_set_requested() -> bool:
+	return _rock_set_arg() != ""
+
+
+static func _rock_fail(marker: String, reason: String) -> Dictionary:
+	push_error("%s=FAIL --rock-set: %s" % [marker, reason])
+	return {}
+
+
+## Replaces `pattern` by `replacement` in `code`; it must occur exactly once, otherwise state["error"] is set and the code is returned unchanged.
+static func _rock_replace(code: String, pattern: String, replacement: String, path: String, state: Dictionary) -> String:
+	var n := code.count(pattern)
+	if n != 1:
+		state["error"] = "%s: pattern matched %d times (need 1): %s" % [path, n, pattern]
+		return code
+	return code.replace(pattern, replacement)
+
+
+## Replaces the rock albedo (ground variants, scatter rocks), the rock detail normal and optionally the far rock mean by the candidate set in <folder> (albedo.png sRGB, normal.png OpenGL
+## linear, rockset.json {id, uv_scale, mean_linear?}) by patching the four shaders' code in memory (nothing is written). Call before the world boots. {} (after push_error) on any failure.
+static func install_rock_set(marker: String) -> Dictionary:
+	var folder := _rock_set_arg()
+	if folder == "":
+		return {}
+	var json_path := folder.path_join("rockset.json")
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(json_path)) if FileAccess.file_exists(json_path) else null
+	if not parsed is Dictionary:
+		return _rock_fail(marker, "rockset.json missing or invalid in %s" % folder)
+	var uv_scale := float(parsed.get("uv_scale", 1.0))
+	if not (uv_scale > 0.0 and is_finite(uv_scale)):
+		return _rock_fail(marker, "uv_scale must be > 0")
+	var mean: Variant = parsed.get("mean_linear", null)
+	if mean != null and not (mean is Array and (mean as Array).size() == 3):
+		return _rock_fail(marker, "mean_linear must be [r,g,b]")
+	var images := {}
+	for name in ["albedo", "normal"]:
+		var path := folder.path_join(name + ".png")
+		var image := Image.load_from_file(path)
+		if image == null or image.is_empty():
+			return _rock_fail(marker, "cannot load %s" % path)
+		var side := image.get_width()
+		if side != image.get_height() or side < 1 or (side & (side - 1)) != 0:
+			return _rock_fail(marker, "%s is %dx%d, need square power of two" % [path, side, image.get_height()])
+		images[name] = image
+	if (images["albedo"] as Image).get_width() != (images["normal"] as Image).get_width():
+		return _rock_fail(marker, "albedo and normal sizes differ")
+	var textures := {}
+	for name in images:
+		var image: Image = images[name]
+		image.convert(Image.FORMAT_RGBA8)
+		image.generate_mipmaps()
+		textures[name] = ImageTexture.create_from_image(image)
+	_rock_textures = [textures["albedo"], textures["normal"]]
+
+	var k := "%.6f" % uv_scale
+	var header_common := "global uniform sampler2D harness_rock_albedo : filter_linear_mipmap_anisotropic, repeat_enable;\nconst float HARNESS_ROCK_UV_SCALE = %s;\n" % k
+	var header_srgb := "vec3 harness_srgb_to_linear(vec3 c) {\n\treturn mix(pow((c + vec3(0.055)) / 1.055, vec3(2.4)), c / 12.92, step(c, vec3(0.04045)));\n}\n"
+	var scaled := "texture_position * HARNESS_ROCK_UV_SCALE"
+	var dscaled := "dpdx * HARNESS_ROCK_UV_SCALE, dpdy * HARNESS_ROCK_UV_SCALE"
+	var plans := {}
+	var counts_text: Array = []
+	for key in ROCK_SHADERS:
+		if key == "far" and mean == null:
+			continue
+		var path: String = ROCK_SHADERS[key]
+		var shader := load(path) as Shader
+		if shader == null:
+			return _rock_fail(marker, "cannot load shader %s" % path)
+		var code := shader.code
+		var state := {}
+		var header := ""
+		var applied := 0
+		if key == "ground":
+			header = header_common + header_srgb
+			code = _rock_replace(code, "RingAntiTile ty = ring_biome_antitile(texture_position, texture_normal, dpdx, dpdy);",
+				"RingAntiTile ty = ring_biome_antitile(texture_position, texture_normal, dpdx, dpdy);\n        RingAntiTile ty_rock = ring_biome_antitile(%s, texture_normal, %s);" % [scaled, dscaled], path, state)
+			code = _rock_replace(code, "alpine * GROUND_ROCK_TINT * strata_factor",
+				"harness_srgb_to_linear(ring_biome_triplanar(harness_rock_albedo, %s, texture_normal, blend, ty_rock, %s)) * GROUND_ROCK_TINT * strata_factor" % [scaled, dscaled], path, state)
+			code = _rock_replace(code, "ground_detail_normal(texture_position, texture_normal, blend, ground_detail_weight, ty, dpdx, dpdy)",
+				"ground_detail_normal(%s, texture_normal, blend, ground_detail_weight, ty_rock, %s)" % [scaled, dscaled], path, state)
+			applied = 3
+		elif key == "proxy":
+			header = header_common + header_srgb
+			code = _rock_replace(code, "RingAntiTile tz = ring_biome_antitile_z(texture_position, world_normal, blend.z, dpdx, dpdy);",
+				"RingAntiTile tz = ring_biome_antitile_z(texture_position, world_normal, blend.z, dpdx, dpdy);\n\t\t\tRingAntiTile tx_rock = ring_biome_antitile_x(%s, world_normal, blend.x, %s);\n\t\t\tRingAntiTile ty_rock = ring_biome_antitile_y(%s, world_normal, blend.y, %s);\n\t\t\tRingAntiTile tz_rock = ring_biome_antitile_z(%s, world_normal, blend.z, %s);" % [scaled, dscaled, scaled, dscaled, scaled, dscaled], path, state)
+			code = _rock_replace(code, "alpine * GROUND_ROCK_TINT * strata_factor",
+				"harness_srgb_to_linear(ring_biome_triplanar_world(harness_rock_albedo, world_normal, blend, tx_rock, ty_rock, tz_rock, %s)) * GROUND_ROCK_TINT * strata_factor" % dscaled, path, state)
+			applied = 3
+		elif key == "scatter":
+			header = header_common + header_srgb
+			code = _rock_replace(code, "rock_biome_triplanar(biome_alpine_albedo, v_world * biome_texture_scale, world_normal, blend)",
+				"harness_srgb_to_linear(rock_biome_triplanar(harness_rock_albedo, v_world * biome_texture_scale * HARNESS_ROCK_UV_SCALE, world_normal, blend))", path, state)
+			applied = 1
+		else:
+			header = "const vec3 HARNESS_ROCK_MEAN_LINEAR = vec3(%.6f, %.6f, %.6f);\n" % [float(mean[0]), float(mean[1]), float(mean[2])]
+			code = _rock_replace(code, "GROUND_ROCK_MEAN_LINEAR * GROUND_ROCK_TINT", "HARNESS_ROCK_MEAN_LINEAR * GROUND_ROCK_TINT", path, state)
+			applied = 1
+		# The header goes right before fragment(): after every include and helper, at global scope.
+		code = _rock_replace(code, "\nvoid fragment()", "\n" + header + "\nvoid fragment()", path, state)
+		if state.has("error"):
+			return _rock_fail(marker, str(state["error"]))
+		plans[key] = [shader, code]
+		counts_text.append("%s:%d" % [key, applied + 1])
+	# Every substitution matched exactly once; now apply. The global sampler exists before any patched shader compiles.
+	RenderingServer.global_shader_parameter_add("harness_rock_albedo", RenderingServer.GLOBAL_VAR_TYPE_SAMPLER2D, textures["albedo"])
+	for key in plans:
+		var shader: Shader = plans[key][0]
+		shader.code = plans[key][1]
+		_rock_shaders.append(shader)
+	if not _bind_rock_detail_normal(marker, "install"):
+		return {}
+	rock_set_record = {"folder": folder, "id": str(parsed.get("id", "")), "uv_scale": uv_scale, "mean_linear": mean if mean != null else "unchanged",
+		"size": (images["albedo"] as Image).get_width(), "albedo_sha256": FileAccess.get_sha256(folder.path_join("albedo.png")),
+		"normal_sha256": FileAccess.get_sha256(folder.path_join("normal.png")), "rockset_sha256": FileAccess.get_sha256(json_path), "patched_shaders": counts_text}
+	print("%s rock set: id=%s folder=%s size=%d uv_scale=%s mean=%s patches=%s" % [marker, rock_set_record["id"], folder, rock_set_record["size"], k,
+		str(mean) if mean != null else "unchanged", ",".join(counts_text)])
+	return rock_set_record
+
+
+## Sets the rock detail normal global to the set's normal map. No readback: global_shader_parameter_get returns Nil for a sampler and logs an engine error outside the editor.
+static func _bind_rock_detail_normal(marker: String, when: String) -> bool:
+	RenderingServer.global_shader_parameter_set(ROCK_DETAIL_GLOBAL, _rock_textures[1])
+	print("%s rock set: %s bound (%s); nothing else rebinds it (only project.godot sets the default)" % [marker, ROCK_DETAIL_GLOBAL, when])
+	return true
 
 
 ## Copies the preference files into the fixture under their REAL names (`--prefs=user|defaults|<dir>`), points every drawer at them, and returns what was used.

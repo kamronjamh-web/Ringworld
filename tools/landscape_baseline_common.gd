@@ -165,6 +165,8 @@ static func setup(tree: SceneTree, marker: String, weather_pose_report := "t0") 
 		RenderingServer.global_shader_parameter_set("ringworld_shadow_debug_mode", shadow_debug_mode)
 	if a5_density:
 		ctx["record"]["scatter_a5_density"] = true
+	if not H.rock_set_record.is_empty():
+		ctx["record"]["rock_set"] = H.rock_set_record
 	if H.seed != H.PINNED_SEED:
 		ctx["record"]["seed"] = H.seed
 		ctx["record"]["explicit_poses"] = explicit.get("poses", [])

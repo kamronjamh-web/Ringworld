@@ -6,6 +6,7 @@ extends SceneTree
 ##   Add --generation=N [--review-features=a,b] after -- to select a v9 world.
 ##   T4-2: --poses= also takes the dressing poses (steep_eye, scree_eye, cliff_eye, breaks_300m, mountain_2km, lowland_eye from tools/fixtures/landscape_poses_dressing_s1337.json, and river_bank_eye in a
 ##   --generation=1 --review-features=water.rivers world); a run that names one pins the weather over the T0 poses plus all dressing poses. --quiet hides clouds, grass and gust debris for pixel-comparable stills.
+##   --rock-set=<absolute folder> (test-only, T8-R1): albedo.png + normal.png + rockset.json{id, uv_scale, mean_linear?} replace the rock texture in memory (terrain rock, scatter rocks, far rock tone); recorded in look.json.
 ##   --feature-off=<feature id|bit:N> runs the whole look with that world feature's bit cleared in the shader mask (same boot; needs a review world that has the feature).
 ## Machine rule: numbers are only authoritative on the A1000 laptop (P0 / 35 W); on any other GPU the output is stamped "non-authoritative" with the machine tag and adapter name.
 ## Test-only. The harness world directory is deleted at exit. Prints LANDSCAPE_LOOK=PASS.
