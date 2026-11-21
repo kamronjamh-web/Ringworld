@@ -1,16 +1,16 @@
 # Gameplay loop and core lore plan
 
-Status: proposal, 2026-11-21, revised four times the same day as the user answered. Written by the Fable role (`claude-fable-5-2`) at the user's request, for the user as creative director. Design and planning only: no code, shader, scene or setting was changed. Section 9 records the user's decisions and the questions still open. Everything else is still a proposal except where section 9 says it is decided.
+Status: proposal, 2026-11-21, revised five times the same day as the user answered. Written by the Fable role (`claude-fable-5-2`) at the user's request, for the user as creative director. Design and planning only: no code, shader, scene or setting was changed. Section 9 records the user's decisions and the questions still open. Everything else is still a proposal except where section 9 says it is decided.
 
 The user's premise: "Humanity finding this ring in the near future, you are tasked with landing on and exploring this ring. Turns out the ring has a sentient AI running all of its systems. And right now, you are an intruder."
 
 How to read this: section 0 is the whole plan on one page. Section 1 is the lore. Section 2 turns the ring AI into a system that can be built. Sections 3 to 6 are the loops, the two play styles, the structure and the suit assistant. Section 7 maps all of it onto the engine as it stands, section 8 is the roadmap and section 9 holds the eight decisions that are the user's. Every name marked "working" is a placeholder for the user to replace.
 
 **A standing rule for the whole plan (user, 2026-11-21): show, do not explain.** "Try not to over explain things to the player, a lot of this will come in as lore. Ask me if something should be explained to the player."
-- By default the game never states the ring's rules, values or numbers. The player finds them in what the ring does, in the places it built and in lore.
-- The suit assistant records what happened. It does not draw the conclusion.
-- Wherever this plan would have the game explain something, the item is marked **Explain to player? (ask the user)**, with what is at stake if it stays hidden. The marked items are collected in section 9.6.
-- The design language of this document (Standing, Attention, ward, the weights and the thresholds) is for the team. None of it is shown to the player.
+- **The rule stands for everything new.** Nothing is explained to the player unless the user has said so. Anything new that would explain something is marked **Explain to player? (ask the user)** and asked.
+- **What the user has chosen to explain** (2026-11-21, section 9.6): eight things, among them the final warning before Struck, the patterns in the assistant's log, a worded estimate of the ring's treatment, a district activity reading and soil and water tests. One thing stays hidden: the state of a struck expedition when a friend joins it.
+- **How anything is explained.** Through the suit assistant's voice and the suit's instruments. Never through tutorial text, pop-ups or a legend. Each thing is said once, briefly, as an observation, a count, a reading or a labelled estimate, and then it lives in the log. The assistant gives no advice and names no rule.
+- **The design language of this document** (Standing, Attention, ward, the weights and the thresholds) is for the team. None of it is shown to the player. Where the player needs a word, it is the player's own: a ward is a "district" on the suit.
 
 ## 0. Summary
 
@@ -28,7 +28,7 @@ It files you under a class and responds in proportion. Its last resort, the mega
 
 **The link between survival and stealth.** Suit power keeps you alive and is also what the Count sees. Every comfort is a signature. That one rule joins the two halves of the feel the user asked for.
 
-**Reputation.** Standing is the ring's reputation for the expedition (section 2.12, added at the user's request). It rises with repair, planting and farming in balance; it is untouched by exploring and light terraforming; it falls with switching systems off, farming that damages the land, destroying constructs and killing animals faster than they are replaced. The ring values balance, not obedience. Every rung of the ladder can be climbed back from except the last, which takes sustained, deliberate harm and a final warning to reach. Farming is a deep soil, water and ecosystem model from its first version (section 3.13).
+**Reputation.** Standing is the ring's reputation for the expedition (section 2.12, added at the user's request). It rises with repair, planting and farming in balance; it is untouched by exploring and light terraforming; it falls with switching systems off, farming that damages the land, destroying constructs and killing animals faster than they are replaced. The ring values balance, not obedience. Every rung of the ladder can be climbed back from except the last, which takes sustained, deliberate harm and a final warning to reach. Farming is a deep soil and water model from its first version, and the whole garden is simulated as a living ecosystem (section 3.13).
 
 **Two play styles, one toolkit.** To abide is to become counted: learn the house rules, mend what is broken, and doors open. To play as a blight is to make parts of the ring uncounted: force doors, strip machines, take districts dark and hold them. Sneaking is the shared middle that both use. Players can switch, and the ring forgives slowly but does not forget.
 
@@ -54,6 +54,7 @@ It files you under a class and responds in proportion. Its last resort, the mega
 | "Virus" | The user's shorthand in conversation for the destructive play style. It is not an in-world word. The game's word is blight. | section 2.13 |
 | The Count | The grid pulse read as a census of everything on the floor | `docs/emitter-grid-climate-machines-spec.md` part G |
 | Ward | The district around one spire: about 314 km along the ring by 53 km across. 595 wards. | emitter site registry |
+| District | The word the player sees for a ward, on the suit's activity reading | section 2.2 |
 | Attention | How alert the Lamplighter is in one ward, minute to minute | new |
 | Standing | What class it files your expedition under, ring-wide, over days | new |
 | The Fever | The megastorm, once it is used as a purge | `docs/megastorm-design.md` |
@@ -271,7 +272,7 @@ Decided by the user on 2026-11-21:
 - **Night does not hide the player from the ring**, which does not see by light. Night helps the player: the pulse is bright at night and can be watched coming round the arch. By day it is faint and the player relies on a timer.
 
 **Where the player reads Attention.** The first draft proposed turning the scale-anchor towers into census masts. The user decided on 2026-11-21 to remove the towers instead (the removal order is in 7.5), so the readout is re-homed in three places:
-- **On the suit: nothing, by default.** The assistant logs what it observes (a watcher overhead, a door that changed state, weather that followed an act) and shows no reading of the ring's mood. **Explain to player? (ask the user):** a ward activity estimate on the HUD. At stake: without it, alertness is read only from lights, doors and constructs, and a player far from any site has almost nothing to read.
+- **On the suit** (explained; user, 2026-11-21). A small district activity reading on the HUD with three steps: quiet, stirring and searching. It is built only from what the suit can observe: a watcher in range, a site's lights, the pulse lingering, weather that followed an act. Far from any site it dims to "no data", because that is the truth. It is an instrument's reading of behaviour, never a reading of the ring's mind.
 - **On the spires and sites.** A site's own lights, in the project's existing teal, shift towards amber and then white as its ward climbs the ladder. This reads within a few kilometres of a spire. No legend explains the colours.
 - **In what the ring does.** A watcher arrives, doors close, the weather turns. As an optional extra, an alert ward could hold the pulse's wake a little longer overhead at night. That is a small change to the grid shader and would be the only cue that reads from tens of kilometres.
 
@@ -359,9 +360,9 @@ A seventh, hidden until Act 3: **do not look at what it has not looked at.** The
 
 Mending is not a rule but the remedy: anything broken and then repaired is forgiven at a discount.
 
-**How the player learns them.** Nothing in the game states a rule (the standing rule at the top of this document).
+**How the player learns them.** Nothing is taught by tutorial text. What is explained comes from the assistant's voice and the suit's instruments (the standing rule at the top of this document).
 1. **The ring marks its boundaries** with a small, consistent vocabulary of signals in the media it has: light on its structures, a tone through the floor, a door that closes as you approach. Roughly: "seen", "stop" and "allowed". No legend explains them.
-2. **The suit assistant keeps a field log.** It records what happened, when and where: "Door sealed. Cutter was powered four seconds earlier." It does not count repeats, rate a pattern or name a rule. The player reads the log and draws the conclusion, and in co-op the log is shared. **Explain to player? (ask the user):** letting the assistant point out a pattern once it has seen it several times. At stake: some players may never connect cause and effect, and to them the ring will feel arbitrary instead of lawful.
+2. **The suit assistant keeps a field log, and points out patterns in it** (explained; user, 2026-11-21). The log records what happened, when and where. When the same thing has followed the same act three times, the assistant says so once, as a count and not as a rule: "Door sealed after the cutter powered up. Third time of three." The pattern then sits on its own page of the log with a running tally. It never names a rule and never advises. In co-op the log is shared.
 3. **The ship offers theories, and is often wrong.** It has the long view from orbit and a human habit of explaining. It is right that the wall lights flicker when the player digs. It is wrong about the Veil (section 1.12). The ship is a character with opinions, not a tutorial.
 4. **Every warning is a test.** Obeying a boundary signal is the earliest and most repeatable source of Regard, because it tells the ring that the animal responds to signals. This is also how a hostile player stands down.
 
@@ -369,7 +370,7 @@ Mending is not a rule but the remedy: anything broken and then repaired is forgi
 
 | Channel | Anomaly | Trespasser | Blight | Once the Fever runs |
 |---|---|---|---|---|
-| **Weather and machines** | Nudges that could be coincidence: a rain cell drifts over the camp. The assistant logs the rain and says nothing more. | Herding: a storm grown over your position, clear air left on the way out | Called lightning, pulse-triggered strikes along the chain overhead (an option already in the grid spec), downbursts near the walls, field strikes near the rim | The megastorm |
+| **Weather and machines** | Nudges that could be coincidence: a rain cell drifts over the camp. The assistant: "Rain has followed the cutter three times in four. The sample is too small." | Herding: a storm grown over your position, clear air left on the way out | Called lightning, pulse-triggered strikes along the chain overhead (an option already in the grid spec), downbursts near the walls, field strikes near the rim | The megastorm |
 | **Constructs** | A watcher observes and marks | Wardens escort, block and drain suit power | Purgers hunt; menders strip your camps | All of it, in the wall's wake |
 | **Systems and access** | Doors that were open are closed. Lights go dark as you approach. | Lockouts, power cut, Deep Line refused or redirected, caches inside its buildings sealed | Rooms sealed and filled with inert gas, drops refused at the field, base power killed if it came from the ring | The Closing becomes total |
 | **The suit** | None | Uplink jammed near live spires. Co-op players lose each other's markers. | Injected lines and waypoints, edited records (section 6) | The same |
@@ -396,7 +397,7 @@ Each ward holds a small stock (for example two watchers and a warden). Destroyed
 The user asked for an AI that adapts. The cheap, legible form is a tactic ledger.
 - The director tags what the player relies on: storm cover, cave routes, river travel, night moves, door cutting, power taps, killing watchers, hiding at the Count.
 - When one tactic has beaten it a set number of times while the player is an Anomaly or worse, it fields a specific counter. If you always hide in storms, it clears the sky over you. If you always cut the same kind of door, the door changes. If you kill watchers, they stop coming alone.
-- Each counter shows as a visible change, and the assistant logs only what it can see: "The door cycle is different."
+- Each counter shows as a visible change, and the assistant notes it: "That is the third time. The door cycle is different."
 - Counters persist. The ring forgives harm but keeps what it has learned.
 - **It learns what a gun is.** A firearm is a tool to the ring until it has lost constructs to one. After that, a weapon in the hand near a construct or inside a site raises Attention by itself (section 3.12).
 
@@ -562,19 +563,18 @@ Decided by the user on 2026-11-21: the bottom state is irredeemable, every rung 
 
 If the three days pass without one, the last count ends, Standing is set to -80 and recovery goes on as usual. A later fall to -90 begins another last count on the same terms.
 
-**The warnings on the way down.** The user asked for clear warnings and a point of no return the player can recognise. The standing rule asks that the game does not explain. By default, then, the warnings are things the ring does, each stronger than the last, and the assistant only logs what it observes.
+**The warnings on the way down** (explained; user, 2026-11-21). Each step is something the ring does and something the assistant says, and each is stronger than the last. The assistant speaks in its own words. It never uses the ring's names for the rungs, which the player learns from the ring, late.
 
-| Where | What the ring does | What the assistant logs |
+| Where | What the ring does | What the assistant says, once |
 |---|---|---|
-| Into Trespasser (-25) | The "stop" signal at sites. Doors close. Entry lights go dark as the player approaches. | The events |
-| Into Blight (-60) | A tone through the floor. Site lights go white. Purgers. | "It is using force." |
-| Below -75 | Nothing new, and that is the sign: staying away no longer changes anything. | Nothing |
-| The last count (-90) | It stops. The purgers withdraw. Every site in the ward shows steady white. At each pass the pulse holds overhead for some seconds, which it never does otherwise. The floor carries one long tone at the start. | "It has stopped attacking. The pulse is holding over us at every pass. I have no earlier record of either." |
-| Struck | If it has words by then, it uses them: "You are struck from the count." Lights go out at every site as the player approaches, from then on. | What it saw and heard |
+| Into Trespasser (-25) | The "stop" signal at sites. Doors close. Entry lights go dark as the player approaches. | Its estimate changes: "It is obstructing us." |
+| Into Blight (-60) | A tone through the floor. Site lights go white. Purgers. | "It is using force against us. I have no earlier record of that." |
+| Below -75 | Nothing new. Staying away no longer changes anything. | "Time away has stopped improving its behaviour. Only repair has, in what I have recorded." |
+| The last count (-90) | It stops. The purgers withdraw. Every site in the district shows steady white. At each pass the pulse holds overhead for some seconds, which it never does otherwise. The floor carries one long tone at the start. | The first of the two lines the user asked for: "Its behaviour has changed in a way I have not recorded before. It has stopped attacking, and it is counting us separately at every pulse. My reading, with high confidence: further serious harm now will not be forgiven." |
+| As the player begins a serious harm during the last count | Nothing. It waits. | The second line: "If you do this, I do not expect it to be undone." |
+| Struck | If it has words by then, it uses them: "You are struck from the count." Lights go out at every site as the player approaches, from then on. | It reports what it saw and heard, and that its estimate no longer changes with anything the player does. |
 
-The silence is the design. A player in the last count is not being chased, so the choice they make there is one they can recognise as a choice.
-
-**Explain to player? (ask the user):** two spoken lines from the assistant. At the start of the last count, its reading that further serious harm now will not be forgiven. And once, as the player begins a serious harm during the last count: "If you do this, I do not expect it to be undone." At stake: this is the one irreversible state in the game. Without the lines the only warning is the ring's behaviour, and a player who takes the pause for a truce can lose every ending but two without knowing a choice was offered. This plan's suggestion is that this is the one place worth saying aloud.
+The silence is the design. A player in the last count is not being chased, so the choice they make there is one they can recognise as a choice. Both spoken lines are authored and critical, so they are never reworded and never skipped. The assistant stays inside its honesty rule (section 6): it gives its reading and its confidence, not the ring's intent.
 
 **What being struck changes.**
 - Reputation stops. Nothing the player does, good or bad, is weighed again.
@@ -597,13 +597,13 @@ The silence is the design. A player in the last count is not being chased, so th
 
 #### Feedback, co-op, exploits and systems
 
-**How the player sees reputation.** No number, and by default no words either. Reputation is read from the ring.
+**How the player sees reputation.** No number, ever. The ring shows it, and the assistant puts it into one plain line.
+- **The assistant's estimate** (explained; user, 2026-11-21). One line in its own words for how the resident system is treating the expedition, with its confidence: ignoring us, watching us, letting us be, accommodating us, obstructing us, using force against us. It is spoken once when it changes and otherwise sits on a page of the suit with the date of the last change. It is not a meter and it does not say how close the next change is.
 - **The doors.** Open, closed, or opening as the player arrives.
 - **The lights.** A site's light colour shows Attention (section 2.2). How its lights behave towards the player shows Standing: at Stray and above the entry lights come up as the player approaches, and at Trespasser they go dark. No legend explains either.
 - **The constructs.** How far a watcher keeps off. Whether a mender carries on, waits, or withdraws.
-- **Changes of class are events the ring makes:** a tone through the floor and a change at the nearest site. The assistant logs the tone and the change, not what they mean.
+- **Changes of class are events the ring makes:** a tone through the floor and a change at the nearest site. The assistant logs them and changes its estimate.
 - **The ring itself.** A dark gap in the wall lights relit. A storm that has stood for centuries clearing. The Lamp a little brighter at the next eclipse.
-- **Explain to player? (ask the user):** an estimate from the assistant of how the ring is treating the expedition, in words and never as a figure ("consistent with tolerance"). At stake: without it a player can misjudge where they stand, most of all far from any site, where there is little behaviour to read.
 
 **Co-op.**
 - **The expedition shares one Standing.** Every act by any player is written to it in full. The story's gates read it.
@@ -612,11 +612,11 @@ The silence is the design. A player in the last count is not being chased, so th
 - **Presence spreads.** Standing beside an offender when the Count passes puts a little of their trace on the bystander. The ring counts who was there.
 
 **Co-op and the bottom of the ladder** (decided 2026-11-21: being struck is personal).
-- **The last count is the expedition's.** It begins on the shared Standing, and the ring's signals reach every player in the world, wherever they are. No one is struck without the whole team having been warned.
+- **The last count is the expedition's.** It begins on the shared Standing, and every player's assistant says so, wherever they are. No one is struck without the whole team having been warned.
 - **Being struck is personal.** It falls on the player who commits the serious harm during the last count, and on any player who joins in before it ends. One friend cannot doom the others.
 - **The expedition itself is struck** only when its host is, or when every member is.
 - **For the players who are not struck,** the shared Standing stays recoverable. But company counts: a party that includes a struck player is treated as Blight wherever they are together, and no door opens for it. The Counted and keeping endings need every player present to be unstruck.
-- **A friend who joins later** arrives with an empty trace and is never struck by inheritance. They take on the expedition's shared Standing, and the Fever if it is running. If the expedition itself is struck, they are joining a war: personally clean, but in a house where no door will open while they keep that company. **Explain to player? (ask the user):** a plain warning on the join screen. At stake: a friend walks into a permanently hostile world without knowing it.
+- **A friend who joins later** arrives with an empty trace and is never struck by inheritance. They take on the expedition's shared Standing, and the Fever if it is running. If the expedition itself is struck, they are joining a war: personally clean, but in a house where no door will open while they keep that company. There is no warning on the join screen (hidden; user, 2026-11-21). They find out the way the others did.
 - **A struck player's state belongs to that world.** It does not follow them into another host's game.
 
 **Exploits to guard against.**
@@ -637,7 +637,7 @@ The silence is the design. A player in the last count is not being chased, so th
 | Riding the last count as a truce | The ring holds its fire, but only in that ward and only while the player does no serious harm. Three ring days later Standing is still deep in Blight. |
 
 **How it maps onto what exists and what is planned.**
-- **Vegetation and scatter (T5, T6).** Trees and plants are placed deterministically from the seed. Felling and planting need a vegetation edit store: removals and additions keyed by tile and instance, persisted like surface edits. A ward's baseline is whatever the seed generates, so the tally never counts a ward: it sums the edit store's differences by species. That keeps it cheap and exact.
+- **Vegetation and scatter (T5, T6).** Trees and plants are placed deterministically from the seed. Felling and planting need a vegetation edit store: removals and additions keyed by tile and instance, persisted like surface edits. A ward's baseline is whatever the seed generates, so the tally never counts a ward: it sums the edit store's differences by species. That keeps it cheap and exact. With the whole garden simulated (section 3.13), the differences also include every garden cell that is off balance. Each carries its cause, so the expedition is charged only for what it caused.
 - **Farming, runoff and water.** Deep from the first version (user, 2026-11-21). The model, its water needs and how it sits on the frozen rivers are in section 3.13.
 - **Editable terrain.** The surface edit store already journals every edit. Moved volume per ward per day comes straight from the journal, and nearness to a structure from the site registries' existing constant-time lookups.
 - **Wall Engines and spires.** Machine state is saved story state (7.5 item 9). Spire state feeds the eclipse's per-site output, and an engine's state feeds its anomaly's strength.
@@ -686,7 +686,7 @@ If play tests want eclipses more often, the celestial time scale is an existing 
 **Move, read, act, be still.**
 
 - **Move.** Walking is 2 m/s and sprinting 7 m/s. At that speed the terrain is the content: slope, footing, river class, canopy, the lee of a ridge.
-- **Read.** The sky for weather, the arch for the pulse and the megastorm, the spire lights for the ring's mood, the suit for power and warmth, a timer the player has set on the pulse.
+- **Read.** The sky for weather, the arch for the pulse and the megastorm, the spire lights and the suit's district reading for the ring's mood, the suit for power and warmth, the assistant's pulse countdown.
 - **Act.** Forage, salvage, scan, climb, cut, open, carry.
 - **Be still.** When the pulse comes, either go dark or stand to be counted.
 
@@ -785,7 +785,7 @@ Three tracks. The third has two forms, one for each play style.
 | Track | What grows | Examples |
 |---|---|---|
 | **Gear** | What the player can survive and reach | Bigger cells, a rebreather for altitude, a rated shelter module, hybrid tools |
-| **Knowledge** | What the player understands | The pulse timetable, the field log and what the player has made of it, the signal vocabulary, the map of wards and blind spots, the Deep Line map, the database |
+| **Knowledge** | What the player understands | The pulse timetable, the field log and its patterns, the signal vocabulary, the map of wards and blind spots, the Deep Line map, the database |
 | **Standing** (abide) | What the ring will do for the player | Open doors, live sockets, transit, shelter in the Fever, speech |
 | **Leverage** (blight) | What the player can make the ring do | Stolen cores that force doors, overrides that hold a lift, dark wards held as territory |
 
@@ -879,94 +879,220 @@ An abiding player's weapon is for the unexpected. Finishing the story with the s
 
 **What may be shot** (decided 2026-11-21): constructs, and animals if animals ship. There are no human enemies, and friendly fire is off by default in co-op.
 
-### 3.13 Farming and the living ground
+### 3.13 Farming and the living garden
 
-Decided by the user on 2026-11-21, against this plan's earlier recommendation of a shallow first version: farming is deep from the start, a full soil, water and ecosystem simulation. This section is the design at plan level. It needs its own design doc before any work order.
+Decided by the user on 2026-11-21, in three answers, each of them larger than this plan recommended:
+- farming is deep from its first version: a full soil, water and ecosystem model;
+- the simulation reaches the whole garden, ring-wide, not only the farm;
+- it runs fast enough that results show within a single session;
+- both the garden's wild food plants and the ship's cultivars are farmed;
+- soil and water tests are explained to the player.
 
-**The principle that makes depth worth having.** The ring does not judge a farmer's methods. It measures results: what the soil is doing, what left the field in the rain, what reached the river. Because the model is real, the reputation rows of section 2.12 need no list of approved practices. Good practice scores well because it works, and a player can find a better method than any the design foresaw.
+This section is the design at plan level. It needs its own design doc before any work order.
 
-**The boundary that makes depth affordable.** The simulation runs on what the player farms and on what that farming touches: the plots, a ring of habitat around them, and the water downstream. The wild garden stays what the seed makes it, plus edits. This is question 2 in section 9.5.
+**The principle.** The ring does not judge methods. It measures results: what the soil is doing, what left the field in the rain, what reached the river, what the forest is doing. Because the model is real, the reputation rows of section 2.12 need no list of approved practices.
 
-**What a deep first version contains.**
+#### Time
+
+**Proposed: one ring day is one growing season, on one clock for the whole ring.** Four ring days make a year. This is question 1 in section 9.7.
+
+| | Step | In field time |
+|---|---|---|
+| The farm (fine ground) | Every pulse: fifteen steps a ring day | About six days a step |
+| The garden (coarse cells) | Every dawn tally | One season a step |
+| The ring's judgement | Every dawn tally (section 2.12) | It judges a season at a time |
+
+**What a session shows.** A session is about two ring days.
+
+| What the player does | When they see the result |
+|---|---|
+| Sows quick greens | Harvest in about 40 minutes |
+| Sows a main crop | Harvest in one ring day, 75 minutes |
+| Leaves a slope bare | Rills at the first rain; a brown stream below it within the hour |
+| Abandons a plot | Grass over it by the next ring day |
+| Clears a stand of trees | Scrub in about 8 ring days; a young wood in about 40. Mature forest does not come back inside a campaign. |
+
+**Rain.** The weather runs in real time and the ground in field time, so one rule joins them: a ring day of weather delivers a season of water. A twenty-minute storm is about three wet weeks to a field.
+
+**Why not two speeds.** A farm that ran faster near the player was considered and rejected.
+- In co-op, two players in different places must agree what day it is for every plot.
+- A plot that ages faster while watched can be exploited by standing beside it, and makes distant farms pointless.
+- Two levels of detail on one clock give the saving without either problem (below).
+
+**No catch-up.** The earlier draft let distant plots fall behind and catch up later. With fixed budgets that is unnecessary: the whole world steps together whenever it is running, and nothing is left behind. The only catching up is a joining player receiving a snapshot.
+
+**The exaggeration, stated.** One season in 75 minutes is about 1,700 times the speed of life. It is the user's decision, and every process uses the same factor, so the relationships between them stay true.
+
+#### The whole garden: how a ring-wide simulation stays tractable
+
+The ring's floor is about ten million square kilometres. It cannot be simulated as plants, and it does not need to be.
+
+**The baseline is the balance.** The generated garden is the state the Lamplighter has kept for an age. It is the equilibrium. The simulation stores only departures from it. Where nothing has disturbed the garden, nothing is stored and nothing is computed. Cost follows disturbance, not area.
+
+**Four levels, one clock.**
+
+| Level | Grain | Holds | Stored | Steps |
+|---|---|---|---|---|
+| **Ring terms** | The whole ring, one entry for each machine | The megastorm's passes, each Wall Engine's weather, the Lamp's brightness | A few hundred numbers. The megastorm needs none: its path is already saved. | Evaluated when asked |
+| **Garden cells** | About 1 km: four by four of the existing vegetation tiles | Cover by class (canopy, shrub, grass, bare), stand age, soil stock, moisture, fire, pests, pollinators, escaped crops, and animal figures that lie dormant until animals ship | Sparse: only cells that are off balance, about 32 bytes each | Each dawn tally |
+| **River overlay** | Each reach, lake and pond | Loads, withdrawals, pond levels | Sparse | Each pulse |
+| **Fine ground** | 2 m cells and single plants | Plots, felled and planted trees, surface edits | Only where players have acted | Each pulse |
+
+A summary for each of the 595 wards is derived from these for the reputation ledgers.
+
+**The arithmetic.**
+- Stored densely at 1 km the garden would be ten million cells and about 320 MB. It is never stored densely.
+- A budget of 200,000 off-balance cells is 6.4 MB and one pass of a worker thread each ring day. Beyond the budget, the oldest and faintest departures settle to balance.
+- The megastorm would touch every cell on every lap. It is therefore not stored in cells at all: its damage at any place is computed from how exposed the place is and how long ago the wall last passed, and the megastorm's saved path already gives the second.
+- The Wall Engines work the same way. Repairing one changes a single number, and the drought it parked greens over tens of ring days.
+
+**How a garden cell behaves.**
+- **It recovers towards its baseline:** bare ground to grass, to scrub, to canopy, at rates limited by its soil and moisture.
+- **It is helped or harmed by its neighbours.** A clearing inside forest closes faster than the middle of a wide one. Fire, pests and escaped crops spread to the cells beside them.
+- **It reads the ring terms** for drought, parked storm and megastorm wake, and the river overlay for water.
+- **It steps from its neighbours' previous values, in whole-number arithmetic.** The order in which cells are visited cannot change the result, and every machine gets the same answer.
+
+**Every departure carries its cause:** the expedition, the ring or the weather. A spread inherits the cause it spread from. Reputation charges the expedition only for what it caused, and mending anything else is credit.
+
+**Promotion and demotion** between garden cells and fine ground.
+- **Promotion.** When a player acts in a cell (tills, plants, fells, digs), fine state is created for the ground they touch. It is built from the cell's state, the baseline and a hashed variation, so the same cell always unpacks the same way.
+- **Demotion.** When fine ground has had no player within about 2 km for some ring days and is not a tended plot, its totals (soil, cover, biomass, cause) are folded into its garden cell and the fine state is dropped.
+- **Totals are conserved in both directions,** so nothing is gained or lost by walking away and coming back.
+- **What demotion loses is identity:** which tree was felled. The forest closes over. A plot that someone still tends never demotes.
+
+#### How the garden shows, without breaking the generation rules
+
+**The rule kept.** Generated vegetation is a frozen baseline. Everything here is an overlay on it. With an empty overlay the output must be bit-identical to today's, and that is a test gate.
+
+- **Near the player: one more factor in the scatter's density.** The scatter already accepts or rejects each candidate by a density from its habitat. The overlay supplies one more factor for each class from the garden cell, exactly 1 where the cell is at balance.
+  - Thinning removes instances by their stable hash, so the same trees go first every time and nothing flickers.
+  - Spreading beyond the baseline is limited to the candidates the generator already considers.
+  - Stand age scales young trees.
+  - Factors change in steps, at the tally, and tiles in view rebuild with the fade they already have. The grass modifier zones are the precedent.
+  - To be checked against the T5 and T6 designs: how the tree spacing competition behaves when its density changes.
+- **Fine ground overrides** the factor wherever it exists.
+- **Further out: one ring-wide garden texture.** About 4 km a texel (7,854 by 80), on the canonical coordinates the whole-ring shadow masks already use, carrying greenness, canopy, bare ground and burn. The shared ground include samples it, so the near terrain, the proxies, the global terrain and the far view all take it with no switch for each. T6's far canopy term reads it as a weight on the forest.
+- **Water** takes a tint for each reach and lake, and ponds a level that can move.
+- **What this gives the vastness plan.** The arch gains a slow motion of its own: the megastorm's scar crossing forest country, a drought greening over a campaign.
+
+#### The farm
+
+**What the fine model holds.**
 
 | Layer | State kept for each 2 m cell of a plot | What drives it | What the player sees |
 |---|---|---|---|
-| Soil nutrients | Nitrogen, phosphorus, potassium; organic matter | Crop uptake, legumes fixing nitrogen, compost and manure, fabricated fertiliser, leaching in rain | Crop vigour and colour; the assistant's soil test |
+| Soil nutrients | Nitrogen, phosphorus, potassium; organic matter | Crop uptake, legumes fixing nitrogen, compost and manure, fabricated fertiliser, leaching in rain | Crop vigour and colour; the soil test |
 | Soil structure | Topsoil depth, compaction, soil life | Tillage, traffic, cover, roots, pesticide | Rain that soaks in or runs off; how the ground works |
-| Soil water | Moisture | Rain from the saved weather, irrigation, evaporation and crop use, drainage by slope and structure | Wilting, waterlogging, cracked or sodden ground |
+| Soil water | Moisture | Rain, irrigation, evaporation and crop use, drainage by slope and structure | Wilting, waterlogging, cracked or sodden ground |
 | Erosion | Soil lost, and where it went | Runoff, slope, bare fraction, structure | Rills after rain; a brown stream below the field; thinner soil each season |
 | Crops | Species, growth stage, health, yield | Light (canopy shade counts), temperature, water, nutrients, crop family and what grew there before | The plants themselves, at each stage |
 | Pests and disease | Pressure, by crop family | Area in one crop, repetition, nearby habitat for predators, pesticide | Damage on the crop; lost yield |
 | Pollinators | Abundance near the plot | Flowering habitat within reach, pesticide | Fruiting crops that set or fail |
-| The neighbours | Effects on the habitat around the plot | Spray drift, shade, escaped crops, a cleared edge | Edge plants thriving or dying back |
 
-Pests and pollinators are population figures in this version, not creatures, with small visible insects as dressing. If animals ship later, they join here.
+Pests and pollinators are population figures, not creatures, with small visible insects as dressing. Beyond the plot they are the garden cells' own figures, so a sprayed field thins the pollinators of the country round it.
+
+**What is farmed** (decided 2026-11-21: both).
+
+| | The garden's food plants | The ship's cultivars |
+|---|---|---|
+| What they are | The wild ancestors of crops, thirty thousand years unbred | Modern seed from the ship's stock |
+| Yield | Low | High |
+| Needs | Little: they suit their habitat | Hungry for water and nutrients |
+| Against pests and weather | Hardy | Tender |
+| What the ring makes of them | Nothing: they are its own | Nothing in themselves. If they escape and spread, the garden cells show it. |
+
+The trade between them is the story's argument in small, and it is where the ship's demand for yield figures bites.
 
 **Water: what farming needs, and what exists.**
 
 | Farming needs | What exists | What is new |
 |---|---|---|
-| Rain on a plot, even while the player is away | Weather is a pure function of seed and time | Sampling it for a plot at each tally. No new state. |
+| Rain on a plot | Weather is a pure function of seed and time | Sampling it for a plot at each step. No new state. |
 | Somewhere for runoff to go | The rivers step bakes a drainage field and a river graph, with discharge, speed and a downstream link for every reach | Routing a plot's runoff to its reach |
 | A river that carries what is put in it | The same graph | A load for each reach (silt, nutrient, chemical) that moves downstream at the reach's speed, is diluted by its discharge, and decays |
 | Irrigation draw | Nothing. Hydrology is static. | A withdrawal entry against a reach, lake or pond |
 | Ponds and wetlands that can be drained | Ponds are planned as still water in the landforms step (T7-11) | A level offset for each pond, and a check that notices a terrain edit breaching its rim |
 | Water that looks changed | River, lake and pond surfaces with fixed levels and colours | A tint for each reach and lake (silt, bloom), and a pond surface that can move |
 
-**Can this be layered on the frozen river graph without changing generation? Yes.**
-- **The frozen graph is the baseline and is never written to.** Everything above is an overlay of differences, keyed by reach, lake and pond and stored as game state. It is the same pattern as the surface edit store and the vegetation edit store.
-- **Nothing the rivers were frozen with moves:** not the fingerprint, not the danger classes, not the collision. A world of the rivers generation stays one.
-- **River level and flow do not visibly change.** A farm draws litres a second from a river that carries cubic metres. Showing no change is the realistic answer, and it is also what keeps the frozen step frozen. The draw still counts in the books.
-- **Ponds do visibly change,** because a pond is small enough for a farm to empty. That needs a pond surface that can move, which is new presentation work on top of T7-11.
-- **Rivers and lakes change colour, not shape.** Silt and bloom are one parameter for each reach in the water shader.
+**Layered on the frozen river graph without changing generation.**
+- **The frozen graph is the baseline and is never written to.** Everything above is an overlay of differences, keyed by reach, lake and pond and stored as game state.
+- **Nothing the rivers were frozen with moves:** not the fingerprint, not the danger classes, not the collision.
+- **River level and flow do not visibly change.** A farm draws litres a second from a river that carries cubic metres. The draw still counts in the books.
+- **Ponds do visibly change,** because a pond is small enough for a farm to empty. That is new presentation work on top of T7-11.
+- **Rivers and lakes change colour, not shape.**
 
 **How this relates to T9i and the river freeze.**
 - **The rivers freeze is the dependency, and it helps.** Overlay keys are reach and lake identities, which are stable once the step is frozen.
-- **T9i is not a dependency.** T9i makes the current act on bodies and floating things. Farming reads the graph's numbers, not the current's physics.
-- **T9a (small streams) matters** if plots are to draw from, and foul, water smaller than a trunk river. Without it, farms water from rain, ponds, lakes and rivers.
+- **T9i is not a dependency.** It makes the current act on bodies and floating things. Farming reads the graph's numbers, not the current's physics.
+- **T9a (small streams) matters** if plots are to draw from, and foul, water smaller than a trunk river.
 - **T7-11 (ponds) is the dependency for wetlands.**
 
-**Time.** Soil forms over centuries and a crop takes months. The model has to run faster than life, and every process has to run faster by the same factor, or the relationships stop being true. The factor is question 1 in section 9.5. The simulation steps at the dawn tally and catches up in whole steps when a player returns to plots they left, so a farm goes on living while the expedition is a thousand kilometres away.
+#### Reading it, owning it, saving it
 
 **How the ring's senses read it.**
-- **The dawn tally** reads each plot's trend: soil gained or lost, cover, variety, cleared edge.
+- **The dawn tally** reads each ward's garden cells and each plot's trend, by cause.
 - **Lines** read the river's load where the water returns to the works, after the flow time.
 - **The floor** hears powered tillage and the digging of channels.
 - **The Count** sees pumps and powered equipment like any other load.
 - A hand-dug channel and a gravity feed are silent. Once again the quiet way and the good way are the same way.
 
-**Reading the ground.** Depth is worth having only if the player can read it. By default the player reads a farm with their eyes: crop colour, standing water, rills, a brown stream. **Explain to player? (ask the user):** soil and water tests from the assistant, given as instrument readings with numbers and no advice. At stake: without tests a player may not be able to tell why a crop failed, and a deep model that cannot be read is worse than a shallow one. This plan's suggestion is to allow readings and never advice. Either way, the link between a farm's results and the ring's regard is never explained.
+**Reading the ground** (explained; user, 2026-11-21). The player reads a farm first with their eyes: crop colour, standing water, rills, a brown stream. The suit adds two instruments, a soil probe and a water test, that give plain readings with numbers and units. The assistant reads them out and logs them for each plot. It gives no advice, and it never connects a reading to the ring's regard.
 
-**Co-op and authority.** Farm state is ring state.
-- **The host owns it:** plots, soil cells, the water overlay and river loads, all keyed by canonical coordinates and reach identities.
-- **It advances only at tallies,** on the saved clock, in fixed steps, from the seed, the weather function and the stored state. Any peer could compute a step, but only the host commits one, so peers cannot drift apart.
-- **Players act through commands** (till, plant, water, spread). A client shows its own action at once and corrects to the host's result.
-- **Replication is light:** a snapshot of the plots near a joining player, then small differences at each tally.
-- **A plot far from every player costs nothing** until someone returns, and then only the missed steps.
+**Authority.** All of it is ring state.
+- **The host owns every level:** ring terms, garden cells, the river overlay and fine ground.
+- **It steps only on the saved clock,** in fixed steps and whole-number arithmetic, from the seed, the weather function and the stored state. Any peer could compute a step, but only the host commits one.
+- **Players act through commands** (till, plant, water, spread, fell). A client shows its own action at once and corrects to the host's result.
+- **What each player is sent:** the ring terms and the garden texture's changes, which are small and go to everyone; the garden cells within a few hundred kilometres; the fine ground nearby.
+
+**Save size.**
+
+| Part | At its budget | Typical |
+|---|---|---|
+| Ring terms | A few kilobytes | The same |
+| Garden cells | 6.4 MB (200,000 cells) | Well under 1 MB |
+| River overlay | Under 1 MB | A few kilobytes |
+| Fine ground | 16 MB. A one-hectare farm is 2,500 cells and about 60 KB. | Under 1 MB |
+| Garden texture | Rebuilt from the above; not saved | |
+
+A slot's ecological state stays in the tens of megabytes at worst, against test profiles that already run to gigabytes.
+
+**What is not feasible, and is ruled out.**
+- **Simulating plants or animals as individuals ring-wide.** The garden is cover and population figures.
+- **Fine 2 m state everywhere.** It would be trillions of cells.
+- **A garden that changes the weather.** Weather stays a pure function of seed, time and machine state. The garden reads the weather, never the reverse.
+- **Rivers that change course or level.** The frozen graph stays frozen. Only ponds move.
+- **Remembering every felled tree for ever.** Identity is lost at demotion.
+- **Two speeds of time.**
 
 **Parts and sizes.**
 
 | Part | Size | Notes |
 |---|---|---|
 | Vegetation edit store and plots | M to L | Also needed by planting and felling |
-| Soil model, and its baseline from the seed's existing fields | L | Pure C#, headless, with golden runs over a hundred ring days of seed weather |
-| Crop model and catalogue | L, plus art | About eight to ten crops. Each needs models at several growth stages, which is the largest art cost here. |
-| Water overlay: plot moisture, runoff routing, reach loads, withdrawals, pond levels | L | Must not touch the frozen river data |
-| Pests, pollinators, neighbours | M | Population figures |
-| Presentation: soil states on the ground, crops through the scatter system, water tint, a moving pond surface | L | This is the cost that lands on the GPU and on the terrain window's uploads |
-| Tools and screens: tilling, planting, channels, compost, soil and water tests, the farm ledger | M to L | |
-| Reputation hooks and co-op replication | M | |
+| Soil model, and its baseline from the seed's existing fields | L | Pure C#, headless, with golden runs |
+| Crop model and catalogue, in two families | L, plus art | About ten crops. Each needs models at several growth stages. |
+| Water overlay | L | Must not touch the frozen river data |
+| Garden cells: state, succession, spread, cause tags, the budget | L | Pure C#, whole-number arithmetic, headless |
+| Ring terms: megastorm wake, engine weather, the Lamp | M | From state that is already saved |
+| Promotion and demotion | M | Conserving totals is the test |
+| Presentation near: the scatter density factor, stand age, tile rebuilds | L | Touches T5 and T6. Identity with an empty overlay is the gate. |
+| Presentation far: the garden texture through the shared ground include and the far view | L | Touches every terrain shader once, in one include |
+| Presentation of the farm: soil states, crops, water tint, a moving pond surface | L | |
+| Pests, pollinators, animal figures | M | Figures only |
+| Tools and screens: tilling, planting, channels, compost, the two instruments, the farm log | M to L | |
+| Reputation hooks and co-op replication | M to L | |
 
-Together this is XL, about the size of the constructs. It is the second-largest new system in the plan.
+Together this is about two XL systems. It is now the largest new system in the plan, larger than the constructs.
 
 **Risks.**
-1. **Scope.** It competes with co-op and the constructs for the same months. The roadmap places it so that it does not block them (milestone GF).
-2. **Compressed time.** Speeding nature up is an exaggeration, and under the project's rule that is the user's call (question 1).
-3. **Legibility.** A deep model the player cannot read is worse than a shallow one. Whether the assistant may give soil and water tests is a marked item (section 9.6). If it may, they belong in the first version.
-4. **Presentation cost.** A soil state for each cell of the near terrain and many small crop instances both spend the smaller machine's scarcest resources. Each needs a budget before it is built.
-5. **Art.** Crops at every stage, convincing bare and worked ground, silted water.
-6. **Moving water on a static system.** The overlay is safe by construction, but a pond surface and shore that move are new ground for the water renderer.
-7. **Catch-up.** A farm left for a long time must not stall the game on return. Cap the steps and summarise beyond the cap.
+1. **Scope.** It has doubled. The roadmap splits it in two (GF1 and GF2) so that the farm can be played long before the garden is finished. Where the garden sits in the order is question 3 in section 9.7.
+2. **The look of the whole world can now change.** A megastorm that really thins forest on every lap could leave the late game looking very different from the world the player landed in. How hard it hits is question 2 in section 9.7.
+3. **Presentation cost.** A texture sample in every terrain shader, more tile rebuilds, crop instances and soil states all spend the smaller machine's scarcest resources. Each needs a budget before it is built: proposed, at most 0.1 ms of GPU for the garden texture and no tile rebuild outside the tally.
+4. **Identity with an empty overlay.** If a world with no departures is not bit-identical to today's, every vegetation golden moves. This is the first thing to prove.
+5. **Determinism across machines.** Whole-number arithmetic and steps that do not depend on order are requirements, not preferences.
+6. **Legibility.** The two instruments and the assistant's log are part of the first version.
+7. **Art.** Crops at every stage in two families, convincing bare and worked ground, silted water, scrub and young woodland that the tree packs may not cover.
+8. **Tuning at speed.** At a season a ring day, a mistake in a rate shows in minutes. That helps testing and punishes players, so the first rates should forgive.
 
 ## 4. The two play styles, side by side
 
@@ -1051,17 +1177,20 @@ The current rule says to avoid "omniscient ring AI, lore claims". A sentient rin
 2. **It reports behaviour, never intent.** "The door sealed four seconds after the cutter powered up" is in character. "It doesn't want us cutting" is not. It calls the Lamplighter "the resident system" and keeps to what that system has been observed to do.
 3. **Lore reaches its voice only as recovered evidence.** It can read out what a record says and say where the record came from. It does not explain the ring.
 4. **Its honesty is the player's anchor.** In a world where a far greater intelligence can manipulate information, the one voice that never guesses is worth more than any weapon. The existing rule was written to prevent a cliché. In this design it is the reason the player trusts the suit.
-5. **It does not explain the game.** Under the standing rule at the top of this document it does not name the ring's rules, estimate the ring's attitude or give advice. Each place where this plan would have had it do so is marked for the user (section 9.6).
+5. **It explains sparingly, and only in its own way** (the standing rule at the top of this document). What the user has chosen to have explained (section 9.6) comes from the assistant as an observation, a count, a reading or a labelled estimate. Each is said once and then lives in the log. It gives no advice, names no rule and uses none of this document's design words.
 
-Suggested replacement wording for the rule, for the user to approve: "The assistant is not the ring's intelligence and has no special knowledge of it. It reports what the resident system has been observed to do. It never states the resident system's intent, motive or history as fact, and unless the user decides otherwise it offers no theory about them."
+Suggested replacement wording for the rule, for the user to approve: "The assistant is not the ring's intelligence and has no special knowledge of it. It reports what the resident system has been observed to do. It may point out a pattern it has counted, and may give an estimate if it labels it as one with its confidence. It never states the resident system's intent, motive or history as fact."
 
 ### 6.3 What it does in the loops
 
-- **Timers.** It times what the player asks it to time. After two passes it logs that the pulse is regular, and the player can set a countdown on it. **Explain to player? (ask the user):** offering that countdown unprompted. At stake: little. Players can time the pulse themselves, though some will not think to. The megastorm and eclipse line tables already exist.
-- **The field log** (section 2.6): what happened, when and where. It is its most important screen, and it draws no conclusions.
+- **The pulse countdown** (explained; user, 2026-11-21). After it has watched two passes it says so, once: "That light is regular. Three hundred seconds. I can count it down." A small countdown then sits on the HUD and can be dismissed. It says nothing about what the pulse is for. The megastorm and eclipse line tables already exist.
+- **The first hour** (explained; user, 2026-11-21). Two restrained things tell the player that power matters. Before the landing, the mission's own protocol page asks for emissions discipline "until we know what is listening", which is the caution a real expedition would write. And after the first time the ring responds to a loud act, the assistant makes one observation, once: "That followed our power draw. I had us at full output when the light passed." Neither says what the ring is or what it wants.
+- **The estimate and the district reading** (explained; user, 2026-11-21): sections 2.12 and 2.2.
+- **Soil and water tests** (explained; user, 2026-11-21): section 3.13.
+- **The field log** (section 2.6): what happened, when and where, with a page of the patterns it has counted. It is its most important screen.
 - **Analysis.** The leaf. The air. Salvage.
 - **Vitals and warnings**, with critical lines always authored and never rewritten, as the megastorm design already requires.
-- **The database**, unlocked by first observation, as "Structural resonance" already is. Entries record what was observed and measured. They are lore, not instructions. **Explain to player? (ask the user):** how much an entry may conclude. The megastorm entry drafted earlier tells the player outright how to shelter. At stake: the megastorm's hazards kill, and learning them only by dying may be too harsh.
+- **The database**, unlocked by first observation, as "Structural resonance" already is. Entries may draw conclusions (explained; user, 2026-11-21). They are written as the expedition's own working notes: what was observed, then a conclusion marked as the current reading. A conclusion can be wrong, and it is revised when the evidence changes. The Veil's entry begins as "a malfunction" and is corrected twice (section 1.12).
 
 ### 6.4 Interference, and the rule that keeps it fair
 
@@ -1148,7 +1277,7 @@ Sizes are in the repo's work orders: S is 1 to 3, M is 4 to 8, L is 9 to 20, and
 | Signature and senses | M | Pure model. Reads the pulse clock, the field bus, cover queries. |
 | The director: Attention, Standing and the ward ledgers (reputation, section 2.12), response scheduling, the tactic ledger | L | Pure C#, headless-testable, ticked on the weather clock. The design risk is tuning, not code. |
 | Vegetation edit store: felling, planting, plots, the dawn tally | M to L | New. Reputation's garden half depends on it (section 2.12). It must sit on the T5 and T6 scatter without disturbing their determinism. |
-| Deep farming: soil, crops, the water overlay, pests and pollinators, presentation, tools | XL | Section 3.13, milestone GF. The second-largest new system, with its own design doc. The risks are scope, compressed time and presentation cost. |
+| The living garden: the farm's soil, crop and water model, the ring-wide garden cells and ring terms, promotion and demotion, presentation near and far | About two XL | Section 3.13, milestones GF1 and GF2. Now the largest new system in the plan, with its own design doc. The risks are scope, presentation cost and bit-identity with an empty overlay. |
 | Site kit: doors, sockets, terminals, lifts, power state | L, then M per kind of site | The spire facility first. Interiors are the real content cost. |
 | Directed weather | M | Storms the director can place, steer and save. Must stay a pure function of seed, time and saved events (7.5). |
 | Megastorm damage and shelter ratings | M | The queries and interfaces exist |
@@ -1248,10 +1377,10 @@ Each milestone ends in something the user can play. Play tests come back as a li
   - A lander as the foothold: recharge, storage, save.
   - Suit power, body temperature, water, and health with falls.
   - About eight items and a simple inventory.
-  - The Count: going dark, standing to be counted, a timer the player can set, cover from canopy, rock and water.
+  - The Count: going dark, standing to be counted, the assistant's countdown, cover from canopy, rock and water.
   - Attention, and the ladder from Uncounted to Trespasser and to Stray.
   - One response on each channel: a watcher, doors and lights at the spire facility, a rain cell that may or may not be coincidence.
-  - The field log, and three rules that can be learned from the ring's behaviour alone: the Count, closed doors, powered tools near structures.
+  - The field log with its patterns page, the district reading, and three rules to be learned: the Count, closed doors, powered tools near structures.
   - About forty assistant lines, subtitled.
   - One job: fetch a written-off part from the spire's gallery to repair the lander's antenna and raise the ship.
 - **Out.** Co-op, weapons and combat, crafting, the underground, the megastorm, the Deep Line, the story.
@@ -1260,7 +1389,7 @@ Each milestone ends in something the user can play. Play tests come back as a li
   2. can state two of the three rules afterwards in their own words;
   3. is noticed at least once and brings the ward back down at least once;
   4. describes the ring as indifferent at first and attentive later.
-- **What this test now also decides.** With nothing explained, criterion 2 measures whether showing is enough. If players cannot state the rules, the marked items in section 9.6 are the first remedies to try. **Explain to player? (ask the user):** whether the first hour says anything at all about powered suit use being what the ring notices. At stake: the link between power and being seen is the centre of the game, and a player could miss it for hours.
+- **What this test also checks.** That the things the user chose to have explained (section 9.6) read as the suit talking and not as a tutorial. If a play tester describes any of them as the game telling them what to do, that line is rewritten.
 - **Unblocks.** The decision to build the rest. If the Count is not fun here, nothing built on it will be.
 - **Size.** XL across several orders, roughly 30 to 40. Depends on G0.
 
@@ -1272,23 +1401,42 @@ Each milestone ends in something the user can play. Play tests come back as a li
 - **Unblocks.** Content at scale; a game worth playing with someone else.
 - **Size.** XL. Depends on G1; benefits from T5, T6 and T9i.
 
-### GF. The living ground (deep farming)
+### GF1. The living ground (the farm)
 
-- **Goal.** Farming as a full soil, water and ecosystem model (section 3.13), read by the ring's reputation.
+- **Goal.** Farming as a full soil, crop and water model (section 3.13), fast enough to show results in one session, read by the ring's reputation.
 - **How it is staged.**
-  - Its design doc is written alongside G0.
-  - Its models (soil, crops, the water overlay) are pure code. They are built and tested headless while G1 and G2 are in progress, without touching gameplay.
+  - The design doc for all of section 3.13 is written alongside G0.
+  - The models are pure code. They are built and tested headless while G1 and G2 are in progress, without touching gameplay.
   - It becomes playable after G2, which supplies the foothold, the inventory, the fabricator and the vegetation edit store.
   - It runs alongside G3 and G4, not ahead of them.
-- **In.** Everything in the parts table of section 3.13.
-- **Playable test.** Two plots on one slope above a stream, over about ten ring days. One is farmed with care and one for yield, with fabricated fertiliser. It passes if:
-  1. the two plots' soil readings diverge in the way a farmer would expect (in the debug overlay, and in the assistant's tests if those are allowed);
-  2. after rain the hard-farmed plot shows rills and the stream below it runs brown, and the other does not;
-  3. the ring's treatment of the player in that ward changes at the tallies that follow, and it can be seen in doors, lights and menders;
-  4. resting and covering the damaged plot turns its readings round;
-  5. a second player who joins midway sees the same two plots in the same state.
-- **Unblocks.** The abide path as a way to live, not only a way to behave. The keeping.
-- **Size.** XL. Depends on G2, the rivers freeze, T4 (ground), and T5 and T6 (scatter); on T7-11 for ponds and wetlands; and on T9a if small streams are to be farmed from. Co-op replication of farm state lands with G3 or after it.
+- **In.** The fine model, both crop families, the water overlay, the two instruments, the farm's presentation.
+- **Playable test.** One session of about two ring days: two plots on one slope above a stream, one farmed with care and one for yield with fabricated fertiliser. It passes if:
+  1. both plots give a harvest inside the session;
+  2. the soil tests diverge in the way a farmer would expect;
+  3. at the first rain the hard-farmed plot shows rills and the stream below it runs brown, and the other does not;
+  4. the ring's treatment of the player in that district changes at the next dawn, and the assistant's estimate says so;
+  5. resting and covering the damaged plot turns its readings round by the end of the session;
+  6. a second player who joins midway sees the same two plots in the same state.
+- **Unblocks.** The abide path as a way to live, not only a way to behave.
+- **Size.** XL. Depends on G2, the rivers freeze, T4 (ground), and T5 and T6 (scatter); on T7-11 for ponds and wetlands; and on T9a if small streams are to be farmed from.
+
+### GF2. The living garden (ring-wide)
+
+- **Goal.** The whole garden as an ecosystem that answers to what is done to it: garden cells, ring terms, promotion and demotion, and the overlay that shows it near and far.
+- **How it is staged.**
+  - **First, and early: identity.** The scatter density factor and the garden texture go in with an empty overlay and are proved bit-identical to today's world. This can be done as soon as T5 and T6 allow, well before the rest.
+  - **Then the model,** headless: cells, succession, spread, cause, the budget.
+  - **Then the ring terms:** the megastorm's wake and the engines' weather.
+  - **Then it is played.** The recommended place is after G4; see question 3 in section 9.7.
+- **Playable test.**
+  1. A world with no departures matches its vegetation and terrain captures from before the feature, exactly.
+  2. Fell a clearing 300 m across and walk away. A ring day later it is grass, and from a ridge it reads as a pale patch. Eight ring days later it is scrub.
+  3. Set a drought engine to repaired and watch from the far arch: over about twenty ring days its patch greens.
+  4. Let the megastorm pass over exposed forest. A lap later the scar is there and visibly recovering.
+  5. A second player 500 km away sees the same garden on the arch.
+  6. The garden's step stays inside its worker budget, the garden texture inside 0.1 ms of GPU on the smaller machine, and the save inside the sizes of section 3.13.
+- **Unblocks.** The Fever's cost made visible. Repair that changes the look of the ring. The keeping as a real occupation.
+- **Size.** XL. Depends on GF1, T5 and T6, and the megastorm and machine state that G4 and G5 bring.
 
 ### G3. Company (co-op)
 
@@ -1325,7 +1473,7 @@ Each milestone ends in something the user can play. Play tests come back as a li
 - **Goal.** The game after the story, and the larger toys.
 - **In, each on its own go.** The maintenance loop. Rover and aircraft. Animals. Block building, if the backend allows. More constructs and counters.
 
-**The order, and why.** Seams, then the slice, because the slice is the cheapest way to find out whether the Count is fun. Then the expedition loop, because co-op needs something to do. Then co-op before enemies, for the reason in 7.4. Then the ladder, then the story, because the story needs the ladder. Farming runs beside this line from G2 onward: its models are built early because they are pure code, and it is played once the expedition loop exists.
+**The order, and why.** Seams, then the slice, because the slice is the cheapest way to find out whether the Count is fun. Then the expedition loop, because co-op needs something to do. Then co-op before enemies, for the reason in 7.4. Then the ladder, then the story, because the story needs the ladder. The living garden runs beside this line in two parts. The farm (GF1) is played once the expedition loop exists. The ring-wide garden (GF2) proves its bit-identity early and is played after the ladder, because its two largest drivers, the megastorm and the state of the machines, arrive with G4 and G5.
 
 ## 9. User decisions (2026-11-21) and new questions
 
@@ -1379,34 +1527,42 @@ The four questions raised by the first answers, with the user's replies.
 - reputation is shown without a raw number (section 2.12);
 - a Guest must first undo their own damage to the ring's machines (section 2.12).
 
-### 9.5 Next questions: the scope of farming
+### 9.5 Fifth round: the scope of farming (2026-11-21)
 
-1. **How fast does the living ground run?**
-   **Recommendation: one ring day stands for about ten days in the field, and every process uses the same factor.** A hundred-day crop then takes ten ring days, about twelve hours of play, most of it spent elsewhere. Erosion stays permanent on any timescale a player will see. This is a deliberate speeding-up of nature, which under the project's rule is the user's to grant.
+| # | Question | The user's answer | Where it lands |
+|---|---|---|---|
+| 1 | How fast does the living ground run? | **Faster than the ten field days a ring day that was proposed.** Results should show within a single session. | Section 3.13, "Time": proposed as one growing season a ring day, with the farm stepping at every pulse, on one clock for the whole ring. A two-speed scheme was considered and rejected. Confirmation is question 1 in 9.7. |
+| 2 | How far does the simulation reach? | **The whole garden,** as a ring-wide ecosystem. | Section 3.13 redesigned: the baseline as the balance, four levels of detail, promotion and demotion, the overlay near and far, authority, save size and what is ruled out. Milestone GF is split into GF1 and GF2. |
+| 3 | What is farmed? | **Both** the garden's wild food plants and the ship's cultivars. | Section 3.13, "What is farmed" |
 
-2. **How far does the simulation reach?**
-   **Recommendation: the farm and its shadow.** The plots, a ring of habitat around them and the water downstream are simulated. The wild garden stays what the seed makes it, plus edits. Simulating the whole garden as a living ecosystem would be a different and much larger project, and it would end the determinism that the rest of the engine relies on.
+### 9.6 Explain to the player? (answered 2026-11-21)
 
-3. **What is farmed?**
-   **Recommendation: both the garden's own food plants and the ship's seed, with a real difference between them.** The garden's plants are the wild ancestors of crops: hardy, suited to their habitat and low in yield. The ship's are modern cultivars: high in yield and hungry for water and nutrients. Neither is harmful in itself. The trade between them is the story's argument in small, and it is where the ship's demand for yield figures bites.
+The user's standing rule: "Try not to over explain things to the player, a lot of this will come in as lore. Ask me if something should be explained to the player." Asked about the nine marked items, the user chose to explain eight and hide one. Each explained item comes from the assistant's voice or a suit instrument, once and briefly, and never as tutorial text.
 
-### 9.6 Explain to the player? Items marked under the standing rule
-
-The user's rule of 2026-11-21: "Try not to over explain things to the player, a lot of this will come in as lore. Ask me if something should be explained to the player." The plan now defaults to showing. These are the places where it used to explain, each left hidden unless the user says otherwise.
-
-| # | Should the game explain this? | Where | At stake if it stays hidden | This plan's suggestion |
+| # | Item | The user's answer | How it is presented | Where |
 |---|---|---|---|---|
-| 1 | The final warning before Struck: two spoken lines from the assistant, one at the start of the last count and one as the player begins the act | 2.12 | The one irreversible state can be entered by a player who took the ring's pause for a truce | Explain. It is the only item here that cannot be undone. |
-| 2 | A plain warning on the join screen when a friend joins a struck expedition | 2.12 | A friend walks into a permanently hostile world unaware | Explain. It is outside the fiction and costs the story nothing. |
-| 3 | Soil and water tests from the assistant, as readings without advice | 3.13 | A player cannot tell why a crop failed; the deep model goes unread | Explain, as readings only |
-| 4 | The assistant pointing out a pattern in its log once it has seen it several times | 2.6 | Some players never connect cause and effect, and the ring feels arbitrary | Keep hidden at first. Decide from the slice's play test. |
-| 5 | An estimate of how the ring is treating the expedition, in words | 2.12 | A player misjudges where they stand, most of all far from any site | Keep hidden |
-| 6 | A ward activity reading on the HUD | 2.2 | Far from a site there is almost nothing to read alertness from | Keep hidden |
-| 7 | Anything in the first hour about powered suit use being what the ring notices | G1 | The central link between power and being seen is missed for hours | Keep hidden. The first loud act and what follows it should teach it. Decide from the slice's play test. |
-| 8 | How much a database entry may conclude, the megastorm's shelter advice above all | 6.3 | The megastorm kills, and learning its hazards only by dying may be too harsh | Keep the megastorm entry as drafted. Keep new entries to what was observed. |
-| 9 | Offering the pulse countdown unprompted | 6.3 | Little: players can time it themselves | Keep hidden |
+| 1 | The final warning before Struck | **Explain** | Two authored spoken lines from the assistant: its reading at the start of the last count, and one sentence as the player begins the act | 2.12 |
+| 2 | A join-screen warning for a struck expedition | **Keep hidden** | No warning. A friend finds out the way the others did. | 2.12 |
+| 3 | Soil and water tests | **Explain** | Two instruments, a soil probe and a water test, giving readings with numbers and units. The assistant reads and logs them and gives no advice. | 3.13 |
+| 4 | The assistant pointing out patterns in its log | **Explain** | After three repeats it says so once, as a count and not a rule. The pattern then sits on a page of the log with a running tally. | 2.6 |
+| 5 | A worded estimate of how the ring is treating the expedition | **Explain** | One line in the assistant's own words with its confidence, spoken when it changes and kept on a suit page. Not a meter. | 2.12 |
+| 6 | A district activity reading on the HUD | **Explain** | A small three-step instrument (quiet, stirring, searching) built from what the suit observes, which dims to "no data" far from any site | 2.2 |
+| 7 | Something in the first hour about powered suit use | **Explain** | The mission's protocol page asks for emissions discipline; and the assistant makes one observation after the ring first responds to a loud act | 6.3 |
+| 8 | Database entries that draw conclusions | **Explain** | Entries are the expedition's working notes: an observation, then a conclusion marked as the current reading, revised when the evidence changes | 6.3 |
+| 9 | The pulse countdown, unprompted | **Explain** | After two passes the assistant offers it once. A small countdown then sits on the HUD and can be dismissed. | 6.3 |
 
-Already changed to showing, with nothing to ask: the rulebook is now a plain field log; light colours and the ring's signals have no legend; changes of class are events the ring makes, and the assistant logs them without their meaning; the ship's explanations are a character's opinions and are sometimes wrong.
+Unchanged: light colours and the ring's signals have no legend, and the ship's explanations are a character's opinions and are sometimes wrong.
+
+### 9.7 Next questions
+
+1. **Is one growing season a ring day the right speed?**
+   **Recommendation: yes, on one clock for the whole ring.** Quick greens come in about 40 minutes and a main crop in 75. A year is four ring days, so a cleared wood is scrub in a few sessions and never mature forest again inside a campaign. It is about 1,700 times the speed of life, which is the user's to grant. The alternative is two seasons a ring day, which doubles everything again and makes weather and farming feel unrelated.
+
+2. **How hard does the megastorm hit the garden, now that the garden is simulated?**
+   **Recommendation: it scars and does not kill.** Realistically a 60 kPa wall flattens exposed forest outright, and at this speed of time the forest has about five years to regrow between laps, so a faithful model would leave the late game a world of scrub. The proposal is heavy loss in exposed country (about half the canopy on each pass), little in the lee of hills and valleys, and none inside the ring's structures. The Fever then visibly costs the garden lap by lap without erasing the place the player came to know. This softens the physics, so under the project's rule it is the user's call.
+
+3. **Where does the ring-wide garden sit in the order?**
+   **Recommendation: the farm (GF1) after the expedition loop, as before; the ring-wide garden (GF2) after the immune response (G4) and beside the first two acts (G5).** Its bit-identity proof is done early, because that is cheap and protects the vegetation work. The alternative is to bring GF2 forward, ahead of the constructs. That would give the abide path its world sooner and delay everything the blight path needs.
 
 **Smaller choices that can wait:** how often eclipses come; whether the Lamp's late ignition and violent collapse are read as signs of age (section 1.2); whether the question-and-answer assistant becomes a feature; a Pleistocene animal roster; and the ship's casting.
 
