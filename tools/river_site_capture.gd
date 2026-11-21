@@ -11,6 +11,10 @@ extends SceneTree
 ##                        shader instance-uniform buffer), and at an idle timeout what is still busy
 ## a view may carry "variants": extra stills <name>_<tag>_<variant>.png after the plain one. "clouds": the saved cloud quality; "watermask": the water SSR debug view, so water
 ## surfaces draw black; "nosunshadow": the sun shadow map off (the water surface casts into it); "levels": one flat colour per proxy level (2 m red, 4 m orange, 8 m yellow, 16 m green, 32 m cyan, 64 m blue, coarser magenta), seen through the water.
+## a view may carry "time": {"mode": "noon"|"fraction"|"elevation", ...} (tools/shadow_harness_common.gd apply_time): applied right before that view's still, and noon is restored after the view and its variants;
+## the sun elevation is recorded as "sun_elevation_deg" in the view's index entry.
+## a view may carry "ambience": true: after its plain still the pose is held 4 s and the WaterAmbience node's diagnostics are stored in the view's index entry ("ambience": sounding_count, playing_count,
+## masker_db, finder_ms, node_ms, source_count, proximity and the playing voices with layer, kind, distance, level_db, mix_gain, cutoff_hz) and printed as one "RIVER_SITE_CAPTURE ambience" line.
 ## places file: [{"name": "d1_stem9943", "caption": "...", "around_km": 23735.336, "across_km": 208.712, "ground_m": 398 (optional: probed when absent),
 ##                "views": [{"tag": "top600", "lift_m": 600, "yaw": 0, "pitch": -89}, ...]}]
 ## Prints RIVER_SITE_CAPTURE=PASS|FAIL and writes index.json beside the stills.
@@ -98,6 +102,31 @@ func _apply_variant(variant: String, on: bool) -> float:
 				shadows.call("SetShadowTuningOverride", "Enabled", false if on else _saved_sun_shadows)
 			return 3.0
 	return 0.0
+
+
+## Holds the pose 4 s, then reads the WaterAmbience diagnostics (see the header).
+func _read_ambience(place_name: String, tag: String) -> Dictionary:
+	for i in 240:
+		await process_frame
+	var node := _game.get_node_or_null("WaterAmbience")
+	if node == null or not node.has_method("GetWaterAmbienceDiagnostics"):
+		print("RIVER_SITE_CAPTURE ambience place=%s view=%s error=no WaterAmbience" % [place_name, tag])
+		return {"error": "no WaterAmbience"}
+	var diagnostics: Dictionary = node.call("GetWaterAmbienceDiagnostics")
+	var voices: Array = []
+	var texts: Array = []
+	for voice_value in diagnostics.get("voices", []):
+		var voice: Dictionary = voice_value
+		if not bool(voice.get("playing", false)):
+			continue
+		voices.append({"layer": str(voice.get("layer", "")), "kind": str(voice.get("kind", "")), "distance": float(voice.get("distance", NAN)), "level_db": float(voice.get("level_db", NAN)),
+			"mix_gain": float(voice.get("mix_gain", NAN)), "cutoff_hz": float(voice.get("cutoff_hz", NAN))})
+		texts.append("%s:%.0f m:%.1f dB" % [str(voice.get("kind", "")), float(voice.get("distance", NAN)), float(voice.get("level_db", NAN))])
+	var result := {"sounding_count": int(diagnostics.get("sounding_count", 0)), "playing_count": int(diagnostics.get("playing_count", 0)), "masker_db": float(diagnostics.get("masker_db", NAN)),
+		"finder_ms": float(diagnostics.get("finder_ms", NAN)), "node_ms": float(diagnostics.get("node_ms", NAN)), "source_count": int(diagnostics.get("source_count", 0)),
+		"proximity": float(diagnostics.get("proximity", NAN)), "voices": voices}
+	print("RIVER_SITE_CAPTURE ambience place=%s view=%s sounding=%d voices=%s finder_ms=%.3f node_ms=%.3f" % [place_name, tag, int(result["sounding_count"]), ", ".join(texts), float(result["finder_ms"]), float(result["node_ms"])])
+	return result
 
 
 func _print_counters(where: String) -> void:
@@ -297,6 +326,9 @@ func _run() -> void:
 			var offset_around := float(view.get("offset_around_m", 0.0))
 			var offset_across := float(view.get("offset_across_m", 0.0))
 			explorer.call("TeleportToCanonicalMeters", around + offset_around, ground + lift, across + offset_across, yaw, pitch, true)
+			var view_time: Dictionary = {}
+			if view.has("time"):
+				view_time = COMMON.apply_time(_game, view["time"])
 			await COMMON.settle(self, 1.0)
 			var view_idle: Dictionary = await _wait_idle(float(_args.get("view-timeout", "150")), 60)
 			if drawer_node != null and drawer_node.has_method("SetBenchmarkDrawerOpen"):
@@ -329,8 +361,13 @@ func _run() -> void:
 			var error := image.save_png(_out.path_join(file))
 			if error != OK:
 				failed += 1
-			(record["views"] as Array).append({"tag": tag, "file": file, "lift_m": lift, "yaw": yaw, "pitch": pitch, "idle": view_idle, "altitude_above_terrain_m": float(explorer.get("CurrentAltitudeAboveTerrainMeters"))})
+			var view_entry := {"tag": tag, "file": file, "lift_m": lift, "yaw": yaw, "pitch": pitch, "idle": view_idle, "altitude_above_terrain_m": float(explorer.get("CurrentAltitudeAboveTerrainMeters"))}
+			if view.has("time"):
+				view_entry["sun_elevation_deg"] = view_time.get("sun_elevation_deg", NAN)
+			(record["views"] as Array).append(view_entry)
 			print("RIVER_SITE_CAPTURE still=%s idle=%s after %.0f s" % [file, view_idle["idle"], view_idle["seconds"]])
+			if bool(view.get("ambience", false)):
+				view_entry["ambience"] = await _read_ambience(name, tag)
 			for variant_value in view.get("variants", []):
 				var variant := str(variant_value)
 				await COMMON.settle(self, _apply_variant(variant, true))
@@ -342,6 +379,8 @@ func _run() -> void:
 					failed += 1
 				await COMMON.settle(self, _apply_variant(variant, false))
 				print("RIVER_SITE_CAPTURE still=%s" % variant_file)
+			if view.has("time"):
+				COMMON.apply_time(_game, {"mode": "noon"})
 			if counters:
 				_print_counters(file)
 		index.append(record)

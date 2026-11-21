@@ -86,6 +86,7 @@ public partial class RingLiveTuningDrawer
         reset.Pressed += ResetEmitterSites;
         section.AddChild(reset);
         RefreshEmitterNavigationLive();
+        BuildCoordinateTravelSection(tabRoot);
     }
 
     private static void AddEmitterNavButtons(VBoxContainer section, params (string Text, Action Action)[] buttons)
@@ -214,6 +215,7 @@ public partial class RingLiveTuningDrawer
 
     private void ProcessEmitterNavigation(double delta)
     {
+        ProcessCoordinateTravel(delta);
         EmitterTeleportPhase state = _emitterTeleport.Poll(delta);
         if (state != _emitterNavLastState || state == EmitterTeleportPhase.Holding)
         {

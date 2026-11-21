@@ -17,7 +17,10 @@ var deadline := 0
 var explorer: Node
 var surface: Node
 var game: Node
-var session: SessionStub
+var session: Node
+var _loader: Node
+var _load_failure := ""
+var _loaded_world: Node
 var failed := false
 var max_grounded_gap := 0.0
 var grounded_gap := 0.0
@@ -142,8 +145,28 @@ func _capture_benchmark_telemetry() -> bool:
 		return false
 	return true
 
+## T2R-14: a world with the review feature water.rivers needs its river graph baked, which only the real loading screen does (as tools/rivers_perf_probe.gd and tools/river_site_capture.gd load it).
+func _wants_rivers() -> bool:
+	for value in OS.get_cmdline_user_args():
+		if value.begins_with("--review-features=") and "water.rivers" in value.trim_prefix("--review-features=").split(","): return true
+	return false
+
 func run() -> void:
+	var rivers := _wants_rivers()
 	fixture = "res://.godot/terrain-generation-tests/m6-%s" % Time.get_ticks_usec()
+	if rivers:
+		# The rivers path runs through the real loading screen and the real (isolated) WorldSession; the fixture folder only holds the report.
+		for unsupported in ["--isolate", "--telemetry", "--sync-baseline", "--legacy", "--reference-v1", "--landforms"]:
+			if unsupported in OS.get_cmdline_user_args(): fail("%s is not supported together with --review-features=water.rivers (the world loads through the loading screen)" % unsupported); return
+		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(fixture))
+		deadline = Time.get_ticks_msec() + 240000
+		game = await create_game_rivers()
+	else:
+		await _run_gen1_setup()
+	if game == null: return
+	await _run_benchmark()
+
+func _run_gen1_setup() -> void:
 	ProjectSettings.set_setting("ringworld/runtime/active_world_directory", fixture)
 	ProjectSettings.set_setting("ringworld/runtime/terrain_backend", "surface_runtime_generation_v1" if "--legacy" not in OS.get_cmdline_user_args() else "terrain3d_surface_v1")
 	# Landforms (v7) are opt-in here so existing benchmark numbers stay on v6: pass --landforms.
@@ -153,7 +176,8 @@ func run() -> void:
 	session=SessionStub.new(); session.name="WorldSession"; root.add_child(session)
 	deadline = Time.get_ticks_msec() + 240000
 	game = await create_game()
-	if game == null: return
+
+func _run_benchmark() -> void:
 	_apply_cloud_resolution_override()
 	if failed: return
 	explorer = game.get_node_or_null("Explorer"); surface = game.get_node_or_null("Terrain3DGameplay")
@@ -206,6 +230,40 @@ func run() -> void:
 	if not await capture_render("terrain-end.png"): return
 	report(game, speed, distance, origin_a, origin_z)
 	game.queue_free(); await ticks(2); quit(0)
+
+func create_game_rivers() -> Node:
+	var user_dir := ProjectSettings.globalize_path("user://").replace("\\", "/").to_lower()
+	var real_roaming := OS.get_environment("USERPROFILE").replace("\\", "/").to_lower() + "/appdata/roaming"
+	if user_dir.begins_with(real_roaming): fail("the rivers path loads a world through the real loading screen: run it with an isolated -AppData profile"); return null
+	session = root.get_node_or_null("WorldSession")
+	if session == null or not session.select_slot(1): fail("isolated world slot unavailable"); return null
+	var pinned_generation := arg_optional_int("--generation=")
+	var review := PackedStringArray()
+	for value in OS.get_cmdline_user_args():
+		if value.begins_with("--review-features="): review = PackedStringArray(value.trim_prefix("--review-features=").split(","))
+	var seed_value := arg_float("--seed=", 1337.0)
+	var launcher := LAUNCHER.instantiate(); root.add_child(launcher); current_scene = launcher
+	launcher.call("_on_certified_preset_pressed")
+	launcher.get("terrain_backend_selector").select(2)
+	launcher.call("_on_terrain_backend_selected", 2)
+	(launcher.get("terrain_seed_spin") as SpinBox).value = seed_value
+	launcher.set("_selected_world_generation", maxi(pinned_generation, 1))
+	launcher.set("_selected_review_features", review)
+	print("TERRAIN3D_TRAVEL rivers path: generation=%s review=%s seed=%s" % [launcher.get("_selected_world_generation"), launcher.get("_selected_review_features"), seed_value])
+	launcher.call("_start_game")
+	_loader = root.get_node_or_null("RingWorldLoading")
+	if _loader == null: fail("loading screen did not appear"); return null
+	_loader.world_ready.connect(func(world: Node): _loaded_world = world)
+	_loader.loading_failed.connect(func(message: String): _load_failure = message)
+	var load_deadline := Time.get_ticks_msec() + 600000
+	while _loaded_world == null and _load_failure.is_empty() and Time.get_ticks_msec() < load_deadline: await process_frame
+	if _loaded_world == null: fail(_load_failure if not _load_failure.is_empty() else "world load timed out"); return null
+	deadline = Time.get_ticks_msec() + 240000
+	while Time.get_ticks_msec() < deadline:
+		await process_frame
+		var gameplay: Node = _loaded_world.get_node_or_null("Terrain3DGameplay")
+		if gameplay != null and bool(gameplay.call("EnsureInitialized")): return _loaded_world
+	fail("startup readiness deadline"); return null
 
 func create_game() -> Node:
 	# T5-10: `--generation=N [--review-features=a,b]` pins the world generation before the launcher reads it (tools/world_generation_pin.gd, as the landscape harness does); no flag, no pin.
@@ -403,7 +461,7 @@ func report(game: Node, speed: float, distance: float, around: float, across: fl
 	for value in frames: max_ms=maxf(max_ms,value)
 	var final_surface: Dictionary = surface.call("GetSurfaceDiagnostics")
 	var final_coverage_waits := _coverage_wait_count(final_surface)
-	var data = {"backend":"legacy" if "--legacy" in OS.get_cmdline_user_args() else "runtime", "reference_v1":"--reference-v1" in OS.get_cmdline_user_args(), "sync_baseline":"--sync-baseline" in OS.get_cmdline_user_args(), "cloud_resolution":_cloud_resolution_report(),"speed_mps":speed,"distance_m":distance,"origin":{"around":around,"across":across},"frames":frames.size(),"p50_ms":pct(frames,.5),"p95_ms":pct(frames,.95),"p99_ms":pct(frames,.99),"max_frame_ms":max_ms,"raw_frame_ms":frames,"raw_frame_profile":raw_frame_profile,"timestamp_note":"raw_frame_profile.timestamp_usec is Godot process uptime. When --telemetry is enabled, raw_frame_profile.runtime_counters.stopwatch_seconds and performance telemetry events share RingPerformanceTelemetry's Stopwatch clock and can be correlated directly.","telemetry_report":telemetry_report,"profile_note":"Frame intervals are adjacent-monitor correlation, not a sum of CPU/GPU timings. Viewport timing covers measured viewports and can exclude custom RenderingDevice compositors or cloud compute.","events":phases,"coverage_waits":{"initial":initial_coverage_waits,"final":final_coverage_waits,"travel_delta":maxi(0, final_coverage_waits-initial_coverage_waits)},"support_probe":{"controller":"IsOnFloor diagnostic","ray_samples":support_ray_samples,"ray_misses":support_ray_misses,"ray":"physics ray, 2m above to 8m below explorer"},"max_ungrounded_diagnostic_seconds":max_grounded_gap,"hardware":{"os":OS.get_name(),"processor":OS.get_processor_name(),"gpu":RenderingServer.get_video_adapter_name()},"graphics":{"viewport_size":root.size,"rendering_method":ProjectSettings.get_setting("rendering/renderer/rendering_method",""),"vsync":DisplayServer.window_get_vsync_mode(),"physics_engine":ProjectSettings.get_setting("physics/3d/physics_engine","")},"world_settings":session.settings.duplicate(true),"failure_context":failure_context,"final_surface":final_surface}
+	var data = {"backend":"legacy" if "--legacy" in OS.get_cmdline_user_args() else "runtime", "reference_v1":"--reference-v1" in OS.get_cmdline_user_args(), "sync_baseline":"--sync-baseline" in OS.get_cmdline_user_args(), "cloud_resolution":_cloud_resolution_report(),"speed_mps":speed,"distance_m":distance,"origin":{"around":around,"across":across},"frames":frames.size(),"p50_ms":pct(frames,.5),"p95_ms":pct(frames,.95),"p99_ms":pct(frames,.99),"max_frame_ms":max_ms,"raw_frame_ms":frames,"raw_frame_profile":raw_frame_profile,"timestamp_note":"raw_frame_profile.timestamp_usec is Godot process uptime. When --telemetry is enabled, raw_frame_profile.runtime_counters.stopwatch_seconds and performance telemetry events share RingPerformanceTelemetry's Stopwatch clock and can be correlated directly.","telemetry_report":telemetry_report,"profile_note":"Frame intervals are adjacent-monitor correlation, not a sum of CPU/GPU timings. Viewport timing covers measured viewports and can exclude custom RenderingDevice compositors or cloud compute.","events":phases,"coverage_waits":{"initial":initial_coverage_waits,"final":final_coverage_waits,"travel_delta":maxi(0, final_coverage_waits-initial_coverage_waits)},"support_probe":{"controller":"IsOnFloor diagnostic","ray_samples":support_ray_samples,"ray_misses":support_ray_misses,"ray":"physics ray, 2m above to 8m below explorer"},"max_ungrounded_diagnostic_seconds":max_grounded_gap,"hardware":{"os":OS.get_name(),"processor":OS.get_processor_name(),"gpu":RenderingServer.get_video_adapter_name()},"graphics":{"viewport_size":root.size,"rendering_method":ProjectSettings.get_setting("rendering/renderer/rendering_method",""),"vsync":DisplayServer.window_get_vsync_mode(),"physics_engine":ProjectSettings.get_setting("physics/3d/physics_engine","")},"world_settings":session.get_active_world_settings(),"failure_context":failure_context,"final_surface":final_surface}
 	var path := ProjectSettings.globalize_path(fixture.path_join("travel-benchmark.json")); var f:=FileAccess.open(path,FileAccess.WRITE); f.store_string(JSON.stringify(data,"\t")); f.close(); print("TERRAIN3D_TRAVEL_BENCHMARK=",path)
 func fail(message: String) -> void:
 	failed=true

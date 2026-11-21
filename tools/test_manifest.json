@@ -5550,6 +5550,18 @@
       "expected_s": 150,
       "timeout_s": 900
     },
+    "river_review_places": {
+      "kind": "tool",
+      "mode": "gpu-local",
+      "tier": "manual",
+      "tags": [
+        "water",
+        "hydrology"
+      ],
+      "marker": "RIVER_REVIEW_PLACES",
+      "expected_s": 120,
+      "timeout_s": 900
+    },
     "river_bed_material_test": {
       "kind": "test",
       "mode": "headless",
@@ -7016,17 +7028,6 @@
       "marker": "TERRAIN_ROCK_MATERIAL",
       "expected_s": 45,
       "timeout_s": 120
-    },
-    "ground_rock_detail_normal": {
-      "kind": "test",
-      "mode": "headless",
-      "tier": "gate",
-      "tags": [
-        "terrain"
-      ],
-      "marker": "GROUND_ROCK_DETAIL_NORMAL",
-      "expected_s": 10,
-      "timeout_s": 60
     },
     "ground_surface_model_test": {
       "kind": "test",

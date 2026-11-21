@@ -90,6 +90,8 @@ func run() -> void:
 	# 6/7. Viewpoints at the land site, the island site and the main site.
 	for entry in [["land", land], ["island", island], ["main", main_info]]:
 		if not await _viewpoints(entry[0], entry[1]): return
+	# 8. Coordinate teleport (grave menu "Travel to coordinates"): a land point about 5 km away, 50 m up, in flight mode.
+	if not await _coordinate_teleport(): return
 	print("EMITTER_SITE_TELEPORT=PASS frames=%d %s" % [frames_seen, " ".join(summary)])
 	game.queue_free(); await process_frame; quit(0)
 
@@ -300,6 +302,40 @@ func _viewpoints(label: String, info: Dictionary) -> bool:
 	if not (align_far > 0.99): _fail("%s far: alignment %.4f" % [label, align_far]); return false
 	summary.append("%s_far=%s/err=%.3f/align=%.4f" % [label, "hover" if hover else "grounded", far_error, align_far])
 	if capture_dir != "": await _capture("%s_far" % label, 120)
+	return true
+
+func _coordinate_teleport() -> bool:
+	var diag := _diag()
+	var start_around := float(diag["player_around"])
+	var target_across := clampf(float(diag["player_across"]), 20000.0, 298000.0)
+	# The streamed height field only covers the player's surroundings, so a land column cannot be probed from here; the main site stands on land and its surroundings are land.
+	var target_around := start_around + 5000.0
+	target_around = fposmod(target_around, 31415936.0)
+	if not bool(drawer.call("RequestCoordinateTeleport", target_around / 1000.0, target_across / 1000.0, 50.0)): _fail("coordinate teleport: request refused: %s" % drawer.get("CoordinateTeleportMessage")); return false
+	var start := Time.get_ticks_msec()
+	var state := ""
+	while Time.get_ticks_msec() - start < 90000 and Time.get_ticks_msec() < deadline:
+		if not await _step(): return false
+		state = str(drawer.get("CoordinateTeleportState"))
+		if state == "Arrived" or state == "Failed" or state == "TimedOut": break
+	if state != "Arrived": _fail("coordinate teleport: %s: %s" % [state, drawer.get("CoordinateTeleportMessage")]); return false
+	for i in 20:
+		if not await _step(): return false
+	var ground_waited := 0
+	while ground_waited < 600 and not is_finite(float(surface.call("SampleCollisionHeight", float(_diag()["player_around"]), float(_diag()["player_across"])))):
+		ground_waited += 1
+		if not await _step(): return false
+	diag = _diag()
+	var around_error := absf(float(diag["player_around"]) - target_around)
+	around_error = minf(around_error, 31415936.0 - around_error)
+	var across_error := absf(float(diag["player_across"]) - target_across)
+	var ground := float(surface.call("SampleCollisionHeight", float(diag["player_around"]), float(diag["player_across"])))
+	var above := float(diag["player_height"]) - ground
+	print("EMITTER_TELEPORT coordinate: %s (around error %.2f m, across error %.2f m, %.1f m above terrain, altitude %.1f)" % [drawer.get("CoordinateTeleportMessage"), around_error, across_error, above, float(explorer.get("CurrentAltitudeAboveTerrainMeters"))])
+	if around_error > 5.0 or across_error > 5.0: _fail("coordinate teleport: landed %.2f m around / %.2f m across from the target" % [around_error, across_error]); return false
+	if above < 30.0 or above > 70.0: _fail("coordinate teleport: %.1f m above the terrain (wanted 30 to 70)" % above); return false
+	if not bool(explorer.get("NoclipEnabled")): _fail("coordinate teleport: not in flight mode"); return false
+	summary.append("coordinate=err%.2f/%.2f/above%.1f" % [around_error, across_error, above])
 	return true
 
 func _capture(shot_name: String, settle_frames: int = 45) -> void:
