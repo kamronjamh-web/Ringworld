@@ -7137,6 +7137,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
         _material.SetShaderParameter("biome_forest_albedo", GD.Load<Texture2D>("res://materials/biomes/forest_floor_albedo.png"));
         _material.SetShaderParameter("biome_tundra_albedo", GD.Load<Texture2D>("res://materials/biomes/tundra_ground_albedo.png"));
         _material.SetShaderParameter("biome_alpine_albedo", GD.Load<Texture2D>("res://materials/biomes/alpine_rock_albedo.png"));
+        if (global::RingworldTechDemo.Terrain.Surface.RingGroundSurfaceVariants.WorldHasGroundSurface)
+            _material.SetShaderParameter("ground_rock_albedo", GD.Load<Texture2D>(global::RingworldTechDemo.Terrain.Surface.RingGroundSurfaceVariants.RockFaceAlbedoPath));
         // T4 ground surface (D2): the distance this level's vertex normals are differenced, 4 m at the 2 m level. Inert unless the world has ground.surface.
         if (global::RingworldTechDemo.Terrain.Surface.RingGroundSurfaceVariants.WorldHasGroundSurface)
             _material.SetShaderParameter("ground_slope_baseline_meters", 2.0f * Mathf.Max(SampleSpacingMeters, 2));

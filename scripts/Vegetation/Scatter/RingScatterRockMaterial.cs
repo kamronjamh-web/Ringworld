@@ -49,6 +49,7 @@ public sealed class RingScatterRockMaterial
     {
         Shader shader = GD.Load<Shader>(ShaderPath);
         Texture2D alpine = GD.Load<Texture2D>("res://materials/biomes/alpine_rock_albedo.png");
+        Texture2D rockFace = GD.Load<Texture2D>(RingGroundSurfaceVariants.RockFaceAlbedoPath);
         foreach (RingScatterRenderGroup group in new[] { RingScatterRenderGroup.Boulders, RingScatterRenderGroup.Outcrops, RingScatterRenderGroup.Cobbles })
         {
             RockGroupCatalog data = catalog.Group(group);
@@ -63,6 +64,8 @@ public sealed class RingScatterRockMaterial
                 // The biome albedo is a constant of the terrain; the follower registration replays the live values later.
                 material.SetShaderParameter("biome_texture_scale", .20f);
                 material.SetShaderParameter("biome_alpine_albedo", alpine);
+                // The rock face is a constant of the rock, not a surface follower value: set once here.
+                material.SetShaderParameter("ground_rock_albedo", rockFace);
                 RingCloudShadowProjector.Register(material);
                 RingTerrainMacroShadowProjector.Register(material);
                 _materials[ShaderGroup(group), lod] = material;

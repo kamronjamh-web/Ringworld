@@ -134,9 +134,9 @@ public partial class GroundSurfaceModelTest : RefCounted
             Check(failures, ground.Contains("#define RING_GROUND_SURFACE") && ground.Contains("ring_ground_surface.gdshaderinc"), $"{shipped}_ground.gdshader does not define RING_GROUND_SURFACE and include the ground functions");
         }
 
-        // D1: the rock-mean constant equals the texture's mean linear colour within 0.01.
-        Image image = Image.LoadFromFile(ProjectSettings.GlobalizePath("res://materials/biomes/alpine_rock_albedo.png"));
-        Check(failures, image != null && !image.IsEmpty(), "alpine_rock_albedo.png did not load");
+        // D1 (T8-R2: the rock face): the rock-mean constant equals the texture's mean linear colour within 0.01.
+        Image image = Image.LoadFromFile(ProjectSettings.GlobalizePath("res://materials/ground/rock_face/rock_face_albedo.png"));
+        Check(failures, image != null && !image.IsEmpty(), "rock_face_albedo.png did not load");
         if (image != null && !image.IsEmpty())
         {
             image.Convert(Image.Format.Rgb8);
@@ -149,6 +149,18 @@ public partial class GroundSurfaceModelTest : RefCounted
             var mean = RingGroundSurfaceModel.RockMeanLinear;
             Check(failures, Math.Abs(r - mean.R) < 0.01 && Math.Abs(g - mean.G) < 0.01 && Math.Abs(b - mean.B) < 0.01, $"rock mean linear constant {mean} differs from the texture mean ({r:F4}, {g:F4}, {b:F4})");
             GD.Print($"GROUND_SURFACE_MODEL rock mean linear measured ({r:F4}, {g:F4}, {b:F4}), constant ({mean.R}, {mean.G}, {mean.B})");
+        }
+
+        // T8-R2: the shader constant GROUND_ROCK_MEAN_LINEAR (far rock tone) mirrors RockMeanLinear exactly.
+        string include = FileAccess.GetFileAsString("res://materials/ring_ground_surface.gdshaderinc");
+        System.Text.RegularExpressions.Match constant = System.Text.RegularExpressions.Regex.Match(include, @"const vec3 GROUND_ROCK_MEAN_LINEAR = vec3\(([^,]+),([^,]+),([^)]+)\);");
+        Check(failures, constant.Success, "GROUND_ROCK_MEAN_LINEAR not found in ring_ground_surface.gdshaderinc");
+        if (constant.Success)
+        {
+            var model = RingGroundSurfaceModel.RockMeanLinear;
+            double[] shader = { double.Parse(constant.Groups[1].Value.Trim(), System.Globalization.CultureInfo.InvariantCulture), double.Parse(constant.Groups[2].Value.Trim(), System.Globalization.CultureInfo.InvariantCulture), double.Parse(constant.Groups[3].Value.Trim(), System.Globalization.CultureInfo.InvariantCulture) };
+            Check(failures, Math.Abs(shader[0] - model.R) < 1e-6 && Math.Abs(shader[1] - model.G) < 1e-6 && Math.Abs(shader[2] - model.B) < 1e-6,
+                $"GROUND_ROCK_MEAN_LINEAR ({shader[0]}, {shader[1]}, {shader[2]}) differs from RingGroundSurfaceModel.RockMeanLinear {model}");
         }
     }
 }

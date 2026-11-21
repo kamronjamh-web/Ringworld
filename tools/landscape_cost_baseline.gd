@@ -7,6 +7,8 @@ extends SceneTree
 ##   T4-2: --poses= also takes the dressing poses (see landscape_look_baseline.gd); --feature-ab=<feature id|bit:N> adds the same-boot A-B-A case feature_off (baseline, feature_off, baseline_repeat) that clears the
 ##   feature's bit in the published shader mask through the test-only hook tools/LandscapeFeatureAbBridge.cs; cost.md gets a "Feature A-B-A" table (delta above 0.1 ms flagged). Needs a world with the feature on,
 ##   e.g. --generation=1 --review-features=ground.surface (today only water.rivers exists in the ledger, a no-op control). --quiet as in the look tool.
+##   T8-R3: --rock-ab --extra-cases=rock_old (with --generation=1 --review-features=ground.surface,scatter.rocks) adds the same-boot A-B-A case rock_old (the old alpine-based rock path, switched by an in-memory shader patch);
+##   cost.md gets a "Rock A-B-A" table (baseline minus rock_old, positive = the new rock face costs more).
 ##   A1000 (authoritative) run: laptop, undocked, P0 / 35 W, memory clock 5300-5700 MHz; the same command.
 ## Machine rule: numbers are only authoritative on the A1000 laptop (P0 / 35 W); on any other GPU the output is stamped "non-authoritative" with the machine tag and adapter name.
 ## TR-1 tree LOD modes (docs/work-orders/terrain-vegetation/TR.md), selected after -- or through the LANDSCAPE_HARNESS_ARGS environment variable (tools/run_tests.ps1 has no argument pass-through):

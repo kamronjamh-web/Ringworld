@@ -54,7 +54,7 @@ const MOUNDS := [[-120.0, 30.0, 6.0], [-120.0, -30.0, -6.0], [-232.0, 30.0, 6.0]
 const MOUND_SIGMA := 14.0
 const MOUND_VIEW_D := -120.0
 const REACH_VIEW_D := -232.0
-const DETAIL_NORMAL_PNG := "res://materials/biomes/alpine_rock_detail_normal.png"
+const DETAIL_NORMAL_PNG := "res://materials/ground/rock_face/rock_face_normal.png"
 const FAR_ZONE_SLOPES := [10.0, 36.0, 50.0]
 
 var failures: PackedStringArray = []
@@ -311,6 +311,7 @@ func _build_proxy() -> void:
 	var native := _terrain_material()
 	for parameter in ["biome_grass_albedo", "biome_dirt_albedo", "biome_desert_albedo", "biome_forest_albedo", "biome_tundra_albedo", "biome_alpine_albedo"]:
 		_proxy_material.set_shader_parameter(parameter, native.call("get_shader_param", parameter))
+	_proxy_material.set_shader_parameter("ground_rock_albedo", load("res://materials/ground/rock_face/rock_face_albedo.png")) # T8-R2: read by the ground variant only
 	_proxy_material.set_shader_parameter("biome_texture_weights_enabled", true)
 	_proxy_material.set_shader_parameter("biome_texture_scale", 0.20)
 	_proxy_material.set_shader_parameter("ring_center", Vector3(RING_RADIUS, 0, 0))

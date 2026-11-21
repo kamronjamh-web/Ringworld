@@ -31,8 +31,8 @@ public static class RingGroundSurfaceModel
     public const double DefaultStrataStepM = 40.0;
     public static readonly (double R, double G, double B) RockTint = (0.92, 0.93, 0.96);
     public static readonly (double R, double G, double B) ScreeTint = (1.04, 1.02, 0.98);
-    /// <summary>Mean linear colour of materials/biomes/alpine_rock_albedo.png.</summary>
-    public static readonly (double R, double G, double B) RockMeanLinear = (0.2189, 0.2220, 0.2160);
+    /// <summary>Mean linear colour of materials/ground/rock_face/rock_face_albedo.png (T8-R2).</summary>
+    public static readonly (double R, double G, double B) RockMeanLinear = (0.1898, 0.1799, 0.1384);
 
     public static double SmoothStep(double edge0, double edge1, double x)
     {

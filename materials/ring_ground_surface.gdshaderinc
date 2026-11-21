@@ -33,8 +33,10 @@ const vec2 GROUND_RELIEF_FADE_M = vec2(16000.0, 24000.0);
 const vec2 GROUND_DETAIL_NORMAL_FADE_M = vec2(40.0, 60.0);
 const vec3 GROUND_ROCK_TINT = vec3(0.92, 0.93, 0.96);
 const vec3 GROUND_SCREE_TINT = vec3(1.04, 1.02, 0.98);
-// Mean linear colour of materials/biomes/alpine_rock_albedo.png (T5 and the far rock tone read it).
-const vec3 GROUND_ROCK_MEAN_LINEAR = vec3(0.2189, 0.2220, 0.2160);
+// The rock face (materials/ground/rock_face/rock_face_albedo.png) repeats every 2.5 m: biome_texture_scale 0.20 is a 5 m tile, and Rock051's real size is unpublished, so 2.5 m is the scale the user picked it at (T8-R1). Declare the sampler in each shader that samples it (not here: this include also compiles into the grass cards).
+const float GROUND_ROCK_UV_SCALE = 2.0;
+// Mean linear colour of materials/ground/rock_face/rock_face_albedo.png (T5 and the far rock tone read it).
+const vec3 GROUND_ROCK_MEAN_LINEAR = vec3(0.1898, 0.1799, 0.1384);
 
 bool ring_ground_on() {
 	return ring_world_has(GROUND_SURFACE_BIT);

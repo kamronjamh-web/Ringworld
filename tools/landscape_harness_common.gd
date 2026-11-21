@@ -7,6 +7,7 @@ extends RefCounted
 ## Flags understood here (after `--`):  --prefs=user|defaults|<dir>   --preset=medium|keep   --allow-blades   --res=WxH   --weather=clear|natural
 ## World selection: --generation=N [--review-features=a,b]. Generation 0 selects the pinned v8 world.
 ## --rock-set=<absolute folder> (test-only, T8-R1): albedo.png + normal.png + rockset.json replace the rock texture on terrain rock, scatter rocks and (with mean_linear) the far rock tone, in memory only. See install_rock_set.
+## --rock-ab (test-only, T8-R3): patches terrain, proxy and scatter rock shaders in memory so the global harness_rock_old (0 = the T8-R2 rock face, 1 = the old alpine-based rock) switches the rock path in one boot; used by the cost case rock_old. See install_rock_ab.
 ## Output layout: see docs/landscape-audit-t0-spec.md 2.7 (transient_dir / baseline_dir).
 
 const COMMON := preload("res://tools/shadow_harness_common.gd")
@@ -275,6 +276,11 @@ static func _weather_at_time(game: Node, clouds: Node, around: float, across: fl
 ## Boots the isolated gameplay world with the pinned generation 1 recipe and the user's preference files. Returns {game, world, prefs, fixture_root} or {} after push_error
 ## ("<marker>=FAIL ..."). The caller removes `fixture_root` (remove_dir_recursive on its globalized path) when it finishes.
 static func boot(tree: SceneTree, marker: String) -> Dictionary:
+	if rock_ab_requested() and rock_set_requested():
+		push_error("%s=FAIL --rock-ab and --rock-set are mutually exclusive" % marker)
+		return {}
+	if rock_ab_requested() and install_rock_ab(marker).is_empty():
+		return {}
 	if rock_set_requested() and install_rock_set(marker).is_empty():
 		return {}
 	var bridge: RefCounted = BRIDGE.new()
@@ -362,6 +368,76 @@ static func boot(tree: SceneTree, marker: String) -> Dictionary:
 		"world_tag": world_tag, "world_record": world_record}
 
 
+# ------------------------------------------------------------------ rock A-B (T8-R3, test only)
+
+## Strong references: the patched Shader resources must outlive the run.
+static var _rock_ab_shaders: Array = []
+## True once install_rock_ab patched the shaders; landscape_baseline_common records it as rock_ab and the rock_old case needs it.
+static var rock_ab_active := false
+
+
+static func rock_ab_requested() -> bool:
+	for arg in OS.get_cmdline_user_args():
+		if arg == "--rock-ab":
+			return true
+	for word in OS.get_environment("LANDSCAPE_HARNESS_ARGS").split(" ", false):
+		if word == "--rock-ab":
+			return true
+	return false
+
+
+## Adds the global float harness_rock_old (0 = the T8-R2 rock face, unchanged; 1 = the OLD rock path: alpine * GROUND_ROCK_TINT * strata_factor at the biome scale, no rock lattice, detail normal on the
+## biome lattice) and patches the terrain, proxy and scatter rock shaders in memory to branch on it. Call before the world boots. {} (after push_error) when any pattern does not match exactly once.
+static func install_rock_ab(marker: String) -> Dictionary:
+	var declare := "global uniform float harness_rock_old;\n"
+	var rules := {
+		"ground": ["res://materials/terrain3d_ring_surface_ground.gdshader", [
+			["vec3 rock_position = texture_position * GROUND_ROCK_UV_SCALE;", "float harness_k = harness_rock_old > 0.5 ? 1.0 : GROUND_ROCK_UV_SCALE;\n            vec3 rock_position = texture_position * harness_k;"],
+			["vec3 rock_dpdx = dpdx * GROUND_ROCK_UV_SCALE;", "vec3 rock_dpdx = dpdx * harness_k;"],
+			["vec3 rock_dpdy = dpdy * GROUND_ROCK_UV_SCALE;", "vec3 rock_dpdy = dpdy * harness_k;"],
+			["ty_rock = ring_biome_antitile(rock_position, texture_normal, rock_dpdx, rock_dpdy);", "if (harness_rock_old > 0.5) { ty_rock = ty; } else { ty_rock = ring_biome_antitile(rock_position, texture_normal, rock_dpdx, rock_dpdy); }"],
+			["rock_albedo = ring_biome_triplanar(ground_rock_albedo, rock_position, texture_normal, blend, ty_rock, rock_dpdx, rock_dpdy) * GROUND_ROCK_TINT * strata_factor;",
+				"if (harness_rock_old > 0.5 && harness_rock_old < 1.5) { rock_albedo = alpine * GROUND_ROCK_TINT * strata_factor; } else { rock_albedo = ring_biome_triplanar(ground_rock_albedo, rock_position, texture_normal, blend, ty_rock, rock_dpdx, rock_dpdy) * GROUND_ROCK_TINT * strata_factor; }"],
+		]],
+		"proxy": ["res://materials/ring_terrain_proxy_ground.gdshader", [
+			["vec3 rock_position = texture_position * GROUND_ROCK_UV_SCALE;", "if (harness_rock_old < 0.5) {\n\t\t\t\t\tvec3 rock_position = texture_position * GROUND_ROCK_UV_SCALE;"],
+			["rock_albedo = ring_biome_triplanar_world(ground_rock_albedo, world_normal, blend, tx_rock, ty_rock, tz_rock, rock_dpdx, rock_dpdy) * GROUND_ROCK_TINT * strata_factor;",
+				"rock_albedo = ring_biome_triplanar_world(ground_rock_albedo, world_normal, blend, tx_rock, ty_rock, tz_rock, rock_dpdx, rock_dpdy) * GROUND_ROCK_TINT * strata_factor;\n\t\t\t\t}"],
+			["terrain_color = mix(mix(ground_surface_texture, alpine * GROUND_SCREE_TINT, ground_scree), rock_albedo, ground_rock);",
+				"if (harness_rock_old > 1.5) rock_albedo = ring_biome_triplanar_world(ground_rock_albedo, world_normal, blend, tx, ty, tz, dpdx, dpdy) * GROUND_ROCK_TINT * strata_factor; else if (harness_rock_old > 0.5) rock_albedo = alpine * GROUND_ROCK_TINT * strata_factor;\n\t\t\t\tterrain_color = mix(mix(ground_surface_texture, alpine * GROUND_SCREE_TINT, ground_scree), rock_albedo, ground_rock);"],
+		]],
+		"scatter": ["res://materials/ring_scatter_rock.gdshader", [
+			["vec3 rock = rock_biome_triplanar(ground_rock_albedo, v_world * biome_texture_scale * GROUND_ROCK_UV_SCALE, world_normal, blend) * GROUND_ROCK_TINT;",
+				"vec3 rock = (harness_rock_old > 1.5 ? rock_biome_triplanar(ground_rock_albedo, v_world * biome_texture_scale, world_normal, blend) : harness_rock_old > 0.5 ? rock_biome_triplanar(biome_alpine_albedo, v_world * biome_texture_scale, world_normal, blend) : rock_biome_triplanar(ground_rock_albedo, v_world * biome_texture_scale * GROUND_ROCK_UV_SCALE, world_normal, blend)) * GROUND_ROCK_TINT;"],
+		]],
+	}
+	var plans := {}
+	for key in rules:
+		var path: String = rules[key][0]
+		var shader := load(path) as Shader
+		if shader == null:
+			push_error("%s=FAIL --rock-ab: cannot load shader %s" % [marker, path])
+			return {}
+		var code := shader.code
+		var state := {}
+		for pair in rules[key][1]:
+			code = _rock_replace(code, pair[0], pair[1], path, state)
+		code = _rock_replace(code, "\nvoid fragment()", "\n" + declare + "\nvoid fragment()", path, state)
+		if state.has("error"):
+			push_error("%s=FAIL --rock-ab: %s" % [marker, str(state["error"])])
+			return {}
+		plans[key] = [shader, code]
+	# Every pattern matched exactly once; now apply. The global exists before any patched shader compiles.
+	RenderingServer.global_shader_parameter_add("harness_rock_old", RenderingServer.GLOBAL_VAR_TYPE_FLOAT, 0.0)
+	for key in plans:
+		var shader: Shader = plans[key][0]
+		shader.code = plans[key][1]
+		_rock_ab_shaders.append(shader)
+	rock_ab_active = true
+	print("%s rock A-B: patched %s (global harness_rock_old: 0 = new rock face, 1 = old rock)" % [marker, ", ".join(plans.keys())])
+	return {"ok": true}
+
+
 # ------------------------------------------------------------------ rock set (T8-R1, test only)
 
 const ROCK_SHADERS := {
@@ -408,7 +484,7 @@ static func _rock_replace(code: String, pattern: String, replacement: String, pa
 
 
 ## Replaces the rock albedo (ground variants, scatter rocks), the rock detail normal and optionally the far rock mean by the candidate set in <folder> (albedo.png sRGB, normal.png OpenGL
-## linear, rockset.json {id, uv_scale, mean_linear?}) by patching the four shaders' code in memory (nothing is written). Call before the world boots. {} (after push_error) on any failure.
+## linear, rockset.json {id, uv_scale, mean_linear?}) by patching the four shaders' code in memory (T8-R2: the ground variants and the scatter shader already read ground_rock_albedo at GROUND_ROCK_UV_SCALE, so the patch swaps the sampler and the scale) (nothing is written). Call before the world boots. {} (after push_error) on any failure.
 static func install_rock_set(marker: String) -> Dictionary:
 	var folder := _rock_set_arg()
 	if folder == "":
@@ -446,8 +522,6 @@ static func install_rock_set(marker: String) -> Dictionary:
 	var k := "%.6f" % uv_scale
 	var header_common := "global uniform sampler2D harness_rock_albedo : filter_linear_mipmap_anisotropic, repeat_enable;\nconst float HARNESS_ROCK_UV_SCALE = %s;\n" % k
 	var header_srgb := "vec3 harness_srgb_to_linear(vec3 c) {\n\treturn mix(pow((c + vec3(0.055)) / 1.055, vec3(2.4)), c / 12.92, step(c, vec3(0.04045)));\n}\n"
-	var scaled := "texture_position * HARNESS_ROCK_UV_SCALE"
-	var dscaled := "dpdx * HARNESS_ROCK_UV_SCALE, dpdy * HARNESS_ROCK_UV_SCALE"
 	var plans := {}
 	var counts_text: Array = []
 	for key in ROCK_SHADERS:
@@ -461,27 +535,22 @@ static func install_rock_set(marker: String) -> Dictionary:
 		var state := {}
 		var header := ""
 		var applied := 0
-		if key == "ground":
+		if key == "ground" or key == "proxy" or key == "scatter":
+			# T8-R2: the shaders already sample ground_rock_albedo at GROUND_ROCK_UV_SCALE (with their own lattices); the candidate replaces the sampler (a global, sRGB decoded here) and the scale.
 			header = header_common + header_srgb
-			code = _rock_replace(code, "RingAntiTile ty = ring_biome_antitile(texture_position, texture_normal, dpdx, dpdy);",
-				"RingAntiTile ty = ring_biome_antitile(texture_position, texture_normal, dpdx, dpdy);\n        RingAntiTile ty_rock = ring_biome_antitile(%s, texture_normal, %s);" % [scaled, dscaled], path, state)
-			code = _rock_replace(code, "alpine * GROUND_ROCK_TINT * strata_factor",
-				"harness_srgb_to_linear(ring_biome_triplanar(harness_rock_albedo, %s, texture_normal, blend, ty_rock, %s)) * GROUND_ROCK_TINT * strata_factor" % [scaled, dscaled], path, state)
-			code = _rock_replace(code, "ground_detail_normal(texture_position, texture_normal, blend, ground_detail_weight, ty, dpdx, dpdy)",
-				"ground_detail_normal(%s, texture_normal, blend, ground_detail_weight, ty_rock, %s)" % [scaled, dscaled], path, state)
-			applied = 3
-		elif key == "proxy":
-			header = header_common + header_srgb
-			code = _rock_replace(code, "RingAntiTile tz = ring_biome_antitile_z(texture_position, world_normal, blend.z, dpdx, dpdy);",
-				"RingAntiTile tz = ring_biome_antitile_z(texture_position, world_normal, blend.z, dpdx, dpdy);\n\t\t\tRingAntiTile tx_rock = ring_biome_antitile_x(%s, world_normal, blend.x, %s);\n\t\t\tRingAntiTile ty_rock = ring_biome_antitile_y(%s, world_normal, blend.y, %s);\n\t\t\tRingAntiTile tz_rock = ring_biome_antitile_z(%s, world_normal, blend.z, %s);" % [scaled, dscaled, scaled, dscaled, scaled, dscaled], path, state)
-			code = _rock_replace(code, "alpine * GROUND_ROCK_TINT * strata_factor",
-				"harness_srgb_to_linear(ring_biome_triplanar_world(harness_rock_albedo, world_normal, blend, tx_rock, ty_rock, tz_rock, %s)) * GROUND_ROCK_TINT * strata_factor" % dscaled, path, state)
-			applied = 3
-		elif key == "scatter":
-			header = header_common + header_srgb
-			code = _rock_replace(code, "rock_biome_triplanar(biome_alpine_albedo, v_world * biome_texture_scale, world_normal, blend)",
-				"harness_srgb_to_linear(rock_biome_triplanar(harness_rock_albedo, v_world * biome_texture_scale * HARNESS_ROCK_UV_SCALE, world_normal, blend))", path, state)
-			applied = 1
+			var call_old := ""
+			if key == "ground":
+				call_old = "ring_biome_triplanar(ground_rock_albedo, rock_position, texture_normal, blend, ty_rock, rock_dpdx, rock_dpdy)"
+			elif key == "proxy":
+				call_old = "ring_biome_triplanar_world(ground_rock_albedo, world_normal, blend, tx_rock, ty_rock, tz_rock, rock_dpdx, rock_dpdy)"
+			else:
+				call_old = "rock_biome_triplanar(ground_rock_albedo, v_world * biome_texture_scale * GROUND_ROCK_UV_SCALE, world_normal, blend)"
+			code = _rock_replace(code, "uniform sampler2D ground_rock_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;", "", path, state)
+			code = _rock_replace(code, call_old, "harness_srgb_to_linear(" + call_old.replace("ground_rock_albedo", "harness_rock_albedo") + ")", path, state)
+			if not code.contains("GROUND_ROCK_UV_SCALE"):
+				state["error"] = "%s: GROUND_ROCK_UV_SCALE not found" % path
+			code = code.replace("GROUND_ROCK_UV_SCALE", "HARNESS_ROCK_UV_SCALE")
+			applied = 3 if key != "scatter" else 1
 		else:
 			header = "const vec3 HARNESS_ROCK_MEAN_LINEAR = vec3(%.6f, %.6f, %.6f);\n" % [float(mean[0]), float(mean[1]), float(mean[2])]
 			code = _rock_replace(code, "GROUND_ROCK_MEAN_LINEAR * GROUND_ROCK_TINT", "HARNESS_ROCK_MEAN_LINEAR * GROUND_ROCK_TINT", path, state)

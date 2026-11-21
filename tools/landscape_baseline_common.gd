@@ -167,6 +167,8 @@ static func setup(tree: SceneTree, marker: String, weather_pose_report := "t0") 
 		ctx["record"]["scatter_a5_density"] = true
 	if not H.rock_set_record.is_empty():
 		ctx["record"]["rock_set"] = H.rock_set_record
+	if H.rock_ab_active:
+		ctx["record"]["rock_ab"] = true
 	if H.seed != H.PINNED_SEED:
 		ctx["record"]["seed"] = H.seed
 		ctx["record"]["explicit_poses"] = explicit.get("poses", [])
@@ -732,7 +734,7 @@ const FEATURE_AB_FLAG_MS := 0.1
 ## T5-10: scatter_off = scatter_hidden plus the layer's _Process stopped (no cull request, so no compute dispatch); (scatter_hidden delta) - (scatter_off delta) is the layer's per-frame compute and CPU-side cost.
 ## T6-4b: understory_hidden hides every renderer and shadow caster under the node named "UnderstoryLayer" (a sibling of the decoration layer; "(no change)" in a world without it); understory_off is that plus the
 ## layer's _Process stopped (no cull request, so no compute dispatch). Select them with --extra-cases=understory_hidden,understory_off.
-const EXTRA_CASES := ["feature_off", "scatter_off", "understory_hidden", "understory_off", "standfill_hidden", "clouds_off", "cloud_shadow_gen_off", "sun_map_off", "hs_receivers_off", "water_hidden", "ui_hidden", "clocks_running", "far_viewport_off", "env_post_off", "env_ssao_off", "env_ssr_off", "atlas_4096", "atlas_8192", "atlas_16384"]
+const EXTRA_CASES := ["feature_off", "scatter_off", "understory_hidden", "understory_off", "standfill_hidden", "clouds_off", "cloud_shadow_gen_off", "sun_map_off", "hs_receivers_off", "water_hidden", "ui_hidden", "clocks_running", "far_viewport_off", "env_post_off", "env_ssao_off", "env_ssr_off", "atlas_4096", "atlas_8192", "atlas_16384", "rock_old", "rock_shared"]
 const ENV_POST_FLAGS := ["glow_enabled", "ssao_enabled", "ssil_enabled", "ssr_enabled", "sdfgi_enabled", "volumetric_fog_enabled", "adjustment_enabled"]
 
 
@@ -753,6 +755,14 @@ static func _apply_extra(state: Dictionary, base: String) -> bool:
 			state["feature_off_mask"] = cleared
 			undo.append(func() -> void:
 				hook.call("Restore"))
+		"rock_old", "rock_shared":
+			# T8-R3: the OLD rock path (alpine sample, biome scale, no rock lattice; global 1) or the rock face at the OLD scale on the shared lattice (rock_shared, global 2) through the global the --rock-ab shader patch reads;
+			# the baseline windows run the T8-R2 rock face. cost = baseline - case.
+			if not H.rock_ab_active:
+				return false
+			RenderingServer.global_shader_parameter_set("harness_rock_old", 1.0 if base == "rock_old" else 2.0)
+			undo.append(func() -> void:
+				RenderingServer.global_shader_parameter_set("harness_rock_old", 0.0))
 		"scatter_off":
 			var layer := _scatter_layer({"trees": state["trees_root"]})
 			if layer == null:
@@ -1530,6 +1540,23 @@ static func _cost_markdown(report: Dictionary) -> String:
 			var flag := "FLAG" if cost > float(ab["flag_delta_ms"]) else ("within noise" if absf(cost) <= float(d3["noise_floor_root_gpu_ms"]) else "")
 			lines.append("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |" % [record["pose"], record["time"], _f(float(d3["baseline_root_gpu_ms"])), _f(float(c3["root_gpu_hidden_median_ms"])), _f(cost),
 				_f(float(c3["far_gpu_delta_ms"])), _f(float(c3["draw_delta"]), 0), _f(float(c3["primitive_delta"]), 0), _f(float(d3["noise_floor_root_gpu_ms"])), flag])
+		lines.append("")
+	if report.has("rock_ab"):
+		lines.append("## Rock A-B-A: `rock_old` (old alpine-based path) and `rock_shared` (rock face at the old scale, shared lattice) (T8-R3, --rock-ab)")
+		lines.append("")
+		lines.append("Cost of the T8-R2 rock face = baseline (new path) minus the case, root viewport GPU median ms, same boot; positive = the new path costs more. A delta inside the noise floor is zero.")
+		lines.append("")
+		lines.append("| case | pose | time | baseline root GPU | case root GPU | delta (baseline - case) | far GPU delta | draws delta | noise floor | verdict |")
+		lines.append("|---|---|---|---|---|---|---|---|---|---|")
+		for rock_case in ["rock_old", "rock_shared"]:
+			for record in report["pose_times"]:
+				if not record.has("derived") or not record["derived"]["classes"].has(rock_case):
+					continue
+				var d4: Dictionary = record["derived"]
+				var c4: Dictionary = d4["classes"][rock_case]
+				var delta := float(c4["root_gpu_delta_ms"])
+				lines.append("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |" % [rock_case, record["pose"], record["time"], _f(float(d4["baseline_root_gpu_ms"])), _f(float(c4["root_gpu_hidden_median_ms"])), _f(delta),
+					_f(float(c4["far_gpu_delta_ms"])), _f(float(c4["draw_delta"]), 0), _f(float(d4["noise_floor_root_gpu_ms"])), "within noise" if absf(delta) <= float(d4["noise_floor_root_gpu_ms"]) else ""])
 		lines.append("")
 	lines.append("## Far viewport GPU delta (ms)")
 	lines.append("")

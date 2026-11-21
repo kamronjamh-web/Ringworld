@@ -55,6 +55,8 @@ uniform sampler2D biome_alpine_albedo : source_color, filter_linear_mipmap_aniso
 #include "res://materials/ring_wetness.gdshaderinc"
 #ifdef RING_GROUND_SURFACE
 #include "res://materials/ring_ground_surface.gdshaderinc"
+// T8-R2: the rock face (materials/ground/rock_face). Declared here, not in the include: the include also compiles into the grass cards.
+uniform sampler2D ground_rock_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
 // Rock replaces dirt on steep ground in worlds with ground.surface: the dirt sample is skipped there.
 #define GROUND_NOT_ON && !ground_on
 #else
@@ -276,7 +278,7 @@ void fragment() {
 		}
 #ifdef RING_GROUND_SURFACE
 		if (ground_on) {
-			// Rock replaces dirt on steep ground and scree sits on the slope foot (T4 design D2, D4; relief is 0 until T4-4b). Rock and scree use the alpine texture, which is sampled
+			// Rock replaces dirt on steep ground and scree sits on the slope foot (T4 design D2, D4; relief is 0 until T4-4b). Scree uses the alpine texture and rock the rock face; the alpine one is sampled
 			// here when the biome weights did not already (packed.a == 0).
 			vec4 ground_weights = clamp(COLOR, 0.0, 1.0);
 			float ground_grass = max(0.0, 1.0 - ground_weights.r - ground_weights.g - ground_weights.b - ground_weights.a);
@@ -287,9 +289,20 @@ void fragment() {
 			float strata_factor = 1.0;
 			terrain_color = ground_surface_texture;
 			if (ground_rock + ground_scree > 0.0) {
-				if (ground_rock > 0.0) strata_factor = ring_ground_strata_factor(ground_height, strata_footprint);
+				vec3 rock_albedo = vec3(0.0);
+				if (ground_rock > 0.0) {
+					strata_factor = ring_ground_strata_factor(ground_height, strata_footprint);
+					// T8-R2: the rock face at its real size, through its own lattices (arithmetic only, so they are built here and only rock pixels pay for them).
+					vec3 rock_position = texture_position * GROUND_ROCK_UV_SCALE;
+					vec3 rock_dpdx = dpdx * GROUND_ROCK_UV_SCALE;
+					vec3 rock_dpdy = dpdy * GROUND_ROCK_UV_SCALE;
+					RingAntiTile tx_rock = ring_biome_antitile_x(rock_position, world_normal, blend.x, rock_dpdx, rock_dpdy);
+					RingAntiTile ty_rock = ring_biome_antitile_y(rock_position, world_normal, blend.y, rock_dpdx, rock_dpdy);
+					RingAntiTile tz_rock = ring_biome_antitile_z(rock_position, world_normal, blend.z, rock_dpdx, rock_dpdy);
+					rock_albedo = ring_biome_triplanar_world(ground_rock_albedo, world_normal, blend, tx_rock, ty_rock, tz_rock, rock_dpdx, rock_dpdy) * GROUND_ROCK_TINT * strata_factor;
+				}
 				vec3 alpine = ring_biome_triplanar_world(biome_alpine_albedo, world_normal, blend, tx, ty, tz, dpdx, dpdy);
-				terrain_color = mix(mix(ground_surface_texture, alpine * GROUND_SCREE_TINT, ground_scree), alpine * GROUND_ROCK_TINT * strata_factor, ground_rock);
+				terrain_color = mix(mix(ground_surface_texture, alpine * GROUND_SCREE_TINT, ground_scree), rock_albedo, ground_rock);
 			}
 			// D5 colour variation on the dry albedo (before grass coverage, wetness and the albedo scale), from the interpolated C64.
 			terrain_color = ring_ground_relief_colour(terrain_color, ground_relief, ground_rock, distance_to_camera);

@@ -85,7 +85,7 @@ ringworld_ground_look={
 }
 ringworld_ground_rock_detail_normal={
 "type": "sampler2D",
-"value": "res://materials/biomes/alpine_rock_detail_normal.png"
+"value": "res://materials/ground/rock_face/rock_face_normal.png"
 }
 ringworld_ground_antitile={
 "type": "float",

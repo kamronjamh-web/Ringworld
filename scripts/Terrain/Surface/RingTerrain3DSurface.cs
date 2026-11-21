@@ -367,6 +367,8 @@ public partial class RingTerrain3DSurface : Node3D
         SetMaterialParameter("biome_forest_albedo", GD.Load<Texture2D>("res://materials/biomes/forest_floor_albedo.png"));
         SetMaterialParameter("biome_tundra_albedo", GD.Load<Texture2D>("res://materials/biomes/tundra_ground_albedo.png"));
         SetMaterialParameter("biome_alpine_albedo", GD.Load<Texture2D>("res://materials/biomes/alpine_rock_albedo.png"));
+        if (RingGroundSurfaceVariants.WorldHasGroundSurface)
+            SetMaterialParameter("ground_rock_albedo", GD.Load<Texture2D>(RingGroundSurfaceVariants.RockFaceAlbedoPath));
         ApplyAtmosphereMaterialParameters();
         ForwardSurfaceAppearance();
         ForwardSurfaceLighting(ResolveLightingSunDirection());

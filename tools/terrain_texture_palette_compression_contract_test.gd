@@ -6,6 +6,7 @@ const TEXTURE_PATHS := [
 	"res://materials/biomes/forest_floor_albedo.png",
 	"res://materials/biomes/tundra_ground_albedo.png",
 	"res://materials/biomes/alpine_rock_albedo.png",
+	"res://materials/ground/rock_face/rock_face_albedo.png", # T8-R2 rock face (VRAM-compressed like the biome maps)
 ]
 const VISUALS_SOURCE := "res://scripts/Voxel/Phase3/RingTerrainVisuals.cs"
 

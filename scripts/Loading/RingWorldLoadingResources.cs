@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using Godot;
+using RingworldTechDemo.Terrain.Surface;
 using RingworldTechDemo.Voxel.Phase3;
 
 namespace RingworldTechDemo.Loading;
@@ -25,6 +26,8 @@ public partial class RingWorldLoadingResources : Node
         "res://materials/biomes/forest_floor_albedo.png",
         "res://materials/biomes/tundra_ground_albedo.png",
         "res://materials/biomes/alpine_rock_albedo.png",
+        RingGroundSurfaceVariants.RockFaceAlbedoPath,
+        RingGroundSurfaceVariants.RockFaceNormalPath,
         "res://materials/ring_terrain_proxy.gdshader",
         "res://materials/ring_terrain_proxy_shadow.gdshader",
         "res://materials/ring_ocean_proxy.gdshader",

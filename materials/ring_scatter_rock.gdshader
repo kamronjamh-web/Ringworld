@@ -23,6 +23,8 @@ uniform vec3 ring_viewer_world_position = vec3(0.0);
 uniform float ring_width_meters = 20000.0;
 
 uniform int rock_group = 0; // 0 boulder, 1 outcrop, 2 cobble
+// T8-R2: the rock face (materials/ground/rock_face), at its real size (GROUND_ROCK_UV_SCALE).
+uniform sampler2D ground_rock_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2D rock_positions : filter_nearest, repeat_disable;
 uniform sampler2D rock_normals : filter_nearest, repeat_disable;
 // 0 normal; 1 haze transmittance T; 2 haze in-scatter; 3 direct visibility (shadow, cloud, macro); 4 albedo after wetness (before night tint and haze);
@@ -112,7 +114,7 @@ void fragment() {
 	vec3 world_normal = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
 	vec3 blend = pow(abs(world_normal), vec3(8.0));
 	blend /= max(blend.x + blend.y + blend.z, 0.0001);
-	vec3 rock = rock_biome_triplanar(biome_alpine_albedo, v_world * biome_texture_scale, world_normal, blend) * GROUND_ROCK_TINT;
+	vec3 rock = rock_biome_triplanar(ground_rock_albedo, v_world * biome_texture_scale * GROUND_ROCK_UV_SCALE, world_normal, blend) * GROUND_ROCK_TINT;
 	bool strata_on = ringworld_ground_world.x > 0.5;
 	float band_height = v_height;
 	if (rock_group == 1 && strata_on) rock *= ring_ground_strata_factor(v_height, strata_footprint);

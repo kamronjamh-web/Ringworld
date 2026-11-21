@@ -16,6 +16,10 @@ public static class RingGroundSurfaceVariants
     public const string FarShader = "res://materials/ring_terrain_global.gdshader";
     public const string FarGroundShader = "res://materials/ring_terrain_global_ground.gdshader";
 
+    /// <summary>T8-R2: the rock face of ground.surface worlds (ambientCG Rock051, CC0; see the folder's LICENSE.md). The albedo is bound as ground_rock_albedo; the normal is the project global ringworld_ground_rock_detail_normal.</summary>
+    public const string RockFaceAlbedoPath = "res://materials/ground/rock_face/rock_face_albedo.png";
+    public const string RockFaceNormalPath = "res://materials/ground/rock_face/rock_face_normal.png";
+
     public static bool WorldHasGroundSurface => WorldGeneration.Has("ground.surface");
 
     public static string ProxyShaderPath => WorldHasGroundSurface ? ProxyGroundShader : ProxyShader;
