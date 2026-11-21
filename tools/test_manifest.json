@@ -5842,6 +5842,18 @@
       "expected_s": 60,
       "timeout_s": 300
     },
+    "t7_meso_prototype": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "landscape",
+        "terrain"
+      ],
+      "marker": "T7_MESO_PROTOTYPE",
+      "expected_s": 160,
+      "timeout_s": 600
+    },
     "shadow_attribution_test": {
       "kind": "test",
       "mode": "gpu",
