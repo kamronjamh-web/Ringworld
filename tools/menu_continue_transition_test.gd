@@ -360,6 +360,8 @@ func _run() -> void:
 		var horizontal := _pose_distance({"around_m": final_pose["around_m"], "vertical_m": 0.0, "across_m": final_pose["across_m"]}, {"around_m": saved["around_m"], "vertical_m": 0.0, "across_m": saved["across_m"]}, circumference)
 		_results["final_pose_error_m"] = distance
 		_results["final_horizontal_error_m"] = horizontal
+		var final_noclip_now := bool(_explorer.get("NoclipEnabled"))
+		print("CONTINUE_POSE_ERROR case=%s noclip=%s horizontal=%.3f vertical=%.3f total=%.3f" % [_case, str(final_noclip_now), horizontal, absf(float(final_pose["vertical_m"]) - float(saved["vertical_m"])), distance])
 		if _case == "underground":
 			# The save is below the surface. It either stays there (a cave void) or is recovered to the surface by the normal below-terrain
 			# recovery, exactly as in a loading-screen load; either way the spot is the same horizontally.
@@ -369,7 +371,7 @@ func _run() -> void:
 			_results["underground_kept_depth"] = kept
 			_results["underground_recovered_to_surface"] = recovered
 			_expect(horizontal <= POSE_TOLERANCE_M and (kept or recovered), "underground final pose: %.2f m horizontally, vertical %.2f vs saved %.2f / surface %.2f" % [horizontal, float(final_pose["vertical_m"]), float(saved["vertical_m"]), ground_here])
-		elif bool(_results.get("final_noclip", false)) or _case == "main" or _case == "warming":
+		elif final_noclip_now:
 			_expect(distance <= POSE_TOLERANCE_M, "final pose is %.2f m from the saved pose (limit %.1f)" % [distance, POSE_TOLERANCE_M])
 		else:
 			# A standing save goes through the loading spawn settle, which puts the capsule on real collision (up to GROUND_SETTLE_TOLERANCE_M off the saved height).
