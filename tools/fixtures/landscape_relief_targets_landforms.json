@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "note": "T7 relief targets R1-R12 (docs/work-orders/terrain-vegetation/T7.md). Anchors by the generation 1 classifier. Ratio checks need --baseline.",
+  "rows": [
+    { "id": "R1", "checks": [ { "class": "Plains", "metric": "decade_rms_median", "decade": "2-30 m", "min": 0.15, "max": 0.60 } ] },
+    { "id": "R2", "checks": [ { "class": "Plains", "metric": "decade_rms_median", "decade": "30-300 m", "min": 2.0, "max": 4.0 } ] },
+    { "id": "R3", "checks": [ { "class": "Plains", "metric": "slope2d_4m_p95", "max": 10 } ] },
+    { "id": "R4", "checks": [ { "class": "Rolling", "metric": "decade_rms_median", "decade": "30-300 m", "min": 3.0, "max": 5.5 } ] },
+    { "id": "R5", "checks": [ { "class": "Rolling", "metric": "slope2d_4m_p95", "max": 25 } ] },
+    { "id": "R6", "checks": [ { "class": "HillCountry", "metric": "decade_rms_median", "decade": "30-300 m", "min": 4.5 } ] },
+    { "id": "R7", "checks": [
+      { "class": "HillCountry", "metric": "slope2d_4m_p95", "max": 35 },
+      { "class": "HillCountry", "metric": "slope2d_4m_share_over_55", "max": 0.004999 } ] },
+    { "id": "R8", "checks": [ { "class": "PlateauInterior", "metric": "decade_rms_median", "decade": "30-300 m", "min": 1.5, "max": 3.5 } ] },
+    { "id": "R9", "checks": [
+      { "class": "CoastalBelt", "metric": "decade_rms_median", "decade": "2-30 m", "min": 0.10, "requires": "land_only_coastal" },
+      { "class": "CoastalBelt", "metric": "decade_rms_median", "decade": "30-300 m", "min": 1.0, "requires": "land_only_coastal" } ] },
+    { "id": "R10", "checks": [
+      { "class": "CoastalBelt", "metric": "slope2d_4m_p50", "min": 1.0, "requires": "land_only_coastal" },
+      { "class": "CoastalBelt", "metric": "slope2d_4m_p95", "max": 15, "requires": "land_only_coastal" } ] },
+    { "id": "R11", "checks": [ { "class": "Mountain", "metric": "decade_rms_median_ratio", "decade": "*", "min": 0.95, "max": 1.05 } ] },
+    { "id": "R12", "checks": [ { "class": ["Plains", "Rolling", "HillCountry", "PlateauInterior", "Breaks", "Mountain"], "metric": "decade_rms_median_ratio", "decade": "3-30 km", "min": 0.95, "max": 1.05 } ] }
+  ]
+}

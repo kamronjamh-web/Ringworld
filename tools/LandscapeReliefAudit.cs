@@ -54,20 +54,37 @@ public partial class LandscapeReliefAudit : RefCounted
         public double[][] Slopes = new double[3][];       // per baseline, pooled over both fine transects (degrees)
         public double[] Slope2d = Array.Empty<double>();  // degrees
         public double[] Relief = new double[2];           // 4 km relief per fine transect
+        public int FineSkipped, CoarseSkipped;            // land-only CoastalBelt: transects without a land window
+        public bool Dropped;                              // land-only CoastalBelt: both fine transects skipped
     }
 
-    public bool Run()
+    /// <summary>Entry options; Run() fills them from the command line, the targets wrapper passes them explicitly.</summary>
+    sealed class Options { public bool LandOnlyCoastal; public string Targets = "", Baseline = "", OutDir = ""; }
+
+    static bool HasFlag(string flag) => OS.GetCmdlineUserArgs().Contains(flag);
+
+    static string ResolvePath(string p) => p.StartsWith("res://", StringComparison.Ordinal) || p.StartsWith("user://", StringComparison.Ordinal) ? ProjectSettings.GlobalizePath(p) : p;
+
+    string targetFailures = "";
+
+    /// <summary>Ids of the targets rows that failed in the last run, comma separated (empty when all passed or no targets file was given).</summary>
+    public string TargetFailuresCsv() => targetFailures;
+
+    public bool Run() => RunWith(HasFlag("--land-only-coastal"), Arg("--targets="), Arg("--baseline="), Arg("--out="));
+
+    public bool RunWith(bool landOnlyCoastal, string targets, string baseline, string outDir)
     {
+        var options = new Options { LandOnlyCoastal = landOnlyCoastal, Targets = targets, Baseline = baseline, OutDir = outDir };
         var failures = new List<string>();
         var warnings = new List<string>();
-        try { RunAudit(failures, warnings); }
+        try { RunAudit(options, failures, warnings); }
         catch (Exception exception) { failures.Add(exception.ToString()); }
         foreach (string w in warnings) GD.Print("LANDSCAPE_RELIEF warning: " + w);
         foreach (string failure in failures) GD.PushError("LANDSCAPE_RELIEF=FAIL " + failure);
         return failures.Count == 0;
     }
 
-    void RunAudit(List<string> failures, List<string> warnings)
+    void RunAudit(Options options, List<string> failures, List<string> warnings)
     {
         var clock = Stopwatch.StartNew();
 
@@ -115,15 +132,19 @@ public partial class LandscapeReliefAudit : RefCounted
 
             // 3. Measure every anchor (one slot per anchor, so the merge order is fixed).
             var anchors = new Anchor[chosen.Count];
-            ParallelRows(workers, chosen.Count, (w, k) => anchors[k] = Measure(w, chosen[k].Cls, chosen[k].Around, chosen[k].Across));
+            ParallelRows(workers, chosen.Count, (w, k) => anchors[k] = Measure(w, chosen[k].Cls, chosen[k].Around, chosen[k].Across, options.LandOnlyCoastal));
 
             // 4. Report.
             string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
             if (!spec.IsDefault) stamp += "_" + spec.Tag;
-            string outDir = Arg("--out=");
+            string outDir = ResolvePath(options.OutDir);
             if (outDir.Length == 0) outDir = ProjectSettings.GlobalizePath("res://.godot/audit_baseline/common/t0/relief/" + stamp);
             Directory.CreateDirectory(outDir);
-            var stats = BuildStats(anchors, coverage, latticeClass.Length, failures, warnings);
+            var stats = BuildStats(anchors, coverage, latticeClass.Length, options.LandOnlyCoastal, failures, warnings);
+            stats.ShowTargets = options.Targets.Length > 0;
+            if (options.Baseline.Length > 0) AttachBaseline(stats, ResolvePath(options.Baseline), warnings);
+            if (stats.ShowTargets) EvaluateTargets(stats, ResolvePath(options.Targets), failures);
+            targetFailures = string.Join(",", stats.Rows.Where(r => !r.Pass).Select(r => r.Id));
             double seconds = clock.Elapsed.TotalSeconds;
             File.WriteAllText(Path.Combine(outDir, "relief_spectrum.json"), stats.Json(spec, stamp, seconds));
             File.WriteAllText(Path.Combine(outDir, "relief_spectrum.md"), stats.Markdown(spec, stamp, seconds));
@@ -181,9 +202,34 @@ public partial class LandscapeReliefAudit : RefCounted
 
     // ---- measurement -------------------------------------------------------------------------------------------------------------------------------
 
-    static Anchor Measure(LandscapeWorld.Worker w, int cls, double a, double z)
+    static double[] NaNs(int n) { var r = new double[n]; Array.Fill(r, double.NaN); return r; }
+
+    /// <summary>Land-only mode: longest run of samples above 0; when it covers at least half of x, the centred window of exactly x.Length / 2 samples inside it.</summary>
+    static bool TryLandWindow(double[] x, out double[] window)
     {
-        bool clampZero = (LandscapeClass)cls == LandscapeClass.CoastalBelt;
+        int bestStart = 0, bestLen = 0, start = -1;
+        for (int i = 0; i <= x.Length; i++)
+        {
+            bool land = i < x.Length && x[i] > 0d;
+            if (land && start < 0) start = i;
+            else if (!land && start >= 0)
+            {
+                if (i - start > bestLen) { bestLen = i - start; bestStart = start; }
+                start = -1;
+            }
+        }
+        int want = x.Length / 2;
+        if (bestLen < want) { window = null; return false; }
+        window = new double[want];
+        Array.Copy(x, bestStart + (bestLen - want) / 2, window, 0, want);
+        return true;
+    }
+
+    static Anchor Measure(LandscapeWorld.Worker w, int cls, double a, double z, bool landOnlyOption)
+    {
+        bool coastal = (LandscapeClass)cls == LandscapeClass.CoastalBelt;
+        bool landOnly = coastal && landOnlyOption;
+        bool clampZero = coastal && !landOnly;
         double H(double around, double across)
         {
             double h = w.Ground(Wrap(around), across);
@@ -195,28 +241,57 @@ public partial class LandscapeReliefAudit : RefCounted
         {
             double[] h = new double[FineN];
             for (int n = 0; n < FineN; n++) h[n] = dir == 0 ? H(a - FineN / 2 + n, z) : H(a, z - FineN / 2 + n);
-            fine[dir] = h;
-            var spec = Spectrum(h);
-            an.FineBand[dir] = BandRms(spec, FineN * 1.0, 0, FineBandsTo);
-            an.Relief[dir] = h.Max() - h.Min();
+            bool fineOk = true;
+            if (landOnly) { fineOk = TryLandWindow(h, out double[] fw); h = fw; }
             int cn = dir == 0 ? CoarseAroundN : CoarseAcrossN;
             double[] c = new double[cn];
             for (int n = 0; n < cn; n++) c[n] = dir == 0 ? H(a + (n - cn / 2) * CoarseStep, z) : H(a, z + (n - cn / 2) * CoarseStep);
-            var cspec = Spectrum(c);
-            an.CoarseBand[dir] = BandRms(cspec, cn * CoarseStep, CoarseBandsFrom, Bands - 1);
-            double[] m = new double[FineN / 32];
-            for (int n = 0; n < m.Length; n++) m[n] = fine[dir][n * 32];
-            an.MatchedBand[dir] = BandRms(Spectrum(m), FineN, 5, 8);
+            bool coarseOk = true;
+            if (landOnly) { coarseOk = TryLandWindow(c, out double[] cw); c = cw; }
+            if (!fineOk) an.FineSkipped++;
+            if (!coarseOk) an.CoarseSkipped++;
+
+            double[] spec = null;
+            double fspan = landOnly ? FineN / 2 : FineN;
+            fine[dir] = h;
+            if (fineOk)
+            {
+                spec = Spectrum(h);
+                an.FineBand[dir] = BandRms(spec, fspan, 0, FineBandsTo);
+                an.Relief[dir] = h.Max() - h.Min();
+                double[] m = new double[h.Length / 32];
+                for (int n = 0; n < m.Length; n++) m[n] = h[n * 32];
+                an.MatchedBand[dir] = BandRms(Spectrum(m), fspan, 5, 8);
+            }
+            else { an.FineBand[dir] = NaNs(Bands); an.Relief[dir] = double.NaN; an.MatchedBand[dir] = NaNs(Bands); }
+            double[] cspec = null;
+            double cspan = 0;
+            if (coarseOk)
+            {
+                cspan = c.Length * CoarseStep;
+                cspec = Spectrum(c);
+                an.CoarseBand[dir] = BandRms(cspec, cspan, CoarseBandsFrom, Bands - 1);
+            }
+            else an.CoarseBand[dir] = NaNs(Bands);
             an.DecadeRms[dir] = new double[Decades.Length];
             for (int d = 0; d < Decades.Length; d++)
-                an.DecadeRms[dir][d] = Math.Sqrt(RangePower(Decades[d].Fine ? spec : cspec, Decades[d].Fine ? FineN * 1.0 : cn * CoarseStep, Decades[d].Lo, Decades[d].Hi));
+            {
+                bool f = Decades[d].Fine;
+                an.DecadeRms[dir][d] = (f ? fineOk : coarseOk)
+                    ? Math.Sqrt(RangePower(f ? spec : cspec, f ? fspan : cspan, Decades[d].Lo, Decades[d].Hi))
+                    : double.NaN;
+            }
         }
+        an.Dropped = landOnly && an.FineSkipped == 2;
         for (int b = 0; b < SlopeBaselines.Length; b++)
         {
             int B = SlopeBaselines[b];
             var list = new List<double>(2 * FineN);
             for (int dir = 0; dir < 2; dir++)
-                for (int n = 0; n + B < FineN; n++) list.Add(Math.Atan(Math.Abs(fine[dir][n + B] - fine[dir][n]) / B) * (180d / Math.PI));
+            {
+                if (double.IsNaN(an.Relief[dir])) continue;
+                for (int n = 0; n + B < fine[dir].Length; n++) list.Add(Math.Atan(Math.Abs(fine[dir][n + B] - fine[dir][n]) / B) * (180d / Math.PI));
+            }
             an.Slopes[b] = list.ToArray();
         }
         var s2 = new List<double>(400);
@@ -224,7 +299,9 @@ public partial class LandscapeReliefAudit : RefCounted
             for (int v = 0; v < 20; v++)
             {
                 double pa = a + (u - 9.5) * 100d, pz = z + (v - 9.5) * 100d;
-                double gx = (H(pa + 2, pz) - H(pa - 2, pz)) / 4d, gz = (H(pa, pz + 2) - H(pa, pz - 2)) / 4d;
+                double h1 = H(pa + 2, pz), h2 = H(pa - 2, pz), h3 = H(pa, pz + 2), h4 = H(pa, pz - 2);
+                if (landOnly && (h1 <= 0d || h2 <= 0d || h3 <= 0d || h4 <= 0d || H(pa, pz) <= 0d)) continue;
+                double gx = (h1 - h2) / 4d, gz = (h3 - h4) / 4d;
                 s2.Add(Math.Atan(Math.Sqrt(gx * gx + gz * gz)) * (180d / Math.PI));
             }
         an.Slope2d = s2.ToArray();
@@ -349,6 +426,7 @@ public partial class LandscapeReliefAudit : RefCounted
         public double[] DecMed = new double[Decades.Length], DecP90 = new double[Decades.Length];
         public double[][] Slope = new double[3][];  // [baseline] -> p50, p90, p99
         public double[] Slope2d = new double[3];    // p50, p95, max
+        public double Share55 = double.NaN;         // share of 2D 4 m slope samples over 55 degrees
         public double[] Relief = new double[2];     // p50, p95
         public List<(double, double)> Anchors = new();
     }
@@ -356,6 +434,14 @@ public partial class LandscapeReliefAudit : RefCounted
     sealed class Stats
     {
         public List<ClassStats> Classes = new();
+        public bool ShowTargets, LandOnly;
+        public int FineSkipped, CoarseSkipped, Kept, Dropped;
+        public BaselineInfo Baseline;
+        public Dictionary<LandscapeClass, double[]> Ratios = new();
+        public List<TargetRow> Rows = new();
+
+        static void Num(Utf8JsonWriter j, string name, double v) { if (double.IsNaN(v)) j.WriteNull(name); else j.WriteNumber(name, v); }
+
         public string Json(LandscapeWorld.Spec spec, string stamp, double seconds)
         {
             using var ms = new MemoryStream();
@@ -373,7 +459,14 @@ public partial class LandscapeReliefAudit : RefCounted
                     j.WriteString("world_tag", spec.Tag);
                 }
                 j.WriteNumber("anchors_per_class", AnchorsPerClass);
-                j.WriteString("coastal_note", "CoastalBelt heights are clamped at 0 (water surface)");
+                j.WriteString("coastal_note", LandOnly ? CoastalNoteLandOnly : "CoastalBelt heights are clamped at 0 (water surface)");
+                if (LandOnly)
+                {
+                    j.WriteStartObject("land_only_coastal");
+                    j.WriteNumber("fine_transects_skipped", FineSkipped); j.WriteNumber("coarse_transects_skipped", CoarseSkipped);
+                    j.WriteNumber("anchors_kept", Kept); j.WriteNumber("anchors_dropped", Dropped);
+                    j.WriteEndObject();
+                }
                 j.WriteStartArray("bands");
                 for (int b = 0; b < Bands; b++) { j.WriteStartObject(); j.WriteNumber("lo_m", Math.Pow(2, b + 1)); j.WriteNumber("hi_m", Math.Pow(2, b + 2)); j.WriteString("source", b < FineUntilBand + 1 ? "fine" : "coarse"); j.WriteEndObject(); }
                 j.WriteEndArray();
@@ -387,19 +480,57 @@ public partial class LandscapeReliefAudit : RefCounted
                     Arr(j, "band_rms_median", c.BandMed); Arr(j, "band_rms_p90", c.BandP90);
                     Arr(j, "band_rms_median_fine", c.FineMed); Arr(j, "band_rms_median_coarse", c.CoarseMed); Arr(j, "band_rms_median_matched_window_32m", c.MatchedMed);
                     j.WriteStartObject("decade_rms");
-                    for (int d = 0; d < Decades.Length; d++) { j.WriteStartObject(Decades[d].Name); j.WriteNumber("median", c.DecMed[d]); j.WriteNumber("p90", c.DecP90[d]); j.WriteEndObject(); }
+                    for (int d = 0; d < Decades.Length; d++) { j.WriteStartObject(Decades[d].Name); Num(j, "median", c.DecMed[d]); Num(j, "p90", c.DecP90[d]); j.WriteEndObject(); }
                     j.WriteEndObject();
                     j.WriteStartObject("slope_deg");
-                    for (int b = 0; b < 3; b++) { j.WriteStartObject(SlopeBaselines[b] + "m"); j.WriteNumber("p50", c.Slope[b][0]); j.WriteNumber("p90", c.Slope[b][1]); j.WriteNumber("p99", c.Slope[b][2]); j.WriteEndObject(); }
+                    for (int b = 0; b < 3; b++) { j.WriteStartObject(SlopeBaselines[b] + "m"); Num(j, "p50", c.Slope[b][0]); Num(j, "p90", c.Slope[b][1]); Num(j, "p99", c.Slope[b][2]); j.WriteEndObject(); }
                     j.WriteEndObject();
-                    j.WriteStartObject("slope2d_4m_deg"); j.WriteNumber("p50", c.Slope2d[0]); j.WriteNumber("p95", c.Slope2d[1]); j.WriteNumber("max", c.Slope2d[2]); j.WriteEndObject();
-                    j.WriteStartObject("relief_4km_m"); j.WriteNumber("p50", c.Relief[0]); j.WriteNumber("p95", c.Relief[1]); j.WriteEndObject();
+                    j.WriteStartObject("slope2d_4m_deg"); Num(j, "p50", c.Slope2d[0]); Num(j, "p95", c.Slope2d[1]); Num(j, "max", c.Slope2d[2]); if (ShowTargets) Num(j, "share_over_55", c.Share55); j.WriteEndObject();
+                    j.WriteStartObject("relief_4km_m"); Num(j, "p50", c.Relief[0]); Num(j, "p95", c.Relief[1]); j.WriteEndObject();
                     j.WriteStartArray("anchor_positions");
                     foreach (var (a, z) in c.Anchors) { j.WriteStartArray(); j.WriteNumberValue(a); j.WriteNumberValue(z); j.WriteEndArray(); }
                     j.WriteEndArray();
                     j.WriteEndObject();
                 }
                 j.WriteEndArray();
+                if (Baseline != null)
+                {
+                    j.WriteStartObject("baseline");
+                    j.WriteString("path", Baseline.Path); j.WriteString("world_hash", Baseline.WorldHash); j.WriteBoolean("land_only_coastal", Baseline.LandOnly);
+                    j.WriteStartObject("decade_rms_median_ratio");
+                    foreach (var c in Classes)
+                    {
+                        j.WriteStartObject(c.Cls.ToString());
+                        for (int d = 0; d < Decades.Length; d++) Num(j, Decades[d].Name, Ratios[c.Cls][d]);
+                        j.WriteEndObject();
+                    }
+                    j.WriteEndObject();
+                    j.WriteEndObject();
+                }
+                if (ShowTargets)
+                {
+                    j.WriteStartArray("targets");
+                    foreach (var r in Rows)
+                    {
+                        j.WriteStartObject();
+                        j.WriteString("id", r.Id); j.WriteString("verdict", r.Pass ? "PASS" : "FAIL");
+                        j.WriteStartArray("checks");
+                        foreach (var k in r.Checks)
+                        {
+                            j.WriteStartObject();
+                            j.WriteString("metric", k.Metric); j.WriteString("class", k.Class); j.WriteString("decade", k.Decade);
+                            Num(j, "value", k.Value);
+                            if (k.Min.HasValue) j.WriteNumber("min", k.Min.Value); else j.WriteNull("min");
+                            if (k.Max.HasValue) j.WriteNumber("max", k.Max.Value); else j.WriteNull("max");
+                            j.WriteString("verdict", k.Reason.Length == 0 ? "PASS" : "FAIL");
+                            if (k.Reason.Length > 0) j.WriteString("reason", k.Reason);
+                            j.WriteEndObject();
+                        }
+                        j.WriteEndArray();
+                        j.WriteEndObject();
+                    }
+                    j.WriteEndArray();
+                }
                 j.WriteStartObject("run");
                 j.WriteString("stamp", stamp);
                 j.WriteNumber("seconds", seconds);
@@ -425,7 +556,8 @@ public partial class LandscapeReliefAudit : RefCounted
             var sb = new StringBuilder();
             string head = "| " + string.Join(" | ", Classes.Select(c => c.Cls.ToString())) + " |";
             string rule = "|---|" + string.Concat(Classes.Select(_ => "---|"));
-            sb.AppendLine($"Relief spectrum, world {spec.DefinitionHashHex}, stamp {stamp}, run time {seconds:F1} s. CoastalBelt heights are clamped at 0 (water surface).");
+            sb.AppendLine($"Relief spectrum, world {spec.DefinitionHashHex}, stamp {stamp}, run time {seconds:F1} s. " + (LandOnly ? CoastalNoteLandOnly + "." : "CoastalBelt heights are clamped at 0 (water surface)."));
+            if (LandOnly) { sb.AppendLine(); sb.AppendLine($"Land-only coastal: fine transects skipped {FineSkipped}, coarse transects skipped {CoarseSkipped}, anchors kept {Kept}, dropped {Dropped}."); }
             sb.AppendLine();
             sb.AppendLine("Anchors per class (lattice share): " + string.Join(", ", Classes.Select(c => $"{c.Cls} {c.AnchorCount} ({c.Coverage * 100:F1} %)")));
             sb.AppendLine();
@@ -449,6 +581,7 @@ public partial class LandscapeReliefAudit : RefCounted
                     sb.AppendLine($"| {SlopeBaselines[b]} m baseline {name} | " + string.Join(" | ", Classes.Select(c => F(c.Slope[b][idx], "0.00"))) + " |");
             foreach (var (name, idx) in new[] { ("p50", 0), ("p95", 1), ("max", 2) })
                 sb.AppendLine($"| 2D 4 m {name} | " + string.Join(" | ", Classes.Select(c => F(c.Slope2d[idx], "0.00"))) + " |");
+            if (ShowTargets) sb.AppendLine("| 2D 4 m share over 55 deg | " + string.Join(" | ", Classes.Select(c => F(c.Share55, "0.0000"))) + " |");
             sb.AppendLine();
             sb.AppendLine("4 km relief (max minus min over each 4,096 m transect), metres.");
             sb.AppendLine();
@@ -461,16 +594,137 @@ public partial class LandscapeReliefAudit : RefCounted
             sb.AppendLine("| Band | " + head.TrimStart('|').TrimStart()); sb.AppendLine(rule);
             foreach (int b in new[] { 5, 6, 7, 8 })
                 sb.AppendLine($"| {BandName(b)} | " + string.Join(" | ", Classes.Select(c => $"{F(c.FineMed[b], "0.000")} / {F(c.MatchedMed[b], "0.000")} / {F(c.CoarseMed[b], "0.000")}")) + " |");
+            if (Baseline != null)
+            {
+                sb.AppendLine();
+                sb.AppendLine($"Ratio to baseline {Baseline.Path} (world {Baseline.WorldHash}, land-only coastal {Baseline.LandOnly}): median decade RMS, new / baseline.");
+                sb.AppendLine();
+                sb.AppendLine("| Decade | " + head.TrimStart('|').TrimStart()); sb.AppendLine(rule);
+                for (int d = 0; d < Decades.Length; d++)
+                    sb.AppendLine($"| {Decades[d].Name} | " + string.Join(" | ", Classes.Select(c => F(Ratios[c.Cls][d], "0.000"))) + " |");
+            }
+            if (ShowTargets)
+            {
+                sb.AppendLine();
+                sb.AppendLine("Targets.");
+                sb.AppendLine();
+                sb.AppendLine("| Row | Verdict | Checks |"); sb.AppendLine("|---|---|---|");
+                foreach (var r in Rows)
+                    sb.AppendLine($"| {r.Id} | {(r.Pass ? "PASS" : "FAIL")} | {string.Join("; ", r.Checks.Select(k => $"{k.Class} {k.Metric} {k.Decade} = {F(k.Value, "0.0000")} [{(k.Min.HasValue ? k.Min.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) : "-")}, {(k.Max.HasValue ? k.Max.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) : "-")}]{(k.Reason.Length > 0 ? " " + k.Reason : "")}"))} |");
+            }
             return sb.ToString();
         }
     }
 
-    static Stats BuildStats(Anchor[] anchors, int[] coverage, int latticeCount, List<string> failures, List<string> warnings)
+    const string CoastalNoteLandOnly = "CoastalBelt measured on land only (samples at or below 0 are skipped; transects with under 50 % land are skipped; others use the centred half-length window inside their longest land run)";
+
+    sealed class BaselineInfo { public string Path = "", WorldHash = ""; public bool LandOnly; public Dictionary<string, Dictionary<string, double>> Decades = new(); }
+    sealed class TargetCheck { public string Metric = "", Class = "", Decade = ""; public double Value = double.NaN; public double? Min, Max; public string Reason = ""; }
+    sealed class TargetRow { public string Id = ""; public bool Pass; public List<TargetCheck> Checks = new(); }
+
+    static void AttachBaseline(Stats stats, string path, List<string> warnings)
     {
-        var stats = new Stats();
+        using var doc = JsonDocument.Parse(File.ReadAllText(path));
+        var root = doc.RootElement;
+        var info = new BaselineInfo { Path = path, WorldHash = root.TryGetProperty("world_hash", out var wh) ? wh.GetString() ?? "" : "", LandOnly = root.TryGetProperty("land_only_coastal", out _) };
+        foreach (var c in root.GetProperty("classes").EnumerateArray())
+        {
+            var dict = new Dictionary<string, double>();
+            foreach (var d in c.GetProperty("decade_rms").EnumerateObject())
+                dict[d.Name] = d.Value.TryGetProperty("median", out var m) && m.ValueKind == JsonValueKind.Number ? m.GetDouble() : double.NaN;
+            info.Decades[c.GetProperty("class").GetString() ?? ""] = dict;
+        }
+        stats.Baseline = info;
+        if (info.LandOnly != stats.LandOnly) warnings.Add($"baseline land_only_coastal={info.LandOnly} differs from this run's {stats.LandOnly}: CoastalBelt ratios compare different measurements");
+        foreach (var c in stats.Classes)
+        {
+            var ratios = new double[Decades.Length];
+            for (int d = 0; d < Decades.Length; d++)
+            {
+                double b = double.NaN;
+                if (info.Decades.TryGetValue(c.Cls.ToString(), out var dict) && dict.TryGetValue(Decades[d].Name, out double v)) b = v;
+                ratios[d] = double.IsNaN(b) || b == 0d ? double.NaN : c.DecMed[d] / b;
+                GD.Print($"LANDSCAPE_RELIEF baseline ratio {c.Cls} {Decades[d].Name} = {F(ratios[d])} (new {F(c.DecMed[d])} / baseline {F(b)})");
+            }
+            stats.Ratios[c.Cls] = ratios;
+        }
+    }
+
+    static string F(double v) => double.IsNaN(v) ? "nan" : v.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture);
+
+    static void EvaluateTargets(Stats stats, string path, List<string> failures)
+    {
+        JsonDocument doc;
+        try { doc = JsonDocument.Parse(File.ReadAllText(path)); }
+        catch (Exception e) { failures.Add($"targets file {path}: {e.Message}"); return; }
+        using (doc)
+        {
+            foreach (var rowEl in doc.RootElement.GetProperty("rows").EnumerateArray())
+            {
+                var row = new TargetRow { Id = rowEl.GetProperty("id").GetString() ?? "" };
+                foreach (var ck in rowEl.GetProperty("checks").EnumerateArray())
+                {
+                    string metric = ck.GetProperty("metric").GetString() ?? "";
+                    var names = new List<string>();
+                    var clsEl = ck.GetProperty("class");
+                    if (clsEl.ValueKind == JsonValueKind.Array) foreach (var e in clsEl.EnumerateArray()) names.Add(e.GetString() ?? ""); else names.Add(clsEl.GetString() ?? "");
+                    string decade = ck.TryGetProperty("decade", out var de) ? de.GetString() ?? "" : "";
+                    double? min = ck.TryGetProperty("min", out var mi) && mi.ValueKind == JsonValueKind.Number ? mi.GetDouble() : null;
+                    double? max = ck.TryGetProperty("max", out var ma) && ma.ValueKind == JsonValueKind.Number ? ma.GetDouble() : null;
+                    string requires = ck.TryGetProperty("requires", out var rq) ? rq.GetString() ?? "" : "";
+                    var decadeNames = decade == "*" ? Decades.Select(x => x.Name).ToList() : new List<string> { decade };
+                    foreach (string name in names)
+                        foreach (string dec in decadeNames)
+                        {
+                            var t = new TargetCheck { Metric = metric, Class = name, Decade = dec, Min = min, Max = max };
+                            var cs = stats.Classes.FirstOrDefault(c => c.Cls.ToString() == name);
+                            int di = Array.FindIndex(Decades, x => x.Name == dec);
+                            bool ratio = metric == "decade_rms_median_ratio";
+                            if (requires == "land_only_coastal" && !stats.LandOnly) t.Reason = "needs-land-only-coastal";
+                            else if (ratio && stats.Baseline == null) t.Reason = "no-baseline";
+                            else if (cs == null) t.Reason = "bad-class";
+                            else
+                            {
+                                switch (metric)
+                                {
+                                    case "decade_rms_median": if (di >= 0) t.Value = cs.DecMed[di]; else t.Reason = "bad-decade"; break;
+                                    case "decade_rms_median_ratio": if (di >= 0) t.Value = stats.Ratios[cs.Cls][di]; else t.Reason = "bad-decade"; break;
+                                    case "slope2d_4m_p50": t.Value = cs.Slope2d[0]; break;
+                                    case "slope2d_4m_p95": t.Value = cs.Slope2d[1]; break;
+                                    case "slope2d_4m_share_over_55": t.Value = cs.Share55; break;
+                                    default: t.Reason = "bad-metric"; break;
+                                }
+                                if (t.Reason.Length == 0)
+                                {
+                                    if (double.IsNaN(t.Value)) t.Reason = "nodata";
+                                    else if (min.HasValue && t.Value < min.Value) t.Reason = "below-min";
+                                    else if (max.HasValue && t.Value > max.Value) t.Reason = "above-max";
+                                }
+                            }
+                            row.Checks.Add(t);
+                        }
+                }
+                row.Pass = row.Checks.All(k => k.Reason.Length == 0);
+                stats.Rows.Add(row);
+                string values = string.Join("|", row.Checks.Select(k => (row.Checks.Count > 1 ? k.Class + ":" : "") + F(k.Value)));
+                string ranges = string.Join("|", row.Checks.Select(k => $"[{(k.Min.HasValue ? F(k.Min.Value) : "-")},{(k.Max.HasValue ? F(k.Max.Value) : "-")}]"));
+                string reasons = string.Join(",", row.Checks.Where(k => k.Reason.Length > 0).Select(k => k.Reason).Distinct());
+                GD.Print($"LANDSCAPE_RELIEF_TARGET id={row.Id} {(row.Pass ? "PASS" : "FAIL")} value={values} range={ranges}" + (row.Pass ? "" : " reason=" + reasons));
+            }
+        }
+    }
+
+    static Stats BuildStats(Anchor[] anchors, int[] coverage, int latticeCount, bool landOnlyCoastal, List<string> failures, List<string> warnings)
+    {
+        var stats = new Stats { LandOnly = landOnlyCoastal };
+        foreach (var a in anchors.Where(a => a.Cls == (int)LandscapeClass.CoastalBelt && landOnlyCoastal))
+        {
+            stats.FineSkipped += a.FineSkipped; stats.CoarseSkipped += a.CoarseSkipped;
+            if (a.Dropped) stats.Dropped++; else stats.Kept++;
+        }
         foreach (LandscapeClass cls in Classes)
         {
-            var set = anchors.Where(a => a.Cls == (int)cls).ToArray();
+            var set = anchors.Where(a => a.Cls == (int)cls && !a.Dropped).ToArray();
             var cs = new ClassStats { Cls = cls, AnchorCount = set.Length, Coverage = coverage[(int)cls] / (double)latticeCount };
             foreach (var a in set) cs.Anchors.Add((a.Around, a.Across));
             if (set.Length == 0)
@@ -506,7 +760,8 @@ public partial class LandscapeReliefAudit : RefCounted
                 cs.Slope[b] = new[] { Percentile(v, 0.5), Percentile(v, 0.9), Percentile(v, 0.99) };
             }
             var s2 = set.SelectMany(a => a.Slope2d).ToList();
-            cs.Slope2d = new[] { Percentile(s2, 0.5), Percentile(s2, 0.95), s2.Max() };
+            cs.Slope2d = new[] { Percentile(s2, 0.5), Percentile(s2, 0.95), s2.Count > 0 ? s2.Max() : double.NaN };
+            cs.Share55 = s2.Count > 0 ? s2.Count(x => x > 55d) / (double)s2.Count : double.NaN;
             var rel = set.SelectMany(a => a.Relief).ToList();
             cs.Relief = new[] { Percentile(rel, 0.5), Percentile(rel, 0.95) };
             // Consistency: 128-256 m and 256-512 m, 1 m sampling against 32 m sampling over the same 4,096 m window, within 25 %. The 65-131 km coarse transects are not
@@ -516,7 +771,7 @@ public partial class LandscapeReliefAudit : RefCounted
                 double f = cs.FineMed[b], c = cs.MatchedMed[b];
                 double err = Math.Abs(f - c) / Math.Max(1e-9, c);
                 GD.Print($"LANDSCAPE_RELIEF consistency {cls} band {b} fine={f:F4} matched32m={c:F4} diff={err * 100:F1} % (wide coarse {cs.CoarseMed[b]:F4})");
-                if (!(err <= 0.25)) failures.Add($"consistency {cls} band {BandNameStatic(b)}: fine {f:F4} vs 32 m matched window {c:F4} ({err * 100:F1} %)");
+                if (!(err <= 0.25)) { string msg = $"consistency {cls} band {BandNameStatic(b)}: fine {f:F4} vs 32 m matched window {c:F4} ({err * 100:F1} %)"; if (landOnlyCoastal && cls == LandscapeClass.CoastalBelt) warnings.Add(msg); else failures.Add(msg); }
             }
             stats.Classes.Add(cs);
         }

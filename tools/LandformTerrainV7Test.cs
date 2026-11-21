@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
@@ -7,6 +8,7 @@ using System.Threading.Tasks;
 using Godot;
 using RingworldTechDemo.Poi;
 using RingworldTechDemo.Terrain.Generation;
+using RingworldTechDemo.Terrain.Hydrology;
 using RingworldTechDemo.Terrain.Sites;
 using RingworldTechDemo.Voxel.Phase3;
 
@@ -224,13 +226,33 @@ public partial class LandformTerrainV7Test : RefCounted
     /// </summary>
     static void LodGap(int seed)
     {
+        string[] userArgs = OS.GetCmdlineUserArgs();
+        RingTerrainSampler world = null;
+        string work = ProjectSettings.GlobalizePath($"res://.godot/landform_lodgap_{System.Environment.ProcessId}");
+        try
+        {
         using RingTerrainSampler s6 = EmitterSiteTestWorlds.CreateGen17Climate(seed);
         using RingTerrainSampler s7 = EmitterSiteTestWorlds.CreateGen17Landform(seed);
+        if (LandscapeWorld.ParseGenerationArgs(userArgs).IsExplicit)
+        {
+            // T7-2 baseline: the explicit world (CPU-baked drainage graph resident before the sampler, as in the game) is measured next to v7.
+            LandscapeWorld.Spec spec = LandscapeWorld.FromArgs(userArgs, seed);
+            TerrainGenerationParameters recipe = spec.Recipe;
+            VoxelTerrainSettings settings = spec.CreateSettings();
+            if (recipe.HasRivers)
+            {
+                Directory.CreateDirectory(work);
+                var clock = Stopwatch.StartNew();
+                RiverGraphStore.GetOrBuild(HydrologyBakeInputs.Capture(settings, recipe, HydrologyBakeInputs.DefaultWorkers, HydrologySourcePreference.Cpu, work));
+                Console.WriteLine($"LANDFORM_V7_LODGAP_WORLD {spec.Tag} hash={spec.DefinitionHashHex} drainage graph (CPU bake) {clock.Elapsed.TotalSeconds:F1} s");
+            }
+            world = new RingTerrainSampler(settings, true, EmitterSiteTestWorlds.Circumference, EmitterSiteTestWorlds.Circumference / Math.Tau, EmitterSiteTestWorlds.Width, 8400);
+        }
         var tiles = new (string Name, double Around, double Across)[] { ("hills_a", 8011003.125, 159000.125), ("hills_b", 10053024.125, 159000.125), ("hills_c", 13194594.125, 159000.125), ("plains", 2513256.125, 159000.125) };
         foreach (double spacing in new[] { 4d, 8d, 16d, 32d, 64d, 128d, 256d })
             foreach ((string name, double a0, double z0) in tiles)
             {
-                var d6 = new List<double>(); var d7 = new List<double>();
+                var d6 = new List<double>(); var d7 = new List<double>(); var dw = new List<double>();
                 for (int line = 0; line < 12; line++)
                     foreach (bool alongAround in new[] { true, false })
                     {
@@ -245,11 +267,23 @@ public partial class LandformTerrainV7Test : RefCounted
                                 double h0 = s.GetPresentationSurfaceHeight(ax, zx), h1 = s.GetPresentationSurfaceHeight(bx, zb), hm = s.GetPresentationSurfaceHeight(mx, zm);
                                 list.Add(Math.Abs(hm - (h0 + h1) * 0.5d));
                             }
+                            if (world != null)
+                            {
+                                double w0 = world.GetPresentationSurfaceHeight(ax, zx), w1 = world.GetPresentationSurfaceHeight(bx, zb), wm = world.GetPresentationSurfaceHeight(mx, zm);
+                                dw.Add(Math.Abs(wm - (w0 + w1) * 0.5d));
+                            }
                         }
                     }
-                d6.Sort(); d7.Sort();
-                Console.WriteLine($"LANDFORM_V7_LODGAP tile={name} spacing={spacing:F0} v6_p99={Pct(d6, .99):F2} v6_max={d6[^1]:F2} v7_p99={Pct(d7, .99):F2} v7_max={d7[^1]:F2} v7_over8m={d7.Count(v => v > 8d) / (double)d7.Count:P3} n={d7.Count}");
+                d6.Sort(); d7.Sort(); dw.Sort();
+                Console.WriteLine($"LANDFORM_V7_LODGAP tile={name} spacing={spacing:F0} v6_p99={Pct(d6, .99):F2} v6_max={d6[^1]:F2} v7_p99={Pct(d7, .99):F2} v7_max={d7[^1]:F2} v7_over8m={d7.Count(v => v > 8d) / (double)d7.Count:P3} n={d7.Count}" + (world == null ? "" : $" world_p99={Pct(dw, .99):F2} world_max={dw[^1]:F2} world_over8m={dw.Count(v => v > 8d) / (double)dw.Count:P3}"));
             }
+        }
+        finally
+        {
+            world?.Dispose();
+            RiverGraphStore.Clear();
+            try { if (Directory.Exists(work)) Directory.Delete(work, true); } catch (IOException) { }
+        }
     }
 
     // ---- shape -------------------------------------------------------------------------------------------------

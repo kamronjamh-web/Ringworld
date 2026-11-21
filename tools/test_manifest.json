@@ -5830,6 +5830,18 @@
       "expected_s": 60,
       "timeout_s": 300
     },
+    "landscape_relief_targets": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "landscape",
+        "terrain"
+      ],
+      "marker": "LANDSCAPE_RELIEF_TARGETS",
+      "expected_s": 60,
+      "timeout_s": 300
+    },
     "shadow_attribution_test": {
       "kind": "test",
       "mode": "gpu",
