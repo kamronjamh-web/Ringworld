@@ -475,8 +475,9 @@ public partial class RingGraphicsQualityController : Node
         }
         ApplyShadowTuningOverrides();
 
-        if (_coordinator != null)
-            _coordinator.SetTerrainShadowCoverageMeters(shadowDistanceMeters);
+        // Terrain caster coverage follows the active light ranges (near sun map cap included), as every frame does; writing the preset's
+        // full sun distance here put the coarser proxy levels back into the sun map until the next frame.
+        UpdateTerrainShadowCasterCoverage();
         ApplyTerrainMacroShadowOverrides(
             macroShadowStrength,
             macroFadeStartMeters,
