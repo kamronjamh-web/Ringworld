@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Godot;
 using RingworldTechDemo.Vegetation.Canopy;
+using RingworldTechDemo.Vegetation.Scatter;
 
 namespace RingworldTechDemo.Vegetation.Understory;
 
@@ -68,8 +69,14 @@ public sealed class UnderstoryStandFill
     public float[] HeightMeters = Array.Empty<float>();
     /// <summary>Trunk radius of each variant row in the carrier's normalised tree space (1 = the tree's height): ImportedTreeVariant.TrunkRadiusMeters / HeightMeters. A collider's radius in metres is this times the instance height in metres (Size times HeightMeters).</summary>
     public float[] TrunkRadiusMeters = Array.Empty<float>();
-    /// <summary>The crown hull of each variant row, equal to TreeCrownHullTable.Get()[source] (also in every carrier's parameter texture rows 8 to 10).</summary>
+    /// <summary>The crown hull of each variant row after the crown lift (SF-7): TreeCrownHullTable.FromBounds of the remaining LOD0 foliage with the base variant's measured porosity and leaf inclination (also in every carrier's parameter texture rows 8 to 10). Its Base is at or above <see cref="CutHeights"/>; the trunk collider and the canopy shade raster read it.</summary>
     public TreeCrownHull[] Hulls = Array.Empty<TreeCrownHull>();
+    /// <summary>SF-7 crown lift: per row, the height in the carrier's normalised tree space below which the foliage is removed (LOD0 and LOD2 cards whose lowest vertex is below it are dropped, the caster discards fragments below it; also parameter row 3 w).</summary>
+    public float[] CutHeights = Array.Empty<float>();
+    /// <summary>Foliage triangles per row before and after the crown lift, for LOD0 and LOD2 (diagnostics and tests).</summary>
+    public int[] Lod0FoliageBefore = Array.Empty<int>(), Lod0FoliageAfter = Array.Empty<int>(), Lod2FoliageBefore = Array.Empty<int>(), Lod2FoliageAfter = Array.Empty<int>();
+    /// <summary>The share of the LOD0 foliage area (normalised space) that remains after the crown lift, per row.</summary>
+    public float[] Lod0FoliageAreaKept = Array.Empty<float>();
     /// <summary>Bytes of the six billboard albedo layers (the only texture this adds to the understory's).</summary>
     public long BillboardTextureBytes;
 }
@@ -130,6 +137,23 @@ public sealed class UnderstoryCatalog
     /// <summary>The stand-filler carriers (SF-1, <see cref="StandFillSources"/> row order); main thread, cached.</summary>
     public static UnderstoryStandFill LoadStandFill() => _standFill ??= BuildStandFill();
 
+    /// <summary>SF-7 crown lift: the scatter row of the stand filler (veg.standfill) and the height in metres above the ground at which the lowest leaf of the smallest filler must sit (head height).</summary>
+    public const ushort StandFillScatterClassId = 15;
+    public const float CrownLiftClearanceMeters = 1.9f;
+
+    /// <summary>The crown-lift cut of each stand filler row in normalised tree space: the lowest leaf of the smallest, most embedded instance (scatter row veg.standfill: SizeMinM, EmbedMax) stays <see cref="CrownLiftClearanceMeters"/> above the ground at its root.</summary>
+    public static float[] CutHeightsOf(IReadOnlyList<ImportedTreeVariant> variants)
+    {
+        RingScatterClass row = RingScatterClassTable.Production.Find(StandFillScatterClassId) ?? throw new InvalidOperationException("scatter row veg.standfill missing");
+        var cuts = new float[StandFillSources.Length];
+        for (int i = 0; i < cuts.Length; i++)
+        {
+            float smallest = variants[StandFillSources[i]].HeightMeters * row.SizeMinM;
+            cuts[i] = (CrownLiftClearanceMeters + row.EmbedMax * smallest) / smallest;
+        }
+        return cuts;
+    }
+
     /// <summary>First vertex layer value of a billboard vertex (position.w = this + the stand-filler row); bark is 0-2 and foliage 4-6 (species + 4).</summary>
     public const float BillboardLayerBase = 8f;
 
@@ -188,6 +212,36 @@ public sealed class UnderstoryCatalog
         public readonly List<Vector3> Normals = new();
         public readonly List<Vector4> Uvs = new();
         public SurfaceTerms? Bark, Foliage;
+        /// <summary>Foliage triangles in the source and kept after a crown lift cut (equal without one), and the bounds of the kept foliage vertices.</summary>
+        public int FoliageBefore, FoliageAfter;
+        public float FoliageAreaBefore, FoliageAreaAfter;
+        public Vector3 FoliageMin = new(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity), FoliageMax = new(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity);
+    }
+
+    /// <summary>
+    /// SF-7: the leaf card (connected component of triangles) of each triangle of an indexed surface; triangles belong to one card when they share a vertex by position (to 1e-5; the source meshes duplicate vertices per triangle or per UV seam,
+    /// so the index alone would split a card). Union-find over the welded positions.
+    /// </summary>
+    private static int[] CardOfTriangle(Vector3[] positions, int[] indices, out int cardCount)
+    {
+        int triangles = indices.Length / 3;
+        var weld = new Dictionary<(long, long, long), int>();
+        var parent = new int[triangles];
+        for (int t = 0; t < triangles; t++) parent[t] = t;
+        int Find(int a) { while (parent[a] != a) { parent[a] = parent[parent[a]]; a = parent[a]; } return a; }
+        for (int t = 0; t < triangles; t++)
+            for (int k = 0; k < 3; k++)
+            {
+                Vector3 p = positions[indices[t * 3 + k]];
+                var key = ((long)MathF.Round(p.X * 1e5f), (long)MathF.Round(p.Y * 1e5f), (long)MathF.Round(p.Z * 1e5f));
+                if (weld.TryGetValue(key, out int other)) { int a = Find(t), b = Find(other); if (a != b) parent[a] = b; }
+                else weld[key] = t;
+            }
+        var card = new int[triangles];
+        var ids = new Dictionary<int, int>();
+        for (int t = 0; t < triangles; t++) { int root = Find(t); if (!ids.TryGetValue(root, out int id)) ids[root] = id = ids.Count; card[t] = id; }
+        cardCount = ids.Count;
+        return card;
     }
 
     private static UnderstoryCatalog Build()
@@ -201,9 +255,10 @@ public sealed class UnderstoryCatalog
     }
 
     /// <summary>The LOD0 and LOD2 carriers (<see cref="SourceLods"/>) of a list of base catalog variants (variant row = list index): the saplings' and the stand filler's builder.</summary>
-    private static UnderstoryLodCarrier[] BuildLodCarriers(int[] sources, string name, IReadOnlyList<ImportedTreeVariant> variants, TextureSet textures)
+    private static UnderstoryLodCarrier[] BuildLodCarriers(int[] sources, string name, IReadOnlyList<ImportedTreeVariant> variants, TextureSet textures, float[]? cuts = null, TreeCrownHull[]? liftedHulls = null, int[][]? foliageCounts = null, float[]? areaKept = null)
     {
-        TreeCrownHull[] hulls = TreeCrownHullTable.Get();
+        // SF-7: with cuts, the foliage cards below each row's cut are dropped and the hull rows are the lifted hulls (indexed by base variant like the table; from the LOD0 foliage that remains).
+        TreeCrownHull[] hulls = cuts == null ? TreeCrownHullTable.Get() : (TreeCrownHull[])TreeCrownHullTable.Get().Clone();
         Shader shader = ResourceLoader.Load<Shader>(ShaderPath) ?? throw new InvalidOperationException("missing " + ShaderPath);
         var carriers = new UnderstoryLodCarrier[SourceLods.Length];
         for (int l = 0; l < SourceLods.Length; l++)
@@ -213,9 +268,16 @@ public sealed class UnderstoryCatalog
             for (int row = 0; row < sources.Length; row++)
             {
                 ImportedTreeVariant variant = variants[sources[row]];
-                geometries[row] = Expand(variant.Lods[lod], (int)variant.Species);
+                geometries[row] = Expand(variant.Lods[lod], (int)variant.Species, cuts?[row] ?? -1f);
+                if (foliageCounts != null) { foliageCounts[2 * l][row] = geometries[row].FoliageBefore; foliageCounts[2 * l + 1][row] = geometries[row].FoliageAfter; if (l == 0 && areaKept != null) areaKept[row] = geometries[row].FoliageAreaAfter / MathF.Max(1e-12f, geometries[row].FoliageAreaBefore); }
+                if (cuts != null && lod == 0)
+                {
+                    TreeCrownHull lifted = TreeCrownHullTable.FromBounds(sources[row], variant.Species, geometries[row].FoliageMin, geometries[row].FoliageMax, variant.HeightMeters, TreeCrownHullTable.LeafInclinationOf(variant));
+                    hulls[sources[row]] = lifted;
+                    if (liftedHulls != null) liftedHulls[row] = lifted;
+                }
             }
-            carriers[l] = MakeCarrier($"{name}_L{lod}", lod, geometries, ParameterTexture(geometries, hulls, textures.Resource.Constants, variants, sources), textures, shader, variants[sources[0]].Lods[lod]);
+            carriers[l] = MakeCarrier($"{name}_L{lod}", lod, geometries, ParameterTexture(geometries, hulls, textures.Resource.Constants, variants, sources, cuts), textures, shader, variants[sources[0]].Lods[lod]);
         }
         return carriers;
     }
@@ -229,22 +291,31 @@ public sealed class UnderstoryCatalog
         IReadOnlyList<ImportedTreeVariant> variants = ImportedTreeCatalog.Load();
         TextureSet textures = Textures();
         int[] sources = StandFillSources;
-        TreeCrownHull[] hulls = TreeCrownHullTable.Get();
-        UnderstoryLodCarrier[] lods = BuildLodCarriers(sources, "UnderstoryStandFill", variants, textures);
-        var result = new UnderstoryStandFill { Lod0 = lods[0], Lod2 = lods[1], HeightMeters = new float[sources.Length], TrunkRadiusMeters = new float[sources.Length], Hulls = new TreeCrownHull[sources.Length], BillboardTextureBytes = textures.BillboardBytes };
+        float[] cuts = CutHeightsOf(variants);
+        var lifted = new TreeCrownHull[sources.Length];
+        var areaKept = new float[sources.Length];
+        var counts = new int[4][]; for (int c = 0; c < 4; c++) counts[c] = new int[sources.Length];
+        UnderstoryLodCarrier[] lods = BuildLodCarriers(sources, "UnderstoryStandFill", variants, textures, cuts, lifted, counts, areaKept);
+        lods[0].Material.SetShaderParameter("stand_fill_head_clear", true); // SF-7b: only the near carrier (L2 starts at 25 m, the caster and every other carrier keep the default false)
+        TreeCrownHull[] hulls = (TreeCrownHull[])TreeCrownHullTable.Get().Clone();
+        for (int row = 0; row < sources.Length; row++) hulls[sources[row]] = lifted[row];
+        var result = new UnderstoryStandFill
+        {
+            Lod0 = lods[0], Lod2 = lods[1], HeightMeters = new float[sources.Length], TrunkRadiusMeters = new float[sources.Length], Hulls = lifted, CutHeights = cuts, BillboardTextureBytes = textures.BillboardBytes,
+            Lod0FoliageBefore = counts[0], Lod0FoliageAfter = counts[1], Lod2FoliageBefore = counts[2], Lod2FoliageAfter = counts[3], Lod0FoliageAreaKept = areaKept,
+        };
         var geometries = new Geometry[sources.Length];
         for (int row = 0; row < sources.Length; row++)
         {
             ImportedTreeVariant variant = variants[sources[row]];
             result.HeightMeters[row] = variant.HeightMeters;
             result.TrunkRadiusMeters[row] = variant.TrunkRadiusMeters / variant.HeightMeters;
-            result.Hulls[row] = hulls[sources[row]];
             Geometry g = geometries[row] = Expand(variant.Lods[3], (int)variant.Species);
             if (g.Foliage is not { } terms || g.Bark != null || terms.Mode != 2) throw new InvalidOperationException($"stand filler variant {sources[row]} LOD3 is not a single billboard surface");
             for (int i = 0; i < g.Positions.Count; i++) { Vector4 p = g.Positions[i]; g.Positions[i] = new Vector4(p.X, p.Y, p.Z, BillboardLayerBase + row); }
         }
         Shader shader = ResourceLoader.Load<Shader>(ShaderPath) ?? throw new InvalidOperationException("missing " + ShaderPath);
-        result.Caster = MakeCarrier("UnderstoryStandFill_Caster", 3, geometries, ParameterTexture(geometries, hulls, textures.Resource.Constants, variants, sources), textures, shader, variants[sources[0]].Lods[3]);
+        result.Caster = MakeCarrier("UnderstoryStandFill_Caster", 3, geometries, ParameterTexture(geometries, hulls, textures.Resource.Constants, variants, sources, cuts), textures, shader, variants[sources[0]].Lods[3]);
         result.Caster.Material.SetShaderParameter("billboard_albedo", textures.BillboardAlbedo);
         return result;
     }
@@ -400,7 +471,7 @@ public sealed class UnderstoryCatalog
         return result;
     }
 
-    private static Geometry Expand(Mesh mesh, int species)
+    private static Geometry Expand(Mesh mesh, int species, float foliageCut = -1f)
     {
         var result = new Geometry();
         for (int surface = 0; surface < mesh.GetSurfaceCount(); surface++)
@@ -421,8 +492,33 @@ public sealed class UnderstoryCatalog
             float[] tangents = ReadF(arrays, Mesh.ArrayType.Tangent), attachments = ReadF(arrays, Mesh.ArrayType.Custom0);
             int[] indices = arrays[(int)Mesh.ArrayType.Index].VariantType == Variant.Type.Nil ? Sequential(positions.Length) : arrays[(int)Mesh.ArrayType.Index].AsInt32Array();
             float layer = species + (foliage ? 4f : 0f);
-            foreach (int i in indices)
+            bool[]? keep = null;
+            if (foliage)
             {
+                // SF-7 crown lift: a card whose lowest vertex is below the cut goes whole (bark is never cut).
+                if (foliageCut > 0f)
+                {
+                    int[] card = CardOfTriangle(positions, indices, out int cards);
+                    var lowest = new float[cards]; Array.Fill(lowest, float.PositiveInfinity);
+                    for (int k = 0; k < indices.Length; k++) lowest[card[k / 3]] = MathF.Min(lowest[card[k / 3]], positions[indices[k]].Y);
+                    keep = new bool[indices.Length / 3];
+                    for (int t = 0; t < keep.Length; t++) keep[t] = lowest[card[t]] >= foliageCut;
+                }
+                result.FoliageBefore += indices.Length / 3;
+                for (int t = 0; t < indices.Length / 3; t++)
+                {
+                    float area = 0.5f * (positions[indices[t * 3 + 1]] - positions[indices[t * 3]]).Cross(positions[indices[t * 3 + 2]] - positions[indices[t * 3]]).Length();
+                    result.FoliageAreaBefore += area;
+                    if (keep != null && !keep[t]) continue;
+                    result.FoliageAreaAfter += area;
+                    result.FoliageAfter++;
+                    for (int k = 0; k < 3; k++) { Vector3 p = positions[indices[t * 3 + k]]; result.FoliageMin = result.FoliageMin.Min(p); result.FoliageMax = result.FoliageMax.Max(p); }
+                }
+            }
+            for (int at = 0; at < indices.Length; at++)
+            {
+                if (keep != null && !keep[at / 3]) continue;
+                int i = indices[at];
                 result.Positions.Add(new Vector4(positions[i].X, positions[i].Y, positions[i].Z, layer));
                 result.Normals.Add(normals.Length > i ? normals[i] : Vector3.Up);
                 Vector2 uv = uvs.Length > i ? uvs[i] : Vector2.Zero, uv2 = uv2s.Length > i ? uv2s[i] : Vector2.Zero;
@@ -455,9 +551,9 @@ public sealed class UnderstoryCatalog
 
     /// <summary>
     /// Rows (variant per column): 0 bark tint, 1 foliage tint, 2 (bark roughness, bark metallic, foliage roughness, foliage metallic) as the material would compute them (the map is replaced by its layer mean),
-    /// 3 (bark normal scale, foliage normal scale, foliage alpha cutoff, 0), 4 (bark wind mode, bark attachments, foliage wind mode, foliage attachments), 8 crown hull, 9 hull extra, 10 leaf inclination (TreeCrownHullTable.Pack, the impostor's rows).
+    /// 3 (bark normal scale, foliage normal scale, foliage alpha cutoff, crown-lift cut height: stand filler only, else 0), 4 (bark wind mode, bark attachments, foliage wind mode, foliage attachments), 8 crown hull, 9 hull extra, 10 leaf inclination (TreeCrownHullTable.Pack, the impostor's rows).
     /// </summary>
-    private static ImageTexture ParameterTexture(Geometry[] geometries, TreeCrownHull[] hulls, Vector4[] constants, IReadOnlyList<ImportedTreeVariant> variants, int[] sources)
+    private static ImageTexture ParameterTexture(Geometry[] geometries, TreeCrownHull[] hulls, Vector4[] constants, IReadOnlyList<ImportedTreeVariant> variants, int[] sources, float[]? cuts = null)
     {
         var image = Image.CreateEmpty(geometries.Length, ParameterRowCount, false, Image.Format.Rgbaf);
         for (int i = 0; i < geometries.Length; i++)
@@ -469,7 +565,7 @@ public sealed class UnderstoryCatalog
                         image.SetPixel(i, 0, bark.Tint);
             image.SetPixel(i, 1, foliage.Tint);
             image.SetPixel(i, 2, new Color(Fold(bark.Roughness, bark.RoughnessMap, layer.Z), Fold(bark.Metallic, bark.MetallicMap, layer.W), Fold(foliage.Roughness, foliage.RoughnessMap, layer.X), Fold(foliage.Metallic, foliage.MetallicMap, layer.Y)));
-            image.SetPixel(i, 3, new Color(bark.NormalScale, foliage.NormalScale, foliage.Cutoff, 0f));
+            image.SetPixel(i, 3, new Color(bark.NormalScale, foliage.NormalScale, foliage.Cutoff, cuts?[i] ?? 0f));
             image.SetPixel(i, 4, new Color(bark.Mode, bark.Attachments ? 1f : 0f, foliage.Mode, foliage.Attachments ? 1f : 0f));
             TreeCrownHullTable.Pack(hulls[sources[i]], out Vector4 hull, out Vector4 extra, out Vector4 lad);
             image.SetPixel(i, 8, new Color(hull.X, hull.Y, hull.Z, hull.W));

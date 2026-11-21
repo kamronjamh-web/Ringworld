@@ -43,12 +43,17 @@ public partial class StandFillCarrierTest : RefCounted
                 Check(UnderstoryCatalog.StandFillRowOf(sources[row]) == row, $"StandFillRowOf({sources[row]})");
                 Check(fill.HeightMeters[row] == v.HeightMeters, $"row {row} height");
                 Check(Math.Abs(fill.TrunkRadiusMeters[row] - v.TrunkRadiusMeters / v.HeightMeters) < 1e-7f && fill.TrunkRadiusMeters[row] > 0f, $"row {row} trunk radius");
-                Check(fill.Hulls[row] == hulls[sources[row]], $"row {row} hull differs from TreeCrownHullTable.Get()[{sources[row]}]");
+                TreeCrownHull lifted = fill.Hulls[row];
+                Check(lifted.Variant == sources[row] && lifted.Species == hulls[sources[row]].Species && lifted.Porosity == TreeCrownHullTable.PorosityOf(sources[row], v.Species) && lifted.LeafInclination == hulls[sources[row]].LeafInclination && lifted.HeightMeters == v.HeightMeters, $"row {row} lifted hull identity, porosity or leaf inclination");
+                Check(fill.CutHeights[row] > 0f && lifted.Base >= fill.CutHeights[row] - 1e-5f && hulls[sources[row]].Base < fill.CutHeights[row] && lifted.Top <= hulls[sources[row]].Top + 1e-5f, $"row {row} hull base {lifted.Base} vs cut {fill.CutHeights[row]} (base variant {hulls[sources[row]].Base})");
+                Check(Math.Abs(fill.CutHeights[row] * v.HeightMeters * 0.85f - (1.9f + 0.03f * v.HeightMeters * 0.85f)) < 1e-3f, $"row {row} cut {fill.CutHeights[row]} does not put the lowest leaf of a Size 0.85 filler 1.9 m above its root");
             }
-            Carrier("LOD0", fill.Lod0, 0, sources, variants, hulls, false);
-            Carrier("LOD2", fill.Lod2, 2, sources, variants, hulls, false);
-            Carrier("Caster", fill.Caster, 3, sources, variants, hulls, true);
-            Check(fill.Lod0.TriangleCount == 3442 && fill.Lod2.TriangleCount == 884, $"padded triangle counts LOD0 {fill.Lod0.TriangleCount} LOD2 {fill.Lod2.TriangleCount}");
+            Carrier("LOD0", fill.Lod0, 0, sources, variants, fill, false);
+            Carrier("LOD2", fill.Lod2, 2, sources, variants, fill, false);
+            Carrier("Caster", fill.Caster, 3, sources, variants, fill, true);
+            Check(fill.Lod0.Material.GetShaderParameter("stand_fill_head_clear").AsBool() && !fill.Lod2.Material.GetShaderParameter("stand_fill_head_clear").AsBool() && !fill.Caster.Material.GetShaderParameter("stand_fill_head_clear").AsBool(), "stand_fill_head_clear must be set on the stand filler L0 carrier only (SF-7b)");
+            Check(!UnderstoryCatalog.Load().Lods.Any(l => l.Material.GetShaderParameter("stand_fill_head_clear").AsBool()), "a sapling carrier has stand_fill_head_clear set");
+            for (int row = 0; row < sources.Length; row++) Detail($"row {row} (variant {sources[row]}) cut {fill.CutHeights[row]:F4} ({fill.CutHeights[row] * fill.HeightMeters[row]:F2} m authored), hull base {fill.Hulls[row].Base:F4} (was {hulls[sources[row]].Base:F4}), foliage triangles LOD0 {fill.Lod0FoliageBefore[row]} -> {fill.Lod0FoliageAfter[row]}, LOD2 {fill.Lod2FoliageBefore[row]} -> {fill.Lod2FoliageAfter[row]}, LOD0 foliage area kept {fill.Lod0FoliageAreaKept[row]:P1}");
 
             var billboards = fill.Caster.Material.GetShaderParameter("billboard_albedo").As<Texture2DArray>();
             Check(billboards != null && billboards.GetLayers() == sources.Length && billboards.GetWidth() == 512 && billboards.GetHeight() == 512, "billboard_albedo is not a 6 x 512 array");
@@ -81,7 +86,7 @@ public partial class StandFillCarrierTest : RefCounted
         }
     }
 
-    private void Carrier(string label, UnderstoryLodCarrier carrier, int sourceLod, int[] sources, IReadOnlyList<ImportedTreeVariant> variants, TreeCrownHull[] hulls, bool caster)
+    private void Carrier(string label, UnderstoryLodCarrier carrier, int sourceLod, int[] sources, IReadOnlyList<ImportedTreeVariant> variants, UnderstoryStandFill fill, bool caster)
     {
         Check(carrier.SourceLod == sourceLod, $"{label} source LOD {carrier.SourceLod}");
         var expected = new int[sources.Length];
@@ -89,6 +94,7 @@ public partial class StandFillCarrierTest : RefCounted
         {
             Mesh mesh = variants[sources[row]].Lods[sourceLod];
             for (int s = 0; s < mesh.GetSurfaceCount(); s++) expected[row] += mesh.SurfaceGetArrays(s)[(int)Mesh.ArrayType.Index].AsInt32Array().Length / 3;
+            if (!caster) expected[row] -= (sourceLod == 0 ? fill.Lod0FoliageBefore[row] - fill.Lod0FoliageAfter[row] : fill.Lod2FoliageBefore[row] - fill.Lod2FoliageAfter[row]); // SF-7: the dropped foliage cards
             if (caster) Check(mesh.GetSurfaceCount() == 1, $"{label} variant {sources[row]} authored LOD3 has {mesh.GetSurfaceCount()} surfaces");
         }
         int largest = expected.Max();
@@ -116,6 +122,7 @@ public partial class StandFillCarrierTest : RefCounted
                     continue;
                 }
                 var p = new Vector3(texel.R, texel.G, texel.B);
+                if (!caster && texel.A == (int)variants[sources[row]].Species + 4f) Check(p.Y >= fill.CutHeights[row] - 1e-6f, $"{label} row {row} foliage vertex {i} at y {p.Y} below the cut {fill.CutHeights[row]}");
                 min = min.Min(p); max = max.Max(p); radius = Math.Max(radius, p.Length());
                 species.Add(texel.A);
             }
@@ -123,6 +130,7 @@ public partial class StandFillCarrierTest : RefCounted
             HashSet<float> allowed = caster ? new() { UnderstoryCatalog.BillboardLayerBase + row } : new() { layer, layer + 4f };
             Check(species.IsSubsetOf(allowed) && species.Count > 0, $"{label} row {row} vertex layers {{{string.Join(",", species)}}}, expected within {{{string.Join(",", allowed)}}}");
             if (!caster) Check(species.Contains(layer + 4f), $"{label} row {row} has no foliage vertex");
+            if (!caster) Check(species.Contains(layer), $"{label} row {row} has no bark vertex");
         }
         Check(MathF.Abs(radius - carrier.UnitRadius) < 1e-6f, $"{label} unit radius {carrier.UnitRadius} vs data {radius}");
         Check(carrier.Bounds.Position.IsEqualApprox(min) && carrier.Bounds.End.IsEqualApprox(max), $"{label} bounds {carrier.Bounds} vs data {min} .. {max}");
@@ -132,8 +140,9 @@ public partial class StandFillCarrierTest : RefCounted
         Check(parameters.GetWidth() == sources.Length && parameters.GetHeight() == UnderstoryCatalog.ParameterRowCount, $"{label} parameter texture size");
         for (int row = 0; row < sources.Length; row++)
         {
-            TreeCrownHullTable.Pack(hulls[sources[row]], out Vector4 hull, out Vector4 extra, out Vector4 lad);
-            Check(Same(parameters.GetPixel(row, 8), hull) && Same(parameters.GetPixel(row, 9), extra) && Same(parameters.GetPixel(row, 10), lad), $"{label} row {row} hull rows 8 to 10 differ from the table");
+            TreeCrownHullTable.Pack(fill.Hulls[row], out Vector4 hull, out Vector4 extra, out Vector4 lad);
+            Check(parameters.GetPixel(row, 3).A == fill.CutHeights[row], $"{label} row {row} parameter row 3 w {parameters.GetPixel(row, 3).A} is not the cut {fill.CutHeights[row]}");
+            Check(Same(parameters.GetPixel(row, 8), hull) && Same(parameters.GetPixel(row, 9), extra) && Same(parameters.GetPixel(row, 10), lad), $"{label} row {row} hull rows 8 to 10 differ from the lifted hull");
             if (caster)
             {
                 var billboard = (ShaderMaterial)variants[sources[row]].Lods[3].SurfaceGetMaterial(0);

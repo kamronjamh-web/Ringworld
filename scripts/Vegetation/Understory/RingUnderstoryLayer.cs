@@ -106,13 +106,13 @@ internal sealed partial class RingUnderstoryLayer : RingScatterLayerBase
     }
 
     /// <summary>
-    /// Main thread (SF-4): appends the current source build's stand fillers within <paramref name="radiusMeters"/> (horizontal) of the focus as canopy records (Variant = the base catalog variant, Width = 2 x the base hull's horizontal radius x instance height),
+    /// Main thread (SF-4): appends the current source build's stand fillers within <paramref name="radiusMeters"/> (horizontal) of the focus as canopy records (Variant = the base catalog variant, Width = 2 x the lifted hull's horizontal radius x instance height, HullBase and HullTop = the crown-lifted hull, SF-7),
     /// so the forest lighting raster treats them as small trees. Returns the number appended.
     /// </summary>
     internal int CopyStandFillTrees(RingCanonicalPosition focus, double radiusMeters, List<CanopyTreeRecord> into)
     {
         if (ActiveSource is not SourceBuild build || build.FillId == null) return 0;
-        TreeCrownHull[] hulls = TreeCrownHullTable.Get();
+        UnderstoryStandFill fill = _standFill ?? UnderstoryCatalog.LoadStandFill(); // the crown-lifted hulls (SF-7)
         int[] sources = UnderstoryCatalog.StandFillSources;
         double circumference = build.Geometry.Circumference, radiusSquared = radiusMeters * radiusMeters;
         int before = into.Count;
@@ -123,9 +123,9 @@ internal sealed partial class RingUnderstoryLayer : RingScatterLayerBase
             double da = Wrap(build.FillAround![i] - focus.AroundMeters, circumference), dz = build.FillAcross![i] - focus.AcrossMeters;
             if (da * da + dz * dz > radiusSquared) continue;
             int source = sources[build.FillRow![i]];
-            if (source < 0 || source >= hulls.Length) continue;
-            TreeCrownHull hull = hulls[source];
-            into.Add(new CanopyTreeRecord(build.FillId[i], build.FillAround[i], build.FillAcross[i], build.FillRoot![i], 2f * hull.RadiusHorizontal * build.FillHeight![i], build.FillHeight[i], hull.Species, source));
+            if (source < 0) continue;
+            TreeCrownHull hull = fill.Hulls[build.FillRow[i]]; // the crown-lifted hull (SF-7), not the base variant's
+            into.Add(new CanopyTreeRecord(build.FillId[i], build.FillAround[i], build.FillAcross[i], build.FillRoot![i], 2f * hull.RadiusHorizontal * build.FillHeight![i], build.FillHeight[i], hull.Species, source, hull.Base, hull.Top));
         }
         return into.Count - before;
     }

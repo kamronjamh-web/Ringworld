@@ -164,6 +164,10 @@ public partial class RingForestLighting : Node
     public static float StandFillWeight(float distanceMeters) => Math.Clamp((StandFillFullMeters + StandFillFadeMeters - distanceMeters) / StandFillFadeMeters, 0f, 1f);
     public static float FadedPorosity(float porosity, float weight) => 1f - (1f - porosity) * weight;
 
+    /// <summary>The crown base and top (normalised) the raster uses for a record: its own when it carries them (a crown-lifted stand filler, SF-7), else the variant's table hull.</summary>
+    public static (float Base, float Top) CrownOf(in CanopyTreeRecord record, in TreeCrownHull tableHull)
+        => (float.IsNaN(record.HullBase) ? tableHull.Base : record.HullBase, float.IsNaN(record.HullTop) ? tableHull.Top : record.HullTop);
+
     private void StartBuild(in RingLodGeometrySnapshot geometry, RingCanonicalPosition camera, long circumference, long signature, double now)
     {
         long start = Stopwatch.GetTimestamp();
@@ -189,7 +193,8 @@ public partial class RingForestLighting : Node
                 porosity = FadedPorosity(porosity, StandFillWeight((float)Math.Sqrt(da * da + dz * dz)));
             }
             // The raster uses the hull's own base and top (normalized * instance height), the same ellipsoid FL-2 feeds the tree shaders.
-            _trees[i] = new CanopyTree(t.Id, t.Around, t.Across, MathF.Max(0.05f, t.Width * 0.5f), t.RootAltitude + hull.Base * t.Height, t.RootAltitude + hull.Top * t.Height, porosity, hull.SpeciesFactor);
+            (float hullBase, float hullTop) = CrownOf(t, hull);
+            _trees[i] = new CanopyTree(t.Id, t.Around, t.Across, MathF.Max(0.05f, t.Width * 0.5f), t.RootAltitude + hullBase * t.Height, t.RootAltitude + hullTop * t.Height, porosity, hull.SpeciesFactor);
             altitudeSum += t.RootAltitude;
         }
         float reference = count > 0 ? MathF.Round((float)(altitudeSum / count)) : 0f;

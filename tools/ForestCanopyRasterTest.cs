@@ -5,6 +5,7 @@ using Godot;
 using RingworldTechDemo.Shadows;
 using RingworldTechDemo.Vegetation;
 using RingworldTechDemo.Vegetation.Canopy;
+using RingworldTechDemo.Vegetation.Understory;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.LOD;
 using RingworldTechDemo.Voxel.Phase2;
@@ -120,6 +121,24 @@ public partial class ForestCanopyRasterTest : RefCounted
         Require(full > none + 0.5f && Math.Abs(full - (1f - porosity)) < 1e-3f, $"a stand filler raises the blocked fraction under it ({full} vs {none})");
         Require(Math.Abs(quarter / full - 0.25f) < 0.02f, $"fade weight at 140 m: effect {quarter / full:F3} of full, expected about 0.25");
         Require(gone == none, "fade weight 0 at 150 m leaves the raster untouched");
+        // SF-7: a filler record carries the crown-lifted hull and the raster takes its base and top from it; a canopy tree record (no override) keeps the table hull.
+        UnderstoryStandFill fill = UnderstoryCatalog.LoadStandFill();
+        TreeCrownHull[] table = TreeCrownHullTable.Get();
+        for (int row = 0; row < fill.Hulls.Length; row++)
+        {
+            TreeCrownHull lifted = fill.Hulls[row], baseHull = table[UnderstoryCatalog.StandFillSources[row]];
+            float height = 0.85f * fill.HeightMeters[row], root = 2f;
+            var record = new CanopyTreeRecord(1, AnchorA + 1, AnchorB + 1, root, 2f * lifted.RadiusHorizontal * height, height, lifted.Species, UnderstoryCatalog.StandFillSources[row], lifted.Base, lifted.Top);
+            (float crownBase, float crownTop) = RingForestLighting.CrownOf(record, baseHull);
+            Require(crownBase == lifted.Base && crownTop == lifted.Top && crownBase > baseHull.Base, $"filler row {row}: the raster crown is the lifted hull ({crownBase}, base variant {baseHull.Base})");
+            Require(crownBase * height >= 1.9f, $"filler row {row}: lifted crown base {crownBase * height:F2} m above the root at Size 0.85, expected at least 1.9 m");
+            var plain = new CanopyTreeRecord(2, AnchorA + 1, AnchorB + 1, root, 2f * baseHull.RadiusHorizontal * height, height, baseHull.Species, UnderstoryCatalog.StandFillSources[row]);
+            Require(RingForestLighting.CrownOf(plain, baseHull) == (baseHull.Base, baseHull.Top), $"filler row {row}: a record without a hull override must use the table hull");
+            var tree = Tree(1, record.Around, record.Across, 1.2f, root + crownBase * height, root + crownTop * height, 0.42f, lifted.SpeciesFactor);
+            var raster = Build(new[] { tree }, AnchorA, AnchorB);
+            float blocked = raster.Texel(0, 256, 256, 0);
+            Require(blocked > 0.4f && Math.Abs(raster.Texel(0, 256, 256, 1) / blocked - (tree.BaseAltitude - raster.ReferenceAltitude)) < 0.05f, $"filler row {row}: the raster base altitude is the lifted base");
+        }
         var layer = new RingBiomeDecorationLayer();
         var into = new List<CanopyTreeRecord>();
         Require(layer.CopyStandFillTrees(default, 150.0, into) == 0 && into.Count == 0 && layer.StandFillSignature() == 0L, "a world without the understory layer copies 0 stand fillers");

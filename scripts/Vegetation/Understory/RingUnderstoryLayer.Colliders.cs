@@ -276,7 +276,7 @@ internal sealed partial class RingUnderstoryLayer
         if (_colliderShapes.Count >= ColliderShapeCacheLimit) _colliderShapes.Clear(); // bodies keep the shapes they hold
         if (key.Row >= ColliderStandFillRowBase)
         {
-            // A stand-filler trunk: ground to the crown base, the normalised trunk radius and crown base scaled by the instance height.
+            // A stand-filler trunk: ground to the crown base, the normalised trunk radius and crown base scaled by the instance height; the base is the crown-lifted hull's (SF-7: at least 1.9 m for a Size 0.85 filler).
             UnderstoryStandFill fill = _colliderStandFill ??= UnderstoryCatalog.LoadStandFill();
             int fillRow = key.Row - ColliderStandFillRowBase;
             float instanceHeight = key.Centimetres * .01f * fill.HeightMeters[fillRow];

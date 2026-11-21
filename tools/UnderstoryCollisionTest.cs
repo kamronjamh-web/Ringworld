@@ -23,7 +23,7 @@ namespace RingworldTechDemo.Tests;
 ///   d. cap: 200 synthetic records in range give exactly 128 bodies, the nearest.
 ///   e. rank gate: DeadWoodDensity 0 removes every body, 0.5 keeps exactly the records of rank 0.5 or lower; restoring 1 brings them back.
 ///   f. pose identity: for 20 records the body's transform scaled by size x source height equals the renderer's source row (BuildSources) in the layer's anchor frame; install rate at most 8 per frame.
-///   h. stand fillers (SF-3): a stem body from the ground to the crown base (min 1.5 m) with the trunk radius (rays), none beyond the radius, none for a sapling, StandFillDensity gates them; a and e also count class 15 (own cap, own gate).
+///   h. stand fillers (SF-3): a stem body from the ground to the crown base (min 1.5 m; the crown-lifted base, at least 1.9 m at Size 0.85, SF-7) with the trunk radius (rays), none beyond the radius, none for a sapling, StandFillDensity gates them; a and e also count class 15 (own cap, own gate).
 ///   g. feature off: generation 1 and a rocks-only world create no understory layer, hence no bodies.
 /// Headless: tools/run_tests.ps1 -Tests understory_collision_test.
 /// </summary>
@@ -197,6 +197,8 @@ public partial class UnderstoryCollisionTest : Node
         // h. stand fillers (SF-3): a trunk body from the ground to the crown base, none beyond the collider radius, the gate removes them
         UnderstoryStandFill fill = UnderstoryCatalog.LoadStandFill();
         int fillMesh = UnderstoryCatalog.StandFillSources[0];
+        // SF-7 crown lift: every filler row's trunk collider (ground to the lifted crown base) is at least 1.9 m tall at the smallest Size, 0.85.
+        for (int r = 0; r < fill.Hulls.Length; r++) Check(fill.Hulls[r].Base * 0.85f * fill.HeightMeters[r] >= 1.9f, $"h: row {r} collider height {fill.Hulls[r].Base * 0.85f * fill.HeightMeters[r]:0.00} m at Size 0.85, expected at least 1.9 m");
         float fillHeight = 1.1f * fill.HeightMeters[0], trunk = fill.TrunkRadiusMeters[0] * fillHeight, crownBase = fill.Hulls[0].Base * fillHeight, trunkHeight = Math.Max(1.5f, crownBase);
         _records = new List<ScatterRecord>
         {

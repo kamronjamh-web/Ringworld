@@ -36,6 +36,8 @@ uniform float night_direct_light_factor : hint_range(0.0, 1.0) = 0.0;
 uniform float day_direct_light_factor : hint_range(0.0, 2.0) = 1.0;
 uniform bool vegetation_wind_enabled = true;
 uniform bool simplified_tree_shading = false;
+// SF-7b: stand filler near-camera clearance (set only on the stand filler L0 carrier): foliage below the eye + 0.25 m dissolves (the fade dither) within 1.5 m horizontally of the camera, fully drawn from 2.5 m. A slope puts a lifted crown at head height; no static cut knows the slope.
+uniform bool stand_fill_head_clear = false;
 
 // Main-viewport only: ray frame comes from global shader parameters.
 #define RING_ATMOSPHERE_FRAME_GLOBAL
@@ -87,6 +89,7 @@ void vertex() {
 	bool foliage = billboard || packed_vertex.w >= 3.5;
 	float layer = packed_vertex.w - (billboard ? 8.0 : foliage ? 4.0 : 0.0);
 	tree_surface = vec4(float(variant), foliage ? 1.0 : 0.0, layer, billboard ? 1.0 : 0.0);
+	COLOR = vec4(packed_vertex.y, 0.0, 0.0, 1.0); // SF-7: the unwound tree-space height (the stand filler caster discards fragments below its crown-lift cut, row 3 w)
 	VERTEX = packed_vertex.xyz;
 	NORMAL = normalize(texelFetch(normal_data, texel, 0).xyz);
 	vec4 packed_uv = texelFetch(uv_data, texel, 0);
@@ -150,10 +153,21 @@ void fragment() {
 	bool billboard = tree_surface.w > 0.5;
 	if (billboard) {
 		// SF-1 caster: colour and cutout from the one billboard layer of this variant row.
+		// SF-7 crown lift: nothing below the variant's cut height (tree space, row 3 w).
+		if (COLOR.x < surface_scale.w) discard;
 		albedo = texture(billboard_albedo, array_uv) * surface_tint;
 		ALPHA = albedo.a;
 		ALPHA_SCISSOR_THRESHOLD = surface_scale.z;
 	} else if (foliage) {
+		if (stand_fill_head_clear) {
+			// SF-7b: up at the camera as vertex() computes surface_up (towards the ring axis' opposite: minus the radial from ring_center, y zeroed); dh = height above the eye, dr = horizontal distance.
+			vec3 camera_radial = ring_atmosphere_camera_world_position - ring_center; camera_radial.y = 0.0;
+			vec3 camera_up = length(camera_radial) > 0.0001 ? -normalize(camera_radial) : vec3(-1.0, 0.0, 0.0);
+			vec3 to_fragment = tree_world_position - ring_atmosphere_camera_world_position;
+			float dh = dot(to_fragment, camera_up);
+			float dr = length(to_fragment - dh * camera_up);
+			if (dh < 0.25 && tree_dither_noise(floor(FRAGCOORD.xy), tree_flat.y) >= smoothstep(1.5, 2.5, dr)) discard;
+		}
 		albedo = texture(foliage_albedo, array_uv) * surface_tint;
 		float leaf_alpha_lod = min(textureQueryLod(foliage_alpha, UV).y, leaf_alpha_max_lod);
 		ALPHA = textureLod(foliage_alpha, array_uv, leaf_alpha_lod).a * surface_tint.a;

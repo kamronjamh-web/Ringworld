@@ -8,8 +8,8 @@ using RingworldTechDemo.Voxel.Phase2;
 
 namespace RingworldTechDemo.Voxel.LOD;
 
-/// <summary>One resident tree as the forest lighting canopy raster needs it (main-thread copy; positions canonical, altitude above the floor as rendered).</summary>
-public readonly record struct CanopyTreeRecord(ulong Id, double Around, double Across, float RootAltitude, float Width, float Height, TreeSpecies Species, int Variant);
+/// <summary>One resident tree as the forest lighting canopy raster needs it (main-thread copy; positions canonical, altitude above the floor as rendered). HullBase and HullTop (normalised, NaN = the variant's table hull) override the crown base and top: a crown-lifted stand filler (SF-7).</summary>
+public readonly record struct CanopyTreeRecord(ulong Id, double Around, double Across, float RootAltitude, float Width, float Height, TreeSpecies Species, int Variant, float HullBase = float.NaN, float HullTop = float.NaN);
 
 /// <summary>Read-only access to the resident tree records for the ForestLighting node (docs/forest-lighting-plan.md section 5). Main thread only.</summary>
 public partial class RingBiomeDecorationLayer

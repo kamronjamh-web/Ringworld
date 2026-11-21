@@ -65,6 +65,8 @@ public partial class UnderstoryRenderMatchGpuTest : Node
     private MeshInstance3D _occluder = null!;
 
     private readonly record struct Stats(int Covered, Vector3 Mean, float Luminance);
+    /// <summary>Normalised height above the crown-lift cut at which the stand filler caster and the tree material's billboard are compared (SF-7).</summary>
+    private const float CutMargin = .08f;
 
     public async void Start()
     {
@@ -75,6 +77,7 @@ public partial class UnderstoryRenderMatchGpuTest : Node
             await SnagChecks();
             await ShrubChecks();
             await StandFillCasterChecks();
+            await StandFillHeadClearChecks();
             await LayerChecks();
             await SaplingCasterChecks();
             await ShrubLayerChecks();
@@ -276,11 +279,11 @@ public partial class UnderstoryRenderMatchGpuTest : Node
         m.SetShaderParameter("ring_viewer_world_position", position);
     }
 
-    private static Stats Measure(Image image)
+    private static Stats Measure(Image image, int rowLimit = int.MaxValue)
     {
         int covered = 0;
         double r = 0, g = 0, b = 0;
-        for (int y = 0; y < image.GetHeight(); y++)
+        for (int y = 0; y < Math.Min(image.GetHeight(), rowLimit); y++)
             for (int x = 0; x < image.GetWidth(); x++)
             {
                 Color c = image.GetPixel(x, y);
@@ -537,13 +540,15 @@ public partial class UnderstoryRenderMatchGpuTest : Node
         for (int i = 0; i < 3; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
         Image image = _vp.GetTexture().GetImage();
         if (image == null || image.IsEmpty()) throw new InvalidOperationException("empty capture");
-        return Measure(image);
+        // SF-7 crown lift: the caster discards everything below the variant's cut and the tree material's billboard has no such cut, so both are measured only above it (plus a margin for the perspective depth of the billboard group): the rows of the image above that height.
+        float aboveCut = fill.CutHeights[row] + CutMargin;
+        return Measure(image, (int)MathF.Floor(image.GetHeight() * .5f * (1f - (aboveCut - .5f) / .6f)));
     }
 
     /// <summary>Each of the six stand filler variants' billboards through the caster carrier covers the same pixels as the tree material's own billboard mesh (the cutout from billboard_albedo's alpha); the colour is only bounded (the caster has no billboard normal map).</summary>
     private async Task StandFillCasterChecks()
     {
-        const float CasterColourTolerance = 0.5f; // the caster has no billboard normal map and takes the species roughness and metallic constants, so it is brighter than the tree material (measured 14 to 40 %); the cutout (coverage) is the contract
+        const float CasterColourTolerance = 1.2f; // the caster has no billboard normal map and takes the species roughness and metallic constants, so it is brighter than the tree material (measured 14 to 40 % over the whole billboard; 16 to 101 % over the upper part left by the SF-7 crown lift, fewer pixels and the reference's yaw-dependent shading); the cutout (coverage) is the contract
         var failures = new List<string>();
         foreach (int source in UnderstoryCatalog.StandFillSources)
             foreach (float yaw in new[] { 0f, 40f })
@@ -561,7 +566,54 @@ public partial class UnderstoryRenderMatchGpuTest : Node
                 if (lum > CasterColourTolerance || channel > CasterColourTolerance) failures.Add($"{tag}: mean colour differs by {lum * 100f:0.0} % luminance, {channel * 100f:0.0} % channel (> {CasterColourTolerance * 100f:0} %)");
             }
         if (failures.Count > 0) throw new InvalidOperationException(string.Join(" ; ", failures));
-        _log.Add("stand filler caster carrier (LOD3 billboards of 9-11 and 27-29) matches the tree material's billboard mesh in coverage (colour within 50 %: no billboard normal map)");
+        _log.Add("stand filler caster carrier (LOD3 billboards of 9-11 and 27-29) matches the tree material's billboard mesh above the crown-lift cut in coverage (colour only bounded: no billboard normal map)");
+    }
+
+    /// <summary>SF-7b: one shot of the stand filler L0 carrier (row 0) from a camera 4.5 m above the root (the crown's lower leaves are below the eye) at <paramref name="distance"/> metres from the trunk, looking at the trunk; the head-clear flag on or off.</summary>
+    private async Task<Stats> StandFillHeadClearShot(float distance, bool flag)
+    {
+        UnderstoryStandFill fill = UnderstoryCatalog.LoadStandFill();
+        ShaderMaterial material = fill.Lod0.Material;
+        ConfigureMaterial(material, false, false, false);
+        material.SetShaderParameter("stand_fill_head_clear", flag);
+        RenderingServer.GlobalShaderParameterSet("ringworld_forest_lighting", SwitchesOff);
+        float elevation = Mathf.DegToRad(20f);
+        Vector3 toSun = (Up * Mathf.Sin(elevation) + AroundDir * Mathf.Cos(elevation)).Normalized();
+        _sun.Transform = new Transform3D(Basis.LookingAt(-toSun, AcrossDir), Vector3.Zero);
+        material.SetShaderParameter("sun_direction", toSun); material.SetShaderParameter("ring_atmosphere_to_sun", toSun);
+        RenderingServer.GlobalShaderParameterSet("ring_atmosphere_to_sun", toSun);
+        float height = fill.HeightMeters[0];
+        Vector3 eye = Up * 4.5f, position = eye + AroundDir * distance;
+        _cam.Fov = 70f;
+        _cam.LookAtFromPosition(position, distance < 2f ? position + AcrossDir * 3f : eye, Up); // near: inside the crown, looking sideways, so every visible leaf is within 2 m; far: at the trunk
+        ApplyShade("front", toSun, Up * height * .5f);
+        SetCameraUniforms(material, position);
+        RenderingServer.GlobalShaderParameterSet("ring_atmosphere_camera_world_position", position);
+        RenderingServer.GlobalShaderParameterSet("ring_atmosphere_camera_height_meters", -position.X);
+        var placement = new Transform3D((new Basis(Vector3.Back, Mathf.Pi * .5f)).Scaled(Vector3.One * height), Vector3.Zero);
+        _reference.Visible = false; _carrier.Visible = true;
+        _carrierMulti.Mesh = fill.Lod0.Carrier;
+        _carrier.MaterialOverride = material;
+        _carrierMulti.SetInstanceTransform(0, placement);
+        _carrierMulti.SetInstanceCustomData(0, new Color(0, 1f, 0f, 0f));
+        await Frames(1);
+        for (int i = 0; i < 3; i++) await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+        Image image = _vp.GetTexture().GetImage();
+        if (image == null || image.IsEmpty()) throw new InvalidOperationException("empty capture");
+        material.SetShaderParameter("stand_fill_head_clear", true);
+        return Measure(image);
+    }
+
+    /// <summary>SF-7b: the near-camera dissolve of the stand filler L0 foliage: 1 m from the camera, below the eye, leaves are removed (the flag on covers far fewer pixels than off); at 5 m (beyond the 2.5 m full-draw distance) the flag changes nothing.</summary>
+    private async Task StandFillHeadClearChecks()
+    {
+        Stats nearOff = await StandFillHeadClearShot(.3f, false), nearOn = await StandFillHeadClearShot(.3f, true);
+        Stats farOff = await StandFillHeadClearShot(5f, false), farOn = await StandFillHeadClearShot(5f, true);
+        GD.Print($"UNDERSTORY_RENDER_MATCH stand filler head clear: 0.3 m off {nearOff.Covered} px, on {nearOn.Covered} px; 5 m off {farOff.Covered} px, on {farOn.Covered} px");
+        if (nearOff.Covered < 2000) throw new InvalidOperationException($"stand filler head clear: the 0.3 m reference covers only {nearOff.Covered} px");
+        if (nearOn.Covered > nearOff.Covered * .5f) throw new InvalidOperationException($"stand filler head clear: 0.3 m with the flag covers {nearOn.Covered} px of {nearOff.Covered} (expected the leaves below the eye to be gone)");
+        if (farOff.Covered < 500 || farOn.Covered != farOff.Covered) throw new InvalidOperationException($"stand filler head clear: at 5 m the flag changed the coverage ({farOn.Covered} vs {farOff.Covered} px)");
+        _log.Add($"stand filler head clear: 0.3 m {nearOn.Covered} of {nearOff.Covered} px with the flag, 5 m unchanged ({farOn.Covered} px)");
     }
 
     // ------------------------------------------------------------------ the layer
