@@ -123,6 +123,7 @@
         "scripts/Voxel/LOD/RingAnalyticGlobalLod*",
         "scripts/Voxel/LOD/RingNaturalTerrain*",
         "materials/biomes/**",
+        "materials/ground/**",
         "materials/third_party/voxelgame/**",
         "materials/landmark_glow.tres",
         "materials/ring_construction_surface*",
