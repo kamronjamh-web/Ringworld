@@ -201,11 +201,15 @@ void fragment() {
 	float speckle_footprint = max(speckle_cell_width.x, speckle_cell_width.y);
 #endif
 	if (ring_surface_aperture_discard(world_position)) discard;
-	if (coverage_atlas_rect.z > 0.0 && proxy_coverage_uv.x >= 0.0 && proxy_coverage_uv.y >= 0.0
-		&& texture(coverage_atlas, coverage_atlas_rect.xy + min(proxy_coverage_uv, vec2(0.99999)) * coverage_atlas_rect.zw).r > 0.5) discard;
+	// Coverage atlas (docs/proxy-coverage-culling.md): 255 = the finer level proves this quad drawn, 64 = the finer level's sectors here are
+	// resident, so it draws every fragment inside its far handoff, which is this level's near handoff ("Resident coverage").
+	float coverage_state = 0.0;
+	if (coverage_atlas_rect.z > 0.0 && proxy_coverage_uv.x >= 0.0 && proxy_coverage_uv.y >= 0.0)
+		coverage_state = texture(coverage_atlas, coverage_atlas_rect.xy + min(proxy_coverage_uv, vec2(0.99999)) * coverage_atlas_rect.zw).r;
+	if (coverage_state > 0.5) discard;
 	float distance_to_camera = distance(world_position, camera_world_position);
 	float near_handoff = (fade_start_meters + max(fade_end_meters, fade_start_meters + 0.01)) * 0.5;
-	if (near_fade_enabled && distance_to_camera < near_handoff) {
+	if ((near_fade_enabled || coverage_state > 0.125) && distance_to_camera < near_handoff) {
 		discard;
 	}
 	if (far_fade_enabled) {

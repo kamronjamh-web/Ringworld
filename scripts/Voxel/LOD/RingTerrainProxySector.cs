@@ -349,6 +349,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
     // basis) so coverage query passes avoid the native GlobalTransform getter.
     private readonly Dictionary<MeshInstance3D, Vector3> _installedLocalPositions = new();
     private Image? _coverageAtlasImage;
+    // Authoritative R8 texels of _coverageAtlasImage (resident coverage writes them without per-texel engine calls); UploadCoverageAtlas copies them in.
+    private byte[]? _coverageAtlasBytes;
     private ImageTexture? _coverageAtlasTexture;
     private int _coverageAtlasTileSize;
     private int _coverageAtlasColumns;
@@ -1112,6 +1114,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             _transitHidden = combined;
             foreach (RingTerrainSectorCoordinate coordinate in _active.Keys)
                 UpdateSectorVisibility(coordinate);
+            if (!combined) NotifyCoverageResidencyDependents(full: true);
         }
         Visible = StreamingActive && ProxyNodeVisibleWhenActive;
         if (_structuralWallMesh != null)
@@ -1137,6 +1140,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
         _lastHeightRangeRevision = ulong.MaxValue;
         _lastAround = long.MinValue;
         if (providerChanged) DropCoverageProvenByPreviousProvider();
+        // Resident texels belong to the provider they were proven against.
+        if (providerChanged) RefreshCoverageResidency();
     }
 
     /// <summary>
@@ -1315,7 +1320,11 @@ public partial class RingTerrainProxySector : MeshInstance3D
         // StreamingActive/transit flag yet (notably SetTransitVisibility).
         // Registration stays intact so a later valid publication repopulates.
         foreach (RingTerrainProxySector dependent in _oceanReplacementDependents.ToArray())
+        {
             dependent.InvalidateOceanReplacementFromFiner(this);
+            // Resident terrain coverage too: the coarser level draws again before this level stops drawing.
+            dependent.ClearCoverageResidencyFromFiner(this);
+        }
     }
 
     private void InvalidateOceanReplacementFromFiner(RingTerrainProxySector finer)
@@ -1660,6 +1669,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             _innerExcluded.Clear();
             _innerExcluded.UnionWith(innerExcluded);
             _coverageRevision++;
+            NotifyCoverageResidencyDependents(full: true);
         }
         _pendingDesired = desired;
         int spacing = Mathf.Clamp(SampleSpacingMeters, 1, size);
@@ -2666,8 +2676,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             UpdateSectorVisibility(coordinate);
         }
         // One texture upload for the whole provider revision, not one per sector.
-        if (atlasDirty && _coverageAtlasTexture != null && _coverageAtlasImage != null)
-            _coverageAtlasTexture.Update(_coverageAtlasImage);
+        if (atlasDirty) UploadCoverageAtlas();
         if (changed) _coverageRevision++;
     }
 
@@ -2738,7 +2747,11 @@ public partial class RingTerrainProxySector : MeshInstance3D
             if (_active.ContainsKey(coordinate)) UpdateSectorVisibility(coordinate);
             innerChanged = true;
         }
-        if (innerChanged) _coverageRevision++;
+        if (innerChanged)
+        {
+            _coverageRevision++;
+            NotifyCoverageResidencyDependents(full: true);
+        }
     }
 
     private Dictionary<RingTerrainSectorCoordinate, SurfaceCoverageMask> CaptureOceanReplacementMasks(
@@ -2760,6 +2773,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
     {
         foreach (RingTerrainProxySector dependent in _oceanReplacementDependents.ToArray())
             dependent.RefreshOceanReplacementFromFiner(this);
+        // The same visible-set changes move resident terrain coverage (docs/proxy-coverage-culling.md, "Resident coverage").
+        NotifyCoverageResidencyDependents();
     }
 
     // Called synchronously by the fine source after its visible ocean set has
@@ -3288,6 +3303,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             _freeCoverageAtlasSlots.Clear();
             _coverageAtlasImage = Image.CreateEmpty(tileSize * atlasColumns, tileSize * atlasColumns, false, Image.Format.R8);
             _coverageAtlasImage.Fill(new Color(0, 0, 0, 1));
+            _coverageAtlasBytes = new byte[tileSize * atlasColumns * tileSize * atlasColumns];
             _coverageAtlasTexture = ImageTexture.CreateFromImage(_coverageAtlasImage);
             _material?.SetShaderParameter("coverage_atlas", _coverageAtlasTexture);
             _oceanMaterial?.SetShaderParameter("coverage_atlas", _coverageAtlasTexture);
@@ -3310,19 +3326,353 @@ public partial class RingTerrainProxySector : MeshInstance3D
         }
         int sx = slot % atlasColumns * tileSize;
         int sy = slot / atlasColumns * tileSize;
-        _coverageAtlasImage!.FillRect(new Rect2I(sx, sy, tileSize, tileSize), new Color(0, 0, 0, 1));
-        for (int z = 0; z < tileSize; z++)
-        for (int x = 0; x < tileSize; x++)
-        {
-            if (mask.CoveredCells[z * tileSize + x])
-                _coverageAtlasImage.SetPixel(sx + x, sy + z, new Color(1, 1, 1, 1));
-        }
-        if (uploadAtlas) _coverageAtlasTexture!.Update(_coverageAtlasImage);
+        WriteCoverageAtlasTile(coordinate, mask, sx, sy, tileSize, clearResident: false, out int residentCells);
+        _residentCellsByTile[coordinate] = residentCells;
+        if (uploadAtlas) UploadCoverageAtlas();
         float atlasSize = tileSize * atlasColumns;
         Vector4 rect = new(sx / atlasSize, sy / atlasSize, tileSize / atlasSize, tileSize / atlasSize);
         node.SetInstanceShaderParameter("coverage_atlas_rect", rect);
         SetOceanChildParameter(node, CoverageAtlasRectName, rect);
         node.GetNodeOrNull<MeshInstance3D>("OpaqueShadowCaster")?.SetInstanceShaderParameter("coverage_atlas_rect", rect);
+    }
+
+    // ---- Resident coverage (docs/proxy-coverage-culling.md, "Resident coverage") ------------------------------------------------
+    // Atlas texel values: 255 strict covered (every reader tests > 0.5), 64 resident (the terrain shaders discard it only inside this
+    // level's near handoff, which is the finer level's far handoff), 0 drawn here.
+    internal const byte CoverageAtlasCoveredByte = 255;
+    internal const byte CoverageAtlasResidentByte = 64;
+
+    private bool _enableResidentCoverage = true;
+
+    /// <summary>
+    /// Resident coverage on this level (default on): where the finer level has its sectors installed and visible, this level's fragments
+    /// closer than its near handoff are discarded, so the finer level alone draws there. Off restores the former overlap (A/B for tests and
+    /// the perf bench; not a menu setting).
+    /// </summary>
+    public bool EnableResidentCoverage
+    {
+        get => _enableResidentCoverage;
+        set
+        {
+            if (_enableResidentCoverage == value) return;
+            _enableResidentCoverage = value;
+            RefreshCoverageResidency(record: false);
+        }
+    }
+
+    /// <summary>Resident coverage cells (atlas texels of value 64) of this level after its last residency refresh (diagnostics and tests).</summary>
+    public int ResidentCoverageCellCount
+    {
+        get
+        {
+            int total = 0;
+            foreach ((RingTerrainSectorCoordinate coordinate, int cells) in _residentCellsByTile)
+                if (_activeCoverageMasks.ContainsKey(coordinate) && !_warmUntil.ContainsKey(coordinate)) total += cells;
+            return total;
+        }
+    }
+
+    private readonly Dictionary<RingTerrainSectorCoordinate, int> _residentCellsByTile = new();
+
+    /// <summary>Copies the texel mirror into the atlas image and uploads it (one upload per call).</summary>
+    private void UploadCoverageAtlas()
+    {
+        if (_coverageAtlasTexture == null || _coverageAtlasImage == null || _coverageAtlasBytes == null) return;
+        int side = _coverageAtlasImage.GetWidth();
+        _coverageAtlasImage.SetData(side, side, false, Image.Format.R8, _coverageAtlasBytes);
+        _coverageAtlasTexture.Update(_coverageAtlasImage);
+    }
+
+    /// <summary>Writes one sector's coverage tile into the texel mirror (255 covered, 64 resident, 0 drawn here). Returns whether a texel changed.</summary>
+    private bool WriteCoverageAtlasTile(RingTerrainSectorCoordinate coordinate, SurfaceCoverageMask mask, int sx, int sy, int tileSize, bool clearResident, out int residentCells)
+    {
+        residentCells = 0;
+        byte[] texels = _coverageAtlasBytes!;
+        int side = _coverageAtlasImage!.GetWidth();
+        bool resident = !clearResident && _enableResidentCoverage && _finerCoverageLevel != null && StreamingActive;
+        int size = Mathf.Max(32, SectorSizeMeters);
+        double providerMeters = size / (double)Math.Max(1, mask.ProxyQuadCells) * mask.QuadsPerProviderCell;
+        double aroundOrigin = coordinate.AroundSector * (double)size;
+        double acrossOrigin = coordinate.AcrossSector * (double)size;
+        bool changed = false;
+        for (int z = 0; z < tileSize; z++)
+        for (int x = 0; x < tileSize; x++)
+        {
+            int index = z * tileSize + x;
+            byte value = 0;
+            if (index < mask.CoveredCells.Length && mask.CoveredCells[index]) value = CoverageAtlasCoveredByte;
+            else if (resident)
+            {
+                double around0 = aroundOrigin + x * providerMeters;
+                double around1 = Math.Min(around0 + providerMeters, aroundOrigin + size);
+                double across0 = acrossOrigin + z * providerMeters;
+                double across1 = Math.Min(across0 + providerMeters, acrossOrigin + size);
+                _residencyQueries++;
+                if (_finerCoverageLevel!.IsSurfaceRegionResident(around0, around1, across0, across1)) value = CoverageAtlasResidentByte;
+            }
+            if (value == CoverageAtlasResidentByte) residentCells++;
+            int texel = (sy + z) * side + sx + x;
+            if (texels[texel] == value) continue;
+            texels[texel] = value;
+            changed = true;
+        }
+        return changed;
+    }
+
+    /// <summary>Rewrites every installed tile's resident texels from the finer level's current state and uploads the atlas once if one changed.</summary>
+    private void RefreshCoverageResidency(bool clearResident = false, bool record = true)
+    {
+        _residencyRefreshPending = false;
+        _residencyPendingFull = false;
+        _residencyPendingFiner.Clear();
+        if (_coverageAtlasImage == null || _coverageAtlasTexture == null || _coverageAtlasBytes == null || _coverageAtlasColumns <= 0) return;
+        long started = Stopwatch.GetTimestamp();
+        bool changed = false;
+        _residentCellsByTile.Clear();
+        foreach (RingTerrainSectorCoordinate coordinate in _activeCoverageMasks.Keys)
+            changed |= RefreshResidencyTile(coordinate, clearResident);
+        UploadResidencyChanges(changed, started, record);
+    }
+
+    /// <summary>Rewrites the tiles of this level's sectors that overlap the given finer sectors (the only cells whose residency they can change).</summary>
+    private void RefreshCoverageResidencyTiles(IReadOnlyCollection<RingTerrainSectorCoordinate> finerSectors, int finerSize)
+    {
+        if (_coverageAtlasImage == null || _coverageAtlasTexture == null || _coverageAtlasBytes == null || _coverageAtlasColumns <= 0) return;
+        long started = Stopwatch.GetTimestamp();
+        int size = Mathf.Max(32, SectorSizeMeters);
+        long aroundSectorLength = ResolveAroundSectorLength(size);
+        var tiles = new HashSet<RingTerrainSectorCoordinate>();
+        foreach (RingTerrainSectorCoordinate finer in finerSectors)
+        {
+            long around0 = finer.AroundSector * (long)finerSize;
+            long across0 = finer.AcrossSector * (long)finerSize;
+            for (long z = FloorDivSectors(across0, size); z <= FloorDivSectors(across0 + finerSize - 1, size); z++)
+            for (long x = FloorDivSectors(around0, size); x <= FloorDivSectors(around0 + finerSize - 1, size); x++)
+                tiles.Add(new RingTerrainSectorCoordinate(WrapAroundSector(x, aroundSectorLength), (int)z));
+        }
+        bool changed = false;
+        foreach (RingTerrainSectorCoordinate coordinate in tiles)
+            changed |= RefreshResidencyTile(coordinate, clearResident: false);
+        UploadResidencyChanges(changed, started, record: true);
+    }
+
+    private static long FloorDivSectors(long value, int size) => (long)Math.Floor(value / (double)size);
+
+    private bool RefreshResidencyTile(RingTerrainSectorCoordinate coordinate, bool clearResident)
+    {
+        if (!_activeCoverageMasks.TryGetValue(coordinate, out SurfaceCoverageMask? mask)
+            || _warmUntil.ContainsKey(coordinate) || !_coverageAtlasSlots.TryGetValue(coordinate, out int slot)) return false;
+        int tileSize = Mathf.Max(1, (mask.ProxyQuadCells + mask.QuadsPerProviderCell - 1) / mask.QuadsPerProviderCell);
+        if (tileSize != _coverageAtlasTileSize) return false;
+        int sx = slot % _coverageAtlasColumns * tileSize;
+        int sy = slot / _coverageAtlasColumns * tileSize;
+        _residencyTiles++;
+        bool changed = WriteCoverageAtlasTile(coordinate, mask, sx, sy, tileSize, clearResident, out int tileResident);
+        _residentCellsByTile[coordinate] = tileResident;
+        return changed;
+    }
+
+    private void UploadResidencyChanges(bool changed, long started, bool record)
+    {
+        long uploadStarted = Stopwatch.GetTimestamp();
+        if (changed) UploadCoverageAtlas();
+        _residencyUploadTicksMax = Math.Max(_residencyUploadTicksMax, Stopwatch.GetTimestamp() - uploadStarted);
+        if (record) RecordResidencyRefresh(Stopwatch.GetTimestamp() - started, changed);
+    }
+
+    // ---- Residency refresh cost (diagnostics): per process frame, the refresh calls of every level, their main-thread time and atlas uploads.
+    // Frames without a call count as zero. RINGWORLD_RESIDENCY_STATS=1 also prints a summary line every 5 s of wall time.
+    private static ulong _residencyStatsFrame = ulong.MaxValue, _residencyStatsFirstFrame = ulong.MaxValue;
+    private static int _residencyFrameCalls, _residencyFrameUploads;
+    private static long _residencyFrameTicks, _residencyMaxCallTicks, _residencyLastPrint, _residencyUploadTicksMax;
+    private static long _residencyTiles, _residencyQueries, _residencyCalls;
+    private static readonly List<(int Calls, long Ticks, int Uploads)> _residencyFrames = new();
+    private static readonly bool _residencyStatsPrint = System.Environment.GetEnvironmentVariable("RINGWORLD_RESIDENCY_STATS") == "1";
+
+    private static void RecordResidencyRefresh(long ticks, bool uploaded)
+    {
+        ulong frame = Engine.GetProcessFrames();
+        if (frame != _residencyStatsFrame)
+        {
+            FlushResidencyFrame();
+            _residencyStatsFrame = frame;
+            if (_residencyStatsFirstFrame == ulong.MaxValue) _residencyStatsFirstFrame = frame;
+        }
+        _residencyFrameCalls++;
+        _residencyCalls++;
+        _residencyFrameTicks += ticks;
+        if (uploaded) _residencyFrameUploads++;
+        _residencyMaxCallTicks = Math.Max(_residencyMaxCallTicks, ticks);
+        if (!_residencyStatsPrint) return;
+        long now = Stopwatch.GetTimestamp();
+        if (_residencyLastPrint == 0) _residencyLastPrint = now;
+        if (now - _residencyLastPrint < Stopwatch.Frequency * 5) return;
+        _residencyLastPrint = now;
+        GD.Print("RESIDENCY_STATS " + TakeResidencyRefreshStatsStatic());
+    }
+
+    private static void FlushResidencyFrame()
+    {
+        if (_residencyFrameCalls > 0 && _residencyFrames.Count < 200_000)
+            _residencyFrames.Add((_residencyFrameCalls, _residencyFrameTicks, _residencyFrameUploads));
+        _residencyFrameCalls = 0;
+        _residencyFrameTicks = 0;
+        _residencyFrameUploads = 0;
+    }
+
+    /// <summary>Residency refresh cost since the last take (all levels): frames, then p50 / p95 / max per frame of calls, ms and atlas uploads, and the largest single call. Resets.</summary>
+    public string TakeResidencyRefreshStats() => TakeResidencyRefreshStatsStatic();
+
+    private static string TakeResidencyRefreshStatsStatic()
+    {
+        ulong current = Engine.GetProcessFrames();
+        if (_residencyStatsFrame != current) FlushResidencyFrame();
+        long frames = _residencyStatsFirstFrame == ulong.MaxValue ? 0 : (long)(current - _residencyStatsFirstFrame) + 1;
+        frames = Math.Max(frames, _residencyFrames.Count + (_residencyFrameCalls > 0 ? 1 : 0));
+        var calls = new List<double>(); var ms = new List<double>(); var uploads = new List<double>();
+        foreach ((int c, long t, int u) in _residencyFrames) { calls.Add(c); ms.Add(t * 1000.0 / Stopwatch.Frequency); uploads.Add(u); }
+        if (_residencyFrameCalls > 0) { calls.Add(_residencyFrameCalls); ms.Add(_residencyFrameTicks * 1000.0 / Stopwatch.Frequency); uploads.Add(_residencyFrameUploads); }
+        string P(List<double> values)
+        {
+            var all = new List<double>(values);
+            while (all.Count < frames) all.Add(0.0);
+            if (all.Count == 0) return "0/0/0";
+            all.Sort();
+            double At(double q) => all[Math.Min(all.Count - 1, (int)Math.Floor(q * (all.Count - 1)))];
+            return $"{At(0.5):0.###}/{At(0.95):0.###}/{all[^1]:0.###}";
+        }
+        string result = $"frames={frames} frames_with_calls={calls.Count} calls_per_frame(p50/p95/max)={P(calls)} ms_per_frame(p50/p95/max)={P(ms)} "
+            + $"max_call_ms={_residencyMaxCallTicks * 1000.0 / Stopwatch.Frequency:0.###} max_upload_ms={_residencyUploadTicksMax * 1000.0 / Stopwatch.Frequency:0.###} uploads_per_frame(p50/p95/max)={P(uploads)} calls={_residencyCalls} tiles={_residencyTiles} cell_queries={_residencyQueries}";
+        _residencyCalls = 0; _residencyTiles = 0; _residencyQueries = 0;
+        _residencyFrames.Clear();
+        _residencyFrameCalls = 0; _residencyFrameTicks = 0; _residencyFrameUploads = 0; _residencyMaxCallTicks = 0; _residencyUploadTicksMax = 0;
+        _residencyStatsFirstFrame = current + 1;
+        _residencyStatsFrame = current;
+        return result;
+    }
+
+    // Called by the finer level after its drawn sector set changed (uploads, departures, warm reactivation, visible again). Notifications of one
+    // frame coalesce into one refresh per level, run from RenderingServer.FramePreDraw (after every _Process, before the frame draws), so the
+    // resident texels are current when the frame renders. Clears stay synchronous (ClearCoverageResidencyFromFiner): they run while the finer
+    // level is being torn down. changed: the finer sectors whose state changed (only the tiles over them are rewritten), or null for every tile.
+    private void RefreshCoverageResidencyFromFiner(RingTerrainProxySector finer, RingTerrainSectorCoordinate[]? changed)
+    {
+        if (!ReferenceEquals(_finerCoverageLevel, finer)) return;
+        if (changed == null) _residencyPendingFull = true;
+        else if (!_residencyPendingFull) _residencyPendingFiner.UnionWith(changed);
+        if (_residencyRefreshPending) return;
+        _residencyRefreshPending = true;
+        lock (ResidencyPendingLevels) ResidencyPendingLevels.Add(this);
+        if (!_residencyPreDrawConnected)
+        {
+            _residencyPreDrawConnected = true;
+            RenderingServer.FramePreDraw += FlushPendingCoverageResidency;
+        }
+    }
+
+    private bool _residencyRefreshPending, _residencyPendingFull;
+    private readonly HashSet<RingTerrainSectorCoordinate> _residencyPendingFiner = new();
+    // Finer-side record of the sectors whose installed / warm state changed since the last notification (installs, departures, warm reactivation, recycling).
+    private readonly HashSet<RingTerrainSectorCoordinate> _residencyChangedSectors = new();
+
+    private void MarkResidencyChanged(RingTerrainSectorCoordinate coordinate)
+    {
+        if (_oceanReplacementDependents.Count > 0) _residencyChangedSectors.Add(coordinate);
+    }
+
+    private void FlushCoverageResidency()
+    {
+        if (!_residencyRefreshPending) return;
+        if (_residencyPendingFull || _finerCoverageLevel == null)
+        {
+            RefreshCoverageResidency();
+            return;
+        }
+        _residencyRefreshPending = false;
+        RingTerrainSectorCoordinate[] finerSectors = _residencyPendingFiner.ToArray();
+        _residencyPendingFiner.Clear();
+        if (finerSectors.Length > 0) RefreshCoverageResidencyTiles(finerSectors, Mathf.Max(32, _finerCoverageLevel.SectorSizeMeters));
+    }
+    private static bool _residencyPreDrawConnected;
+    private static readonly List<RingTerrainProxySector> ResidencyPendingLevels = new();
+
+    private static void FlushPendingCoverageResidency()
+    {
+        RingTerrainProxySector[] pending;
+        lock (ResidencyPendingLevels)
+        {
+            if (ResidencyPendingLevels.Count == 0) return;
+            pending = ResidencyPendingLevels.ToArray();
+            ResidencyPendingLevels.Clear();
+        }
+        foreach (RingTerrainProxySector level in pending)
+        {
+            if (!GodotObject.IsInstanceValid(level)) continue;
+            if (!level.IsInsideTree())
+            {
+                // Not drawing now: let the next notification queue it again, with a full rewrite so no stale resident texel survives.
+                level._residencyRefreshPending = false;
+                level._residencyPendingFull = true;
+                continue;
+            }
+            level.FlushCoverageResidency();
+        }
+    }
+
+    // Called synchronously by the finer level before it stops drawing (deactivation, transit hide, exit): drop every resident texel.
+    private void ClearCoverageResidencyFromFiner(RingTerrainProxySector finer)
+    {
+        if (!ReferenceEquals(_finerCoverageLevel, finer)) return;
+        RefreshCoverageResidency(clearResident: true);
+    }
+
+    // full: every tile of every dependent (visibility, exclusion or slot-pool changes); otherwise only the tiles over the sectors marked changed.
+    private void NotifyCoverageResidencyDependents(bool full = false)
+    {
+        if (_oceanReplacementDependents.Count == 0) { _residencyChangedSectors.Clear(); return; }
+        RingTerrainSectorCoordinate[]? changed = full ? null : _residencyChangedSectors.ToArray();
+        _residencyChangedSectors.Clear();
+        if (changed != null && changed.Length == 0) return;
+        foreach (RingTerrainProxySector dependent in _oceanReplacementDependents.ToArray())
+            dependent.RefreshCoverageResidencyFromFiner(this, changed);
+    }
+
+    /// <summary>
+    /// Finer-level side of resident coverage: true when this level draws every fragment of the region closer than its far handoff. Every
+    /// sector under the region must be active, installed, not warm and visible (or hidden only because its own finer level strictly covers
+    /// it, or strictly inner-excluded). Never true where the region touches the Terrain3D discard disk of the level next to Terrain3D.
+    /// </summary>
+    private bool IsSurfaceRegionResident(double aroundStart, double aroundEnd, double acrossStart, double acrossEnd)
+    {
+        if (!StreamingActive || _transitHidden || _focus == null || _grid == null) return false;
+        if (acrossStart < 0.0 || acrossEnd > RingWidthMeters) return false;
+        if (ResolveTerrain3DNearFadeEnabled())
+        {
+            RingCanonicalPosition focus = ResolveQueryPassDiscardFocus();
+            float radius = (FadeStartMeters + Mathf.Max(FadeEndMeters, FadeStartMeters + 1f)) * .5f;
+            if (RectangleIntersectsTerrain3DDiscard(aroundStart, aroundEnd, acrossStart, acrossEnd,
+                focus.AroundMeters, focus.AcrossMeters, ResolveAroundCircumferenceMeters(), radius)) return false;
+        }
+        int size = Mathf.Max(32, SectorSizeMeters);
+        long around0 = (long)Math.Floor(Math.Min(aroundStart, aroundEnd) / size);
+        long around1 = (long)Math.Floor((Math.Max(aroundStart, aroundEnd) - 0.001) / size);
+        int across0 = (int)Math.Floor(Math.Min(acrossStart, acrossEnd) / size);
+        int across1 = (int)Math.Floor((Math.Max(acrossStart, acrossEnd) - 0.001) / size);
+        long aroundSectorLength = ResolveAroundSectorLength(size);
+        for (int z = across0; z <= across1; z++)
+        for (long x = around0; x <= around1; x++)
+            if (!IsSectorResident(new RingTerrainSectorCoordinate(WrapAroundSector(x, aroundSectorLength), z), size)) return false;
+        return true;
+    }
+
+    private bool IsSectorResident(RingTerrainSectorCoordinate coordinate, int size)
+    {
+        if (_warmUntil.ContainsKey(coordinate)) return false;
+        if (_innerExcluded.Contains(coordinate)) return IsCoveredByFinerRepresentation(coordinate, size);
+        // Installed, not warm, and the level streams and is not transit-hidden (checked by the caller): UpdateSectorVisibility shows the node unless
+        // its own finer level strictly covers the whole sector, and that level then draws it. Decided from this state, not node.Visible (an engine call per cell).
+        return _active.TryGetValue(coordinate, out MeshInstance3D? node)
+            && (_installedMeshNodes.Contains(node) || node.Mesh != null);
     }
 
     // Exact ocean ownership for FFT vertices outside the finite shoreline
@@ -6160,6 +6510,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             ConfigureOpaqueShadowCaster(node, mesh, useOpaqueShadowCaster);
             node.Visible = false;
             _active[data.Coordinate] = node;
+            MarkResidencyChanged(data.Coordinate);
             _activeVisualBounds[data.Coordinate] = data.VisualBounds;
             ReleaseCameraCullEntry(data.Coordinate, node);
             MarkCameraCullBoundsDirty();
@@ -6275,6 +6626,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 RestoreFullPartialCoverageMesh(key, node);
                 node.Visible = false;
                 _warmUntil[key] = Time.GetTicksMsec() / 1000.0 + Math.Max(0.0f, WarmSectorRetentionSeconds);
+                MarkResidencyChanged(key);
                 if (_activeMeshBytes.TryGetValue(key, out long bytes)) EstimatedWarmMeshBytes += bytes;
                 if (_coverageAtlasSlots.Remove(key, out int atlasSlot)) _freeCoverageAtlasSlots.Push(atlasSlot);
                 coverageChanged = true;
@@ -6302,6 +6654,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         foreach (RingTerrainSectorCoordinate coordinate in desired)
         {
             if (!_warmUntil.Remove(coordinate)) continue;
+            MarkResidencyChanged(coordinate);
             if (_active.TryGetValue(coordinate, out MeshInstance3D? node))
             {
                 if (_latestCoverageMasks.TryGetValue(coordinate, out SurfaceCoverageMask? mask))
@@ -6318,8 +6671,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             if (_activeMeshBytes.TryGetValue(coordinate, out long bytes)) EstimatedWarmMeshBytes = Math.Max(0L, EstimatedWarmMeshBytes - bytes);
             coverageChanged = true;
         }
-        if (atlasDirty && _coverageAtlasTexture != null && _coverageAtlasImage != null)
-            _coverageAtlasTexture.Update(_coverageAtlasImage);
+        if (atlasDirty) UploadCoverageAtlas();
         if (coverageChanged)
         {
             _coverageRevision++;
@@ -6427,6 +6779,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         MarkOceanCoverageDirtyForRoutineSectorChange();
         RemoveFftWaterDemandMetadata(coordinate);
         if (!_active.Remove(coordinate, out MeshInstance3D? node)) return;
+        MarkResidencyChanged(coordinate);
         if (_warmUntil.Remove(coordinate) && _activeMeshBytes.TryGetValue(coordinate, out long warmBytes))
             EstimatedWarmMeshBytes = Math.Max(0L, EstimatedWarmMeshBytes - warmBytes);
         _activeCoverageMasks.Remove(coordinate);

@@ -22,6 +22,12 @@
         "desktop_mid_high"
       ]
     },
+    "proxy_terrain_normals_gpu_test": {
+      "status": "known-fail",
+      "match": "Trying to assign value of type 'Nil' to a variable of type 'PackedVector3Array'",
+      "evidence": "_normal_status (proxy_terrain_normals_gpu_test.gd:90) reads ARRAY_VERTEX of each proxy sector mesh; slot-installed sectors (gpu-offload slot install, default on) draw a shared index-only grid mesh with no vertex array, so the read is Nil and the test times out in its stream phase. Same script error 224x in .godot/test_runs/instslots/20261113-143129 (2026-11-13, before resident coverage) and in rescov2/20261121-053534; it failed since 2026-11-06 for an earlier reason (legacy inverted-normal ROI, s0/s1 runs). Needs a vertex-table-aware rewrite of the probe",
+      "since": "2026-11-13"
+    },
     "generated_output_policy_test": {
       "status": "known-fail",
       "match": "GENERATED_OUTPUT_POLICY_TEST=FAIL \\(30 violations\\)",

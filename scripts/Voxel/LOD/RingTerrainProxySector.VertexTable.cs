@@ -641,6 +641,8 @@ public partial class RingTerrainProxySector
         foreach (RingTerrainSectorCoordinate coordinate in new List<RingTerrainSectorCoordinate>(_activeSlots.Keys))
             RecycleActiveSector(coordinate);
         _activeSlots.Clear();
+        // The coarser level must draw these cells again before this frame renders (resident coverage, docs/proxy-coverage-culling.md).
+        NotifyCoverageResidencyDependents(full: true);
     }
 
     /// <summary>Worker thread: packs the slot blocks and the coastal ocean arrays for one finished sector, or null to install through a mesh.</summary>
