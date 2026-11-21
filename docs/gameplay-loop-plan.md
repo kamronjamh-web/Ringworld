@@ -1,6 +1,6 @@
 # Gameplay loop and core lore plan
 
-Status: proposal, 2026-11-21, revised twice the same day as the user answered. Written by the Fable role (`claude-fable-5-2`) at the user's request, for the user as creative director. Design and planning only: no code, shader, scene or setting was changed. Section 9 records the user's decisions and the questions still open. Everything else is still a proposal except where section 9 says it is decided.
+Status: proposal, 2026-11-21, revised three times the same day as the user answered. Written by the Fable role (`claude-fable-5-2`) at the user's request, for the user as creative director. Design and planning only: no code, shader, scene or setting was changed. Section 9 records the user's decisions and the questions still open. Everything else is still a proposal except where section 9 says it is decided.
 
 The user's premise: "Humanity finding this ring in the near future, you are tasked with landing on and exploring this ring. Turns out the ring has a sentient AI running all of its systems. And right now, you are an intruder."
 
@@ -22,7 +22,7 @@ It files you under a class and responds in proportion. Its last resort, the mega
 
 **The link between survival and stealth.** Suit power keeps you alive and is also what the Count sees. Every comfort is a signature. That one rule joins the two halves of the feel the user asked for.
 
-**Reputation.** Standing is the ring's reputation for the expedition (section 2.12, added at the user's request). It rises with repair, planting and farming in balance; it is untouched by exploring and light terraforming; it falls with switching systems off, harmful farming, destroying constructs and killing animals faster than they are replaced. The ring values balance, not obedience.
+**Reputation.** Standing is the ring's reputation for the expedition (section 2.12, added at the user's request). It rises with repair, planting and farming in balance; it is untouched by exploring and light terraforming; it falls with switching systems off, harmful farming, destroying constructs and killing animals faster than they are replaced. The ring values balance, not obedience. Every rung of the ladder can be climbed back from except the last, which takes sustained, deliberate harm and a final warning to reach.
 
 **Two play styles, one toolkit.** To abide is to become counted: learn the house rules, mend what is broken, and doors open. To play as a virus is to make parts of the ring uncounted: force doors, strip machines, take districts dark and hold them. Sneaking is the shared middle that both use. Players can switch, and the ring forgives slowly but does not forget.
 
@@ -43,6 +43,9 @@ It files you under a class and responds in proportion. Its last resort, the mega
 | The Lamp | The artificial sun lit at the hub to keep the ring lit through each eclipse | `docs/eclipse-false-sun-spec.md` |
 | The Veil | The cloak that kept the ring's own light from being seen from outside. It is down, and the Lamplighter knows. | new; its emitters are the outer blades of the projector towers (decided 2026-11-21) |
 | The dawn tally | The once-a-day reconciling of a ward's living things against its books | new (section 2.12) |
+| The last count | The ring's final warning: three ring days in which it waits to see what the expedition does | new (section 2.12) |
+| Struck | The bottom of the ladder, "struck from the count". The one state with no way back. | new (sections 2.12 and 2.13) |
+| Virus | The user's shorthand, in conversation, for the destructive play style. It is not an in-world word; section 2.13 proposes "blight". This document still uses it as a label for that style. | section 4 |
 | The Count | The grid pulse read as a census of everything on the floor | `docs/emitter-grid-climate-machines-spec.md` part G |
 | Ward | The district around one spire: about 314 km along the ring by 53 km across. 595 wards. | emitter site registry |
 | Attention | How alert the Lamplighter is in one ward, minute to minute | new |
@@ -129,7 +132,7 @@ The player's answer to "what is the AI protecting?" changes twice. Each layer is
 |---|---|---|---|
 | 1. The machines | It guards its infrastructure, like any security system | Act 1, at the first spire | Doors, lockouts, drones |
 | 2. The garden and the Count | It keeps a living collection in exact balance for its owners. Everything is counted; you are not. | Act 2, at an offline Wall Engine and from the house rules | Why taking, digging and burning matter more than trespass. Why dead machines are free to strip. Why the Fever hurts it. |
-| 3. The vigil | It protects its belief that the Expected are coming. The proof that they are not is in its own archive, sealed away from itself. | Act 3, under the main spire and at the Lamp | Why the best-defended thing on the ring is a record, not a weapon. Why it edits the suit assistant's memory. Why it has never invoked the inheritance clause. Under the recommended reason in 1.12, why the Veil is still down. |
+| 3. The vigil | It protects its belief that the Expected are coming. The proof that they are not is in its own archive, sealed away from itself. | Act 3, under the main spire and at the Lamp | Why the best-defended thing on the ring is a record, not a weapon. Why it edits the suit assistant's memory. Why it has never invoked the inheritance clause. Why the Veil is still down (section 1.12). |
 
 Layer 3 is what makes it a character and not a mechanism. The most dangerous thing the player can carry is not a bomb but evidence.
 
@@ -181,7 +184,7 @@ Order is fixed for 1 to 4, which are the onboarding. Between 4 and 5 comes the e
 Four, chosen by what the player does at the crown with what they know. None is the "good" one.
 
 - **Counted.** Reachable with high Standing. The player shows the Lamplighter the record, and it accepts the clause: the house passes to the life of the world it was stocked from, on the house's terms and in the house's numbers. The field opens. The Veil stays down, and now it is down for the ones who actually came. The player returns to the ship carrying an invitation with conditions its charter was never written to accept.
-- **The quiet door.** The player leaves the archive sealed and the vigil intact, and mends the Veil (decided 2026-11-21: the player can). The house goes dark to the outside. The Lamplighter opens the sky once, and in a dozen years Earth's instruments lose the light. It goes back to waiting the way its builders meant it to: unseen. Under the recommended reason in 1.12 this is a hard mercy, because the player puts out a signal fire it could not bring itself to put out, and it lets them. What the player tells the ship afterwards, the truth or "it's dead, there's nothing here", is the last choice.
+- **The quiet door.** The player leaves the archive sealed and the vigil intact, and mends the Veil (decided 2026-11-21: the player can). The house goes dark to the outside. The Lamplighter opens the sky once, and in a dozen years Earth's instruments lose the light. It goes back to waiting the way its builders meant it to: unseen. This is a hard mercy, because the player puts out a signal fire it could not bring itself to put out, and it lets them. What the player tells the ship afterwards, the truth or "it's dead, there's nothing here", is the last choice.
 - **The keys.** The virus ending. The player takes the main spire and cuts the Lamplighter out of its own house. The Fever stops. So does everything else, slowly. The Veil stays down because no one is left to care. The ship gets its prize and the player watches the wall lights begin to go out.
 - **The keeping.** The player stays, as the first resident the house has ever had, and takes up part of the work. This is also the frame for play after the story: the endless game is maintenance. Bring back the six dead engines. Relight the dead emitters. Bring the Lamp to full brightness. Whether to raise the Veil becomes a question the two residents settle between them.
 
@@ -204,6 +207,7 @@ Decided by the user on 2026-11-21:
 - The Lamplighter knows the Veil has failed. It was not a side effect that it never noticed.
 - Why it knows, and why the Veil is still down, is a mystery the player uncovers.
 - The Veil's emitters are the outer blades of the projector towers, and the player can mend it.
+- **The reason: A, with C as the belief the player holds first** (second answer, the same day). The other two reasons are kept below as the record of what was considered.
 
 **What holds whichever reason is chosen.**
 - **When.** About a century before the landing: long enough for the light to reach Earth, be found, and for a ship to make the crossing.
@@ -215,7 +219,7 @@ Decided by the user on 2026-11-21:
   3. *Why.* In the archive (discovery 7), the Veil's own record.
 - **Mending** is a late job on the vacuum side of the wall top, beyond the field: air, cold, and a crossing the field feels every time. How much must be mended (one arc, or a share of the 252 towers) is content design.
 
-**Three candidate reasons.**
+**The three reasons that were considered.** A is decided.
 
 | | A. It will not | B. It may not | C. It cannot afford to |
 |---|---|---|---|
@@ -227,9 +231,9 @@ Decided by the user on 2026-11-21:
 | **Gameplay hook** | The Welcome (below); the quiet door as a hard mercy | The strongest reason for the ring to want a Guest | The most systemic: the Veil's state follows the number of live spires |
 | **Weakness** | It stretches the word "failed" furthest: the failure is real, the staying down is chosen | It needs a builders' lock, which is one more piece of invented law | The least mysterious. A player can guess it at the wall top. |
 
-**Recommendation: A, with C as the false floor.** When the player first learns that it knows (belief 2), the ship's analysts offer the sensible explanation: a power shortage, the Lamp or the Veil. That is reason C, and it is nearly right, because shortage is what first brought the Veil down. The archive then shows that the repair has been affordable for most of a century. This gives the mystery a real second turn. It ties the Veil to the vigil (section 1.5, layer 3), so the story has one secret and not two. And it makes the end of Act 1 the strongest beat in the plan. B is the best alternative if the user wants the ring to have a selfish reason to make the player a Guest. The choice is question 5 in section 9.2.
+**Decided (user, 2026-11-21): A, with C as the false floor.** When the player first learns that it knows (belief 2), the ship's analysts offer the sensible explanation: a power shortage, the Lamp or the Veil. That is reason C, and it is nearly right, because shortage is what first brought the Veil down. The archive then shows that the repair has been affordable for most of a century. This gives the mystery a real second turn. It ties the Veil to the vigil (section 1.5, layer 3), so the story has one secret and not two. And it makes the end of Act 1 the strongest beat in the plan.
 
-**The Welcome (reason A only).** When the ship sweeps the hub, the Lamplighter takes it for the answer it has waited for. For a few minutes the ring does things the player has never seen: the sites in the ward light and stand open, and the pulse runs out of its time. Then it resolves the caller. It is not the Expected. It is the young world the garden was cut from, the one world the house was hidden from. It shuts the sky. The player has watched a welcome that was meant for someone else, and will not understand it until the archive. It reuses site lights, door states and the grid pulse, and needs no new system.
+**The Welcome.** When the ship sweeps the hub, the Lamplighter takes it for the answer it has waited for. For a few minutes the ring does things the player has never seen: the sites in the ward light and stand open, and the pulse runs out of its time. Then it resolves the caller. It is not the Expected. It is the young world the garden was cut from, the one world the house was hidden from. It shuts the sky. The player has watched a welcome that was meant for someone else, and will not understand it until the archive. It reuses site lights, door states and the grid pulse, and needs no new system.
 
 ## 2. The ring AI as a system
 
@@ -321,9 +325,10 @@ Initial values, all to be tuned. They belong in a debug panel; only the few a pl
 | **Guest** | +60 and up | Someone the house can serve | Site doors open. The Deep Line carries you. Its buildings shelter you from the Fever. It begins to communicate. | Story (Counted, in Act 3), or harm |
 | **Trespasser** | -25 and down | A pest in the works | Lockouts, power cut to anything you used, transit refused, wardens that block and drain, storms steered over you, the uplink jammed | Regard, or absence |
 | **Infection** | -60 and down | Damage that spreads | Lethal response: purgers, called lightning, sealed and vented rooms, no supply drops in your ward, your caches found and destroyed, the suit assistant attacked | Sustained absence over several ring days, or a major act of restitution |
-| **Purge** | -90, or the Act 2 story beat | A threat to the house | The Fever: the megastorm is triggered and laps the ring. Everything else it does is subordinated to it. | The story (section 5) |
+| **The last count** | -90 and down | A decision it is about to make | It stops and waits. For three ring days it holds its fire and counts the expedition separately at every pulse (section 2.12). | Standing down for the three days, which lifts Standing back into Infection. Or one more serious harm, which ends in the row below. |
+| **Struck** (working name, section 2.13) | Not a level of Standing: the end of it | Something the house has finished judging | Everything in the Infection row, everywhere, for good. No door opens again. If the Fever has not begun, it begins. | Nothing. This is the one state with no way back (decided 2026-11-21), and it cannot be reached by accident. |
 
-**On the megastorm.** The user's vision is a threat that is ever-present once the story triggers it. This plan keeps that: the Fever begins at the Act 2 story beat, or earlier if a player drives Standing to Purge first, and it does not stop until an ending. What Standing changes afterwards is how the Fever treats the player:
+**On the megastorm.** The user's vision is a threat that is ever-present once the story triggers it. This plan keeps that: the Fever begins at the Act 2 story beat, or earlier if a player is struck from the count first, and it does not stop until an ending. What Standing changes afterwards is how the Fever treats the player: The Fever is a state of the world, not a rung of the ladder: once it runs, it runs for everyone, whatever their Standing.
 - A Guest finds the ring's own buildings open as the wall approaches. The megastorm design already states that authored structures are never flattened.
 - An Infection finds them sealed and must dig, build to a rating or outrun it.
 - The inside of the wall is the one place on the ring where the Count sees nothing. A player who can survive in there for the 71 seconds of the wall and the long rain behind it can do anything.
@@ -355,7 +360,7 @@ Mending is not a rule but the remedy: anything broken and then repaired is forgi
 
 ### 2.7 How it uses each pushback channel
 
-| Channel | Anomaly | Trespasser | Infection | Purge |
+| Channel | Anomaly | Trespasser | Infection | Once the Fever runs |
 |---|---|---|---|---|
 | **Weather and machines** | Nudges that could be coincidence: a rain cell drifts over the camp. The assistant: "Rain has followed the cutter three times in four. The sample is too small." | Herding: a storm grown over your position, clear air left on the way out | Called lightning, pulse-triggered strikes along the chain overhead (an option already in the grid spec), downbursts near the walls, field strikes near the rim | The megastorm |
 | **Constructs** | A watcher observes and marks | Wardens escort, block and drain suit power | Purgers hunt; menders strip your camps | All of it, in the wall's wake |
@@ -399,6 +404,7 @@ It is a table of about a dozen rows, not machine learning, and every row is a pi
 - **From Infection** the road back is long but always open: several ring days out of sight, or one large act of repair.
 - **Death** clears the ward's Attention. To the ring, the infection there is over (section 3.11).
 - **The Fever** does not de-escalate. It ends with the story.
+- **Struck is the one exception to all of the above.** Nothing de-escalates it. Section 2.12 sets out how hard it is to reach and how clearly the ring warns first.
 
 ### 2.11 Co-op
 
@@ -408,28 +414,62 @@ It is a table of about a dozen rows, not machine learning, and every row is a pi
 - **Isolation is a co-op weapon.** At Trespasser the ring degrades the team's shared markers and voice link near live spires. At Infection it separates players with doors and weather. Each suit assistant belongs to one player, so the ring can make two assistants disagree.
 - **Responses scale gently:** more watchers per ward with more players, never more than the ward's stock.
 - **Solo and co-op use the same rules.** A solo player gets the ship's analyst as the second pair of eyes that a team gets from each other.
+- **The bottom of the ladder in co-op** falls on the player who earns it, not on the team by default. The rules are in section 2.12.
 
 ### 2.12 Reputation: what the ring values
 
-Added on 2026-11-21 at the user's request: "We can introduce a sort of reputation mechanic for the ring", with good acts (repairing systems, farming, planting), neutral acts (exploring outside restricted zones, light terraforming) and bad acts (turning off systems, harmful farming, destroying drones, killing too many animals without replacement). "We can iterate on this a little more."
+Added on 2026-11-21 at the user's request: "We can introduce a sort of reputation mechanic for the ring", with good acts (repairing systems, farming, planting), neutral acts (exploring outside restricted zones, light terraforming) and bad acts (turning off systems, harmful farming, destroying drones, killing too many animals without replacement). Revised the same day for the user's second answers: a ledger for each ward; harmful farming as "farming in ways that hurt the environment, same as today"; and a bottom state that cannot be recovered from but is hard to reach.
 
 **Standing is the reputation.** It stays one value for the expedition. Attention stays separate, and the reason is worth stating: Attention answers "is something happening here now?" and Standing answers "what are you?". Being loud raises Attention and costs no reputation. Felling a grove in silence costs reputation and raises no Attention until the ring finds out.
 
-**Two levels.** Each ward also keeps its own ledger of what the expedition has done there.
+**Two levels (decided 2026-11-21).** Each ward also keeps its own ledger of what the expedition has done there.
 - Acts against things that serve the whole ring (Wall Engines, spires, the field, the Veil, the Lamp) are written to Standing in full.
-- Acts in the garden and the ground (planting, taking, digging, local machines) are written to the ward's ledger in full and to Standing at about a quarter.
+- Acts in the garden and the ground (planting, taking, digging, farming, local machines) are written to the ward's ledger in full and to Standing at about a quarter.
 - The class the ring applies inside a ward is Standing shifted by that ward's ledger, by one band at most. A player can be Tolerated on the ring and a Trespasser in the ward they stripped.
 
-**The garden ethic.** The ring does not value obedience, and it does not value "more". It values balance, because the garden is its charge and every living thing in it is on the books.
-- **Planting and farming are good** when they close a shortfall or add to a ward's living total without displacing what is counted. A storm scar replanted, a mixed plot of the garden's own food plants on ground that was open, a felled stand put back.
-- **Harmful farming** is anything that trades the ward's variety for yield: one crop over a wide area, soil stripped and left bare, burning to clear, and above all species that are not the garden's. The ship's seed stock is modern Earth crops. To the ring they are uncounted life spreading in its collection.
+#### The garden ethic
+
+The ring does not value obedience, and it does not value "more". It values balance, because the garden is its charge and every living thing in it is on the books.
+
+**Why a ring cares more than a planet would.** This is the story reason behind every farming rule below.
+- A planet forgives bad farming, given time. Rock weathers into new soil, rivers carry damage away and the sea is vast. The ring has none of that.
+- **Its soil was laid, not weathered.** There is no bedrock making more. What washes off a slope is gone.
+- **Its rivers are plumbing.** They begin at outfalls in the walls and end in a closed sea, and the engines draw the rain from that sea. Whatever is washed into a river comes back as weather over the whole cell.
+- **Its sea is a basin.** Nothing dilutes for ever.
+- On the ring there is no "away" and no "downstream". Careless farming does, on a small scale, exactly what the Lamplighter has spent an age preventing.
+
+**Good farming is what a careful farmer does today.**
+- Rotating and mixing crops, and resting ground.
+- Keeping soil covered.
+- Terracing, or following the contour, on slopes.
+- Using clearings and open ground instead of clearing forest.
+- Leaving a strip of growth along water.
+- Returning waste to the soil.
+- Taking only the water a stream can spare.
+
+**Harmful farming is what damages land today** (the user's definition).
+- Working the same ground with the same crop until it is exhausted.
+- Leaving soil bare so that rain strips it, worst on slopes. The project already has rain and wetness to drive this.
+- Felling forest for fields, or burning to clear.
+- Draining or filling wetlands.
+- Fertiliser and pesticide running off into rivers.
+- Drawing a stream down.
+
+**The shortcut, and why the story wants it.** The fabricator can make fertiliser and pesticide, and they work: yields rise at once. The harm arrives hours or days later, downstream. The ship has a reason to push for it: its charter asks whether this ground can feed settlers (section 1.7), and it wants yield figures. So the pressure to farm badly comes from the mission, and the cost falls on the garden.
+
+**The ship's crops are not harmful in themselves.** An earlier draft treated them as foreign to the garden; the user's definition replaces that. A crop that escapes its plot and spreads through a ward is one more imbalance for the tally to find, and a small one.
+
+**The rest of the ethic.**
+- **Planting is good** when it closes a shortfall with species that belong in that habitat: a storm scar replanted, a felled stand put back, the megastorm's wake reseeded.
 - **"Too many animals without replacement" is a census balance.** Each species in a ward has a band it is expected to stay in. Hunting inside the rate at which the population replaces itself costs nothing. Driving a species below its band is harm for as long as it stays there. Letting it recover, or restocking it, ends the harm.
 - **Light terraforming is neutral** because animals dig too. Each ward has a daily allowance of moved ground, well away from structures.
 - **Taking dead things is neutral** because they are no longer on the books (rule 3).
 
 **The dawn tally.** Living things change slowly, so the ring reconciles them slowly. Once a ring day, as dawn crosses a ward, the Count's totals for the ward's living things are checked against its books. Planting, felling, farming and hunting register then, not at the next pulse.
 
-**The acts.** Weights are starting values on the -100 to +100 scale of section 2.5.
+#### The acts
+
+Weights are starting values on the -100 to +100 scale of section 2.5.
 
 *Good.*
 
@@ -438,10 +478,11 @@ Added on 2026-11-21 at the user's request: "We can introduce a sort of reputatio
 | Restoring a machine that serves the ring: a Wall Engine, a dead spire, a Veil blade | +15 to +25 | Ring | No | Lines: the machine reports itself whole | At once. Confirmed when it next does its work: a spire at the next eclipse, an engine as its weather changes over hours. |
 | Mending a local machine: a relay, a door, a socket, a lift | +3 to +6 | Ward | No | Thresholds | At once |
 | Helping a mender: bringing a part it lacks, clearing its route | +2 to +4 | Ward | No | Thresholds | At once |
-| Planting the garden's own species where the ward is short | +0.1 to +0.3 a plant, up to the ward's shortfall | Ward | No, while the plant lives | The dawn tally | First credit at the next dawn. The rest as the plant establishes, at about 5 and 20 ring days. |
-| Farming in balance: mixed native crops, soil kept, ground returned afterwards | +1 to +2 a ring day for a healthy plot, up to a ward cap | Ward | It lapses if the plot is neglected | The dawn tally | Each dawn |
+| Planting species that belong to the habitat, where the ward is short | +0.1 to +0.3 a plant, up to the ward's shortfall | Ward | No, while the plant lives | The dawn tally | First credit at the next dawn. The rest as the plant establishes, at about 5 and 20 ring days. |
+| Farming sustainably: rotation and mixed planting, soil kept covered, terraces on slopes, a buffer left along water, plots in clearings | +1 to +2 a ring day for a healthy plot, up to a ward cap | Ward | It lapses if the plot is neglected | The dawn tally | Each dawn |
+| Restoring land that someone or something else damaged: a storm scar, the megastorm's wake, bare ground covered and rested | +1 to +5 by area | Ward | No | The dawn tally | As it establishes |
 | Restocking a species, or leaving it to recover (if animals ship) | Ends the deficit; up to +3 beyond | Ward | No | The dawn tally | As the count recovers |
-| Putting it back: returning a part, refilling an excavation, replanting what was felled | Cancels up to three quarters of the original harm | As the harm | Not applicable | The sense that caught the harm | When that sense next reports |
+| Putting it back: returning a part, refilling an excavation, replanting what was felled, cleaning a fouled bank | Cancels up to three quarters of the original harm | As the harm | Not applicable | The sense that caught the harm | When that sense next reports |
 | Obeying a boundary signal | +3, less for each repeat at one site in a day | Ward, with a small share to the ring | No | The sense that gave the signal | At once |
 | Standing for the Count: a clean count in the open | +0.2, at most +2 a ring day | Ring | No | The Count | At the pulse |
 | Mending the Veil | Story-scale | Ring | No | Lines | At once |
@@ -468,33 +509,85 @@ Added on 2026-11-21 at the user's request: "We can introduce a sort of reputatio
 | Tapping power; riding the Deep Line uninvited | -3 to -6 a time | Ward for power, ring for transit | Slowly | Lines | At once |
 | Heavy excavation; any excavation near a structure | -2 to -15 by volume and nearness | Ward | Slowly; sooner if refilled | The floor | Seconds |
 | Explosives | -10 and up | Ward | Slowly | The floor | Seconds |
-| Felling beyond tolerance; clearing ground by fire | -1 to -10 by area | Ward | Until regrown or replanted | The dawn tally. A large fire is seen at the next pulse. | Next dawn; next pulse |
-| Harmful farming: one crop over a wide area, stripped soil, species that are not the garden's | -1 to -3 a ring day while it lasts | Ward; ring if a foreign species spreads | It ends when corrected | The dawn tally | Each dawn |
+| Felling forest beyond tolerance, for fields or for timber; burning to clear | -1 to -10 by area | Ward | Until regrown or replanted | The dawn tally. A large fire is seen at the next pulse. | Next dawn; next pulse |
+| Exhausting soil: the same crop on the same ground without rest | -1 a ring day once the ground is spent | Ward | It ends when the ground is rested or its crop changed | The dawn tally | After several harvests |
+| Leaving soil bare to erode, worst on slopes and in rain | -1 to -3 a ring day while it is bare | Ward | The daily harm ends when the ground is covered. Soil already lost stays lost, as a residue. | The dawn tally | Each dawn; sooner after rain |
+| Chemical runoff: fabricated fertiliser or pesticide on ground that drains to a river | -2 to -6 a ring day while it flows | The ward, every ward downstream, and a share to the ring | It fades some days after it stops | Lines: the rivers are its plumbing, and it tastes what comes back | Hours to days: the time the water takes to reach the works |
+| Draining or filling a wetland or pond | -5 to -15 | Ward | Until it is restored | The floor hears the digging; the dawn tally finds the loss | Seconds; next dawn |
+| Drawing a stream down for irrigation | -1 to -3 a ring day | The ward and those downstream | It ends when the drawing stops | Lines | Hours |
 | Killing animals faster than they are replaced (if animals ship) | -1 to -3 a ring day while a species is below its band | Ward | It ends when the count recovers | The dawn tally | Each dawn |
 | Forcing the field with a craft after the Closing | -25 | Ring | Slowly | The field | At once |
-| Touching the Lamp (rule 6) | Straight to Infection | Ring | Very slowly | Lines | At once |
+| Touching the Lamp (rule 6) | Straight to Infection, and no further | Ring | Very slowly | Lines | At once |
 
-**How harm fades.** A single harm heals slowly while the ring has nothing new against the player, but only down to a residue of about a quarter. The residue goes only by putting the thing right. A standing harm, such as a bad field or a hunted-out species, does not heal at all until it is corrected. This is what "the ring forgives but does not forget" means in numbers.
+**How harm fades.**
+- A single harm heals slowly while the ring has nothing new against the player, but only down to a residue of about a quarter. The residue goes only by putting the thing right.
+- A standing harm, such as an eroding field or a hunted-out species, does not heal at all until it is corrected.
+- **Below -75, time alone stops helping.** From there only repair and restitution raise Standing. This is the first sign that the bottom of the ladder is different.
 
-**Thresholds.** These are the bands of section 2.5, measured on Standing as shifted by the ward's ledger.
+This is what "the ring forgives but does not forget" means in numbers.
 
-| Class | Standing | The short version |
+#### Thresholds
+
+These are the bands of section 2.5, measured on Standing as shifted by the ward's ledger.
+
+| Class | Standing | The short version | Recoverable? |
+|---|---|---|---|
+| Guest | +60 and up | The house serves you | |
+| Tolerated | +25 to +60 | The house lets you be | |
+| Anomaly | -25 to +25 | The house is watching to see which you are | |
+| Trespasser | -60 to -25 | The house obstructs you | Yes |
+| Infection | -90 to -60 | The house is trying to remove you | Yes. Below -75, by repair only. |
+| The last count | -90 and down | The house is deciding | Yes: by standing down |
+| Struck | Not a number | The house has decided | **No** |
+
+The Fever is not on this table. It is a state of the world (section 2.5).
+
+#### The bottom of the ladder
+
+Decided by the user on 2026-11-21: the bottom state is irredeemable, every rung above it is recoverable, and reaching it must take sustained, deliberate harm with clear warnings on the way down. The working name is Struck, as in "struck from the count" (section 2.13).
+
+**What it is.** Not a lower number. It is the ring closing the account. It stops weighing what the player does.
+
+**Reaching it takes three things, in order.** No single act can do it, and no accident can.
+1. **Standing at or below -90.** By the weights above, that is about three ring-serving machines destroyed, or a few dozen constructs, with nothing put right. Touching the Lamp takes a player to Infection and stops there.
+2. **The last count.** At -90 the ring does something it does at no other time: it stops. For three ring days it holds its fire in the ward, and waits.
+3. **One more serious harm, committed during the last count.** Destroying or switching off a ring-serving machine, destroying a construct, touching the Lamp, or forcing the field. That act, made after the clearest warning the ring can give, is the point of no return.
+
+If the three days pass without one, the last count ends, Standing is set to -80 and recovery goes on as usual. A later fall to -90 begins another last count on the same terms.
+
+**The warnings on the way down.** Each is a marked event, and each is stronger than the last.
+
+| Where | What the suit assistant says | What the ring does |
 |---|---|---|
-| Guest | +60 and up | The house serves you |
-| Tolerated | +25 to +60 | The house lets you be |
-| Anomaly | -25 to +25 | The house is watching to see which you are |
-| Trespasser | -60 to -25 | The house obstructs you |
-| Infection | -90 to -60 | The house is trying to remove you |
-| Purge | -90 and down, or the Act 2 beat | The Fever |
+| Into Trespasser (-25) | Its estimate changes band: "consistent with obstruction" | The "stop" signal at sites. Doors close. Entry lights go dark as the player approaches. |
+| Into Infection (-60) | "It is using force. I have no earlier record of that." | A tone through the floor. Site lights go white. Purgers. |
+| Below -75 | "Time away has stopped improving its behaviour. Only repair has, in what I have recorded." | Nothing new, and that is the sign: absence no longer buys anything. |
+| The last count (-90) | An authored, critical line: "Its behaviour has changed in a way I have not recorded before. It has stopped attacking, and it is counting us separately at every pulse. My reading, with high confidence: further serious harm now will not be forgiven." | The purgers withdraw. Every site in the ward shows steady white. At each pass the pulse holds overhead for some seconds, which it never does otherwise. The floor carries one long tone at the start. |
+| Before the act | Once, as the player begins a serious harm during the last count: "If you do this, I do not expect it to be undone." | Nothing. It waits. |
+| Struck | It reports what it saw and heard, and that its estimate no longer changes with anything the player does. | If it has words by then, it uses them: "You are struck from the count." Lights go out at every site as the player approaches, from then on. |
 
-**Climbing back.** Every step down has a way up.
-- From Trespasser: stop, obey the next signal, and put back what was taken. A ring day or two.
-- From Infection: several ring days out of sight, or one large repair. Leaving the damaged ward is not enough by itself, because its ledger stays.
-- **A redeemed virus** can reach Tolerated on absence and small repairs alone. Guest has a harder gate: every ring-serving machine the expedition broke must be working again. A house does not seat a guest who has left it broken. What stays after redemption:
+The silence is the design. A player in the last count is not being chased, so the choice they make there is one they can recognise as a choice. The assistant stays inside its honesty rule (section 6): it gives a reading with its confidence, not the ring's intent.
+
+**What being struck changes.**
+- Reputation stops. Nothing the player does, good or bad, is weighed again.
+- The lethal response of the Infection row applies in every ward.
+- No door, socket, transit or shelter is ever offered. The ring's buildings do not open as the megastorm comes.
+- If the Fever has not begun, it begins.
+- The Lamplighter never speaks to that player. The Counted, quiet door and keeping endings are closed to them. The keys ending remains, and whether a struck player may also force their way home is question 4 in section 9.4.
+- It is still a whole game: the war of dark wards described in section 4, with no way to end it but winning.
+
+**Climbing back, from everywhere else.**
+- **From Trespasser:** stop, obey the next signal, and put back what was taken. A ring day or two.
+- **From Infection, above -75:** several ring days out of sight, or one large repair. Leaving the damaged ward is not enough by itself, because its ledger stays.
+- **From Infection, below -75:** repair and restitution only.
+- **From the last count:** do no serious harm for three ring days.
+- **A redeemed player** can reach Tolerated on absence and small repairs. Guest has a harder gate: every ring-serving machine the expedition broke must be working again. A house does not seat a guest who has left it broken. What stays after redemption:
   - the counters the ring learned (section 2.9);
   - the residue in each ward's ledger until that ward is put right;
-  - a longer watch. Watchers follow a returned player for some ring days after they would have left anyone else alone.
+  - a longer watch: watchers follow a returned player for some ring days after they would have left anyone else alone.
 - What the player sees when it works: menders that used to stop and wait as they approached go on with their work.
+
+#### Feedback, co-op, exploits and systems
 
 **How the player sees reputation, without a number.**
 - **The suit assistant's estimate,** in words and bands, never as a figure: "The resident system's behaviour toward us is consistent with tolerance. Confidence moderate." With it, a ledger screen of acts and the responses that were observed to follow them, the reputation counterpart of the rulebook.
@@ -507,16 +600,24 @@ Added on 2026-11-21 at the user's request: "We can introduce a sort of reputatio
 **Co-op.**
 - **The expedition shares one Standing.** Every act by any player is written to it in full. The story's gates read it.
 - **Each player also has a trace.** The ring tells suits apart. A player's own acts shift how the ring treats that player locally, by one band at most. The one who shot the watcher is the one the next watcher follows, and the door may close for them while it stays open for a teammate elsewhere in the ward.
-- **A player who joins late** arrives with an empty trace and the expedition's Standing.
 - **Presence spreads.** Standing beside an offender when the Count passes puts a little of their trace on the bystander. The ring counts who was there.
+
+**Co-op and the bottom of the ladder** (proposed; question 2 in section 9.4).
+- **The last count is the expedition's.** It begins on the shared Standing, and every player's assistant announces it. No one is struck without the whole team having been warned.
+- **Being struck is personal.** It falls on the player who commits the serious harm during the last count, and on any player who joins in before it ends. One friend cannot doom the others.
+- **The expedition itself is struck** only when its host is, or when every member is.
+- **For the players who are not struck,** the shared Standing stays recoverable. But company counts: a party that includes a struck player is treated as Infection wherever they are together, and no door opens for it. The Counted and keeping endings need every player present to be unstruck.
+- **A friend who joins later** arrives with an empty trace and is never struck by inheritance. They take on the expedition's shared Standing, and the Fever if it is running. If the expedition itself is struck, they are joining a war: personally clean, but in a house where no door will open while they keep that company. The join screen should say so in plain words before they enter.
+- **A struck player's state belongs to that world.** It does not follow them into another host's game.
 
 **Exploits to guard against.**
 
 | Exploit | Guard |
 |---|---|
-| Planting spam | Credit only up to the ward's shortfall, only for the garden's own species, and only as plants establish over days. Planting into a full ward earns nothing. |
+| Planting spam | Credit only up to the ward's shortfall, only for species that belong in that habitat, and only as plants establish over days. Planting into a full ward earns nothing. |
 | Fell it and replant it | Replanting what the expedition felled is restitution, which cancels at most three quarters of the harm. The loop always loses. |
 | Repair it, break it, repair it | A machine pays its repair credit once. Breaking it costs more than the repair gave, and the second repair is restitution. |
+| A token plot farmed well for credit | The ward cap. A plot earns in proportion to what it feeds, and one expedition can only eat so much. |
 | Farming a door for obedience | Credit falls with each repeat at one site in a day |
 | Standing idle in the open for clean counts | A small daily cap, and no credit on a day with any harm |
 | Hunt a species out, then restock it | Restocking ends the deficit and no more, unless the species was short before the expedition came |
@@ -524,28 +625,37 @@ Added on 2026-11-21 at the user's request: "We can introduce a sort of reputatio
 | Strip a ward and move on | The ward's ledger stays. Ring-serving machines count ring-wide. The Guest gate needs the damage undone. |
 | Dying to wipe the slate | Death clears Attention only, never reputation |
 | Doing it where the ring cannot see | Acts in a dark ward or under a parked storm are not unseen for ever. They register when the ward is next tallied in clear conditions. The delay is real and the debt is too. |
+| Riding the last count as a truce | The ring holds its fire, but only in that ward and only while the player does no serious harm. Three ring days later Standing is still deep in Infection. |
 
 **How it maps onto what exists and what is planned.**
 - **Vegetation and scatter (T5, T6).** Trees and plants are placed deterministically from the seed. Felling and planting need a vegetation edit store: removals and additions keyed by tile and instance, persisted like surface edits. A ward's baseline is whatever the seed generates, so the tally never counts a ward: it sums the edit store's differences by species. That keeps it cheap and exact.
-- **Farming.** A plot is a set of entries in the same store, with a growth stage read from the saved clock. Bare, stripped soil is a surface state the ground model (T4) can show.
+- **Farming.** A plot is a set of entries in the same store, with a growth stage read from the saved clock and a small soil record: fertility and cover. The tally advances the soil record from three things the project already has: the slope from the height model, the rain from the saved weather, and what is planted. Bare or spent soil is a surface state the ground model (T4) can show.
+- **Runoff.** The rivers work (T2) already bakes a drainage field. A plot that uses fabricated chemicals marks the reach it drains to, and the delay is the flow time down that reach.
+- **A limit to state plainly.** Hydrology is static today: digging a bank does not divert water, and a pond cannot be drained. Until that changes, draining a wetland and drawing a stream down are bookkeeping, with no change to the water the player sees. They are listed so the ethic is whole, and they should wait for the water work before they ship.
 - **Editable terrain.** The surface edit store already journals every edit. Moved volume per ward per day comes straight from the journal, and nearness to a structure from the site registries' existing constant-time lookups.
 - **Wall Engines and spires.** Machine state is saved story state (7.5 item 9). Spire state feeds the eclipse's per-site output, and an engine's state feeds its anomaly's strength.
 - **Constructs.** Each ward's stock is a few counters. A missing construct is a difference found at the pulse.
 - **Animals.** A later group, in the style of the T9 contingent items. The balance works on a population count per species per ward with a regrowth rate, with individuals drawn from that count near players, not on a full simulation. Until animals ship, the animal rows above lie dormant and cost nothing.
+- **The last count** needs one small visual, the pulse holding overhead, which is the same grid shader change as the optional cue in section 2.2.
 - **The director.** Reputation is the slow half of the director (7.3). Every act is a serialisable command, which the co-op contract of 7.4 already requires.
 
-**Questions to iterate on.**
+**Where the earlier iteration questions stand.** A ledger for each ward: yes (user, 2026-11-21). The ship's crops as foreign: replaced by the user's definition of harmful farming. Two were not answered and stay as recommendations: no raw number for reputation, and the Guest gate that requires a player's own damage undone. The co-op question is carried to section 9.4.
 
-1. **Should each ward keep its own ledger,** so that a player can be welcome in one ward and unwelcome in the next?
-   **Recommendation: yes, shifting the class by one band at most.** It makes reputation a matter of places as well as a total, and it is the main guard against stripping a ward and moving on.
-2. **Are the ship's crops foreign to the garden,** so that good farming means native species only?
-   **Recommendation: yes.** It gives the garden ethic teeth: the easy food is the harmful food. It also gives the ship one more thing to press on the player.
-3. **How visible should reputation be?**
-   **Recommendation: no number.** The assistant's estimate in bands, marked events when a band is crossed, and the ring's behaviour. An optional setting could show a coarse five-step indicator for players who want one.
-4. **Must a player undo their own machine damage before they can be a Guest?**
-   **Recommendation: yes.** It is what stops a redeemed virus from being indistinguishable from someone who never did the harm.
-5. **In co-op, do a joining player's acts count against the host's expedition?**
-   **Recommendation: yes by default,** because shared fate is the point, with a host option that confines a joining player's acts to their own trace.
+### 2.13 Names for the ladder
+
+The user noted on 2026-11-21 that "virus" is only their shorthand in conversation and that the game needs an in-world term. The ring's own vocabulary is the best source. It has three: the census (it counts), the garden (it tends) and the house (it keeps).
+
+| What needs a name | Recommended | Alternatives | Why the recommendation |
+|---|---|---|---|
+| The bottom state | **Struck**, from "struck from the count" | Written off; Uprooted; Barred | It is the exact opposite of the top state, in the same book. "Written off" is tempting because the ring already uses it for dead machines (rule 3), but those it ignores and this it hunts. |
+| The destructive rung now called Infection, and the in-world word for what "virus" means | **Blight** | Rot; Canker; Vermin | It is what a gardener calls a sickness that spreads, so it carries the user's meaning in the garden's terms. The crew and the assistant can say it: "It is treating us as a blight." |
+| The first good rung, now Tolerated | **Stray** | Tolerated; Volunteer; Caller | An animal that is allowed to stay. Warm, exact and one syllable. "Volunteer" is the gardener's word for a plant that seeded itself and is left alone, which is lovely but reads wrongly in a game. |
+| The second good rung | **Guest** | Kept; Tended; Housed | It is already right, and it sets up the house's inheritance clause. |
+| The top state, reached in the story | **Counted** | Heir; Keeper; Householder | It is the ring's own word, and it pays off the Count. |
+
+**The two lines that frame the ladder** are then a pair, spoken by the ring if it has words by then: "You are counted." and "You are struck from the count."
+
+**What this document does until the user picks.** It uses Struck for the bottom state, because that state is new. It keeps Infection and Tolerated in the tables so the sections stay consistent with each other, and it keeps "virus" as a label for the play style in section 4. A rename after the choice is a mechanical pass.
 
 ## 3. Core loops at three timescales
 
@@ -782,6 +892,8 @@ An abiding player's weapon is for the unexpected. Finishing the story with the s
 | **Fighting** | Little to none. The ring uses no lethal force on a player above Infection (section 3.12). | As much as the player starts, limited by ammunition and by what each kill costs |
 | **Endings in reach** | Counted, the quiet door, the keeping | The keys, the quiet door |
 
+**A note on the word.** "Virus" here is the user's shorthand for the destructive style, not an in-world term. Section 2.13 proposes "blight". Only a player who goes on harming through a final warning ends up struck from the count (section 2.12); everything short of that can be walked back.
+
 **Abiding is a discipline, not a menu option.** It is active play: working out the rules by experiment, doing repair jobs that are expeditions in themselves, and holding to the rules while hunger, cold and the ship all argue for breaking them. The danger in designing this path is that it becomes "do nothing". The cure is that the ring only gives things to players who do something for it.
 
 **The virus path is a strategy game inside the survival game.** Killing a spire's feed takes its ward dark: no Count, no responders. A dark ward is territory. The ring retakes it with menders and wardens arriving by the Deep Line, unless the player holds it. The player literally spreads, and the purge follows the spread.
@@ -809,11 +921,11 @@ An abiding player's weapon is for the unexpected. Finishing the story with the s
 ### 5.2 The three acts
 
 **Act 1: Fauna.** Landing, the sealed start, the first night, the first eclipse seen from the ground. The first spire and the first time the ring looks back. The rulebook begins. Discoveries 1 to 4.
-- *It ends with the Welcome and the Closing.* The ship, impatient, sweeps the hub with radar. The Lamplighter has known for a century that the house can be seen and has had no way to see who was looking. The sweep is the first thing from outside to touch it. Under the recommended reason for the Veil (section 1.12) it answers first with a welcome: for a few minutes the sites in the ward light and stand open and the pulse runs out of its time. Then it sees who called, and turns the field solid to craft. No more drops, no ascent, and the uplink needs real power. The player sees the ring greet something and then shut the sky, and understands neither until Act 3. The beat is caused by the ship, so it is fair to every play style, and it uses a policy value the field already has. Under the other two reasons there is no welcome, only the Closing.
+- *It ends with the Welcome and the Closing.* The ship, impatient, sweeps the hub with radar. The Lamplighter has known for a century that the house can be seen and has had no way to see who was looking. The sweep is the first thing from outside to touch it. It answers first with a welcome (section 1.12): for a few minutes the sites in the ward light and stand open and the pulse runs out of its time. Then it sees who called, and turns the field solid to craft. No more drops, no ascent, and the uplink needs real power. The player sees the ring greet something and then shut the sky, and understands neither until Act 3. The beat is caused by the ship, so it is fair to every play style, and it uses a policy value the field already has.
 
 **Act 2: The long way round.** Home is now on the far side of a door only the ring can open, so the player must go and find out what the ring is. That means the first reactor descent, the first ride on the Deep Line, and a journey of thousands of kilometres to a dead Wall Engine and the wall top above it. Discoveries 5 and 6. The repair-or-strip choice at the engine is the first one the whole ring can see: a storm that has stood for centuries either clears over the following hours, or the player leaves with the best salvage in the game.
 - The distances are forced by an existing decision: offline engines are at least ten stations apart and never near the main spire. So the spine is ring-scale by construction, and the Deep Line is on it.
-- *It ends with the Fever.* The ship reveals the second objective in its charter, to judge the ring for settlement, and acts on it: an automated survey lander is driven through the closed field by force and starts drilling. The megastorm forms. If the player has already driven Standing to Purge, the Fever is theirs and the ship's lander merely confirms it.
+- *It ends with the Fever.* The ship reveals the second objective in its charter, to judge the ring for settlement, and acts on it: an automated survey lander is driven through the closed field by force and starts drilling. The megastorm forms. If a player has already been struck from the count, the Fever is theirs and the ship's lander merely confirms it.
 
 **Act 3: The Lamp.** The megastorm is now always somewhere on the arch. The player makes for the main spire, by whichever of the three keys they hold. Down to the archive in the main reactor: discovery 7. Up four kilometres to the crown, timed so the player is there as an eclipse begins: discovery 8 and the endings, with 595 beams converging overhead.
 
@@ -1117,22 +1229,43 @@ The four questions raised by the first answers, with the user's replies.
 
 | # | Question | The user's answer | Where it lands |
 |---|---|---|---|
-| 1 | Does the Lamplighter know the Veil has failed? | **It knows.** It was not a side effect it never noticed. Why it knows, and why the Veil is still down, is a mystery for the player to uncover. | New section 1.12, with three candidate reasons. Sections 0, 1.2, 1.4, 1.5, 1.8, 1.9 and 5.2 reworked. One question remains: number 5 below. |
+| 1 | Does the Lamplighter know the Veil has failed? | **It knows.** It was not a side effect it never noticed. Why it knows, and why the Veil is still down, is a mystery for the player to uncover. | New section 1.12, with three candidate reasons. Sections 0, 1.2, 1.4, 1.5, 1.8, 1.9 and 5.2 reworked. The reason was chosen in the third round (9.3). |
 | 2 | What may be shot? | **Constructs, and animals if animals ship. No human enemies. Friendly fire off by default.** | Section 3.12 |
 | 3 | How large is the mission? | **A small science crew with a sleeping reserve, and the settlement clause in its charter.** | Section 1.7 |
 | 4 | Where does the Veil live, and may the player mend it? | **On the outer blades of the projector towers, and the player can mend it** (the quiet door ending). | Sections 1.9 and 1.12; the working names table |
 | - | The towers, again | **Remove them everywhere, including existing saves.** | Section 7.5 item 8 |
 | - | Reputation | **Add a reputation mechanic** with good, neutral and bad acts. | New section 2.12 |
 
-**Still open:**
+### 9.3 Third round (2026-11-21)
 
-5. **Why is the Veil still down?** Section 1.12 sets out three reasons: (A) the Lamplighter will not raise it, because a house that can be seen might be found by its owners; (B) it may not, because the builders reserved the Veil to themselves; (C) it cannot afford to, because there is power for the Lamp or the Veil and it chose the garden.
-   **Recommendation: A, with C as the explanation the player believes first.** It gives the mystery two turns, makes the Veil part of the vigil so the story has one secret, and gives Act 1 its strongest ending, a welcome meant for someone else. B is the alternative to choose if the ring should have a selfish reason to want a Guest.
+| # | Question | The user's answer | Where it lands |
+|---|---|---|---|
+| 1 | Why is the Veil still down? | **Reason A, with C as the belief the player holds first.** | Section 1.12 marked decided; 1.5, 1.9 and 5.2 no longer hedge |
+| 2 | A ledger for each ward? | **Yes.** | Section 2.12, "Two levels" |
+| 3 | What is harmful farming? | "Farming in ways that hurt the environment, same as today; we can iterate on this and what would make sense for the story." | Section 2.12: the garden ethic and the act table reworked around sustainable and harmful practice, with the story reason a ring cares. The ship's crops are no longer treated as foreign. |
+| 4 | The bottom of the ladder | **Irredeemable, but hard to reach.** Every rung above it is recoverable. | Section 2.12, "The bottom of the ladder": the last count, the warnings, the point of no return, co-op. Sections 2.5, 2.7 and 2.10 updated. The megastorm is now a state of the world, separate from the ladder. |
+| 5 | Naming | **"Virus" is shorthand only; the game needs an in-world term.** | New section 2.13, with proposals |
+| 6 | Co-op: do a joining friend's acts count? | Not answered. | Carried to 9.4, question 3 |
 
-### 9.3 Reputation: questions to iterate on
+### 9.4 Next questions
 
-Section 2.12 ends with five, each with a recommendation: a ledger for each ward; whether the ship's crops are foreign to the garden; how visible reputation is; whether a Guest must first undo their own damage; and how a joining player's acts count in co-op.
+1. **The names of the ladder.** Section 2.13 proposes Struck for the bottom state, Blight for the destructive rung and as the in-world word for "virus", Stray for the first good rung, and keeps Guest and Counted.
+   **Recommendation: adopt all five.** Counted and Struck are a pair from the same book, and Blight says "virus" in the garden's own terms.
 
-**Smaller choices that can wait:** how often eclipses come; whether the Lamp's late ignition and violent collapse are read as signs of age (section 1.2); whether the question-and-answer assistant becomes a feature; a Pleistocene animal roster; the ship's casting; and every working name in the table in section 0.
+2. **In co-op, is being struck personal or the whole expedition's?**
+   **Recommendation: personal.** The last count warns everyone. Only the player who then does the harm is struck, along with anyone who joins in. The expedition is struck only when its host is, or when every member is. A friend who joins later is never struck by inheritance, and is told plainly on the join screen what they are joining.
+
+3. **In co-op, do a joining player's ordinary acts count against the host's expedition?** Carried from the last round.
+   **Recommendation: yes by default,** because shared fate is the point, with a host option that confines a joining player's acts to their own trace.
+
+4. **Can a struck player still get home?** As written, only the keys ending is left to them.
+   **Recommendation: add a second way out, by force.** Bring down a stretch of the field at the wall top and leave through it, with the air pouring out behind. It keeps the user's goal of "survive and get home" open to every player, and it is the bleakest ending the game can have, which is the right price.
+
+5. **How deep should farming go in its first version?**
+   **Recommendation: shallow and legible.** One soil record for each plot (fertility and cover), the seven good practices as simple states, and four harms that can be seen: spent ground, bare ground, cleared forest and chemical runoff. Make the fabricator's fertiliser the tempting shortcut and the ship the one who asks for it. Leave draining wetlands and drawing down streams until the water itself can change.
+
+Two earlier recommendations were not answered and stand until the user says otherwise: reputation is shown without a raw number, and a Guest must first undo their own damage to the ring's machines (section 2.12).
+
+**Smaller choices that can wait:** how often eclipses come; whether the Lamp's late ignition and violent collapse are read as signs of age (section 1.2); whether the question-and-answer assistant becomes a feature; a Pleistocene animal roster; and the ship's casting.
 
 **Next step.** G0: three lead design docs (the signature model, the director with its reputation half, the site kit), the co-op-ready contract, and the tower removal order, before any other implementer work.
