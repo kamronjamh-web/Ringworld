@@ -45,8 +45,6 @@ public partial class RingLiveTuningDrawer : CanvasLayer
     [Export] public bool DeferDrawerBuildUntilOpened { get; set; }
     [Export] public NodePath WaterFftPath { get; set; } = new("../WaterFftController");
     [Export] public NodePath PerformanceMonitorPath { get; set; } = new("../RingPerformanceMonitor");
-    /// <summary>Set only by the isolated sunblocker scene.  It keeps the production drawer untouched.</summary>
-    [Export] public NodePath SunblockerDemoPath { get; set; } = new NodePath();
     /// <summary>Optional authoring-preview root. When set, F6 exposes only the biome preset controls.</summary>
     [Export] public NodePath BiomeAuthoringPreviewPath { get; set; } = new NodePath();
     /// <summary>Optional isolated reference-generation preview. It has its own versioned recipe save.</summary>
@@ -86,7 +84,6 @@ public partial class RingLiveTuningDrawer : CanvasLayer
     private double _cloudRefreshDelay;
     private ConfirmationDialog? _cloudResetConfirmation;
     private readonly System.Collections.Generic.HashSet<string> _cloudControlKeys = new();
-    private global::RingworldTechDemo.SunblockerDemoController? _sunblockerDemo;
     private Node? _biomeAuthoringPreview;
     private Node? _generationPreview;
     private Node? _surfaceTerrainPilot;
@@ -121,8 +118,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
             SetOpen(false, immediate: true);
             return;
         }
-        _sunblockerDemo = GetNodeOrNull<global::RingworldTechDemo.SunblockerDemoController>(SunblockerDemoPath);
-        if (_sunblockerDemo != null || _biomeAuthoringPreview != null || _generationPreview != null || _surfaceTerrainPilot != null)
+        if (_biomeAuthoringPreview != null || _generationPreview != null || _surfaceTerrainPilot != null)
         {
             BuildDrawer();
             SetOpen(false, immediate: true);
@@ -200,7 +196,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         _vegetationGraphics = null;
         _popupIsolation?.Dispose();
         _popupIsolation = null;
-        if (_sunblockerDemo != null || _biomeAuthoringPreview != null || _generationPreview != null || _surfaceTerrainPilot != null)
+        if (_biomeAuthoringPreview != null || _generationPreview != null || _surfaceTerrainPilot != null)
         {
             FlushSurfaceTerrainDefaults();
             GetTree().Root.SetMeta(MouseOwnershipMeta, false);
@@ -243,7 +239,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
             return;
         }
         if (_generationPreview != null) { ProcessGenerationPreviewTuning(delta); return; }
-        if (_sunblockerDemo != null || _biomeAuthoringPreview != null) return;
+        if (_biomeAuthoringPreview != null) return;
         ProcessSurfaceTerrainPrototypeLaunch(delta);
         if (_open)
         {
@@ -330,13 +326,6 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         tabs.AddThemeFontSizeOverride("font_size", 13);
         tabs.GetTabBar().AddThemeFontSizeOverride("font_size", 13);
         column.AddChild(tabs);
-        if (_sunblockerDemo != null)
-        {
-            BuildSunblockerDemoTab(tabs, _sunblockerDemo);
-            DisableKeyboardFocus(_drawer);
-            TuningMenuUi.ConfigureNumericScrolling(_drawer);
-            return;
-        }
         if (_biomeAuthoringPreview != null)
         {
             BuildBiomeAuthoringTab(tabs);
@@ -1119,7 +1108,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
     {
         if (_drawer == null && open) BuildDrawer();
         if (_drawer == null) return;
-        if (_sunblockerDemo != null || _biomeAuthoringPreview != null || _generationPreview != null || _surfaceTerrainPilot != null)
+        if (_biomeAuthoringPreview != null || _generationPreview != null || _surfaceTerrainPilot != null)
         {
             _open = open;
             GetTree().Root.SetMeta(MouseOwnershipMeta, open);

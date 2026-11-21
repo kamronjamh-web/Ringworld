@@ -3,7 +3,7 @@
 Work orders for `docs/storm-revamp-plan.md` step S1. Line refs are main at 3110b7e. Estimates are unmeasured.
 
 ## 0. Why the old rain streaks were retired
-Only record: user request "Replace rain drops with soft gray, depth-aware haze" (`docs/shared-wind-implementation-checklist.md:65,73`, commit f22431f, 2026-10-08). The removed code (`git show f22431f -- scripts/RingLocalWeatherEffects.cs`) had:
+Only record: user request "Replace rain drops with soft gray, depth-aware haze" (`docs/archive/shared-wind-implementation-checklist.md:65,73`, commit f22431f, 2026-10-08). The removed code (`git show f22431f -- scripts/RingLocalWeatherEffects.cs`) had:
 1. Drops jumped while walking: `LocalCoords = true` (:582) plus re-snapping the emitter every 8 m (:733-757) dragged live drops with the box.
 2. No shelter: drops fell through roofs, caves, POIs.
 3. Glowing, shimmering lines: unshaded alpha glowed at night; 0.022-0.046 m sub-pixel widths shimmered under FXAA and ghosted under FSR2.

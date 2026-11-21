@@ -5,8 +5,8 @@ Status: design spec, read-only investigation, 2026-10-16. No project files were 
 Companions:
 - [emitter-poi-streaming-spec.md](emitter-poi-streaming-spec.md), the "POI spec" (§B.7 beam hooks, USER and MAIN SPIRE DECISIONS).
 - [emitter-grid-climate-machines-spec.md](emitter-grid-climate-machines-spec.md), the "grid spec" (G1-G7, the G4 and T2 notes, USER DECISIONS).
-- [emitter-milestone1-handoff.md](emitter-milestone1-handoff.md).
-- [cloud-diagnostics-2026-10-16.md](cloud-diagnostics-2026-10-16.md) (night cloud ambient and show-through).
+- [emitter-milestone1-handoff.md](archive/emitter-milestone1-handoff.md).
+- [cloud-diagnostics-2026-10-16.md](archive/cloud-diagnostics-2026-10-16.md) (night cloud ambient and show-through).
 - `prototypes/pda-voice/README.md` (PDA voice prototype).
 
 Scope: during each gas-giant total eclipse, the main spire fires to the ring hub and kindles an artificial sun. A bidirectional ignition pulse then lights every spire's beam, and the hub sun reaches 80 % of the real sun, lighting the whole ring from each point's zenith ("noon everywhere"). The regular spires stand down and the normal one-way grid pulse refuels the sun. The sun collapses dramatically as totality ends. Before ignition and after the collapse the eclipse is near pitch black. Dead emitters are a seam only.
@@ -38,7 +38,7 @@ The binding user decisions are at the end. §1 records how this spec interprets 
 | F17 | **Sun-direction side effects.** The whole-ring macro shadow mask is rebuilt whenever `StarLight` turns more than 0.51° (`RingTerrainGlobalLod.cs:1794-1805`). In hub mode, where the light follows the camera zenith, that is every 44 km of travel. The local shadow handoff keeps the sun shadow pass on whenever the sun is above the local horizon (`RingGraphicsQualityController.LocalShadows.cs:47-65, 126-155`), **including in totality at zero energy**: a pre-existing wasted shadow pass. The planet light already skips zero-energy shadows (`day_side_atmosphere.gd:886-888`). | cited |
 | F18 | **Exposure is constrained.** Auto-exposure sensitivity is limited to 50-160 (1.7 stops) (`day_side_atmosphere.gd:65-69, 640-653`), so it cannot lift a dark eclipse much. Tonemapping is AgX with white 16.29. There is no glow pass (grid spec F11). | cited |
 | F19 | **Precedents.** For sound delay, `ThunderPropagation` (343 m/s, 25 km cap, `LateSeconds` for seeking a missed arrival) (`scripts/Weather/ThunderPropagation.cs:10-25`). For the announcer, the PDA prototype has 20 events, an authored fallback, an LLM rewrite with a validator and a ~2 s timeout, critical events that skip the LLM, and Kokoro/Piper TTS (`prototypes/pda-voice/README.md`, `events.json:4-18`). The time-jump UI is `CelestialDebugHud` (F9; `CelestialDebugHud.cs:72-103`). | cited |
-| F20 | **Performance context.** On the A1000 at 1600×900 the CPU floor is 20-23 ms, the far SubViewport costs 4.8 ms of render CPU, and draw calls and main-thread work are scarcer than GPU fill (grid spec F19). The eclipse solver evaluates `EvaluateFrame` in about 2 µs, so a 10°-longitude window search (3,672 evaluations) costs about 7 ms: run it off the main thread. | `docs/perf-ranking-2026-10-15.md`; measured |
+| F20 | **Performance context.** On the A1000 at 1600×900 the CPU floor is 20-23 ms, the far SubViewport costs 4.8 ms of render CPU, and draw calls and main-thread work are scarcer than GPU fill (grid spec F19). The eclipse solver evaluates `EvaluateFrame` in about 2 µs, so a 10°-longitude window search (3,672 evaluations) costs about 7 ms: run it off the main thread. | `docs/archive/perf-ranking-2026-10-15.md`; measured |
 
 ---
 

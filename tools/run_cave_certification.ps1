@@ -18,12 +18,11 @@ function Resolve-GodotExecutable {
         return (Resolve-Path -LiteralPath $Requested).Path
     }
 
-    foreach ($candidate in @('godot', 'godot4', 'Godot_v4.7.2-stable_mono_win64')) {
-        $command = Get-Command $candidate -ErrorAction SilentlyContinue
-        if ($null -ne $command) { return $command.Source }
-    }
+    # Same engine tools/run_godot.ps1 uses (Godot 4.8 under artifacts/engine-upgrade).
+    $engine = Join-Path $projectRoot 'artifacts\engine-upgrade\Godot_v4.8-dev7_mono_win64\Godot_v4.8-dev7_mono_win64_console.exe'
+    if (Test-Path -LiteralPath $engine -PathType Leaf) { return $engine }
 
-    throw 'Godot .NET executable was not found. Pass -Godot <absolute-path-to-godot.exe>.'
+    throw "Godot 4.8 executable was not found at $engine. Pass -Godot <absolute-path-to-godot.exe>."
 }
 
 function Invoke-CertificationStage {

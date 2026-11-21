@@ -53,7 +53,7 @@ or viewport render targets. Raising a viewport's linear resolution scale from
 
 - [Godot 4.8 dev 5 release notes](https://godotengine.org/article/dev-snapshot-godot-4-8-dev-5/)
 - [TextureStreaming API](https://docs.godotengine.org/en/latest/classes/class_texturestreaming.html)
-- [Existing terrain transition contracts](terrain-lod-transition-integration.md)
+- [Existing terrain transition contracts](archive/terrain-lod-transition-integration.md)
 
 Validation results and outstanding limitations are recorded below as the
 implementation is reviewed.

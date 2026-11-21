@@ -4,7 +4,7 @@ Status: design spec, read-only investigation, 2026-10-16. Revised the same day a
 Companions:
 - [emitter-site-terrain-spec.md](emitter-site-terrain-spec.md), the "site spec".
 - [emitter-poi-streaming-spec.md](emitter-poi-streaming-spec.md), the "POI spec".
-- [emitter-milestone1-handoff.md](emitter-milestone1-handoff.md), "M1".
+- [emitter-milestone1-handoff.md](archive/emitter-milestone1-handoff.md), "M1".
 - [weather-system-checklist.md](weather-system-checklist.md).
 
 Scope: two new systems for gen-17 runtime-surface worlds.
@@ -38,7 +38,7 @@ The binding user decisions are at the end of the document. Section §U records h
 | F16 | **Grass modifier zones** are caller-owned canonical soft ellipses (`SetGrassModifier(id, RingGrassModifierZone)`, at most 256) with tint, tint strength and density multiplier. A change rebuilds the overlapping tiles. They feed both standing grass and card grass. | `RingStandingGrassLayer.Modifiers.cs:28-38`; `RingGrassModifierSnapshot.cs:6-12`; `ring_grass_cards.gdshader:171` |
 | F17 | **Structural edge walls rise to 10,000 m** (terrain ceiling 8,000 + 2,000) on both sides. They are drawn by global LOD segments and the far viewport. Sea level is 0, which is also the cloud datum. | `CertifiedRingScale.cs:16-25`; `RingTerrainGlobalLod.cs:1500-1528`; `RingSunshineCloudBridge.cs:108-113` |
 | F18 | **Recipe versioning.** `generator_id` v1→v5. v5 enables sites through `EmitterSiteRecipe.Default(seed)` (no JSON fields). The v5 runtime hash appends recipe hash, algorithm version and registry identity. The baseline golden currently has **only gen17_v4 and gen16 cases (no v5)**. | `TerrainGenerationParameters.cs:14-18, 36-39, 66`; `EmitterSiteTerrainShaper.cs:28-41`; `RingTerrainSampler.SurfaceGeneration.cs:226-246`; `tools/fixtures/emitter_site_baseline_golden.json` |
-| F19 | **Performance context (A1000, 1600×900).** The CPU floor is 20-23 ms. RenderingServer frame setup is 8.2 ms. The far SubViewport costs 4.8 ms render CPU, and its weather atlas about 2 ms. Sunshine is the largest GPU cost. **Draw calls and main-thread work are scarcer than GPU fill.** | `docs/perf-ranking-2026-10-15.md:23-46` |
+| F19 | **Performance context (A1000, 1600×900).** The CPU floor is 20-23 ms. RenderingServer frame setup is 8.2 ms. The far SubViewport costs 4.8 ms render CPU, and its weather atlas about 2 ms. Sunshine is the largest GPU cost. **Draw calls and main-thread work are scarcer than GPU fill.** | `docs/archive/perf-ranking-2026-10-15.md:23-46` |
 | F20 | **Pre-existing, outside this scope:** the fine 3.2 km weather noise (`SampleWeatherNoise`) is not periodic around the ring, so coverage may have a small step at the seam. The anomaly design does not depend on it. | `RingVolumetricCloudLayer.cs:4043-4067` |
 
 ---
@@ -277,7 +277,7 @@ Because Sunshine composites after the transparent pass:
 - This needs two passes (`next_pass` halo material) and one extra draw call.
 - It is verified as T2. The fallback is `depth_draw_never` everywhere, accepting dimming behind clouds. Setting: `DepthWriteCore`.
 
-**G4 and T2 implementation notes (2026-10-16; headless done, windowed checks pending).** The trigger was the cloud diagnosis (`docs/cloud-diagnostics-2026-10-16.md` §1): beams kept only 0.28 (ground) / 0.51 (9 km) of their luminance under clouds, and a 1-2 px core depth write recovered only 0.35 / 0.60.
+**G4 and T2 implementation notes (2026-10-16; headless done, windowed checks pending).** The trigger was the cloud diagnosis (`docs/archive/cloud-diagnostics-2026-10-16.md` §1): beams kept only 0.28 (ground) / 0.51 (9 km) of their luminance under clouds, and a 1-2 px core depth write recovered only 0.35 / 0.60.
 - **Shaders.** The ribbon code moved to `ring_emitter_grid_beam_common.gdshaderinc` and the head sprite code to `ring_emitter_grid_head_common.gdshaderinc`. Both include `ring_emitter_grid_layers.gdshaderinc` (per-layer uniforms and weights) and are compiled three ways from thin entry shaders:
   - `ring_emitter_grid_beam.gdshader`: the near additive halo;
   - `ring_emitter_grid_beam_core.gdshader` (`EG_CORE_PASS`): the near depth-only core;

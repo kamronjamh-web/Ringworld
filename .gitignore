@@ -46,3 +46,6 @@ Desktop.ini
 
 # Python bytecode from tool scripts
 __pycache__/
+
+# Local model caches (audio studio ACE-Step and similar)
+/.cache/

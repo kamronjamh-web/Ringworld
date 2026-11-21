@@ -87,7 +87,7 @@ Not verified: any A1000 cost figure for trees alone, whether inland water render
 
 **Nothing exists** for rocks, boulders, shrubs, flowers, ferns, reeds, logs, stumps or ground cover.
 
-**Machine.** The A1000 at Medium runs at 40-44 ms GPU with a 20-23 ms main-thread floor (measured (doc), `docs/perf-ranking-2026-10-15.md`).
+**Machine.** The A1000 at Medium runs at 40-44 ms GPU with a 20-23 ms main-thread floor (measured (doc), `docs/archive/perf-ranking-2026-10-15.md`).
 
 ### 1.3 Why v7 land still reads flat (derived from code defaults)
 

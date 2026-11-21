@@ -1,7 +1,7 @@
 # Terrain LOD coverage at altitude
 
 **Problem.** When flying high, very coarse terrain appears close to the camera,
-with sawtooth coastlines and a hard seam (see `docs/phase-c-p0-measurements.md`).
+with sawtooth coastlines and a hard seam (see `docs/archive/phase-c-p0-measurements.md`).
 Visible terrain coarseness must scale with distance from the camera.
 
 ## Root cause

@@ -4,7 +4,7 @@ This document is the portable reference for the proposed generator. It includes 
 
 Implementation progress and validation results are tracked in the [runtime generation checklist](terrain3d-runtime-generation-checklist.md). The plan's performance and production-integration criteria remain open until that evidence is recorded.
 
-Follow-up [terrain detail research](terrain-generation-detail-research.md), prepared 2026-09-29, investigates smooth mountains and weak local relief. The resulting [v3 detail implementation](terrain-generation-detail-implementation.md) adds foothills, spurs, optional Swiss shaping, and directional gullies through the existing preview and runtime-world paths. Its checks and CPU sampling measurements do not complete the full performance acceptance below.
+Follow-up [terrain detail research](archive/terrain-generation-detail-research.md), prepared 2026-09-29, investigates smooth mountains and weak local relief. The resulting [v3 detail implementation](terrain-generation-detail-implementation.md) adds foothills, spurs, optional Swiss shaping, and directional gullies through the existing preview and runtime-world paths. Its checks and CPU sampling measurements do not complete the full performance acceptance below.
 
 ### M6 gameplay streaming status
 
@@ -41,7 +41,7 @@ The checkout was inspected on 2026-09-25. Its relevant starting points are:
 | [VoxelChunkGridManager.SurfaceTerrain.cs](../scripts/Voxel/Phase2/VoxelChunkGridManager.SurfaceTerrain.cs) | The existing edit bridge to distant LOD uses integer height snapshots. RF images alone do not make this path preserve fractional heights. |
 | [RingLiveTuningDrawer.SurfaceTerrain.cs](../scripts/ui/RingLiveTuningDrawer.SurfaceTerrain.cs), [surface settings](../scripts/ui/GameplaySurfaceTerrainSettings.cs), and [surface defaults](../scripts/ui/GameplaySurfaceTerrainDefaults.cs) | Existing grave-key menu and persistence conventions to extend. |
 
-Related repository context is recorded in the [current Terrain3D surface integration](terrain3d-surface-port.md) and the [earlier mountain terrain brainstorm](mountain-terrain-overhaul-plan.md). The implementation status of this plan is defined by its own unchecked acceptance criteria below.
+Related repository context is recorded in the [current Terrain3D surface integration](archive/terrain3d-surface-port.md) and the [earlier mountain terrain brainstorm](mountain-terrain-overhaul-plan.md). The implementation status of this plan is defined by its own unchecked acceptance criteria below.
 
 The requested API names need updating. For this version, the data owner is `Terrain3DData`, reached through `terrain.data`; regions are `Terrain3DRegion`. Use `update_maps()`, including its changed-region mode. Treat `Terrain3DStorage` and `force_update_maps()` as legacy interfaces rather than new dependencies. [Terrain3DData API](https://terrain3d.readthedocs.io/en/stable/api/class_terrain3ddata.html)
 

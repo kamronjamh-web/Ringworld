@@ -687,7 +687,7 @@ and celestial clocks fixed. All phases retained the same 311,015 roots across
 1,024 leaves, source/rank/wind bytes and canonical world-pose hashes. Each settled
 collection performed zero grass builds, uploads or completed compute updates.
 Raw reports and screenshots are archived in
-[capture-v2](../artifacts/grass-grouping-20261007/capture-v2/).
+[capture-v2](../artifacts/grass-grouping-20261007/capture-v2).
 
 | Phase | Cache / maximum group | Grass manager CPU, ms | FPS from mean frame | Native batches | Active groups |
 | --- | --- | ---: | ---: | ---: | --- |
@@ -722,7 +722,7 @@ Forward+ grouping/cache contracts, GPU identity parity, candidate-budget and
 production movement/hysteresis/edit/disable tests passed. Existing live tuning,
 output residency, lifecycle, grouped compute phases, registration and material
 cache suites also passed; logs are under
-[grass-grouping-20261007](../artifacts/grass-grouping-20261007/).
+[grass-grouping-20261007](../artifacts/grass-grouping-20261007).
 
 This is a controlled stationary comparison with the Godot editor still open and
 detailed GPU telemetry enabled. It does not establish moving-route performance,

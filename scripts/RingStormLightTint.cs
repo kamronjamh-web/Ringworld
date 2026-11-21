@@ -13,8 +13,8 @@ namespace RingworldTechDemo;
 /// ShaderMaterial (it would be dimmed twice) or an unshaded / emissive-only material.
 /// Inventory of gameplay-visible StandardMaterial3D (2026-10-25): SmoothConstructionOverlay concrete and glass (construction pieces),
 /// SmoothTerrainGrid and VoxelChunkNode fallback surfaces, the VoxelChunkNode fluid surface. Not registered: rain/snow particles, the
-/// eclipse zenith gizmo and the sun disc (unshaded or emissive), minimap and pause-menu debug meshes (UI / debug), BiomeAuthoring and
-/// Sunblocker demo scenes (tools). The player has no body mesh and there are no held items.
+/// eclipse zenith gizmo and the sun disc (unshaded or emissive), minimap and pause-menu debug meshes (UI / debug), the BiomeAuthoring
+/// preview scene (tools). The player has no body mesh and there are no held items.
 /// Wet world (docs/storm-revamp-s2-wet-world-design.md 2.4): the same registered materials also follow the CPU mirror of the wetness at the camera
 /// (<see cref="ApplyWetness"/>, driven by RingWetWorld): albedo darkens by the soak and roughness drops with the gloss. Ring ShaderMaterials read the wet map per fragment instead.
 /// </summary>

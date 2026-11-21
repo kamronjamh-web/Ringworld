@@ -1,7 +1,7 @@
 # Test-suite tooling design
 
 **Status:** design for review (2026-10-29, `main` acd9b74). Nothing here is implemented yet; the work orders in section 9 build it.
-**Draft manifest:** `docs/test-suite-tooling-manifest.draft.json` (generated; 450 entries, tag globs, smoke set, known failures).
+**Draft manifest:** `docs/archive/test-suite-tooling-manifest.draft.json` (generated; 450 entries, tag globs, smoke set, known failures).
 **Measurements:** RTX 4070 desktop, warm profile, `.godot/testtooling_timing/*.tlog` (per-line wall-clock timestamps).
 
 **User decisions (2026-10-29), building paused by the user until resumed:**

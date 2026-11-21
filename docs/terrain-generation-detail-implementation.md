@@ -1,6 +1,6 @@
 # Terrain detail implementation
 
-Implemented 2026-09-29, following the [terrain detail research](terrain-generation-detail-research.md). The shared C# height model now supports `ringworld_surface_detail_v3`: independent foothills, intermediate mountain spurs, and optional directional gullies. New runtime-generation worlds use this recipe by default. Existing worlds keep their frozen definition.
+Implemented 2026-09-29, following the [terrain detail research](archive/terrain-generation-detail-research.md). The shared C# height model now supports `ringworld_surface_detail_v3`: independent foothills, intermediate mountain spurs, and optional directional gullies. New runtime-generation worlds use this recipe by default. Existing worlds keep their frozen definition.
 
 The follow-up [CPU optimization implementation and measurements](terrain-generation-cpu-optimization.md) removes redundant sampling work while retaining exact heights. Two optimized C# comparisons on the i7-13700H measured 24-26% less generation time for the default-mode mountain and foothill tiles. Existing worlds benefit without a recipe change; gameplay FPS acceptance remains separate.
 

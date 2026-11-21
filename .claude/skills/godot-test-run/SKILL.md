@@ -84,7 +84,7 @@ Read the test's header comment; the filename is not reliable.
 | `menu_warm_world_lifecycle_test.ps1` | `-Label -Primary -Secondary -Headless -Phase -Sequence -Cache` | yes |
 | `menu_warm_stall_probe.ps1` | `-Label -Cache -Trace -NoWarm -EnvVars` | yes |
 | `run_emitter_capture_route.ps1` | `-Out -Sites -Quick` (windowed only) | yes |
-| `run_cave_certification.ps1` | `-Godot <exe>` (**required**, not on PATH) `-SkipBuild` | throws on fail |
+| `run_cave_certification.ps1` | `-Godot <exe>` (optional override; defaults to the Godot 4.8 engine under `artifacts\engine-upgrade`, same as `run_godot.ps1`) `-SkipBuild` | throws on fail |
 | `menu_main_scene_boot_check.ps1` | `-AppData <isolated dir>` (mandatory) `-Seconds` | yes |
 
 Profile flags:

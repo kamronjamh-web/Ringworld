@@ -42,7 +42,7 @@ Survey and plan only. No code was changed. Author: Fable (acting Lead).
 - The T2R-9 river bake benchmark (`.godot/audit_baseline/DESKTOP-RAVA9C1/t2r/bench/20261112_115109/`).
 - Evidence kept in `.godot/audit_baseline/DESKTOP-RAVA9C1/load/20261112_prelim/` (`summary.txt` and the three reload console logs). The new-world log was pruned after I read it; its numbers are in `summary.txt`.
 
-**Earlier measurements used:** `docs/phase-c-p0-measurements.md` (2026-10-21, same desktop) and the 2026-11-04 smoke-test log (39.9 s new world).
+**Earlier measurements used:** `docs/archive/phase-c-p0-measurements.md` (2026-10-21, same desktop) and the 2026-11-04 smoke-test log (39.9 s new world).
 
 **Not measured:**
 

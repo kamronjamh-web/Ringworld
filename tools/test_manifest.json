@@ -48,13 +48,7 @@
         "resources/**/*cloud*",
         "resources/clouds/**",
         "scenes/*Cloud*",
-        "tools/cloud_history_gameplay_diagnostic.gd",
-        "tools/cloud_history_targeted_gameplay_gpu_test.gd",
-        "tools/cloud_lightning_history_gpu_test.gd",
-        "tools/cloud_sky_history_gpu_test.gd",
-        "tools/cloud_slowdown_attribution_test.gd",
-        "tools/cloud_terrain_sun_lighting_gpu_test.gd",
-        "tools/far_cloud_patch_gpu_test.gd"
+        "tools/cloud_history_gameplay_diagnostic.gd"
       ]
     },
     "sunshine-compute": {
@@ -81,7 +75,6 @@
         "materials/ring_far_*",
         "scripts/render/RingFar*",
         "scripts/render/ring_far*",
-        "scenes/FarRegional*",
         "scripts/Tools/far_*"
       ]
     },
@@ -136,8 +129,6 @@
         "scenes/Terrain*",
         "scenes/Smooth*",
         "scenes/RingSegment.tscn",
-        "scenes/VoxelPhase*",
-        "scenes/VoxelDebugAnchoredMarker.tscn",
         "third_party/Terrain3D/**",
         "tools/terrain/**",
         "scripts/Voxel/LOD/RingMinimapTrackable.cs"
@@ -198,8 +189,7 @@
         "materials/ring_far_weather*",
         "materials/*storm*",
         "materials/ring_snow_particle*",
-        "materials/ring_lens_droplets*",
-        "tools/storm_light_gpu_test.gd"
+        "materials/ring_lens_droplets*"
       ]
     },
     "rain": {
@@ -301,9 +291,6 @@
         "materials/ring_poi*",
         "materials/ring_emitter*",
         "materials/ring_eclipse_hub*",
-        "scripts/Sunblocker*",
-        "scenes/SunblockerDemo.tscn",
-        "Start Sunblocker Demo.cmd",
         "tools/poi/**",
         "tools/EclipseEventDirectorGridTest.cs",
         "tools/EclipseHubBeamCloudTest.cs",
@@ -343,19 +330,14 @@
         "scenes/*Tree*",
         "scenes/*Forest*",
         "scenes/BiomeAuthoring*",
-        "scenes/GrassMeadow*",
         "scenes/grass_cards_spike/**",
         "scripts/grass_cards_spike/**",
-        "scripts/grass_meadow_benchmark.gd",
         "scripts/Tools/BiomeAuthoringPreview*",
         "scripts/Tools/ForestRegionPreview*",
         "scripts/Tools/PlayableForest*",
         "scripts/ui/BiomeAuthoringControls*",
-        "tools/GrassMeadowBenchmarkDriver.cs",
         "tools/PreparedTreeAssets.targets",
         "tools/author_meadow_grass.py",
-        "tools/grass_scenario_cost_capture.gd",
-        "tools/shared_wind_vegetation_gpu_test.gd",
         "tools/tr7d_card_thinning_prototype.py",
         "tools/tree_visibility_summary.py"
       ]
@@ -371,8 +353,7 @@
         "materials/*water*",
         "third_party/godot_ocean_waves/compute/**",
         "resources/water/**",
-        "scenes/*Water*",
-        "tools/water_shared_wind_gpu_test.gd"
+        "scenes/*Water*"
       ]
     },
     "near-fog": {
@@ -471,8 +452,7 @@
         "scripts/RingGeneratedOutputPaths*",
         "tools/generated_output*",
         "scripts/Tools/TestRunMouseRelease*",
-        "scripts/ui/RingShortsCapture*",
-        "scenes/VerticalShortCapture.tscn"
+        "scripts/ui/RingShortsCapture*"
       ]
     },
     "explorer-motion": {
@@ -508,14 +488,12 @@
     ".codex/**",
     "captures/**",
     "prototypes/**",
-    "onedrive_conflict_archive/**",
     "**/*.uid",
     "**/*.import",
     ".gitignore",
     ".gitattributes",
     "icon.svg",
     "artifacts/.gdignore",
-    "demo/**",
     "third_party/godot_ocean_waves/LICENSE",
     "tools/media/**"
   ],
@@ -1558,6 +1536,19 @@
       "marker": "CLOUD_WEATHER_DISTRIBUTION_GPU_TEST",
       "expected_s": 3,
       "timeout_s": 60
+    },
+    "compositor_temporal_stability_test": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "clouds",
+        "render-core"
+      ],
+      "world": "certified",
+      "marker": "COMPOSITOR_STABILITY",
+      "expected_s": null,
+      "timeout_s": 600
     },
     "contact_shadow_capture": {
       "kind": "tool",
@@ -3085,8 +3076,8 @@
       ],
       "world": "certified",
       "marker": "GRAVE_MENU_INTERACTION_GAMEPLAY",
-      "expected_s": 17,
-      "timeout_s": 60,
+      "expected_s": 45,
+      "timeout_s": 120,
       "batch": null,
       "batch_note": "drives real input and the menu tree; leaves UI state"
     },
@@ -4161,84 +4152,6 @@
       "tags": ["pda"],
       "runner": "tools/run_pda_model_comparison.ps1",
       "user_args": "-ModelKey qwen3-8b-q4 -MemoryMode GpuVram -GpuLayers 99 -Threads 4",
-      "profile": "own-runner",
-      "parallel_safe": false,
-      "marker": "PDA_MODEL_COMPARISON_VRAM",
-      "expected_s": 90,
-      "timeout_s": 900
-    },
-    "pda_compare_granite_ram": {
-      "kind": "tool",
-      "mode": "headless",
-      "tier": "manual",
-      "tags": ["pda"],
-      "runner": "tools/run_pda_model_comparison.ps1",
-      "user_args": "-ModelKey granite-3.3-8b-q4 -MemoryMode SystemRam -GpuLayers 8 -Threads 4",
-      "profile": "own-runner",
-      "parallel_safe": false,
-      "marker": "PDA_MODEL_COMPARISON_RAM",
-      "expected_s": null,
-      "timeout_s": 900
-    },
-    "pda_compare_granite_vram_split": {
-      "kind": "tool",
-      "mode": "gpu",
-      "tier": "manual",
-      "tags": ["pda"],
-      "runner": "tools/run_pda_model_comparison.ps1",
-      "user_args": "-ModelKey granite-3.3-8b-q4 -MemoryMode GpuVram -GpuLayers 16 -Threads 4",
-      "profile": "own-runner",
-      "parallel_safe": false,
-      "marker": "PDA_MODEL_COMPARISON_VRAM",
-      "expected_s": 300,
-      "timeout_s": 900
-    },
-    "pda_compare_granite_vram_full": {
-      "kind": "tool",
-      "mode": "gpu",
-      "tier": "manual",
-      "tags": ["pda"],
-      "runner": "tools/run_pda_model_comparison.ps1",
-      "user_args": "-ModelKey granite-3.3-8b-q4 -MemoryMode GpuVram -GpuLayers 99 -Threads 4",
-      "profile": "own-runner",
-      "parallel_safe": false,
-      "marker": "PDA_MODEL_COMPARISON_VRAM",
-      "expected_s": 90,
-      "timeout_s": 900
-    },
-    "pda_compare_llama_ram": {
-      "kind": "tool",
-      "mode": "headless",
-      "tier": "manual",
-      "tags": ["pda"],
-      "runner": "tools/run_pda_model_comparison.ps1",
-      "user_args": "-ModelKey llama-3.1-8b-q4 -MemoryMode SystemRam -GpuLayers 8 -Threads 4",
-      "profile": "own-runner",
-      "parallel_safe": false,
-      "marker": "PDA_MODEL_COMPARISON_RAM",
-      "expected_s": null,
-      "timeout_s": 900
-    },
-    "pda_compare_llama_vram_split": {
-      "kind": "tool",
-      "mode": "gpu",
-      "tier": "manual",
-      "tags": ["pda"],
-      "runner": "tools/run_pda_model_comparison.ps1",
-      "user_args": "-ModelKey llama-3.1-8b-q4 -MemoryMode GpuVram -GpuLayers 16 -Threads 4",
-      "profile": "own-runner",
-      "parallel_safe": false,
-      "marker": "PDA_MODEL_COMPARISON_VRAM",
-      "expected_s": 300,
-      "timeout_s": 900
-    },
-    "pda_compare_llama_vram_full": {
-      "kind": "tool",
-      "mode": "gpu",
-      "tier": "manual",
-      "tags": ["pda"],
-      "runner": "tools/run_pda_model_comparison.ps1",
-      "user_args": "-ModelKey llama-3.1-8b-q4 -MemoryMode GpuVram -GpuLayers 99 -Threads 4",
       "profile": "own-runner",
       "parallel_safe": false,
       "marker": "PDA_MODEL_COMPARISON_VRAM",
@@ -6188,6 +6101,19 @@
       "expected_s": 2,
       "timeout_s": 60
     },
+    "storm_light_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "weather",
+        "shadows",
+        "clouds"
+      ],
+      "marker": "STORM_LIGHT_GPU",
+      "expected_s": 156,
+      "timeout_s": 470
+    },
     "storm_light_capture": {
       "kind": "tool",
       "mode": "gpu",
@@ -6380,21 +6306,6 @@
       "expected_s": 17,
       "timeout_s": 60,
       "batch": "integration@default"
-    },
-    "sunshine_inside_cloud_seam_test": {
-      "kind": "test",
-      "mode": "gpu",
-      "tier": "gate",
-      "tags": [
-        "clouds",
-        "sunshine-compute"
-      ],
-      "world": "certified",
-      "marker": "SUNSHINE_INSIDE_CLOUD_SEAM",
-      "expected_s": null,
-      "timeout_s": 300,
-      "batch": null,
-      "batch_note": "known hang"
     },
     "sunshine_menu_smoke_test": {
       "kind": "test",

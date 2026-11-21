@@ -87,7 +87,8 @@ func _make_grid(name: String, dormant: bool) -> Node3D:
 	grid.ChunkRadiusAcross = 0
 	grid.ChunkRadiusVertical = 0
 	grid.UseDeterministicTerrainGeneration = true
-	grid.TerrainSettings = TERRAIN_SETTINGS.duplicate(true)
+	# set(): a typed property write of a preloaded const resource fails to parse on Godot 4.8 ("Cannot assign a new value to a constant").
+	grid.set("TerrainSettings", TERRAIN_SETTINGS.duplicate(true))
 	return grid
 
 func _fail() -> void:

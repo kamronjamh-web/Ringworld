@@ -2,7 +2,7 @@
 
 Read this before starting the cave/voxel work on the other machine. It is a read-only scoping pass; no code was written for it. Related docs:
 
-- [emitter-milestone1-handoff.md](emitter-milestone1-handoff.md): Milestone 1, complete.
+- [emitter-milestone1-handoff.md](archive/emitter-milestone1-handoff.md): Milestone 1, complete.
 - [emitter-milestone2-plan.md](emitter-milestone2-plan.md): Milestone 2 status.
 - [underground-mode-spec.md](underground-mode-spec.md): cave roadmap; "item 5" is the cave port.
 - [emitter-site-terrain-spec.md](emitter-site-terrain-spec.md): §3.3–3.6 and P5–P7 cover the density hook, carve and cave exclusion.

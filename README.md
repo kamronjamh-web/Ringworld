@@ -57,7 +57,7 @@ New Certified worlds select the original Terrain3D surface once when the launche
 
 Terrain3D renders a moving nine-region window spanning 768 m, with curved collision and a near-to-proxy transition at 84 m. A native culling patch keeps the curved surface visible; that patch has been validated on Windows x64. Environmental integration and broader traversal validation are still in progress; see [limitations and remaining work](#limitations-and-remaining-work).
 
-Near Terrain3D shares the proxy terrain's projected cloud shadows, day/night lighting controls, night tint, and distance-based grass coverage tint. The former near-only altitude snow coating has been removed, so high terrain keeps its biome textures across the handoff. Existing grave-key lighting, cloud-shadow, grass, and rain-wetness controls apply to the near surface. Dry near terrain has no direct specular highlight, matching the proxy LOD; highlights fade in with accumulated rain wetness and fade out as the surface dries. See [surface shading validation](docs/terrain3d-surface-port.md#near-surface-shading-parity).
+Near Terrain3D shares the proxy terrain's projected cloud shadows, day/night lighting controls, night tint, and distance-based grass coverage tint. The former near-only altitude snow coating has been removed, so high terrain keeps its biome textures across the handoff. Existing grave-key lighting, cloud-shadow, grass, and rain-wetness controls apply to the near surface. Dry near terrain has no direct specular highlight, matching the proxy LOD; highlights fade in with accumulated rain wetness and fade out as the surface dries. See [surface shading validation](docs/archive/terrain3d-surface-port.md#near-surface-shading-parity).
 
 ## Main gameplay controls
 
@@ -135,7 +135,7 @@ Certified terrain plus finite wall heightmap shadows are a coarse asynchronous C
 
 Deterministic landmark towers, foundations, and beacons provide visual scale references in main gameplay.
 
-References: [Terrain3D surface port](docs/terrain3d-surface-port.md), [far-ring shadow plan](docs/far-ring-heightmap-shadow-plan.md), and [performance diagnostics](docs/performance_diagnostics.md).
+References: [Terrain3D surface port](docs/archive/terrain3d-surface-port.md), [far-ring shadow plan](docs/far-ring-heightmap-shadow-plan.md), and [performance diagnostics](docs/performance_diagnostics.md).
 
 ## Traversal and minimap
 
@@ -169,7 +169,7 @@ Terrain3D now receives the shared terrain haze model; macro/cloud projector inte
 
 Main and far presentation use AgX tonemapping. Day/night, altitude, storms, and eclipses affect atmosphere and lighting. SSAO adds contact shading; directional shadow cascades expose distance, filtering, resolution, and bias controls. Stepped sunlight updates help stabilize shadows. Projected cloud masks are active on supported materials; the coarse terrain/wall shadow prototype remains limited as described above.
 
-Local sun shadows automatically suspend during deep night while planet illumination and planet shadows remain available. The handoff uses the sun's elevation over the local shadow coverage, with separate suspend/resume thresholds to keep twilight stable. It preserves sun direction and energy for clouds and the distant daytime ring, respects the saved sun-shadow preference, and keeps sun shadows when custom nighttime direct lighting or uncertain geometry requires them. The grave-key **Shadows** tab persists the automatic handoff toggle and elevation thresholds and reports the current state. See the [night-horizon investigation](docs/night-horizon-slowdown.md).
+Local sun shadows automatically suspend during deep night while planet illumination and planet shadows remain available. The handoff uses the sun's elevation over the local shadow coverage, with separate suspend/resume thresholds to keep twilight stable. It preserves sun direction and energy for clouds and the distant daytime ring, respects the saved sun-shadow preference, and keeps sun shadows when custom nighttime direct lighting or uncertain geometry requires them. The grave-key **Shadows** tab persists the automatic handoff toggle and elevation thresholds and reports the current state. See the [night-horizon investigation](docs/archive/night-horizon-slowdown.md).
 
 The celestial and shadow controls are available from the live drawer alongside diagnostic HUDs. Time, weather clock data, and the ring day state are retained with each world slot.
 
@@ -187,7 +187,7 @@ Standing GPU grass uses deterministic placement, wind motion, player bending and
 
 Grass follows the local ring day/night lighting: the globally active sun no longer lights blades on the local night side. Ambient and nearby lights remain active. Daytime shading is checked against Godot's built-in material lighting. See the [night vegetation and atmosphere follow-up](docs/night-vegetation-atmosphere-diagnostics.md) for the fix, cloud-edge diagnostics, and optional mist investigation.
 
-References: [Biome workshop](docs/biome-workshop.md), [forest-region checklist](docs/forest-region-implementation-checklist.md), [grass checklist](docs/grass-system-implementation-checklist.md), and [Sunblocker demo](docs/sunblocker-demo.md).
+References: [Biome workshop](docs/biome-workshop.md), [forest-region checklist](docs/forest-region-implementation-checklist.md), and [grass checklist](docs/grass-system-implementation-checklist.md).
 
 ## Menus and live tuning
 
@@ -247,9 +247,6 @@ Open a scene in the editor and use **F6** to run that scene independently.
 | [Biome Workshop plugin](addons/biome_workshop) | Active rule-based biome-preset editor; world assignment remains separate. |
 | [PlayableForest.tscn](scenes/PlayableForest.tscn) | Alternate forest route validation. |
 | [TreeAssetPreview.tscn](scenes/TreeAssetPreview.tscn) | Asset inspection. |
-| [SunblockerDemo.tscn](scenes/SunblockerDemo.tscn) | Dedicated shadow-caster comparison with separate controls. |
-| [GrassMeadowBenchmark.tscn](scenes/GrassMeadowBenchmark.tscn) | Grass-focused benchmark. |
-| `VoxelPhase1`–`VoxelPhase5` scenes | Retained legacy voxel development scenes. |
 
 The retained Voxel Phase 5 tools include optional anchored build objects, chunk navigation invalidation with a `NavigationRegion` bridge, revisioned edit commands, and replication snapshots. The retained voxel backend also has dynamic fluid-source propagation, with `F` and `G` placing or removing fluid sources in loaded voxel data. These systems are available as development infrastructure; full multiplayer remains unfinished. Terrain3D does not use the voxel-fluid tooling.
 
@@ -302,7 +299,7 @@ Headless checks exercise configuration, data, and scene initialization. Renderin
 | --- | --- |
 | Launch and slots | [start_menu.gd](scripts/start_menu.gd), [world_session.gd](scripts/world_session.gd), [world_size_launcher.gd](scripts/world_size_launcher.gd) |
 | Gameplay scene | [VoxelRingIntegrationTest.tscn](scenes/VoxelRingIntegrationTest.tscn) |
-| Terrain3D | [terrain3d-surface-port.md](docs/terrain3d-surface-port.md), [scripts/Terrain/Surface](scripts/Terrain/Surface) |
+| Terrain3D | [terrain3d-surface-port.md](docs/archive/terrain3d-surface-port.md), [scripts/Terrain/Surface](scripts/Terrain/Surface) |
 | Runtime generation preview | [generation plan](docs/terrain3d-runtime-generation-plan.md), [implementation checklist](docs/terrain3d-runtime-generation-checklist.md), [scripts/Terrain/Generation](scripts/Terrain/Generation) |
 | Terrain rendering | [scripts/Voxel/LOD](scripts/Voxel/LOD), [far-ring plan](docs/far-ring-heightmap-shadow-plan.md) |
 | UI/menu | [main-menu checklist](docs/main-menu-space-checklist.md) |

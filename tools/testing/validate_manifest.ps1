@@ -76,13 +76,43 @@ if (-not (Has $m 'tags')) { Fail $mf "missing 'tags'" } else {
 Test-Globs (Get-Val $m 'core_globs') 'core_globs'
 Test-Globs (Get-Val $m 'ignore_globs') 'ignore_globs'
 
-# --- every SceneTree tools/*.gd has an entry ---
+# --- every SceneTree tools/*.gd (including subclasses) has an entry ---
 $entries = @{}
 if (-not (Has $m 'tests')) { Fail $mf "missing 'tests'" } else { foreach ($p in $m.tests.PSObject.Properties) { $entries[$p.Name] = $p.Value } }
 $rx = New-Object System.Text.RegularExpressions.Regex('^\s*extends\s+SceneTree\b', 'Multiline')
+$rxBase = New-Object System.Text.RegularExpressions.Regex('^\s*extends\s+"res://tools/([^"/]+)\.gd"', 'Multiline')
+$gdText = @{}; $gdBase = @{}
 foreach ($f in Get-ChildItem -LiteralPath $toolsDir -Filter '*.gd' -File) {
-    if ($rx.IsMatch([System.IO.File]::ReadAllText($f.FullName)) -and -not $entries.ContainsKey($f.BaseName)) {
-        Fail "tools/$($f.Name)" "SceneTree script has no entry in $mf"
+    $t = [System.IO.File]::ReadAllText($f.FullName)
+    $gdText[$f.BaseName] = $rx.IsMatch($t)
+    $bm = $rxBase.Match($t)
+    if ($bm.Success) { $gdBase[$f.BaseName] = $bm.Groups[1].Value }
+}
+function Test-SceneTreeScript([string]$name) {
+    $seen = @{}
+    while ($name -and -not $seen.ContainsKey($name)) {
+        $seen[$name] = $true
+        if ($gdText.ContainsKey($name) -and $gdText[$name]) { return $true }
+        $name = if ($gdBase.ContainsKey($name)) { $gdBase[$name] } else { $null }
+    }
+    return $false
+}
+$extended = @{}
+foreach ($b in $gdBase.Values) { $extended[$b] = $true }
+foreach ($n in @($gdText.Keys | Sort-Object)) {
+    if ($entries.ContainsKey($n)) { continue }
+    if ($gdText[$n]) { Fail "tools/$n.gd" "SceneTree script has no entry in $mf" }
+    elseif ($gdBase.ContainsKey($n) -and -not $extended.ContainsKey($n) -and (Test-SceneTreeScript $n)) { Fail "tools/$n.gd" "SceneTree subclass has no entry in $mf" }
+}
+# SceneTree scripts must live in tools/ (addons, prototypes and generated folders are skipped)
+foreach ($dir in 'scripts', 'scenes', 'materials', 'resources') {
+    $d = Join-Path $root $dir
+    if (-not (Test-Path -LiteralPath $d)) { continue }
+    foreach ($f in Get-ChildItem -LiteralPath $d -Filter '*.gd' -File -Recurse) {
+        if ($rx.IsMatch([System.IO.File]::ReadAllText($f.FullName))) {
+            $rel = $f.FullName.Substring($root.Length + 1).Replace([string][char]92, '/')
+            Fail $rel 'SceneTree script outside tools/ (move it to tools/ and register it)'
+        }
     }
 }
 

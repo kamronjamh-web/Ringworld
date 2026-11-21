@@ -1,6 +1,6 @@
 # Beam Emitter POIs, Milestone 2 plan (underground)
 
-Milestone 1 is complete (see [emitter-milestone1-handoff.md](emitter-milestone1-handoff.md)). Milestone 2 adds the shaft below the bore, the reactor cavern and the lift.
+Milestone 1 is complete (see [emitter-milestone1-handoff.md](archive/emitter-milestone1-handoff.md)). Milestone 2 adds the shaft below the bore, the reactor cavern and the lift.
 
 ## Key finding
 

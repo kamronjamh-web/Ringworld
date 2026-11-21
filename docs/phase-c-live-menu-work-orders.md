@@ -1,6 +1,6 @@
 # Phase C: live world behind the start menu — work orders
 
-Parent plan: `docs/main-menu-revamp-plan.md` (Phase C). This document holds the
+Parent plan: `docs/archive/main-menu-revamp-plan.md` (Phase C). This document holds the
 executable work orders and the facts they depend on.
 
 ## Status (2026-10-23)

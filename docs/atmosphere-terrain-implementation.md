@@ -1,6 +1,6 @@
 # Atmosphere and terrain implementation
 
-This implements the priorities from [the September 27 diagnostics](atmosphere-terrain-diagnostics-2026-09-27.md). Existing world recipes, terrain heights, biome weights, edits, collision tile size, and streaming cache limits are preserved.
+This implements the priorities from [the September 27 diagnostics](archive/atmosphere-terrain-diagnostics-2026-09-27.md). Existing world recipes, terrain heights, biome weights, edits, collision tile size, and streaming cache limits are preserved.
 
 ## Validation checklist
 
