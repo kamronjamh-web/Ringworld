@@ -581,6 +581,8 @@ Not built, and not to be built from the earlier text of this order: `scripts/poi
 
 ### T2R-25. Rules review
 
+STATUS: **replaced** (user decision 2026-11-21). The order was stopped by the user on 2026-11-13. Its three open points (site removal at every kind of keep-out site, the shape clamps, the lake-end falls and the lake stems that end in higher water) are asked at gate G2 instead, as items 10 to 12 of the G2 list in T3.md (Review notes, "T3R-12 and G2 preparation"), with the numbers of 2026-11-21 and the lead's recommendation for each. The text below is kept as the record.
+
 ROLE: claude-lead
 SIZE: S
 DEPENDS ON: T2R-20 to T2R-23 (T2R-24 is dropped).
@@ -761,7 +763,7 @@ Reported, not asked: about 2 to 3 % of a ring's runoff leaves at sites (T2R-19),
 
 ## Phase acceptance (additions to T2.md)
 
-9. The rule orders of 2026-11-13 are done: T2R-19 to T2R-23 pass their validation, including `drainage_overflow_test` and `drainage_site_intake_test` (headless); T2R-24 is dropped. T2R-25 has reported: on three seeds no river ends in a full pool without an outlet, no lake stands above keep-out ground, no river ends at a site and no River or Lake sample lies inside a site shape, no section has a floor, and every source tapers. The user has answered open question 4, RQ1 and RQ2, and the head taper constant is no longer marked provisional.
+9. The rule orders of 2026-11-13 are done: T2R-19 to T2R-23 pass their validation, including `drainage_overflow_test` and `drainage_site_intake_test` (headless); T2R-24 is dropped. **T2R-25 is replaced (user decision 2026-11-21):** the user answers G2 items 10 to 12 in T3.md (site removal, the shape clamps, the lake-end falls and higher-water ends) before the freeze. What T2R-25 would have reported is covered as follows: no river ends at a site and no River or Lake sample lies inside a site shape (`drainage_site_intake_test`, `river_carve_invariants_test`); no section has a floor (`river_danger_test`: widths in (0, 400], depths above 0); every source tapers (the heads line of `river_carve_invariants_test`); no lake stands above keep-out ground and no closed lake overflows without an outlet (terminals report of 2026-11-13 on seed 1337, whose graph is today's by identity hash). The user has answered open question 4, RQ1 and RQ2, and the head taper constant is final (1,500 m, 2026-11-13).
 
 ## User answers 2026-11-13
 
