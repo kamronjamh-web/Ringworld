@@ -36,6 +36,9 @@ public partial class RingTerrain3DSurface : Node3D
     // terrain-macro shadow registration remains valid between updates.
     private GodotObject? _cloudShadowMaterial;
     private ulong _atmosphereRevision = ulong.MaxValue;
+    // Last ring centre written (ApplyRingCenterParameters); cleared with each new native material.
+    private Vector3 _appliedRingCenterWorld;
+    private bool _ringCenterApplied;
     private ulong _uploadedRevision = ulong.MaxValue;
 
     private bool _isReady;
@@ -91,6 +94,7 @@ public partial class RingTerrain3DSurface : Node3D
         if (_worldFrame == worldFrame) return;
         _worldFrame = worldFrame;
         ApplyWorldFrameMaterial();
+        ApplyRingCenterParameters();
         if (_hasLocalPhysicalCameraPosition)
             SetMaterialParameter(RingViewerWorldPositionName, _worldFrame * _lastLocalPhysicalCameraPosition);
         ApplyAtmosphereRayFrame();
@@ -338,6 +342,7 @@ public partial class RingTerrain3DSurface : Node3D
         // model parameters must therefore publish again even at the same
         // global atmosphere revision.
         _atmosphereRevision = ulong.MaxValue;
+        _ringCenterApplied = false;
         GodotObject material = _terrain!.Call("get_material").AsGodotObject() ?? throw new InvalidOperationException("Terrain3D did not initialize its material.");
         Shader shader = GD.Load<Shader>(RingGroundSurfaceVariants.Terrain3DShaderPath) ?? throw new InvalidOperationException("Ring Terrain3D shader is missing.");
         // The override shader is installed before tree entry (PreconfigureNativeBeforeTreeEntry).
@@ -457,24 +462,36 @@ public partial class RingTerrain3DSurface : Node3D
         SetMaterialParameter(RingGroundLatticeOffsetName, new Vector2(PositiveModulo(_frame.AnchorAroundMeters, lattice), PositiveModulo(_frame.AnchorAcrossMeters, lattice)));
     }
 
+    /// <summary>
+    /// The ring centre in world space (ring_atmosphere_center_world and ring_center), written whenever the world frame or the frame radius moves it, not only on an
+    /// atmosphere revision: every floating-origin re-anchor moves it. Followers read it (the scatter rocks take their up, and so their day factor, from it), so a centre
+    /// left at an old frame turned every rock night-tinted and unlit after a long flight (play test 2026-11-20). Deduplicated: an unchanged centre writes nothing.
+    /// The curved Terrain3D vertex is in this same authoritative world frame, so macro-shadow sampling uses the identical receiver coordinate contract as the proxy terrain.
+    /// </summary>
+    private void ApplyRingCenterParameters()
+    {
+        if (_terrain == null) return;
+        Vector3 ringCenterWorld = _worldFrame * new Vector3(0.0f, (float)_frame.RadiusMeters, 0.0f);
+        if (_ringCenterApplied && ringCenterWorld == _appliedRingCenterWorld) return;
+        _ringCenterApplied = true;
+        _appliedRingCenterWorld = ringCenterWorld;
+        SetMaterialParameter(RingAtmosphereCenterWorldName, ringCenterWorld);
+        SetMaterialParameter(RingCenterName, ringCenterWorld);
+    }
+
     private void ApplyAtmosphereMaterialParameters(bool force = false)
     {
         // Terrain3D owns a plugin material object rather than a ShaderMaterial,
         // so it receives the same public model values through its parameter API.
         float radius = (float)_frame.RadiusMeters;
         SetMaterialParameter(RingAtmosphereCameraWorldName, _hasLocalPhysicalCameraPosition ? _worldFrame * _lastLocalPhysicalCameraPosition : Vector3.Zero);
+        ApplyRingCenterParameters();
         if (!force && _atmosphereRevision == RingAtmosphereModel.Revision) return;
         _atmosphereRevision = RingAtmosphereModel.Revision;
         SetMaterialParameter(RingAtmosphereEnabledName, RingAtmosphereModel.Enabled);
         SetMaterialParameter(RingRadiusMetersName, radius);
-        Vector3 ringCenterWorld = _worldFrame * new Vector3(0.0f, radius, 0.0f);
         float ringWidthMeters = _field?.WidthMeters ?? CertifiedRingScale.RingWidthMeters;
-        SetMaterialParameter(RingAtmosphereCenterWorldName, ringCenterWorld);
         SetMaterialParameter(RingAtmosphereHalfWidthMetersName, ringWidthMeters * 0.5f);
-        // The curved Terrain3D vertex is already in this same authoritative
-        // world frame, so macro-shadow sampling uses the identical receiver
-        // coordinate contract as the proxy terrain.
-        SetMaterialParameter(RingCenterName, ringCenterWorld);
         SetMaterialParameter(RingWidthMetersName, ringWidthMeters);
         SetMaterialParameter(AtmosphereFloorDepthMetersName, RingAtmosphereModel.FloorDepthMeters);
         SetMaterialParameter(AtmosphereBoundaryHeightMetersName, RingAtmosphereModel.BoundaryHeightMeters);

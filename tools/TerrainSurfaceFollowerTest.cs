@@ -177,6 +177,8 @@ public partial class TerrainSurfaceFollowerTest : Node
         surface.UpdateCamera(moved);
         Expect(follower.Writes == movedWrites, "the repeated pose must not write again");
 
+        await RunRebaseContract(surface, follower, moved);
+
         // A second window is staged while the camera is stationary: its own setup must not touch the follower.
         await StageWindow(surface, 2, moved);
         int stagedWrites = follower.Writes;
@@ -200,5 +202,43 @@ public partial class TerrainSurfaceFollowerTest : Node
         surface.QueueFree();
         sun.QueueFree();
         await NextFrame();
+    }
+
+    /// <summary>
+    /// Black-rock regression (play test 2026-11-20): the ring centre a follower receives must follow every world-frame rebase, with no atmosphere revision change.
+    /// ring_scatter_rock.gdshader takes the rock's up (and so its day factor) from ring_atmosphere_center_world; a centre left at an old frame turned every rock night-tinted and unlit.
+    /// Many re-anchors in a row (noclip exit and landing re-anchor too) must each land, and an unchanged frame must write nothing.
+    /// </summary>
+    private async Task RunRebaseContract(RingTerrain3DSurface surface, DummyFollower follower, Vector3 camera)
+    {
+        float radius = follower.Values["ring_radius_meters"].AsSingle();
+        Expect(radius > 1000.0f, $"ring_radius_meters must be forwarded before the rebase check, got {radius}");
+        ulong revision = RingworldTechDemo.Voxel.LOD.RingAtmosphereModel.Revision;
+        void ExpectCenter(Transform3D frame, string label)
+        {
+            Vector3 expected = frame * new Vector3(0.0f, radius, 0.0f);
+            Vector3 got = follower.Values["ring_atmosphere_center_world"].AsVector3();
+            // Float32 at ~5e6 m: one ulp is 0.5 m; anything stale is off by the rebase distance (here >= 100 m).
+            Expect(got.DistanceTo(expected) < 2.0f, $"{label}: forwarded ring centre {got} != world frame centre {expected} (stale after a rebase)");
+        }
+        Transform3D last = Transform3D.Identity;
+        for (int step = 0; step < 24; step++)
+        {
+            // Rotation about the frame's across axis plus a translation: what a floating-origin re-anchor around the ring does to the world frame.
+            float angle = 0.35f * (step + 1) * (step % 2 == 0 ? 1.0f : -1.0f);
+            last = new Transform3D(new Basis(Vector3.Back, angle), new Vector3(150.0f * (step + 1), -40.0f * step, 90.0f * (step % 5)));
+            surface.SetGameplayWorldFrames(last, last);
+            if (step % 3 == 0) { surface.UpdateCamera(camera); await NextFrame(); }
+            ExpectCenter(last, $"rebase {step}");
+        }
+        Expect(RingworldTechDemo.Voxel.LOD.RingAtmosphereModel.Revision == revision, "the rebase check must not depend on an atmosphere revision change");
+        for (int frame = 0; frame < 3; frame++) { surface.SetGameplayWorldFrames(last, last); surface.UpdateCamera(camera); await NextFrame(); }
+        int settled = follower.Writes;
+        for (int frame = 0; frame < 10; frame++) { surface.SetGameplayWorldFrames(last, last); surface.UpdateCamera(camera); await NextFrame(); }
+        Expect(follower.Writes == settled, $"an unchanged world frame wrote {follower.Writes - settled} follower parameters");
+        // Back to the identity frame the rest of the contract runs in.
+        surface.SetGameplayWorldFrames(Transform3D.Identity, Transform3D.Identity);
+        ExpectCenter(Transform3D.Identity, "rebase back to identity");
+        for (int frame = 0; frame < 3; frame++) { surface.UpdateCamera(camera); await NextFrame(); }
     }
 }
