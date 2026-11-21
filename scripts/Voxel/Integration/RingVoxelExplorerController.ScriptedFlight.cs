@@ -114,6 +114,7 @@ public partial class RingVoxelExplorerController
         _scriptedVelocity = Vector3.Zero;
         _canonicalVelocity = Vector3.Zero;
         _noclip = _scriptedPreviousNoclip;
+        RecenterCollisionOrigin(force: true); ApplyWorldTransform();
         _curvatureAtmosphereStateInitialized = false;
         RequestCurvatureCorrection(NoclipExitCorrectionResponse);
     }

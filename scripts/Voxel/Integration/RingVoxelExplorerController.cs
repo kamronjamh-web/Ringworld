@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using Godot;
 using RingworldTechDemo.ContainmentField;
 using RingworldTechDemo.Poi;
@@ -108,6 +109,12 @@ public partial class RingVoxelExplorerController : CharacterBody3D
     private bool _hasConfiguredCanonicalSpawn;
     private double _collisionOriginAround;
     private double _collisionOriginAcross;
+    private RingCanonicalPosition _floatingAnchorPosition;
+    private bool _hasFloatingAnchorPosition;
+    private const double WalkReanchorDistanceMeters = 2048.0;
+    public int FloatingOriginReanchorCount { get; private set; }
+    public double LastFloatingOriginReanchorMilliseconds { get; private set; }
+    public double MaxFloatingOriginReanchorMilliseconds { get; private set; }
     private Vector3 _canonicalVelocity;
     private float _yaw;
     private float _pitch;
@@ -826,6 +833,7 @@ public partial class RingVoxelExplorerController : CharacterBody3D
                 _hasLastSmoothGroundedPosition = false;
                 _smoothTerrain?.SetCanonicalFocus(_canonicalPosition);
                 RequestCurvatureCorrection(NoclipExitCorrectionResponse);
+                RecenterCollisionOrigin(force: true); ApplyWorldTransform();
             }
             GD.Print($"Ring voxel noclip: {(_noclip ? "ON" : "OFF")}");
         }
@@ -2867,13 +2875,20 @@ public partial class RingVoxelExplorerController : CharacterBody3D
         position.Y,
         _collisionOriginAcross + position.Z);
 
+    /// <summary>
+    /// Moves the floating origin (collision sector and grid anchor) to the body. Triggers: forced; the body left its
+    /// 32 km collision sector; or, when not flying (noclip or scripted flight), it is more than
+    /// <see cref="WalkReanchorDistanceMeters"/> from the anchor on any axis, which keeps walking physics near float precision.
+    /// </summary>
     private void RecenterCollisionOrigin(bool force)
     {
         double localAround = _canonicalPosition.AroundMeters - _collisionOriginAround;
         double localAcross = _canonicalPosition.AcrossMeters - _collisionOriginAcross;
-        if (!force
-            && Math.Abs(localAround) <= CollisionSectorSizeMeters * 0.5
-            && Math.Abs(localAcross) <= CollisionSectorSizeMeters * 0.5) return;
+        bool outsideSector = Math.Abs(localAround) > CollisionSectorSizeMeters * 0.5
+            || Math.Abs(localAcross) > CollisionSectorSizeMeters * 0.5;
+        bool walkTooFar = !force && !outsideSector && !_noclip && !_scriptedFlight && _hasFloatingAnchorPosition
+            && FloatingAnchorDistanceMeters > WalkReanchorDistanceMeters;
+        if (!(force || outsideSector || walkTooFar)) return;
         // Select the nearest sector, not the previous sector floor. With a
         // floor-only selection, every physics frame in the outer half of a
         // sector requested another canonical anchor update until the next full
@@ -2886,8 +2901,44 @@ public partial class RingVoxelExplorerController : CharacterBody3D
                 (_canonicalPosition.AcrossMeters + CollisionSectorSizeMeters * 0.5)
                 / CollisionSectorSizeMeters)
             * CollisionSectorSizeMeters;
-        _grid?.SetFloatingOriginCanonicalAnchor(_canonicalPosition);
+        _floatingAnchorPosition = _canonicalPosition;
+        _hasFloatingAnchorPosition = true;
+        if (_grid != null)
+        {
+            long start = Stopwatch.GetTimestamp();
+            _grid.SetFloatingOriginCanonicalAnchor(_canonicalPosition);
+            double ms = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            FloatingOriginReanchorCount++;
+            LastFloatingOriginReanchorMilliseconds = ms;
+            if (ms > MaxFloatingOriginReanchorMilliseconds) MaxFloatingOriginReanchorMilliseconds = ms;
+            if (LogReanchor)
+                GD.Print($"FLOATING_ORIGIN_REANCHOR ms={ms:0.000} count={FloatingOriginReanchorCount} force={force} noclip={_noclip} around={_canonicalPosition.AroundMeters:0.0} vertical={_canonicalPosition.VerticalMeters:0.0} across={_canonicalPosition.AcrossMeters:0.0}");
+        }
         _pendingPhysicsInterpolationReset = true;
+    }
+
+    /// <summary>Largest per-axis distance of the body from the current floating-origin anchor; 0 when none is set.</summary>
+    public double FloatingAnchorDistanceMeters
+    {
+        get
+        {
+            if (!_hasFloatingAnchorPosition) return 0.0;
+            double around = _canonicalPosition.AroundMeters - _floatingAnchorPosition.AroundMeters;
+            double circumference = _grid?.GetCanonicalRingCircumferenceMeters64() ?? 0.0;
+            if (circumference > 0.0) around -= Math.Round(around / circumference) * circumference;
+            return Math.Max(Math.Abs(around), Math.Max(
+                Math.Abs(_canonicalPosition.AcrossMeters - _floatingAnchorPosition.AcrossMeters),
+                Math.Abs(_canonicalPosition.VerticalMeters - _floatingAnchorPosition.VerticalMeters)));
+        }
+    }
+
+    private static readonly bool LogReanchor = HasLaunchArgument("--log-reanchor");
+
+    private static bool HasLaunchArgument(string name)
+    {
+        foreach (string arg in OS.GetCmdlineArgs()) if (arg == name) return true;
+        foreach (string arg in OS.GetCmdlineUserArgs()) if (arg == name) return true;
+        return false;
     }
 
     private static bool RangesOverlap(float aMin, float aMax, float bMin, float bMax) => aMax > bMin + CollisionEpsilon && aMin < bMax - CollisionEpsilon;

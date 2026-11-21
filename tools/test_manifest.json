@@ -474,6 +474,12 @@
         "scripts/ui/RingShortsCapture*",
         "scenes/VerticalShortCapture.tscn"
       ]
+    },
+    "explorer-motion": {
+      "globs": [
+        "scripts/Voxel/Integration/RingVoxelExplorerController*.cs",
+        "tools/flight_landing_walk_test.gd"
+      ]
     }
   },
   "core_globs": [
@@ -2018,6 +2024,23 @@
       "marker": "EMITTER_UNDERGROUND_BAKE",
       "expected_s": 2,
       "timeout_s": 60
+    },
+    "flight_landing_walk_test": {
+      "kind": "test",
+      "gpu_class": "exclusive",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "explorer-motion",
+        "terrain",
+        "terrain-near"
+      ],
+      "world": "certified",
+      "marker": "FLIGHT_LANDING_WALK",
+      "expected_s": 240,
+      "timeout_s": 900,
+      "batch": null,
+      "batch_note": "long flights and walks; mutates streaming state"
     },
     "fallback_cloud_mask_atmosphere_gpu_test": {
       "kind": "test",
@@ -6549,6 +6572,7 @@
       "mode": "gpu",
       "tier": "gate",
       "tags": [
+        "explorer-motion",
         "terrain",
         "terrain-near"
       ],
