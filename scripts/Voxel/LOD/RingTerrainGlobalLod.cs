@@ -49,6 +49,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
     private void FailStartup(string error)
     {
         if (!UseStagedStartup || StartupError.Length > 0) return;
+        AbandonGlobalTerrainCache();
         StartupError = "Global terrain startup failed: " + error;
         _startupHullBuild?.Dispose(); _startupHullBuild = null;
         _startupOccluderBuild?.Dispose(); _startupOccluderBuild = null;
@@ -328,6 +329,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         _startupHullBuild?.Dispose(); _startupHullBuild = null;
         _startupOccluderBuild?.Dispose(); _startupOccluderBuild = null;
         InvalidatePendingPreparation();
+        AbandonGlobalTerrainCache();
         Task? samplingTask = _pendingSamplingTask;
         CancellationTokenSource? samplingCancellation = _pendingSamplingCancellation;
         _pendingSamplingTask = null;
@@ -760,6 +762,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
 
         BeginGlobalMorphGeneration(Mathf.Clamp(GlobalSegmentCount, 1, Mathf.Max(1, AroundSegments)), _grid.LodSurfaceEditVersion);
         InvalidatePendingPreparation();
+        AbandonGlobalTerrainCache();
         // Reuse existing nodes when the segment partition is unchanged.  This
         // keeps visible terrain alive until each replacement is published.
         bool reuseExisting = _terrainSegments.Count == Mathf.Clamp(GlobalSegmentCount, 1, Mathf.Max(1, AroundSegments));
@@ -806,6 +809,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         _initialSegmentCount = Mathf.Clamp(GlobalSegmentCount, 1, Mathf.Max(1, AroundSegments));
         for (int segmentIndex = 0; segmentIndex < _initialSegmentCount; segmentIndex++)
             _initialSegmentQueue.Enqueue(segmentIndex);
+        BeginGlobalTerrainCache(sampler, edits);
         Mesh = null;
         RingLoadTimeline.Mark("global_terrain_queued", $"segments={_initialSegmentCount} across={AcrossSegments}");
         GD.Print($"Segmented global terrain HLOD queued: segments={_initialSegmentCount}, around={AroundSegments}, across={AcrossSegments}, minmaxLevels={_heightPyramid?.LevelCount ?? 0}, seed={sampler.Seed}, terrainHash={sampler.TerrainDefinitionHash:X16}");
@@ -817,14 +821,28 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Terrain global initial segment service");
         ulong start = Time.GetTicksUsec();
         ulong deadline = start + (ulong)Math.Max(1.0, MaxSegmentRebuildMillisecondsPerFrame * 1000.0);
+        // Cache-served segments cost no sampling, so the real loading screen may spend more of each frame finalising them.
+        double cachedMilliseconds = LoadingScreenBoost ? Math.Max(MaxSegmentRebuildMillisecondsPerFrame, LoadingScreenCachedSegmentMillisecondsPerFrame) : MaxSegmentRebuildMillisecondsPerFrame;
+        ulong cachedDeadline = start + (ulong)Math.Max(1.0, cachedMilliseconds * 1000.0);
         int buildCount = 0;
         int buildBudget = Mathf.Max(1, MaxSegmentRebuildsPerFrame);
+        if (_globalCache != null)
+        {
+            _globalCache.ServiceFrames++;
+            _globalCache.DeadlineMilliseconds = cachedMilliseconds;
+        }
         StartAheadPreparations();
-        while (buildCount < buildBudget && _initialSegmentQueue.Count > 0)
+        while (_initialSegmentQueue.Count > 0)
         {
             int index = _initialSegmentQueue.Peek();
+            // Segments served from the global terrain cache cost no sampling, so more of them may finalise per frame (still inside the deadline).
+            bool cacheServed = GlobalTerrainCacheServes(index);
+            if (buildCount >= (cacheServed ? Math.Max(buildBudget, GlobalTerrainCachePublishesPerFrame) : buildBudget)) break;
             MeshInstance3D? existing = index < _terrainSegments.Count ? _terrainSegments[index] : null;
-            if (!ServicePreparedSegment(index, _initialSegmentCount, existing, _initialSegmentEdits, deadline, out bool published)) break;
+            ulong segmentDeadline = cacheServed ? cachedDeadline : deadline;
+            if (!ServicePreparedSegment(index, _initialSegmentCount, existing, _initialSegmentEdits, segmentDeadline, out bool published)) break;
+            // The first call only adopts a finished preparation; a cached one is ready now, so finalise it in the same frame.
+            if (!published && cacheServed && !ServicePreparedSegment(index, _initialSegmentCount, existing, _initialSegmentEdits, segmentDeadline, out published)) break;
             if (!published) break;
             _initialSegmentQueue.Dequeue();
             buildCount++;
@@ -833,6 +851,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         }
 
         if (_initialSegmentQueue.Count != 0) return;
+        CompleteGlobalTerrainCache();
         _initialSegmentEdits = null;
         TryPublishStagedMorphSnapshot();
         RetireRetainedTerrainSegments();
@@ -866,6 +885,8 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         public required ulong Version;
         public int NextVertex;
         public ulong OutputHash;
+        // Set for a segment of the initial build that the global terrain disk cache may serve or record.
+        public GlobalTerrainCacheSession? Cache;
         public int VertexCount => TerrainVertices.Length;
     }
 
@@ -1006,8 +1027,14 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         {
             using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu(
                 "Terrain global segment sampling", worker: true);
+            bool fromCache = false;
             using (prepared.Sampler)
             {
+                if (prepared.Cache != null && prepared.Cache.TryFill(prepared, cancellation))
+                {
+                    fromCache = true;
+                    prepared.NextVertex = prepared.VertexCount;
+                }
                 while (prepared.NextVertex < prepared.VertexCount)
                 {
                     cancellation.ThrowIfCancellationRequested();
@@ -1016,18 +1043,23 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
                 }
             }
             prepared.OutputHash = ComputePreparedOutputHash(prepared);
+            if (!fromCache) prepared.Cache?.Capture(prepared);
         });
     }
 
     private static ulong ComputePreparedOutputHash(PendingSegmentPreparation state)
+        => ComputePreparedOutputHash(state.VertexCount, state.TerrainCanonicalHeights, state.TerrainColors, state.WaterColors, state.DisplayedWater, state.RawTerrainHeights, state.RawWaterHeights);
+
+    // The array form lets the global terrain disk cache verify a stored segment with the very same hash.
+    private static ulong ComputePreparedOutputHash(int vertexCount, float[] terrainCanonicalHeights, Color[] terrainColors, Color[] waterColors, bool[] displayedWater, float[] rawTerrainHeights, float[] rawWaterHeights)
     {
         const ulong prime = 1099511628211UL;
         ulong hash = 14695981039346656037UL;
-        for (int i = 0; i < state.VertexCount; i++)
+        for (int i = 0; i < vertexCount; i++)
         {
             // World-space vertices depend on the ring transform at creation time, so hash the canonical heights instead.
-            hash = MixMorphHash(hash, BitConverter.SingleToUInt32Bits(state.TerrainCanonicalHeights[i]), prime);
-            Color tc = state.TerrainColors[i], wc = state.WaterColors[i];
+            hash = MixMorphHash(hash, BitConverter.SingleToUInt32Bits(terrainCanonicalHeights[i]), prime);
+            Color tc = terrainColors[i], wc = waterColors[i];
             hash = MixMorphHash(hash, BitConverter.SingleToUInt32Bits(tc.R), prime);
             hash = MixMorphHash(hash, BitConverter.SingleToUInt32Bits(tc.G), prime);
             hash = MixMorphHash(hash, BitConverter.SingleToUInt32Bits(tc.B), prime);
@@ -1036,9 +1068,9 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
             hash = MixMorphHash(hash, BitConverter.SingleToUInt32Bits(wc.G), prime);
             hash = MixMorphHash(hash, BitConverter.SingleToUInt32Bits(wc.B), prime);
             hash = MixMorphHash(hash, BitConverter.SingleToUInt32Bits(wc.A), prime);
-            hash = MixMorphHash(hash, state.DisplayedWater[i] ? 1UL : 0UL, prime);
-            hash = MixMorphHash(hash, BitConverter.SingleToUInt32Bits(state.RawTerrainHeights[i]), prime);
-            hash = MixMorphHash(hash, BitConverter.SingleToUInt32Bits(state.RawWaterHeights[i]), prime);
+            hash = MixMorphHash(hash, displayedWater[i] ? 1UL : 0UL, prime);
+            hash = MixMorphHash(hash, BitConverter.SingleToUInt32Bits(rawTerrainHeights[i]), prime);
+            hash = MixMorphHash(hash, BitConverter.SingleToUInt32Bits(rawWaterHeights[i]), prime);
         }
         return hash;
     }
@@ -1099,7 +1131,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         double aroundSpacing = circumference / aroundCount;
         double acrossSpacing = RingWidthMeters / (double)acrossCount;
         var terrainVertices = new Vector3[(localAroundCount + 1) * (acrossCount + 1)];
-        return new PendingSegmentPreparation {
+        var prepared = new PendingSegmentPreparation {
             SegmentIndex = segmentIndex, SegmentCount = segmentCount, AroundStartIndex = aroundStartIndex, LocalAroundCount = localAroundCount, AcrossCount = acrossCount,
             Existing = existing, Sampler = sampler.CreateIndependentCopy(), Edits = edits, AroundSpacing = aroundSpacing, AcrossSpacing = acrossSpacing,
             UsesPresentationSurface = edits.UsesFloatSurface || sampler.UsesRuntimeSurfaceGeneration,
@@ -1111,6 +1143,8 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
             WaterCanonicalOffset = (sampler.UsesRuntimeSurfaceGeneration ? 0.0f : 1.0f) - RadialUnderlayOffsetMeters,
             TerrainColors = new Color[terrainVertices.Length], WaterVertices = new Vector3[terrainVertices.Length],
             WaterColors = new Color[terrainVertices.Length], DisplayedWater = new bool[terrainVertices.Length], Version = _pendingPreparationVersion };
+        AttachGlobalTerrainCache(prepared, edits);
+        return prepared;
     }
 
     private static void SamplePreparedVertex(PendingSegmentPreparation state, int index)
@@ -1412,6 +1446,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
     private void ClearTerrainSegments()
     {
         InvalidatePendingPreparation();
+        AbandonGlobalTerrainCache();
         _dirtySegmentQueue.Clear();
         _queuedDirtySegments.Clear();
         _pendingSegmentEdits = null;

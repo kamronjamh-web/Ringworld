@@ -38,28 +38,28 @@
           "tile_around": 979,
           "tile_across": 1092,
           "count": 64,
-          "hash": "0x439C192239211866"
+          "hash": "0xA224275FBEF0F39B"
         },
         {
           "pose": "forest_interior_eye",
           "tile_around": 9811,
           "tile_across": 785,
           "count": 296,
-          "hash": "0x1ED38A3BD6829E9A"
+          "hash": "0x092E5D19D18BD281"
         },
         {
           "pose": "forest_edge_eye",
           "tile_around": 9813,
           "tile_across": 786,
           "count": 185,
-          "hash": "0x9130C43C12FF53FE"
+          "hash": "0xBFE00FD020FDB98B"
         },
         {
           "pose": "forest_clearing_eye",
           "tile_around": 9813,
           "tile_across": 787,
           "count": 70,
-          "hash": "0x94905D8D2C6B3921"
+          "hash": "0x1657EA128B03E70C"
         },
         {
           "pose": "v0_ridge_eye",
@@ -120,7 +120,7 @@
           "tile_across": 8015,
           "count": 7358,
           "low_count": 4137,
-          "hash": "0xFBF2EC6646A2FAA0"
+          "hash": "0x13F3D3979580BAAC"
         },
         {
           "pose": "hills_eye",
@@ -128,7 +128,7 @@
           "tile_across": 8484,
           "count": 4413,
           "low_count": 2493,
-          "hash": "0x6B830805A750702A"
+          "hash": "0x425704AFEA64E334"
         },
         {
           "pose": "coast_eye",
@@ -136,7 +136,7 @@
           "tile_across": 8190,
           "count": 4921,
           "low_count": 2821,
-          "hash": "0x7E87C0F85B41939B"
+          "hash": "0x48773D14642E5327"
         },
         {
           "pose": "forest_interior_eye",
@@ -144,7 +144,7 @@
           "tile_across": 5890,
           "count": 15859,
           "low_count": 8890,
-          "hash": "0x5276C68A646037EE"
+          "hash": "0x3FD2AF85325AC1DC"
         },
         {
           "pose": "forest_edge_eye",
@@ -152,7 +152,7 @@
           "tile_across": 5901,
           "count": 16068,
           "low_count": 9039,
-          "hash": "0x9C39AA8D519BD6BC"
+          "hash": "0x92090BFEDC6E997D"
         },
         {
           "pose": "forest_clearing_eye",
@@ -160,7 +160,7 @@
           "tile_across": 5904,
           "count": 16024,
           "low_count": 9062,
-          "hash": "0x7C2E06C1253447F8"
+          "hash": "0xBD5020D6F3AFCA40"
         },
         {
           "pose": "v0_ridge_eye",
@@ -168,7 +168,7 @@
           "tile_across": 9422,
           "count": 2304,
           "low_count": 1280,
-          "hash": "0x83851B4043397732"
+          "hash": "0xF60C971929BE9922"
         },
         {
           "pose": "v0_centre_eye",
@@ -176,7 +176,7 @@
           "tile_across": 4875,
           "count": 4620,
           "low_count": 2588,
-          "hash": "0x4E7D93E06D4DD96B"
+          "hash": "0x90E411BC94A900ED"
         }
       ],
       "scatter": {

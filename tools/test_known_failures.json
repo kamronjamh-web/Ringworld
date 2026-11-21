@@ -12,6 +12,12 @@
         "desktop_mid_high"
       ]
     },
+    "world_generation_recipe_test": {
+      "status": "flaky",
+      "match": "Condition \"script\\.is_null\\(\\)\" is true[\\s\\S]*CaveGenerationSettings\\.\\.ctor",
+      "retries": 1,
+      "evidence": "2026-11-21 (RTX 4070): intermittent FATAL in CaveGenerationSettings..ctor (CaveGenerationSettings.cs:17) during CaveGenerationContract.Create, exit -1073741795, no marker; passes on rerun. Crashed in flip_shared_b/20261118-095942, t4-7files/20261118-143344, gate-1121/20261121-082140 (before the determinism and cache changes), gtcache/20261121-151032 and gtcache/20261121-155809. Root cause not investigated (Godot script binding not ready for the C# Resource at construction)."
+    },
     "water_sound_sources_test": {
       "status": "flaky",
       "match": "cost, walk along stem 211",

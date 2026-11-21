@@ -24,6 +24,7 @@ public partial class RingWorldLoadingBridge : Node
     private RingTerrain3DGameplay? _surface;
     private RingScaledFarViewport? _far;
     private RingTerrainLodCoordinator? _lodCoordinator;
+    private RingTerrainGlobalLod? _globalLod;
     private ulong _settleWaitStartUsec;
     private ulong _settleIdleSinceUsec;
     private bool _streamingSettled;
@@ -93,6 +94,8 @@ public partial class RingWorldLoadingBridge : Node
     {
         ProcessPriority = 10000;
         RingLoadTimeline.Reset();
+        // One-time removal of the retired proxy sector caches, on a worker and before the world attaches (a marker file makes later launches a no-op).
+        RingLegacyCacheCleanup.StartOnce();
         _world = world;
         _explorer = world.GetNodeOrNull<RingVoxelExplorerController>("Explorer");
         _saves = world.GetNodeOrNull<RingWorldSaveManager>("WorldSaveManager");
@@ -105,6 +108,9 @@ public partial class RingWorldLoadingBridge : Node
         if (_far?.ProcessMode == ProcessModeEnum.Disabled) _far = null;
         _lodCoordinator = world.GetNodeOrNull<RingTerrainLodCoordinator>("TerrainLodCoordinator");
         if (_lodCoordinator != null && !_background) _lodCoordinator.LoadingScreenBoost = true;
+        // The global terrain finalises cache-served segments on a larger deadline for the real loading screen only (mirrors the coordinator boost).
+        _globalLod = world.GetNodeOrNull<RingTerrainGlobalLod>("GlobalTerrainLod3");
+        if (_globalLod != null && !_background) _globalLod.LoadingScreenBoost = true;
         RingLiveTuningDrawer? drawer = world.GetNodeOrNull<RingLiveTuningDrawer>("LiveTuningDrawer");
         if (drawer != null) drawer.DeferDrawerBuildUntilOpened = true;
         if (_saves != null)
@@ -676,6 +682,7 @@ public partial class RingWorldLoadingBridge : Node
     private void EndLoadingScreenBoost()
     {
         if (_lodCoordinator != null && GodotObject.IsInstanceValid(_lodCoordinator)) _lodCoordinator.LoadingScreenBoost = false;
+        if (_globalLod != null && GodotObject.IsInstanceValid(_globalLod)) _globalLod.LoadingScreenBoost = false;
     }
 
     /// <summary>

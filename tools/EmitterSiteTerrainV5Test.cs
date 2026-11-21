@@ -123,8 +123,10 @@ public partial class EmitterSiteTerrainV5Test : RefCounted
     // Fixed tree review tile (found once by a seeded search on the v4 sampler; the 186000/141000 grass focus tile has no trees).
     static readonly (long Around, long Across) FingerprintTreeTile = (84509L, 762L);
     const ulong ExpectedFingerprintTerrain = 0xD82EFCF9C4FCE3E4UL;
-    const ulong ExpectedFingerprintGrass = 0x071B8B28921E7298UL;
-    const ulong ExpectedFingerprintTrees = 0x9C6BDB7DF0127E66UL;
+    // Re-blessed 2026-11-21 (user-approved): grass and tree heights now take the 2 m lattice (global terrain determinism fix in
+    // RingLodSurfaceEditSnapshot.GetPresentationSurfaceHeight(double, double)); terrain fingerprint and instance counts unchanged.
+    const ulong ExpectedFingerprintGrass = 0x6E426C8BFD1892DAUL;
+    const ulong ExpectedFingerprintTrees = 0x50C7BD4AC68BFA5AUL;
 
     static ulong Fnv(ulong h, ulong v)
     {

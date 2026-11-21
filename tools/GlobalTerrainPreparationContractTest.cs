@@ -41,6 +41,8 @@ public partial class GlobalTerrainPreparationContractTest : RefCounted
             VerifyCancellationRestartsWithoutDroppingTheHead(lod, grid);
             VerifyQualityAndPartitionRetention(lod, grid);
             VerifyRuntimeSurfaceSamplingAndEdits(fixture);
+            VerifyRuntimeSurfaceIndependentOfFieldAttach(fixture);
+            VerifyGlobalTerrainDiskCache(fixture);
             VerifyExitDetachesAndObservesWorker(lod, grid);
             GD.Print("GLOBAL_TERRAIN_PREPARATION_CONTRACT=PASS");
             return true;
@@ -260,6 +262,315 @@ public partial class GlobalTerrainPreparationContractTest : RefCounted
             if (field != null) grid.DetachSurfaceHeightField(field);
             lod?.Free();
             grid.Free();
+        }
+    }
+
+    /// <summary>
+    /// Global segments sampled before the gameplay height field attaches must match those sampled after it: an unedited runtime world has one
+    /// surface (the 2 m lattice), whatever UsesFloatSurface says. Regression for the load-timing race in the global terrain heights.
+    /// </summary>
+    private static void VerifyRuntimeSurfaceIndependentOfFieldAttach(Node3D fixture)
+    {
+        TerrainGenerationParameters recipe = TerrainGenerationParameters.Default();
+        using var settings = new VoxelTerrainSettings {
+            SurfaceGenerationRecipeJson = recipe.CanonicalJson,
+            SurfaceGenerationContractId = RingTerrainSampler.RuntimeSurfaceGenerationContractId,
+            BedrockY = -8000,
+            SeaLevelY = 0,
+            EnableUnified3dDensityTerrain = false,
+            EnableProceduralCaves = false,
+            EnableNaturalOverhangs = false,
+            EnableDesignedCaveDensityComposition = false
+        };
+        var grid = new VoxelChunkGridManager {
+            BuildOnReady = false, DormantEditableBackend = true, EnableChunkStreaming = false,
+            UseTerrain3DSurface = true, UseDeterministicTerrainGeneration = true, UseRingCurvedPlacement = true,
+            EnableCanonicalFloatingOriginAnchor = true,
+            AroundRingChunkLength = CertifiedRingScale.AroundChunkCount,
+            RingAcrossWidthMeters = CertifiedRingScale.RingWidthMeters,
+            MaxBuildGlobalY = 8400, MinExcavationGlobalY = -8192, TerrainBottomGlobalY = -8192,
+            TerrainSettings = settings
+        };
+        RingTerrainGlobalLod? lod = null;
+        RingSurfaceHeightField? field = null;
+        try
+        {
+            fixture.AddChild(grid);
+            grid.SetFloatingOriginCanonicalAnchor(new RingCanonicalPosition(0.0, 0.0, 0.0));
+            using RingTerrainSampler sampler = grid.CreateIndependentTerrainSampler()
+                ?? throw new InvalidOperationException("attach fixture sampler unavailable");
+            Require(sampler.UsesRuntimeSurfaceGeneration, "attach fixture did not select the runtime sampler");
+            lod = new RingTerrainGlobalLod { Name = "AttachIndependenceLod" };
+            fixture.AddChild(lod);
+            lod.ConfigureGlobalPreparationFixture(grid, aroundSegments: 497, segmentCount: 2);
+            lod.InstallGlobalPreparationPyramidFixture(new RingTerrainMinMaxPyramid(sampler, lod.RingWidthMeters, 1_000_000),
+                grid.LodSurfaceEditVersion);
+
+            RingLodSurfaceEditSnapshot before = grid.CaptureLodSurfaceEditSnapshot();
+            lod.BuildGlobalRingFixture();
+            lod.ServiceInitialGlobalBuildFixture();
+            lod.WaitForGlobalPreparationWorkerFixture();
+            var sampling = lod.GetGlobalPreparationSamplingFixture();
+            int row = sampling.LocalAroundCount + 1;
+            int[] indices = { 0, 1, 2, row + 1, row + 2, 3 * row + 1, sampling.AcrossCount * row + sampling.LocalAroundCount };
+            Vector3[] heightsBefore = new Vector3[indices.Length];
+            for (int i = 0; i < indices.Length; i++) heightsBefore[i] = lod.GetGlobalPreparedVertexFixture(indices[i]).TerrainVertex;
+
+            field = new RingSurfaceHeightField(sampler.TerrainDefinitionHash, sampler.AroundRingVoxelLength,
+                Mathf.RoundToInt(grid.RingAcrossWidthMeters), -8000, 8000, sampler.GetPresentationSurfaceHeight,
+                useTriangleInterpolation: true);
+            grid.AttachSurfaceHeightField(field);
+            RingLodSurfaceEditSnapshot after = grid.CaptureLodSurfaceEditSnapshot();
+            Require(!before.UsesFloatSurface && after.UsesFloatSurface && !before.HasEdits && !after.HasEdits,
+                "attach fixture did not capture an unattached and an attached unedited snapshot");
+
+            for (int i = 0; i < indices.Length; i++)
+            {
+                int index = indices[i], z = index / row, x = index % row;
+                double around = (sampling.AroundStart + x) * sampling.AroundSpacing;
+                double across = z * sampling.AcrossSpacing;
+                float a = before.GetPresentationSurfaceHeight(sampler, around, across);
+                float b = after.GetPresentationSurfaceHeight(sampler, around, across);
+                Require(BitConverter.SingleToInt32Bits(a) == BitConverter.SingleToInt32Bits(b),
+                    $"presentation height at ({around}, {across}) depends on the height field attach: {a} before, {b} after");
+            }
+            // Explicit fractional coordinates, in case the segment spacing happens to land on the 2 m lattice.
+            // The 2 m lattice and 1 m bilinear surfaces only differ where a cell is not planar, so scan many scattered points.
+            var probes = new System.Collections.Generic.List<(double, double)> { (123.37, 4567.81), (1001.5, 9.25), (31.999, 31.001) };
+            var random = new Random(20261121);
+            for (int i = 0; i < 4000; i++)
+                probes.Add((random.NextDouble() * sampler.AroundRingVoxelLength, random.NextDouble() * grid.RingAcrossWidthMeters));
+            foreach ((double around, double across) in probes)
+            {
+                float a = before.GetPresentationSurfaceHeight(sampler, around, across);
+                float b = after.GetPresentationSurfaceHeight(sampler, around, across);
+                Require(BitConverter.SingleToInt32Bits(a) == BitConverter.SingleToInt32Bits(b),
+                    $"presentation height at ({around}, {across}) depends on the height field attach: {a} before, {b} after");
+            }
+            // The prepared global vertices (built from the unattached snapshot above) must equal those of a second global terrain built after the attach.
+            var lodAfter = new RingTerrainGlobalLod { Name = "AttachIndependenceLodAttached" };
+            fixture.AddChild(lodAfter);
+            try
+            {
+                lodAfter.ConfigureGlobalPreparationFixture(grid, aroundSegments: 497, segmentCount: 2);
+                lodAfter.InstallGlobalPreparationPyramidFixture(new RingTerrainMinMaxPyramid(sampler, lodAfter.RingWidthMeters, 1_000_000),
+                    grid.LodSurfaceEditVersion);
+                lodAfter.BuildGlobalRingFixture();
+                lodAfter.ServiceInitialGlobalBuildFixture();
+                lodAfter.WaitForGlobalPreparationWorkerFixture();
+                for (int i = 0; i < indices.Length; i++)
+                {
+                    Vector3 now = lodAfter.GetGlobalPreparedVertexFixture(indices[i]).TerrainVertex;
+                    Require(now == heightsBefore[i], $"prepared global vertex {indices[i]} depends on the height field attach: {heightsBefore[i]} -> {now}");
+                }
+            }
+            finally
+            {
+                lodAfter.InvalidateGlobalPreparationFixture();
+                lodAfter.WaitForGlobalPreparationWorkerFixture();
+                lodAfter.Free();
+            }
+        }
+        finally
+        {
+            if (lod != null) lod.InvalidateGlobalPreparationFixture();
+            if (field != null) grid.DetachSurfaceHeightField(field);
+            lod?.Free();
+            grid.Free();
+        }
+    }
+
+    private sealed class CacheBuildResult
+    {
+        public string State = "";
+        public int Cached, Sampled, Eligible;
+        public bool Wrote;
+        public ulong[] Hashes = Array.Empty<ulong>();
+        public string Morph = "";
+        public float[][] Heights = Array.Empty<float[]>();
+        public Vector3[][] MeshVertices = Array.Empty<Vector3[]>();
+        public Color[][] MeshColors = Array.Empty<Color[]>();
+    }
+
+    /// <summary>
+    /// Global terrain disk cache (#12): a build replayed from the cache is byte-identical to the sampled one, and any damaged file
+    /// (wrong key, wrong version, truncated, flipped payload byte) falls back to a full resample and is rewritten.
+    /// </summary>
+    private static void VerifyGlobalTerrainDiskCache(Node3D fixture)
+    {
+        string scratch = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "ringworld_gtcache_" + Guid.NewGuid().ToString("N"));
+        string file = System.IO.Path.Combine(scratch, "global_terrain.bin");
+        System.IO.Directory.CreateDirectory(scratch);
+        TerrainGenerationParameters recipe = TerrainGenerationParameters.Default();
+        using var settings = new VoxelTerrainSettings {
+            SurfaceGenerationRecipeJson = recipe.CanonicalJson,
+            SurfaceGenerationContractId = RingTerrainSampler.RuntimeSurfaceGenerationContractId,
+            BedrockY = -8000,
+            SeaLevelY = 0,
+            EnableUnified3dDensityTerrain = false,
+            EnableProceduralCaves = false,
+            EnableNaturalOverhangs = false,
+            EnableDesignedCaveDensityComposition = false
+        };
+        var grid = new VoxelChunkGridManager {
+            BuildOnReady = false, DormantEditableBackend = true, EnableChunkStreaming = false,
+            UseTerrain3DSurface = true, UseDeterministicTerrainGeneration = true, UseRingCurvedPlacement = true,
+            EnableCanonicalFloatingOriginAnchor = true,
+            AroundRingChunkLength = CertifiedRingScale.AroundChunkCount,
+            RingAcrossWidthMeters = CertifiedRingScale.RingWidthMeters,
+            MaxBuildGlobalY = 8400, MinExcavationGlobalY = -8192, TerrainBottomGlobalY = -8192,
+            TerrainSettings = settings
+        };
+        try
+        {
+            fixture.AddChild(grid);
+            grid.SetFloatingOriginCanonicalAnchor(new RingCanonicalPosition(0.0, 0.0, 0.0));
+            using RingTerrainSampler sampler = grid.CreateIndependentTerrainSampler()
+                ?? throw new InvalidOperationException("cache fixture sampler unavailable");
+            Require(sampler.UsesRuntimeSurfaceGeneration, "cache fixture did not select the runtime sampler");
+
+            CacheBuildResult sampled = RunCacheBuild(fixture, grid, sampler, scratch);
+            Require(sampled.State == "miss" && sampled.Cached == 0 && sampled.Sampled == 4 && sampled.Eligible == 4,
+                $"first build must sample every segment with no cache file, got {sampled.State} cached={sampled.Cached} sampled={sampled.Sampled}");
+            Require(sampled.Wrote && System.IO.File.Exists(file), "first build did not write the global terrain cache");
+            byte[] good = System.IO.File.ReadAllBytes(file);
+            Require(!System.IO.Directory.Exists(System.IO.Path.Combine(scratch, "lod_sectors")), "cache build created a lod_sectors folder");
+
+            CacheBuildResult replayed = RunCacheBuild(fixture, grid, sampler, scratch);
+            Require(replayed.State == "hit" && replayed.Cached == 4 && replayed.Sampled == 0 && !replayed.Wrote,
+                $"second build must replay every segment from the cache, got {replayed.State} cached={replayed.Cached} sampled={replayed.Sampled} wrote={replayed.Wrote}");
+            RequireSameCacheBuild(sampled, replayed, "cached build");
+            Require(System.IO.File.ReadAllBytes(file).AsSpan().SequenceEqual(good), "a cache hit rewrote the file");
+
+            RequireTotalHeader(good, out int version, out int keyLength, out int keyOffset, out int payloadOffset, out int payloadLength);
+            var corruptions = new (string Name, Func<byte[]> Corrupt)[]
+            {
+                ("wrong key", () => { byte[] b = (byte[])good.Clone(); b[keyOffset + keyLength / 2] ^= 0x01; return b; }),
+                ("wrong version", () => { byte[] b = (byte[])good.Clone(); BitConverter.GetBytes(version + 1).CopyTo(b, 4); return b; }),
+                ("truncated file", () => good.AsSpan(0, good.Length / 2).ToArray()),
+                ("flipped payload byte", () => { byte[] b = (byte[])good.Clone(); b[payloadOffset + payloadLength / 2] ^= 0x40; return b; }),
+            };
+            foreach ((string name, Func<byte[]> corrupt) in corruptions)
+            {
+                System.IO.File.WriteAllBytes(file, corrupt());
+                CacheBuildResult fallback = RunCacheBuild(fixture, grid, sampler, scratch);
+                Require(fallback.State == "stale" && fallback.Cached == 0 && fallback.Sampled == 4,
+                    $"{name}: expected a full resample, got {fallback.State} cached={fallback.Cached} sampled={fallback.Sampled}");
+                Require(fallback.Wrote, $"{name}: the stale file was not rewritten");
+                RequireSameCacheBuild(sampled, fallback, name);
+                Require(System.IO.File.ReadAllBytes(file).AsSpan().SequenceEqual(good), $"{name}: the rewritten file differs from the original");
+            }
+            CacheBuildResult recovered = RunCacheBuild(fixture, grid, sampler, scratch);
+            Require(recovered.State == "hit" && recovered.Cached == 4, "the rewritten cache was not usable");
+            // The same through an edit-version bump in the middle of the build (the height field attaching), which swaps the initial snapshot.
+            var attachField = new RingSurfaceHeightField(sampler.TerrainDefinitionHash, sampler.AroundRingVoxelLength,
+                Mathf.RoundToInt(grid.RingAcrossWidthMeters), -8000, 8000, sampler.GetPresentationSurfaceHeight, useTriangleInterpolation: true);
+            try
+            {
+                System.IO.File.Delete(file);
+                CacheBuildResult swappedMiss = RunCacheBuild(fixture, grid, sampler, scratch, attachField);
+                Require(swappedMiss.State == "miss" && swappedMiss.Sampled == 4 && swappedMiss.Wrote && System.IO.File.Exists(file),
+                    $"snapshot swap during a miss build lost the cache write: {swappedMiss.State} sampled={swappedMiss.Sampled} wrote={swappedMiss.Wrote}");
+                RequireSameCacheBuild(sampled, swappedMiss, "snapshot swap (miss)");
+                Require(System.IO.File.ReadAllBytes(file).AsSpan().SequenceEqual(good), "snapshot swap wrote a different file");
+                grid.DetachSurfaceHeightField(attachField);
+                CacheBuildResult swappedHit = RunCacheBuild(fixture, grid, sampler, scratch, attachField);
+                Require(swappedHit.State == "hit" && swappedHit.Cached == 4 && swappedHit.Sampled == 0 && !swappedHit.Wrote,
+                    $"snapshot swap during a hit build dropped the cache: {swappedHit.State} cached={swappedHit.Cached} sampled={swappedHit.Sampled}");
+                RequireSameCacheBuild(sampled, swappedHit, "snapshot swap (hit)");
+            }
+            finally
+            {
+                grid.DetachSurfaceHeightField(attachField);
+            }
+        }
+        finally
+        {
+            grid.Free();
+            try { System.IO.Directory.Delete(scratch, true); } catch (Exception) { }
+        }
+    }
+
+    private static void RequireTotalHeader(byte[] file, out int version, out int keyLength, out int keyOffset, out int payloadOffset, out int payloadLength)
+    {
+        Require(RingTerrainGlobalLod.TryReadGlobalTerrainCacheHeader(file, out version, out keyLength, out keyOffset, out _, out _, out payloadOffset, out payloadLength),
+            "written cache file has no readable header");
+        Require(version == RingTerrainGlobalLod.GlobalTerrainCacheVersion && payloadLength > 0 && file.Length == payloadOffset + payloadLength,
+            "written cache file header is inconsistent");
+    }
+
+    private static CacheBuildResult RunCacheBuild(Node3D fixture, VoxelChunkGridManager grid, RingTerrainSampler sampler, string directory, RingSurfaceHeightField? attachDuringBuild = null)
+    {
+        var lod = new RingTerrainGlobalLod { Name = "GlobalTerrainCacheLod" };
+        fixture.AddChild(lod);
+        try
+        {
+            lod.ConfigureGlobalPreparationFixture(grid, aroundSegments: 256, segmentCount: 4);
+            lod.EnableGlobalTerrainDiskCache = true;
+            lod.GlobalTerrainCacheDirectoryOverride = directory;
+            lod.InstallGlobalPreparationPyramidFixture(new RingTerrainMinMaxPyramid(sampler, lod.RingWidthMeters, 1_000_000), grid.LodSurfaceEditVersion);
+            lod.BuildGlobalRingFixture();
+            if (attachDuringBuild != null)
+            {
+                // The height field attaching bumps the edit version with no edit; the build must keep using (or writing) the cache.
+                lod.ServiceInitialGlobalBuildFixture();
+                grid.AttachSurfaceHeightField(attachDuringBuild);
+                lod.RefreshGlobalPreparationEditsFixture();
+                lod.WaitForGlobalPreparationWorkerFixture();
+                lod.RefreshGlobalPreparationEditsFixture();
+            }
+            lod.WaitForAllGlobalPreparationWorkersFixture();
+            System.Threading.Tasks.Task? write = lod.GlobalTerrainCacheWriteTaskFixture;
+            if (write != null) Require(write.Wait(60_000), "global terrain cache write did not finish");
+            var result = new CacheBuildResult { Wrote = write != null };
+            (result.State, result.Cached, result.Sampled, result.Eligible) = lod.LastGlobalTerrainCacheResult;
+            result.Hashes = lod.GetSegmentOutputHashesFixture();
+            result.Morph = lod.GetMorphDeterminismReport();
+            Require(lod.TryCapturePublishedGlobalMorphFixture(out RingTerrainGlobalMorphSnapshot snapshot), "cache build did not publish a morph snapshot");
+            RingTerrainGlobalMorphSnapshot.Segment[] segments = snapshot.CopySegments();
+            result.Heights = new float[segments.Length][];
+            for (int i = 0; i < segments.Length; i++) result.Heights[i] = segments[i].CopyCanonicalHeights();
+            var vertices = new System.Collections.Generic.List<Vector3[]>();
+            var colors = new System.Collections.Generic.List<Color[]>();
+            for (int i = 0; i < segments.Length; i++)
+            {
+                ArrayMesh mesh = lod.GetGlobalTerrainSegmentFixture(i)?.Mesh as ArrayMesh ?? throw new InvalidOperationException("cache build segment mesh missing");
+                for (int surface = 0; surface < mesh.GetSurfaceCount(); surface++)
+                {
+                    var arrays = mesh.SurfaceGetArrays(surface);
+                    vertices.Add(arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array());
+                    colors.Add(arrays[(int)Mesh.ArrayType.Color].AsColorArray());
+                }
+            }
+            result.MeshVertices = vertices.ToArray();
+            result.MeshColors = colors.ToArray();
+            return result;
+        }
+        finally
+        {
+            lod.InvalidateGlobalPreparationFixture();
+            lod.WaitForGlobalPreparationWorkerFixture();
+            lod.Free();
+        }
+    }
+
+    private static void RequireSameCacheBuild(CacheBuildResult expected, CacheBuildResult actual, string label)
+    {
+        Require(expected.Hashes.AsSpan().SequenceEqual(actual.Hashes), $"{label}: per-segment output hashes (heights, colours, water flags) differ");
+        Require(expected.Morph == actual.Morph && expected.Morph.Length > 0, $"{label}: morph TopologyAndHeightHash differs");
+        Require(expected.Heights.Length == actual.Heights.Length, $"{label}: segment count differs");
+        for (int i = 0; i < expected.Heights.Length; i++)
+        {
+            Require(expected.Heights[i].Length == actual.Heights[i].Length, $"{label}: segment {i} canonical height count differs");
+            for (int v = 0; v < expected.Heights[i].Length; v++)
+                Require(BitConverter.SingleToInt32Bits(expected.Heights[i][v]) == BitConverter.SingleToInt32Bits(actual.Heights[i][v]),
+                    $"{label}: segment {i} canonical height {v} differs");
+        }
+        Require(expected.MeshVertices.Length == actual.MeshVertices.Length, $"{label}: published surface count differs");
+        for (int s = 0; s < expected.MeshVertices.Length; s++)
+        {
+            Require(expected.MeshVertices[s].AsSpan().SequenceEqual(actual.MeshVertices[s]), $"{label}: published mesh vertices of surface {s} differ");
+            Require(expected.MeshColors[s].AsSpan().SequenceEqual(actual.MeshColors[s]), $"{label}: published mesh colours of surface {s} differ");
         }
     }
 

@@ -107,7 +107,7 @@ public partial class RingTerrainLodCoordinator : Node
     [Export(PropertyHint.Range, "100,50000,100")] public float TerrainShadowCoverageMeters { get; set; } = 4000.0f;
 
     [ExportGroup("Generated LOD Disk Cache")]
-    [Export] public bool EnableGeneratedLodDiskCache { get; set; } = true;
+    [Export] public bool EnableGeneratedLodDiskCache { get; set; } = false;
     [Export] public bool ReadGeneratedLodDiskCache { get; set; } = true;
     [Export] public bool WriteGeneratedLodDiskCache { get; set; } = true;
     [Export(PropertyHint.Range, "1,8,1")] public int FirstPersistentLod { get; set; } = 3;

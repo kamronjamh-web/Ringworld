@@ -186,10 +186,14 @@ public sealed class RingLodSurfaceEditSnapshot
     {
         if (!double.IsFinite(globalAroundVoxel) || !double.IsFinite(globalAcrossVoxel))
             throw new ArgumentOutOfRangeException("Presentation surface coordinates must be finite.");
-        if (!sampler.UsesRuntimeSurfaceGeneration || !UsesFloatSurface)
+        if (!sampler.UsesRuntimeSurfaceGeneration)
             return SampleLegacyPresentationHeight(sampler, globalAroundVoxel, globalAcrossVoxel);
+        // Unedited runtime generation has one surface, the 2m lattice, whether or not the gameplay height field has attached
+        // yet (UsesFloatSurface). Taking the 1m bilinear path before the attach made the global terrain depend on load timing.
         if (!HasEdits)
             return sampler.GetPresentationSurfaceHeight(globalAroundVoxel, globalAcrossVoxel);
+        if (!UsesFloatSurface)
+            return SampleLegacyPresentationHeight(sampler, globalAroundVoxel, globalAcrossVoxel);
 
         const int spacing = 2;
         double wrappedAround = globalAroundVoxel % _aroundVoxelLength;

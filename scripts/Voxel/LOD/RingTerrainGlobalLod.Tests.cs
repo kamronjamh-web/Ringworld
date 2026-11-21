@@ -36,6 +36,7 @@ public partial class RingTerrainGlobalLod
         BuildTerrainRoofUnderside = false;
         BuildLowerHullCavityFloor = false;
         BuildTerrainOccluder = false;
+        EnableGlobalTerrainDiskCache = false; // the cache contract test turns it on with a scratch directory
         _observedEditVersion = grid.LodSurfaceEditVersion;
         SetProcess(false);
     }

@@ -764,3 +764,132 @@ These are still open from L1 and L2 and sit on the critical path of every load o
 
 - **Shared cache scope:** the user chose to include the arrival-area data. L2-3f also caches the arrival-area proxy samples and tree tiles per recipe, so a repeated seed loads almost like a reload. Measure their size first, then propose a per-recipe cap and a total cap with eviction. Generation 1 must stay identical, and stale entries are keyed out by the same identity as the 20 MB part.
 - **L1-2 and L2-2:** they join this batch, straight after L2-3a.
+
+## Design study: a sector cache that follows the player (2026-11-21, not built)
+
+Asked by the user on 2026-11-21: keep the proxy sector disk cache, make it follow the player, and make it help load times. Measured on the user's slot 3 (isolated copy, RTX 4070, VSync on, optimized C#), with a throwaway prototype that stored each finished sector (`SectorData`) on disk and skipped `BuildRawSector` on a hit. The prototype is not in the tree.
+
+### What the current cache does
+
+- It stores only the full terrain samples (`TerrainBuildSampleCache.Get`). The height-only halo, normal and parent samples, the 16 m biome weights, the river line, normals and meshing all rerun on a hit. With 85 to 97 % hits, a sector cost 0.27 to 0.30 Gcyc on a hit and 0.31 on a miss.
+- It froze in the world's first 2 minutes. Writes are refused at the 512 MiB budget, and `Trim` only runs above the budget, so it never runs. On slot 3, 505 MiB was written on 11-20 between 19:14 and 19:15 and nothing since.
+- The 2 m and 4 m levels are never cached (`FirstPersistentLod`).
+- The terminal level's key held the global morph hash, which changed on every launch. That hash is now stable: see "Global terrain determinism" below.
+- `LoadedSectorCacheCount` only counts batches that finish uncancelled, so it read 0 during every load.
+
+### Prototype result: finished-sector output cache
+
+| | No cache (fixed tree) | Output cache, warm | Gain |
+|---|---|---|---|
+| CPU per sector, 4 m to 4 km levels | 0.22 to 0.34 Gcyc (50 to 75 ms) | 1.5 Mcyc + 0.55 ms read | about 99 % |
+| Proxy CPU per loading-screen load | about 75 to 100 Gcyc (20+ core-seconds) | about 25 Gcyc (the 2 m level, not cached by the prototype) | about 70 % |
+| Loading screen `world_ready` | 20.55, 20.03 s | 19.89, 20.03 s | 0 to 0.5 s (inside the noise) |
+| Global terrain, queued to ready | 7.6, 7.6 s | 7.6, 7.3 s | none |
+| Continue `continue_available` / `handed_off` | 20.0 / 32.8 s | 20.2 / 32.9 s | none |
+| Continue, proxy levels settled after the hand-off | +2.7 s | +1.0 s (one run) | about 1.5 s of refinement after control returns |
+
+- Every one of the 308 cached sectors was byte-identical to a fresh build in a later launch (vertices, normals, colours, morph, chords, indices). The output is launch-invariant for the same save spot. Other save spots and floating-origin anchors were not tested.
+- **Size:** about 790 KB per sector raw and 320 KB deflated. One arrival area (about 295 sectors without the 2 m level) is about 230 MB raw, or about 95 MB deflated. Quantising heights, normals and morph data should bring a sector to about 100 KB and an arrival area to about 35 MB.
+
+### Why load time does not move
+
+- **Loading screen.** The gate waits for the whole global terrain: 128 segments, about 7.5 s from queue (9.6 s) to ready (17.1 s), then the terminal level and the 0.75 s dwell. The proxies finish before the global terrain in every run, cached or not. Removing their CPU did not speed up the global terrain.
+- **Continue.** The fly-in is a fixed 12 s descent (`DescentSeconds`). Each level is built within 0.1 to 0.6 s of switching on, so the cache cannot shorten it. It only shortens the refinement after the hand-off, and `continue_available` waits for the warm world's global terrain as well.
+
+### Design, if the user still wants it
+
+1. **Store the finished sector,** not samples: the `SectorData` arrays, quantised and deflated. Include the 2 m and 4 m levels (the 2 m level also needs its shoreline tile). Leave out the terminal level's parent-chord offsets, which are the only morph-dependent field; rebuild them at install from the current morph snapshot, so the key has no morph hash.
+2. **Key** on the level definition without the morph hash, plus the sector coordinate. A versioned header in each file holds the sector record version.
+3. **Follow the player.** Keep the 512 MiB budget per world. When a write would exceed it, evict before writing:
+   - first, other key folders (stale definitions);
+   - then the files farthest from the player along the ring, per level;
+   - then the least recently used.
+   Trim also when the world is saved, so the save spot's area always fits.
+4. **The repairs from the 2026-11-21 report:**
+   - trim on a refused write (point 3);
+   - stale key folders first;
+   - no key folder created before its first successful write;
+   - per-sector hit counting, so a cancelled batch still counts its hits;
+   - a stable key (point 2 and the determinism fix).
+5. **Expected gain:** about 0.5 s or less on the loading screen, 0 s on Continue to `handed_off`, about 1.5 s less refinement after the hand-off, and about 20 core-seconds less worker CPU per load. That CPU saving may reduce hitches in the first seconds, which was not measured. Cost is about 35 to 100 MB per arrival area and a size M work order.
+
+### Recommendation
+
+- **Do not build the player-following sector cache for load time.** It cannot move either gate. Build it only if the 1.5 s of refinement after Continue, or the saved CPU, is worth an M-sized order and the disk space.
+- **The cache that would move load time is #12, "cache the built global terrain per world"** (section 3 table). It removes the 7.5 s global terrain build from the loading-screen critical path, and the 6 s from the warm world behind the Continue button. Its data is about 1 MB of heights plus colours for the whole ring, keyed by the terrain definition and the edit version. It was blocked in practice by the non-reproducible segments, which are now fixed.
+  - **Estimate (not prototyped):** about 3 to 4.5 s on the loading screen, and a similar amount earlier `continue_available`. The other owners then set the gate: `surface_ready` at 14 s and the proxies at about 15 s, then the 0.75 s dwell.
+- **Either way, stop the current sample cache from writing,** or replace it, because it buys under 0.3 s.
+
+### Global terrain determinism (fixed 2026-11-21, uncommitted)
+
+- **Cause.** `RingLodSurfaceEditSnapshot.GetPresentationSurfaceHeight(sampler, double, double)` took the legacy 1 m bilinear path while `UsesFloatSurface` was false. In runtime-generation worlds that holds until `VoxelChunkGridManager` attaches its `SurfaceHeightField`. Global segments sampled before the attach used bilinear heights, and the later ones used the 2 m lattice. The frontier moved with load timing: on slot 3, segments 12 to 26 differed by up to 0.27 m between launches.
+- **Fix.** Unedited runtime generation always uses the lattice. Two launches now give byte-identical segments.
+- **Tests.** `global_terrain_preparation_contract_test` was extended, and the new `global_terrain_determinism_test` (manual, GPU, 3 launches) was added. Both fail on the old code.
+- **Not affected:** proxies and Terrain3D, which sample integer columns, where both paths agree.
+- **Affected:** decoration heights computed before the attach (grass, trees; see the fingerprint note in the report).
+
+## #12 Global terrain cache per world: design (2026-11-21, user-approved)
+
+The user chose #12 over the player-following sector cache (2026-11-21), and asked to stop the proxy sample cache from writing and reading by default. Existing `lod_sectors` folders stay on disk until the user approves deleting them. On the 4070 they hold 494.9 MiB (slot 1), 504.1 MiB (slot 2), 505.1 MiB (slot 3) and 501.6 MiB (`user://ring_cache`), about 2.0 GiB in all.
+
+### What is cached
+
+- **The sampled output of the 128 initial global segments.** Per vertex: `TerrainCanonicalHeights`, `RawTerrainHeights`, `RawWaterHeights`, `TerrainColors`, `WaterColors` and `DisplayedWater`, the arrays `SamplePreparedVertex` fills. Each segment also stores its `ComputePreparedOutputHash`.
+- **The layout:** segment count, around and across counts, start index and spacing.
+- **Not cached:** vertex positions, which depend on the floating-origin geometry. They are recomputed on load from the canonical heights with the same two lines `SamplePreparedVertex` uses (`CanonicalToWorld`), at about 0.1 µs per vertex.
+- **Size:** about 2,145 vertices × 45 bytes × 128 segments, roughly 12 MB raw. Deflate brings it to an estimated 5 MB. One file per world.
+
+### Where and how
+
+- **Location:** `<world>/lod_cache/global_terrain.bin`, with one file replaced in place (temp file, then move).
+- **Header:** magic, a format version constant `GlobalTerrainCacheVersion`, and the key. The key is the full definition string plus its 64-bit hash: generator version, seed, `TerrainDefinitionHash`, circumference, ring width, `AroundSegments`, `AcrossSegments`, segment count, `RadialUnderlayOffsetMeters`, `UseMinMaxFeaturePreservation` and the summary's base cell size, the low and high terrain colours, and the river graph identity or `HydrologyVersions`.
+- **Budget:** the file is not counted against the generated-LOD budget (512 MiB). That budget is already full in every played save because of the old `lod_sectors` folders, so a budgeted write would always be refused. It keeps the 2 GiB free-space floor. The file is generated and rebuildable, so a later trim may delete it.
+- **Edits:** a segment is cached only when its initial edit snapshot has no edited column within its around range plus one segment on each side. Edited segments are sampled as today, and the dirty-segment path after the height field attaches is unchanged.
+
+### Read path
+
+- `BuildGlobalRing` tries to load the file once (header, key, lengths, deflate stream, per-segment output hash) on a worker, before or while the segments are queued.
+- A segment with a valid cached record skips sampling. Its "sampling worker" copies the arrays and recomputes the vertices, and everything after that (ahead preparations, `FinalizePreparedSegment`, morph staging, publish) is unchanged.
+- **Fallback:** a missing file, wrong magic, version or key, a short or corrupt stream, or a per-segment hash mismatch makes the whole file stale. The segments are then sampled as today and the file is rewritten after the build.
+- **Publish pacing:** today 1 segment per frame within 2 ms (`MaxSegmentRebuildsPerFrame`), which alone takes about 128 frames, roughly 3 s at loading frame rates. Cached segments may publish up to 8 per frame within the same millisecond deadline.
+
+### Write path
+
+- When the initial build completes (all segments staged, before `TryPublishStagedMorphSnapshot` or right after it), and the file was missing or stale, the build serialises the cached arrays it kept for the eligible segments. It writes them on a background task.
+- The arrays are held only for that write (about 12 MB), and only when a write is due.
+
+### Proxy sample cache off
+
+- `EnableGeneratedLodDiskCache` defaults to false on `RingTerrainLodCoordinator` and `RingTerrainProxySector`.
+- With it off, the proxies neither read nor write `lod_sectors`. No folders are deleted.
+
+### Validation
+
+- **Contract test (headless, gate):**
+  - Cached and freshly sampled segments are byte-identical: heights, colours, water flags and the morph snapshot hash.
+  - A stale key, a wrong version, a truncated file and a flipped payload byte each fall back to a full rebuild, and the file is rewritten.
+- **Determinism:** `global_terrain_determinism_test` passes with the cache on. The second and third launches load from the cache.
+- **Measurement on an isolated slot 3 copy** (loading screen `world_ready` and Continue `continue_available`):
+  - before: cache off;
+  - after: the first launch writes, and the next launches read.
+
+### Expected gain (to be measured)
+
+- **Loading screen:** global terrain from queued to ready falls from about 7.5 s to the publish time (about 0.5 to 1.5 s). `world_ready` should then follow `surface_ready` (about 14 s) and the proxies, plus the 0.75 s dwell, for about 3 to 4.5 s saved.
+- **Continue:** `continue_available` should move by a similar amount.
+
+### #12 results (2026-11-21; isolated slot 3 copy, RTX 4070, VSync on, one run per row)
+
+| Run | Global terrain, queued to ready | `world_ready` | `continue_available` |
+|---|---|---|---|
+| Cache off, load (2 runs) | 8.5, 7.9 s | 19.6, 19.2 s | |
+| Cache off, Continue | 6.0 s | | 17.7 s |
+| First load (miss, writes the file) | 8.2 s | 18.6 s | |
+| Cache hit, load (3 runs) | 5.0, 4.4, 5.0 s | 18.2, 17.3, 17.5 s | |
+| Cache hit, Continue | 3.4 s | | 15.2 s |
+
+- **File and timings:** 7.07 MiB per world. Load and validation take about 40 ms. The write takes about 80 ms in the background. Cached and sampled output are byte-identical (`outputHash A1218A16BDD242C3` in every run).
+- **Gain:** about 1.5 to 2 s on the loading screen and about 2.5 s on Continue. That is less than estimated, because cached segments still publish about one per frame: finalising a segment mesh takes longer than the 2 ms deadline (134 frames).
+  - A temporary 8 ms deadline gave a 3.6 s global terrain; 16 ms gave 2.9 s.
+  - `world_ready` then follows `streaming_settled` and `surface_ready`, so a larger deadline buys little more on the loading screen.
+- **Open decision:** a larger publish deadline for cached segments during loading. It trades loading frame time for about 1 to 2 s of global terrain time.

@@ -2435,6 +2435,20 @@
       "expected_s": 1,
       "timeout_s": 60
     },
+    "global_terrain_determinism_test": {
+      "kind": "test",
+      "gpu_class": "exclusive",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "terrain",
+        "loading"
+      ],
+      "runner": "tools/global_terrain_determinism_test.ps1",
+      "marker": "GLOBAL_TERRAIN_DETERMINISM",
+      "expected_s": 400,
+      "timeout_s": 1500
+    },
     "gpu_grass_card_culling_test": {
       "kind": "test",
       "mode": "gpu",
@@ -3478,6 +3492,17 @@
       "expected_s": 224,
       "timeout_s": 680,
       "parallel_safe": false
+    },
+    "legacy_cache_cleanup_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "loading"
+      ],
+      "marker": "LEGACY_CACHE_CLEANUP",
+      "expected_s": 1,
+      "timeout_s": 60
     },
     "legacy_terrain_isolation_test": {
       "kind": "test",

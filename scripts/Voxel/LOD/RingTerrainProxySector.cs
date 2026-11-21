@@ -157,7 +157,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
     [Export(PropertyHint.Range, "0,8192,16")] public int PartialCoverageMinimumRemovedTriangles { get; set; } = 64;
     [Export(PropertyHint.Range, "0,256,1")] public int PartialCoverageSourceMemoryMiB { get; set; } = 64;
     [ExportGroup("Persistent LOD Cache")]
-    [Export] public bool EnableGeneratedLodDiskCache { get; set; } = true;
+    [Export] public bool EnableGeneratedLodDiskCache { get; set; } = false;
     [Export] public bool ReadGeneratedLodDiskCache { get; set; } = true;
     [Export] public bool WriteGeneratedLodDiskCache { get; set; } = true;
     [Export(PropertyHint.Range, "0,8192,64")] public int GeneratedLodDiskCacheBudgetMiB { get; set; } = 512;
