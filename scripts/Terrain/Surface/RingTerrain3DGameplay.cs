@@ -42,7 +42,7 @@ public partial class RingTerrain3DGameplay : Node3D
     private bool _saveBlocked;
     private bool _initializationFailed;
     private bool _subscribed;
-    private float _actualWalkSpeed = 8;
+    private float _actualWalkSpeed = 2, _actualSprintSpeed = 7;
     private float _brushRadius = 8;
     private float _brushStep = 2;
     private int _meshLods = 4;
@@ -234,7 +234,7 @@ public partial class RingTerrain3DGameplay : Node3D
         }
         _grid.SurfaceTerrainVisualReady = HasVisualCoverage(position);
         if (!_subscribed) { _grid.CanonicalFloatingOriginAnchorChanged += OnFloatingOriginChanged; _subscribed = true; }
-        if (_explorer != null) _explorer.MoveSpeed = _actualWalkSpeed;
+        if (_explorer != null) { _explorer.MoveSpeed = _actualWalkSpeed; _explorer.SprintSpeed = _actualSprintSpeed; }
         return IsReady;
     }
 
@@ -298,7 +298,8 @@ public partial class RingTerrain3DGameplay : Node3D
         _meshSize = GameplaySurfaceTerrainDefaults.ClampMeshSize(settings.MeshSize);
         _handoffDistanceMeters = GameplaySurfaceTerrainDefaults.ClampHandoffDistanceMeters(settings.HandoffDistanceMeters);
         _actualWalkSpeed = GameplaySurfaceTerrainDefaults.ClampMoveSpeedMetersPerSecond(settings.MoveSpeedMetersPerSecond);
-        if (_explorer != null) _explorer.MoveSpeed = _actualWalkSpeed;
+        _actualSprintSpeed = GameplaySurfaceTerrainDefaults.ClampSprintSpeedMetersPerSecond(settings.SprintSpeedMetersPerSecond);
+        if (_explorer != null) { _explorer.MoveSpeed = _actualWalkSpeed; _explorer.SprintSpeed = _actualSprintSpeed; }
         _surface?.SetMeshLods(_meshLods);
         _surface?.SetMeshSize(_meshSize);
         _surface?.SetHandoffDistance(_handoffDistanceMeters);

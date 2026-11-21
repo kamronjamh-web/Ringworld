@@ -867,6 +867,7 @@ func _walk(seconds: float, base: Dictionary) -> Dictionary:
 	var grounded := bool(explorer.call("is_on_floor"))
 	_run_world_clocks()
 	_key(KEY_SHIFT, false)
+	explorer.set("MoveSpeed", 12.0); explorer.set("SprintSpeed", 14.0) # old default walk speed; the shipped default is now 2 m/s walk, 7 sprint
 	_key(KEY_W, true)
 	await COMMON.settle(self, 2.0)
 	var start_pose: Dictionary = COMMON.pose_now(game)

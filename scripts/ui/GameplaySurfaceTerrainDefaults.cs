@@ -16,8 +16,10 @@ public sealed class GameplaySurfaceTerrainDefaults
     public const int MaximumMeshSize = 64;
     public const float MinimumHandoffDistanceMeters = 84.0f;
     public const float MaximumHandoffDistanceMeters = 128.0f;
-    public const float MinimumMoveSpeedMetersPerSecond = 2.0f;
+    public const float MinimumMoveSpeedMetersPerSecond = .5f;
     public const float MaximumMoveSpeedMetersPerSecond = 60.0f;
+    public const float MinimumSprintSpeedMetersPerSecond = 1.0f;
+    public const float MaximumSprintSpeedMetersPerSecond = 80.0f;
     public const int MinimumGenerationWorkerCount = 1;
     public const int MaximumGenerationWorkerCount = 4;
     public const float MinimumGenerationPrefetchMeters = 16.0f;
@@ -95,6 +97,12 @@ public sealed class GameplaySurfaceTerrainDefaults
         if (Mathf.IsEqualApprox(Settings.MoveSpeedMetersPerSecond, value)) return false;
         Settings.MoveSpeedMetersPerSecond = value; Dirty = true; return true;
     }
+    public bool SetSprintSpeedMetersPerSecond(float value)
+    {
+        value = ClampSprintSpeedMetersPerSecond(value);
+        if (Mathf.IsEqualApprox(Settings.SprintSpeedMetersPerSecond, value)) return false;
+        Settings.SprintSpeedMetersPerSecond = value; Dirty = true; return true;
+    }
     public bool SetGenerationWorkerCount(int value) { value = ClampGenerationWorkerCount(value); if (Settings.GenerationWorkerCount == value) return false; Settings.GenerationWorkerCount = value; Dirty = true; return true; }
     public bool SetGenerationPrefetchMeters(float value) { value = ClampGenerationPrefetchMeters(value); if (Mathf.IsEqualApprox(Settings.GenerationPrefetchMeters, value)) return false; Settings.GenerationPrefetchMeters = value; Dirty = true; return true; }
     public bool SetGenerationCacheMiB(int value) { value = ClampGenerationCacheMiB(value); if (Settings.GenerationCacheMiB == value) return false; Settings.GenerationCacheMiB = value; Dirty = true; return true; }
@@ -114,7 +122,7 @@ public sealed class GameplaySurfaceTerrainDefaults
 
     public void Reset()
     {
-        Settings = new GameplaySurfaceTerrainSettings();
+        Settings = new GameplaySurfaceTerrainSettings { MoveSpeedMigration = GameplaySurfaceTerrainSettings.CurrentMoveSpeedMigration };
         LastError = "";
         Dirty = true;
     }
@@ -144,10 +152,11 @@ public sealed class GameplaySurfaceTerrainDefaults
 
     private void Load()
     {
-        Settings = new GameplaySurfaceTerrainSettings();
+        Settings = new GameplaySurfaceTerrainSettings { MoveSpeedMigration = GameplaySurfaceTerrainSettings.CurrentMoveSpeedMigration };
         LastError = "";
         string path = GetPath();
         if (!ResourceLoader.Exists(path)) { Dirty = false; return; }
+        bool migrateMoveSpeed = false;
         try
         {
             GameplaySurfaceTerrainSettings? loaded = ResourceLoader.Load<GameplaySurfaceTerrainSettings>(path, cacheMode: ResourceLoader.CacheMode.Ignore);
@@ -157,6 +166,9 @@ public sealed class GameplaySurfaceTerrainDefaults
             Settings.MeshSize = ClampMeshSize(loaded.MeshSize);
             Settings.HandoffDistanceMeters = ClampHandoffDistanceMeters(loaded.HandoffDistanceMeters);
             Settings.MoveSpeedMetersPerSecond = ClampMoveSpeedMetersPerSecond(loaded.MoveSpeedMetersPerSecond);
+            Settings.SprintSpeedMetersPerSecond = ClampSprintSpeedMetersPerSecond(loaded.SprintSpeedMetersPerSecond);
+            migrateMoveSpeed = loaded.MoveSpeedMigration < GameplaySurfaceTerrainSettings.CurrentMoveSpeedMigration;
+            if (migrateMoveSpeed) Settings.MoveSpeedMetersPerSecond = GameplaySurfaceTerrainSettings.DefaultMoveSpeedMetersPerSecond;
             Settings.GenerationWorkerCount = ClampGenerationWorkerCount(loaded.GenerationWorkerCount);
             Settings.GenerationPrefetchMeters = ClampGenerationPrefetchMeters(loaded.GenerationPrefetchMeters);
             Settings.GenerationCacheMiB = ClampGenerationCacheMiB(loaded.GenerationCacheMiB);
@@ -175,7 +187,7 @@ public sealed class GameplaySurfaceTerrainDefaults
             Settings.GroundColorVariation = ClampGroundColorVariation(loaded.GroundColorVariation);
         }
         catch (Exception error) { LastError = error.Message; }
-        Dirty = false;
+        Dirty = migrateMoveSpeed;
     }
 
     private void ClampSettings()
@@ -185,6 +197,7 @@ public sealed class GameplaySurfaceTerrainDefaults
         Settings.MeshSize = ClampMeshSize(Settings.MeshSize);
         Settings.HandoffDistanceMeters = ClampHandoffDistanceMeters(Settings.HandoffDistanceMeters);
         Settings.MoveSpeedMetersPerSecond = ClampMoveSpeedMetersPerSecond(Settings.MoveSpeedMetersPerSecond);
+        Settings.SprintSpeedMetersPerSecond = ClampSprintSpeedMetersPerSecond(Settings.SprintSpeedMetersPerSecond);
         Settings.GenerationWorkerCount = ClampGenerationWorkerCount(Settings.GenerationWorkerCount);
         Settings.GenerationPrefetchMeters = ClampGenerationPrefetchMeters(Settings.GenerationPrefetchMeters);
         Settings.GenerationCacheMiB = ClampGenerationCacheMiB(Settings.GenerationCacheMiB);
@@ -206,7 +219,8 @@ public sealed class GameplaySurfaceTerrainDefaults
     public static float ClampBrushStepMeters(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumBrushStepMeters, MaximumBrushStepMeters) : 2.0f;
     public static int ClampMeshSize(int value) => Mathf.Clamp(Mathf.RoundToInt(value / 8.0f) * 8, MinimumMeshSize, MaximumMeshSize);
     public static float ClampHandoffDistanceMeters(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumHandoffDistanceMeters, MaximumHandoffDistanceMeters) : 112.0f;
-    public static float ClampMoveSpeedMetersPerSecond(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumMoveSpeedMetersPerSecond, MaximumMoveSpeedMetersPerSecond) : 12.0f;
+    public static float ClampMoveSpeedMetersPerSecond(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumMoveSpeedMetersPerSecond, MaximumMoveSpeedMetersPerSecond) : GameplaySurfaceTerrainSettings.DefaultMoveSpeedMetersPerSecond;
+    public static float ClampSprintSpeedMetersPerSecond(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumSprintSpeedMetersPerSecond, MaximumSprintSpeedMetersPerSecond) : GameplaySurfaceTerrainSettings.DefaultSprintSpeedMetersPerSecond;
     public static int ClampGenerationWorkerCount(int value) => Mathf.Clamp(value, MinimumGenerationWorkerCount, MaximumGenerationWorkerCount);
     public static float ClampGenerationPrefetchMeters(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumGenerationPrefetchMeters, MaximumGenerationPrefetchMeters) : 64.0f;
     public static int ClampGenerationCacheMiB(int value) => Mathf.Clamp(value, MinimumGenerationCacheMiB, MaximumGenerationCacheMiB);

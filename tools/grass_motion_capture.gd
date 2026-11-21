@@ -13,7 +13,7 @@ extends SceneTree
 #
 # --pose relocates from the far-ring pose to a canonical (around, across) point (2 m above the surface, then landed).
 # --survey ranks dense-forest candidates near the Certified grove, visits each, prints GRASS_MOTION_SURVEY lines, quits.
-# circle walks forward at the explorer's real MoveSpeed while yawing at --circle-yaw-rate deg/s (radius = v / rate).
+# circle walks forward at CIRCLE_SPEED (12 m/s) while yawing at --circle-yaw-rate deg/s (radius = v / rate).
 #
 # Output: res://.godot/grass-motion/<label>-<pid>-<time>/report.json, plus one GRASS_MOTION_PHASE line per phase.
 
@@ -49,8 +49,9 @@ var capture_vsync := -1
 # Custom pose (--pose): canonical around/across, landed vertical, and the explorer's real (preference) walk speeds.
 var custom_pose := {}
 var circle_yaw_rate := 30.0
-var real_move_speed := 8.0
-var real_sprint_speed := 14.0
+var real_move_speed := 2.0
+var real_sprint_speed := 7.0
+const CIRCLE_SPEED := 12.0 # the circle motion keeps its old 12 m/s (radius = v / yaw rate); the shipped walk default is now 2 m/s
 var pose_report := {}
 var survey_results: Array = []
 var path_trace: Array = []
@@ -310,7 +311,7 @@ func _capture(case_name: String, motion_name: String) -> bool:
 	var start_position: Dictionary = probe.ExplorerState(explorer)
 	motion_elapsed = 0.0
 	if motion_name == "walk5" or motion_name == "circle":
-		var speed := walk_speed if motion_name == "walk5" else real_move_speed
+		var speed := walk_speed if motion_name == "walk5" else CIRCLE_SPEED
 		explorer.set("MoveSpeed", speed)
 		explorer.set("SprintSpeed", speed)
 		explorer.set_physics_process(true)
@@ -356,7 +357,7 @@ func _capture(case_name: String, motion_name: String) -> bool:
 			"lastMotionPixels":interleave_after.motion, "setting":clouds.get("cloud_interleave") if clouds != null else null},
 		"water":_water_state(), "trees":trees_after, "treeDispatches":int(trees_after.gpu_tree_dispatches) - int(trees_before.gpu_tree_dispatches),
 		"treePlans":int(trees_after.vegetation_plans) - int(trees_before.vegetation_plans),
-		"walkSpeed":(walk_speed if motion_name == "walk5" else (real_move_speed if motion_name == "circle" else 0.0)),
+		"walkSpeed":(walk_speed if motion_name == "walk5" else (CIRCLE_SPEED if motion_name == "circle" else 0.0)),
 		"circleYawRate":(circle_yaw_rate if motion_name == "circle" else 0.0),
 		"endSpeed":float(end_position.speed), "startPosition":start_position, "endPosition":end_position, "path":path_trace.duplicate(),
 		"movedMeters":Vector2(float(end_position.around) - float(start_position.around), float(end_position.across) - float(start_position.across)).length(),

@@ -303,6 +303,7 @@ func _scenario(sc: Dictionary, vsync_on: bool) -> Dictionary:
 				await COMMON.wait_builds_idle(self, game, 120.0)
 				DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_ENABLED if vsync_on else DisplayServer.VSYNC_DISABLED)
 			var start_pose: Dictionary = COMMON.pose_now(game)
+			explorer.set("MoveSpeed", 12.0); explorer.set("SprintSpeed", 14.0) # old default walk speed; the shipped default is now 2 m/s walk, 7 sprint
 			_key(KEY_W, true)
 			await COMMON.settle(self, 1.5)
 			w = await _window(tag, seconds, {})

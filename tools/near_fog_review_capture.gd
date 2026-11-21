@@ -273,6 +273,7 @@ func _record(clip: String, count: int, view: Callable, keys := Callable()) -> Di
 	DirAccess.make_dir_recursive_absolute(dir)
 	var t0 := Time.get_ticks_msec()
 	var speeds: Array = []
+	if keys.is_valid(): explorer.set("MoveSpeed", 12.0); explorer.set("SprintSpeed", 14.0) # old default walk speed; the shipped default is now 2 m/s walk, 7 sprint
 	for i in count:
 		var v = view.call(i)
 		if v != null:

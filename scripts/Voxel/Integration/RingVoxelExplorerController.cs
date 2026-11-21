@@ -34,8 +34,8 @@ public partial class RingVoxelExplorerController : CharacterBody3D
     [Export] public bool EnableAltitudeGravityFalloff { get; set; } = true;
     [Export(PropertyHint.Range, "1000,50000,100")] public float GravityFadeStartHeightMeters { get; set; } = 10000.0f;
     [Export(PropertyHint.Range, "1000,100000,100")] public float GravityZeroHeightMeters { get; set; } = 20000.0f;
-    [Export(PropertyHint.Range, "1,30,0.1")] public float MoveSpeed { get; set; } = 8.0f;
-    [Export(PropertyHint.Range, "1,60,0.1")] public float SprintSpeed { get; set; } = 14.0f;
+    [Export(PropertyHint.Range, "1,30,0.1")] public float MoveSpeed { get; set; } = 2.0f;
+    [Export(PropertyHint.Range, "1,60,0.1")] public float SprintSpeed { get; set; } = 7.0f;
     [Export(PropertyHint.Range, "1,100,0.1")] public float GroundAcceleration { get; set; } = 45.0f;
     [Export(PropertyHint.Range, "1,100,0.1")] public float AirAcceleration { get; set; } = 10.0f;
     [Export(PropertyHint.Range, "1,30,0.1")] public float JumpVelocity { get; set; } = 8.5f;

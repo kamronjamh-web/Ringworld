@@ -34,7 +34,7 @@ public partial class RingTerrain3DPilot : Node3D
     private bool _saveBlocked;
     private ulong _savedRevision;
     private bool _fly;
-    private float _brushRadius = 8, _brushStep = 2, _moveSpeed = 12;
+    private float _brushRadius = 8, _brushStep = 2, _moveSpeed = 2, _sprintSpeed = 7;
     private int _meshLods = 4;
     private int _meshSize = 48;
     private double _autosave = 20;
@@ -120,7 +120,7 @@ public partial class RingTerrain3DPilot : Node3D
         Vector2 input = canControl ? MovementInput() : Vector2.Zero;
         Vector3 forward = -_player.GlobalTransform.Basis.Z; forward.Y = 0; forward = forward.Normalized();
         Vector3 right = _player.GlobalTransform.Basis.X; right.Y = 0; right = right.Normalized();
-        float speed = _moveSpeed * (Input.IsPhysicalKeyPressed(Key.Shift) ? 1.8f : 1f);
+        float speed = (Input.IsPhysicalKeyPressed(Key.Shift) ? _sprintSpeed : _moveSpeed);
         Vector3 horizontal = (right * input.X + forward * input.Y) * speed;
         Vector3 velocity = _player.Velocity; velocity.X = horizontal.X; velocity.Z = horizontal.Z;
         if (_player.IsOnFloor() && canControl && Input.IsPhysicalKeyPressed(Key.Space)) velocity.Y = 8.5f; else velocity.Y -= 24 * dt;
@@ -158,6 +158,7 @@ public partial class RingTerrain3DPilot : Node3D
         _brushRadius = GameplaySurfaceTerrainDefaults.ClampBrushRadiusMeters(settings.BrushRadiusMeters);
         _brushStep = GameplaySurfaceTerrainDefaults.ClampBrushStepMeters(settings.BrushStepMeters);
         _moveSpeed = GameplaySurfaceTerrainDefaults.ClampMoveSpeedMetersPerSecond(settings.MoveSpeedMetersPerSecond);
+        _sprintSpeed = GameplaySurfaceTerrainDefaults.ClampSprintSpeedMetersPerSecond(settings.SprintSpeedMetersPerSecond);
         _meshSize = GameplaySurfaceTerrainDefaults.ClampMeshSize(settings.MeshSize);
         _surface?.SetMeshLods(_meshLods);
         _surface?.SetMeshSize(_meshSize);

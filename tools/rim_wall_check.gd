@@ -108,6 +108,7 @@ func _tap(code: Key) -> void:
 	await process_frame
 
 func _hold(code: Key, seconds: float) -> void:
+	_explorer.set("MoveSpeed", 12.0); _explorer.set("SprintSpeed", 14.0) # old default walk speed; the shipped default is now 2 m/s walk, 7 sprint
 	_key(code, true)
 	await create_timer(seconds).timeout
 	_key(code, false)

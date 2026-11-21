@@ -361,6 +361,7 @@ func _sweep_walk(name: String, pose: Dictionary, secs: float) -> void:
 	WORLD.freeze_world(game)
 	var entry := _begin(name)
 	var start: Dictionary = COMMON.pose_now(game)
+	explorer.set("MoveSpeed", 12.0); explorer.set("SprintSpeed", 14.0) # old default walk speed; the shipped default is now 2 m/s walk, 7 sprint
 	_key(KEY_W, true)
 	await _run_frames(entry, secs)
 	_key(KEY_W, false)

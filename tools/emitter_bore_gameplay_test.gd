@@ -283,6 +283,7 @@ func _run_site(label: String, info: Dictionary, full: bool) -> bool:
 	var clamp: Vector3 = probe.call("ConstrainedVelocity", surface, explorer, Vector3(50.0, 0.0, 50.0), 1.0 / 60.0)
 	if not _check(clamp.is_equal_approx(Vector3(50.0, 0.0, 50.0)), "velocity clamp active in the cavern: %s" % clamp): return false
 	var start := _diag()
+	explorer.set("MoveSpeed", 12.0); explorer.set("SprintSpeed", 14.0) # old default walk speed; the shipped default is now 2 m/s walk, 7 sprint
 	_key(KEY_W, true)
 	var worst_up := 0.0
 	prev = float(start["player_height"])

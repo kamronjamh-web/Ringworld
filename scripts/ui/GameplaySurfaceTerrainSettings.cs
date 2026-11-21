@@ -14,7 +14,14 @@ public partial class GameplaySurfaceTerrainSettings : Resource
     // Radius of the Terrain3D-owned disk. The proxy transition is centered
     // on this value and remains ready-coverage gated.
     [Export] public float HandoffDistanceMeters { get; set; } = 112.0f;
-    [Export] public float MoveSpeedMetersPerSecond { get; set; } = 12.0f;
+    // Realistic movement (user 2026-11-20): walk 2 m/s, sprint 7 m/s. Older files without SprintSpeedMetersPerSecond load the default.
+    public const float DefaultMoveSpeedMetersPerSecond = 2.0f;
+    public const float DefaultSprintSpeedMetersPerSecond = 7.0f;
+    public const int CurrentMoveSpeedMigration = 1;
+    [Export] public float MoveSpeedMetersPerSecond { get; set; } = DefaultMoveSpeedMetersPerSecond;
+    [Export] public float SprintSpeedMetersPerSecond { get; set; } = DefaultSprintSpeedMetersPerSecond;
+    // One-time marker: files saved before it existed (0) get their walk speed reset to the new default on first load.
+    [Export] public int MoveSpeedMigration { get; set; } = 0;
     [Export] public int GenerationWorkerCount { get; set; } = 2;
     [Export] public float GenerationPrefetchMeters { get; set; } = 64.0f;
     [Export] public int GenerationCacheMiB { get; set; } = 8;
