@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Godot;
 using RingworldTechDemo.Tools;
@@ -22,14 +24,14 @@ namespace RingworldTechDemo.Tests;
 ///   e. feature off: the generation 1 creation helper gives no layer, hence no bodies.
 ///   f. pose identity: for 20 records the body's transform scaled by the size equals the renderer's source row (BuildSources) in the layer's anchor frame, and a floating-origin rebase moves every body with it.
 ///   g. install rate: no frame installs more than 8 bodies (counted by the layer and as body-count deltas between frames).
-///   h. timing: average and maximum main-thread ms of the per-frame collider update over a simulated 60 s walk at 6 m/s across steep_eye (printed; limits 0.05 ms average, 0.75 ms single frame).
+///   h. timing over a simulated 60 s walk at 6 m/s across steep_eye, settled at its own start (no 150 m jump on frame 1): the layer's wall average (limit 0.05 ms) and the main-thread CPU work of each update, measured as thread cycle time with GC frames excluded and counted (limit 0.75 ms single frame); wall time is printed.
 /// Headless: tools/run_tests.ps1 -Tests scatter_collision_test. User arg --radius=0 sets the layer radius to 0 (the can-it-fail run: a and b must fail).
 /// </summary>
 public partial class ScatterCollisionTest : Node
 {
     private const double Circ = LandscapeWorld.Circumference;
     private const float WalkSpeed = 6f;
-    // FrameLimitMs 0.5 -> 0.75 (2026-11-19): the design-A5 boulder density (user's choice) puts about 2.5x the boulders in the 110 m pool, and the re-evaluation frame (not the installs, max 8) scales with them; the average stays far under its limit.
+    // FrameLimitMs 0.5 -> 0.75 (2026-11-19): the design-A5 boulder density (user's choice) puts about 2.5x the boulders in the 110 m pool, and the re-evaluation frame (not the installs, max 8) scales with them; the average stays far under its limit. The frame limit applies to the update's main-thread CPU work (thread cycle time; OS descheduling and GC pauses are not work).
     private const double AverageLimitMs = .05, FrameLimitMs = .75;
 
     public string Result { get; private set; } = "RUNNING";
@@ -193,28 +195,80 @@ public partial class ScatterCollisionTest : Node
         // h. walk
         _records = real;
         _epoch++;
+        // The walk settles at its own first-frame focus (no 150 m jump on frame 1); geometry stays anchored at steep_eye.
+        RingCanonicalPosition WalkFocus(double travelled)
+        {
+            double phase = travelled % 600.0, offset = phase < 300.0 ? phase - 150.0 : 450.0 - phase; // triangle wave, +-150 m around the pose
+            return new RingCanonicalPosition(_steep.Around + offset, _steep.Ground, _steep.Across);
+        }
         Teleport(steepFocus, true);
+        _focus = WalkFocus(WalkSpeed / 60.0);
         await Settle("walk start");
         _layer.ResetColliderTiming();
         long installsBefore = _layer.ColliderInstallsTotal;
         int minBodies = int.MaxValue, maxBodies = 0;
         const int Frames = 3600;
         double travelled = 0.0;
+        bool windows = OperatingSystem.IsWindows();
+        double cyclesPerMs = windows ? CalibrateCyclesPerMs() : 0.0;
+        double workMax = 0.0, workTotal = 0.0, wallSumNonGc = 0.0, wallMax = 0.0, wallMaxWork = 0.0, wallMaxGc = 0.0, gcMax = 0.0;
+        int gcFrames = 0;
+        _layer.SetProcess(false); // the test drives the update itself so it can bracket it
         for (int i = 0; i < Frames; i++)
         {
             travelled += WalkSpeed / 60.0;
-            double phase = travelled % 600.0, offset = phase < 300.0 ? phase - 150.0 : 450.0 - phase; // triangle wave, +-150 m around the pose
-            _focus = new RingCanonicalPosition(_steep.Around + offset, _steep.Ground, _steep.Across);
+            _focus = WalkFocus(travelled);
             if (i % 120 == 0) _epoch++; // tiles streaming in or out about every 2 s
             await Frame();
+            TimeSpan gc0 = GC.GetTotalPauseDuration();
+            ulong c0 = 0, c1 = 0;
+            if (windows) QueryThreadCycleTime(GetCurrentThread(), out c0);
+            long w0 = Stopwatch.GetTimestamp();
+            _layer._Process(1.0 / 60.0);
+            long w1 = Stopwatch.GetTimestamp();
+            if (windows) QueryThreadCycleTime(GetCurrentThread(), out c1);
+            TimeSpan gc1 = GC.GetTotalPauseDuration();
+            double wallMs = (w1 - w0) * 1000.0 / Stopwatch.Frequency, gcMs = (gc1 - gc0).TotalMilliseconds;
+            double workMs = windows ? (c1 - c0) / cyclesPerMs : 0.0;
+            if (wallMs > wallMax) { wallMax = wallMs; wallMaxWork = workMs; wallMaxGc = gcMs; }
+            if (gcMs > 0.0) { gcFrames++; gcMax = Math.Max(gcMax, gcMs); }
+            else { workMax = Math.Max(workMax, workMs); workTotal += workMs; wallSumNonGc += wallMs; }
             int count = _layer.ColliderCount;
             minBodies = Math.Min(minBodies, count); maxBodies = Math.Max(maxBodies, count);
         }
+        _layer.SetProcess(true);
         double average = _layer.ColliderUpdateMsTotal / Math.Max(1, _layer.ColliderUpdateFrames), maximum = _layer.ColliderUpdateMsMax;
-        _log.Add($"h: simulated {Frames / 60} s walk at {WalkSpeed} m/s over {real.Count} records ({_layer.ColliderEligibleCount} eligible), {maxBodies} max bodies (min {minBodies}), {_layer.ColliderInstallsTotal - installsBefore} installs: update average {average:0.0000} ms, max {maximum:0.000} ms per frame over {_layer.ColliderUpdateFrames} frames");
+        string clock = windows ? $"cycle clock {cyclesPerMs / 1e6:0.00} M/ms, work max {workMax:0.000} ms" : "no cycle clock (wall max)";
+        _log.Add($"h: simulated {Frames / 60} s walk at {WalkSpeed} m/s over {real.Count} records ({_layer.ColliderEligibleCount} eligible), {maxBodies} max bodies (min {minBodies}), {_layer.ColliderInstallsTotal - installsBefore} installs: update wall average {average:0.0000} ms, wall max {wallMax:0.000} ms (that frame: work {wallMaxWork:0.000} ms, gc {wallMaxGc:0.000} ms) per frame over {_layer.ColliderUpdateFrames} frames; {clock}; {gcFrames} GC frames (largest pause {gcMax:0.000} ms)");
         Check(average <= AverageLimitMs, $"h: the average collider update is {average:0.0000} ms (limit {AverageLimitMs})");
-        Check(maximum <= FrameLimitMs, $"h: a collider update frame took {maximum:0.000} ms (limit {FrameLimitMs})");
+        if (windows)
+        {
+            Check(cyclesPerMs > 100000.0, $"h: the cycle clock reads {cyclesPerMs:0} cycles/ms, too low to trust");
+            Check(workTotal >= 0.5 * wallSumNonGc, $"h: the cycle clock saw {workTotal:0.00} ms of work against {wallSumNonGc:0.00} ms of wall time on non-GC frames (measurement blind)");
+            Check(gcFrames <= 10, $"h: {gcFrames} frames contained a GC pause (limit 10)");
+            Check(workMax <= FrameLimitMs, $"h: a collider update frame used {workMax:0.000} ms of main-thread CPU (limit {FrameLimitMs})");
+        }
+        else Check(maximum <= FrameLimitMs, $"h: a collider update frame took {maximum:0.000} ms (limit {FrameLimitMs})");
         Check(_layer.ColliderMaxInstallsInFrame <= 8, "g: the layer installed more than 8 bodies in a walk frame");
+    }
+
+    [DllImport("kernel32.dll")] private static extern bool QueryThreadCycleTime(IntPtr thread, out ulong cycles);
+    [DllImport("kernel32.dll")] private static extern IntPtr GetCurrentThread();
+
+    /// <summary>Thread cycles per wall ms: 3 busy spins of about 10 ms, the maximum (descheduling only lowers a spin's rate).</summary>
+    private static double CalibrateCyclesPerMs()
+    {
+        double best = 0.0;
+        for (int s = 0; s < 3; s++)
+        {
+            QueryThreadCycleTime(GetCurrentThread(), out ulong c0);
+            long w0 = Stopwatch.GetTimestamp(), spin = 0;
+            while ((Stopwatch.GetTimestamp() - w0) * 1000.0 / Stopwatch.Frequency < 10.0) spin++;
+            long w1 = Stopwatch.GetTimestamp();
+            QueryThreadCycleTime(GetCurrentThread(), out ulong c1);
+            best = Math.Max(best, (c1 - c0) / ((w1 - w0) * 1000.0 / Stopwatch.Frequency));
+        }
+        return best;
     }
 
     // ------------------------------------------------------------------ e
