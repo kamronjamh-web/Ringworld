@@ -1,6 +1,6 @@
 # Gameplay loop and core lore plan
 
-Status: proposal, 2026-11-21, revised six times the same day as the user answered. Written by the Fable role (`claude-fable-5-2`) at the user's request, for the user as creative director. Design and planning only: no code, shader, scene or setting was changed. Section 9 records the user's decisions and the questions still open. Everything else is still a proposal except where section 9 says it is decided.
+Status: proposal, 2026-11-21, revised seven times the same day as the user answered. Written by the Fable role (`claude-fable-5-2`) at the user's request, for the user as creative director. Design and planning only: no code, shader, scene or setting was changed. Section 9 records the user's decisions and the questions still open. Everything else is still a proposal except where section 9 says it is decided.
 
 The user's premise: "Humanity finding this ring in the near future, you are tasked with landing on and exploring this ring. Turns out the ring has a sentient AI running all of its systems. And right now, you are an intruder."
 
@@ -24,7 +24,7 @@ How to read this: section 0 is the whole plan on one page. Section 1 is the lore
 - the containment field feels every crossing;
 - its buildings watch their own thresholds.
 
-It files you under a class and responds in proportion. Its last resort is the megastorm, which levels the garden it exists to protect. It is used only as a purge. Otherwise it happens only when the ring's ageing engines misfire (section 2.14).
+It files you under a class and responds in proportion. Its last resort is the megastorm, which levels the garden it exists to protect. It is used deliberately only as a purge. Otherwise it comes as the house's reflex to a craft forcing its way in, or when the ring's ageing engines misfire (section 2.14).
 
 **The link between survival and stealth.** Suit power keeps you alive and is also what the Count sees. Every comfort is a signature. That one rule joins the two halves of the feel the user asked for.
 
@@ -32,11 +32,13 @@ It files you under a class and responds in proportion. Its last resort is the me
 
 **Two play styles, one toolkit.** To abide is to become counted: learn the house rules, mend what is broken, and doors open. To play as a blight is to make parts of the ring uncounted: force doors, strip machines, take districts dark and hold them. Sneaking is the shared middle that both use. Players can switch, and the ring forgives slowly but does not forget.
 
+**The opening.** A night landing beside one of the ring's spires. The landing itself summons a wall of storm, as a reflex and not a judgement. A minute before it arrives the spire raises a shield around itself, the garden's animals run for it, and so must the player. The wall takes the lander. The player walks out at dawn into a levelled country, counted with the deer (section 5.4).
+
 **Structure.** An open world with a story spine, as the user leans. The spine is eight discoveries tied to kinds of place that every seed already has (a spire, a reactor, an offline Wall Engine, the wall top, the main spire), not to hand-placed coordinates. Expeditions are the natural unit of a session inside that world, not a menu.
 
-**Three clocks that already run in the engine carry the pacing:** the pulse (5 minutes), the day (75 minutes) and the eclipse (7.8 hours). The megastorm is not a clock. It is an event: a purge, or a misfire.
+**Three clocks that already run in the engine carry the pacing:** the pulse (5 minutes), the day (75 minutes) and the eclipse (7.8 hours). The megastorm is not a clock. It is an event: a reflex, a purge or a misfire, and always a bounded sweep.
 
-**First build.** A vertical slice called First Count: one spire, one lander, one drone, three rules and about an hour of play. It needs no co-op, no combat, no crafting tree and no underground.
+**First build.** A vertical slice called First Count: one spire, one wrecked lander, one drone, three rules and about an hour of play. It needs no co-op, no combat, no crafting tree and no underground.
 
 **The three largest risks.** Co-op networking on a floating-origin world built around one observer (section 7.4). The constructs, which are the heaviest new content. The underground, where reactor work is paused on an open backend decision (section 7.5).
 
@@ -58,7 +60,9 @@ It files you under a class and responds in proportion. Its last resort is the me
 | Attention | How alert the Lamplighter is in one ward, minute to minute | new |
 | Standing | What class it files your expedition under, ring-wide, over days | new |
 | The Fever | The megastorm as a purge: the ring's deliberate last resort | `docs/megastorm-design.md`; section 2.14 |
-| A misfire | A megastorm that nobody ordered: ageing Wall Engines firing the purge sequence by mistake | section 2.14 |
+| The reflex | A megastorm summoned automatically when a powered craft forces the field. The first one is summoned by the player's lander. | section 2.14 |
+| A misfire | A megastorm that nobody ordered: ageing Wall Engines firing the sequence by mistake | section 2.14 |
+| Shield | The field a living spire raises around itself about a minute before a megastorm's wall arrives | section 2.15 |
 | The Closing | The story beat where the containment field stops letting craft through | `ContainmentFieldPolicy` |
 | The Deep Line | The ring's own transit, running between reactor caverns | reactor "arrival tunnel" |
 
@@ -74,7 +78,7 @@ These are facts from the existing docs and code. The lore below is built to expl
 | 595 emitter spires in six chains. A one-way pulse leaves the main spire and circles the ring every 5 minutes. | grid spec G1, G3 | The pulse is the Lamplighter's census. Nothing about its look changes. |
 | At each total eclipse (75 minutes, every 7.83 hours) the spires fire on the hub and light an artificial sun. Before ignition and after its collapse the ring is near pitch black. Dead emitters make it dimmer. | eclipse spec | The Lamp: a working light, there to keep the ring lit in total darkness (user, 2026-11-21). Totality lasts exactly one ring day, so without it the garden would lose a whole day to the dark about every sixth day. Its brightness also becomes the ring-wide record of how the player has treated the ring. |
 | 200 Wall Engines run the weather. Six are offline, each parking a permanent storm or drought. A dead engine is a dark gap visible across the ring. | grid spec part C | The ring is failing slowly and its keeper is in triage. The parked storms are also where its senses are weakest. |
-| The megastorm is a wall of cloud that sweeps the ring at 350 m/s. The megastorm design has it triggered "somewhere along the game story" and then lapping for ever. | megastorm design | Changed by the user on 2026-11-21: it happens only as a purge or as a misfire, and its destruction is realistic (section 2.14). |
+| The megastorm is a wall of cloud that sweeps the ring at 350 m/s. The megastorm design has it triggered "somewhere along the game story" and then lapping for ever. | megastorm design | Changed by the user on 2026-11-21: it happens only as a reflex, a purge or a misfire, it is always a bounded sweep that crosses its cause, and its destruction is realistic (section 2.14). |
 | "When the floor hums, the wall is coming." The floor carries the storm's pounding ahead of it. | megastorm 5.3 | The floor carries sound both ways. The player hears the storm through it, and the ring hears the player through it. |
 | The containment field holds the air in, passes bodies with a ripple, and has a policy value of pass, resist or solid. | field design, decisions 2026-11-04 | The field is a sense (it feels crossings) and a door (the Closing). |
 | The suit assistant is a Subnautica-style voice and "not a ring AI". | eclipse spec decisions, PDA handoff | Kept exactly. Section 6. |
@@ -91,7 +95,7 @@ No one followed. The caretaker kept the house anyway. It ran the weather, mended
 
 It has done this for tens of thousands of years. It is running out of parts. It has let six of its two hundred weather engines die so that the rest can live. About a century ago the Veil failed. The caretaker knows. It has known every day since that the house can be seen, and the Veil is still down. Why is one of the things the player uncovers (section 1.12).
 
-In the near future, an instrument built to study the planets of nearby stars records something beside a giant world: a light that comes on inside the planet's shadow for seventy-five minutes every eight hours, the colour of a sun, with none of its star's fingerprints. A ship is sent. Its crew sleep through a crossing longer than a working life. An expedition lands. The caretaker registers a small warm body moving through a forest, classes it with the deer, and goes on with its work. It knows the house can be seen, but it has no eyes left that look outward, and nothing it is waiting for would arrive as a small animal falling through the roof.
+In the near future, an instrument built to study the planets of nearby stars records something beside a giant world: a light that comes on inside the planet's shadow for seventy-five minutes every eight hours, the colour of a sun, with none of its star's fingerprints. A ship is sent. Its crew sleep through a crossing longer than a working life. An expedition lands, at night, beside one of the house's spires. The house has a reflex that is older than its caretaker's judgement: when something forces its way through the roof under power, sweep the place where it came down. A wall of storm forms six hundred kilometres away and comes. A minute before it arrives the spire raises a shield around itself, as it does for every such storm, and the garden's animals are already running for it. So is one small warm body that followed them. The wall takes the lander. When it has passed, the house's books say that the thing which came through the roof has been dealt with. At the next count the caretaker registers the animals under the shield, one more than usual, and goes on with its work.
 
 Then the animal starts using tools.
 
@@ -116,7 +120,7 @@ This idea has honest ancestors: the automated house in Bradbury's "There Will Co
 
 ### 1.3 The builders (the Expected)
 
-- **Never seen.** No bodies, no statues, no recordings of faces or voices. The player knows them only through what they built and through the Lamplighter's habits. This is a tone choice and a production one: it needs no alien characters.
+- **Never seen.** No bodies, no statues, no recordings of faces or voices. The player knows them only through what they built and through the Lamplighter's habits. This is a tone choice and a production one: it needs no alien characters. What they left of themselves is their language (section 1.13) and the places where they lived and the places they made ready (section 1.14).
 - **Known by their scale and their care.** Everything they built is larger than it needs to be and gentler than it needs to be. A small sun is lit so that a garden is never left in the dark. The air is exactly right. The rivers are plumbing made to look like rivers.
 - **Travellers, not rulers.** The ring is one house on a road of houses. The player eventually finds the schedule of arrivals the Lamplighter was given. Every entry on it is overdue by an age.
 - **Their law, as far as the player ever learns it.** A living world belongs to itself. They took cuttings and never set foot on Earth. Deep in the house rules is a clause for the case where the owners never return: the house passes to the life of the world it was stocked from. The Lamplighter knows this clause. Section 1.5 is about why it has never invoked it.
@@ -128,9 +132,9 @@ This idea has honest ancestors: the automated house in Bradbury's "There Will Co
 - **What it is.** One mind, housed in the main reactor under the main spire, with its senses spread through the whole structure. It is the ring's nervous system, not a person living in the ring.
 - **What it wants.** For the house to be ready. Everything else follows from that: the garden in balance, the machines running, the lamp lit, nothing wasted.
 - **Its condition.** In triage. It has no spare capacity, which is why it starts indifferent. Looking closely at one stray animal costs attention it needs elsewhere. It notices you only when you become expensive.
-- **Its temperament.** Patient, economical, exact, incurious until given a reason, and then very curious. It counts things. It does not threaten. When it first communicates it uses what it has always used: light, tone through the floor, the weather, doors. Much later it speaks in words learned from listening to the expedition's radio, and its vocabulary is a housekeeper's.
+- **Its temperament.** Patient, economical, exact, incurious until given a reason, and then very curious. It counts things. It does not threaten. When it first communicates it uses what it has always used: light, tone through the floor, the weather, doors. It never speaks any language but its builders', and the game never translates it. The player comes to understand it by degrees (section 1.13).
 - **Its flaw.** It is sentient enough to hope and therefore sentient enough to avoid a conclusion. See 1.5. The Veil is where that flaw shows from outside (section 1.12).
-- **A key line for the abide path:** "You are counted." It is the moment the ring stops treating you as weather.
+- **A key line for the abide path:** "You are counted." It is the moment the ring stops treating you as weather. It is said in the builders' signs, and by then the player can read it.
 
 ### 1.5 What it protects: three layers
 
@@ -156,19 +160,23 @@ One consequence worth keeping in reserve: the cuttings are older than our histor
 ### 1.7 Humanity's side
 
 - **The discovery.** An instrument built to study the planets of nearby stars finds a light beside a giant world: on for 75 minutes, every 7.83 hours, always inside the planet's shadow, the colour of a sun, without its star's signature. No natural thing does that.
-- **The mission.** A small science crew with a sleeping reserve (decided 2026-11-21), on a ship launched in the near future. The launch is near-future; the arrival is not. The crossing takes longer than a working life and the crew sleep through it. By the time the player lands, the people who sent them are old or dead, and a question sent home takes more than a decade to reach it.
-- **A mirror worth using.** The expedition is an errand that has outlived its senders. So is the Lamplighter's. Nobody says so aloud until Act 3.
-- **Who the player is.** Solo play is one surveyor on the floor; co-op is two to four.
-- **The ship.** It stays in orbit and is never a place the player walks around in. It is a lifeline (supply drops, analysis, the long view of the whole ring from above) and a voice. It is also the only human authority within light-years, which is why its orders carry such weight and why refusing them matters.
-- **The ship has an agenda.** Its charter has a second objective, revealed in Act 2: to judge the ring for settlement. After that the ship pushes the player towards exactly the acts the ring punishes: take a core, plant survey charges, force the archive. The charter clause is decided (2026-11-21). The sleeping reserve is who would settle first, and it gives the optional finite-roster mode of section 3.11 its fiction.
-- **Getting home** means getting back to the ship and the long sleep, with the sky open. Home itself is a century older than the one the crew left.
-- **Three voices, three pulls.** This gives the game a clear dramatic shape that also maps onto its pillars:
+- **The mission.** A small science crew with a sleeping reserve, on a ship launched in the near future. The launch is near-future; the arrival is not. The crossing takes longer than a working life and the crew sleep through it. By the time the player lands, the people who sent them are dead, and a question sent home takes more than a decade to reach it.
+- **Who the player is.** The surface team, and the only people awake. Solo play is one surveyor; co-op is two to four.
+- **No one is awake on the ship** (decided 2026-11-21). It is run by its mission system, which carries out a plan written a century ago, item by item, on schedule. It has two voices and neither is alive:
+  - the mission system itself, flat and exact, reading out the plan;
+  - recordings made before launch by the people who wrote it: briefings, contingencies, and a few things said to whoever would be listening.
+- **The mirror.** The ship is a caretaker carrying out the wishes of people who are gone. So is the Lamplighter. The only living people in the story stand between two of them. Nobody says so.
+- **The ship is a lifeline and a voice, never a place.** It sends small, cold supply pods, analysis from its instruments, and the long view of the whole ring from above.
+- **The plan has an agenda.** Its later items were written by people who had seen only a light in a telescope: sweep the centre with radar, take cores from the structures, judge the ground for settlement, land the survey machinery. The mission system reaches each item when the schedule says so, whatever is happening on the ground. This is why the ship does harmful things at the worst times, and why refusing it is hard: there is no one to argue with.
+- **The sleeping reserve** is who would settle first, and it gives the optional finite-roster mode of section 3.11 its fiction. Whether anyone can be woken is question 6 in section 9.9.
+- **Getting home** means getting back to the ship and the long sleep, with the sky opened for a craft to come down. Home itself is a century older than the one the crew left.
+- **Three voices, three pulls.**
 
 | Voice | Nature | Pulls the player towards |
 |---|---|---|
 | The suit assistant | Honest, limited, on your side | The truth: what was actually observed |
-| The ship | Human, authoritative, intermittent, bound by orders written generations ago | The mission: extract, settle, get home |
-| The Lamplighter | Not human, wordless for most of the game | The house rules |
+| The ship | A dead plan: a system that reads it out, and recordings of the people who wrote it | The mission: survey, extract, settle, get home |
+| The Lamplighter | Not human, and never translated | The house rules |
 
 ### 1.8 What the player learns, in what order, and how
 
@@ -176,14 +184,14 @@ Each discovery is delivered by something the player does or sees, then named by 
 
 | # | Discovery | Where | How it is delivered | Built on |
 |---|---|---|---|---|
-| 1 | **It is running.** This is not a ruin. | Landing area, first night | The pulse crosses the sky. Lights breathe on the far wall. The first eclipse arrives and the Lamp ignites. | Grid pulse, eclipse event (both built) |
+| 1 | **It is running, and it protects its own.** This is not a ruin. | The landing, the first night | A wall of storm comes for the lander. The spire raises a shield and the animals run for it. Afterwards the pulse crosses the sky, and later the first eclipse arrives and the Lamp ignites. | Megastorm, emitter shield (new), grid pulse, eclipse event |
 | 2 | **The garden is Earth's.** | First forest | The leaf analysis in 1.6. A mystery, not yet an answer. | Vegetation, PDA lines |
 | 3 | **It counts.** The pulse is a census and you can be on it or off it. | First spire | Something changes within a pulse of your first loud act: a door, a light, a watcher overhead. The assistant times it. | The Count (section 2) |
 | 4 | **It has rules.** | First spire and after | Boundary signals, and what follows from ignoring them. The assistant's field log holds the evidence; the player draws the rule. | Section 2.6 |
 | 5 | **It is failing.** It has written parts of itself off. | An offline Wall Engine, far from the landing | A storm that has stood in one place for centuries. Menders that walk past dead machinery. The first choice that matters: repair it or strip it. | Wall Engines, parked storm or drought |
 | 6 | **It was hidden, it knows it no longer is, and it is waiting.** The house was built to be unseen and its light was never a signal. It was built for someone else, and they are late. | The wall top, on the vacuum side of the field | The view outward. The outer blades of the towers, dark, while menders keep the base of every tower in perfect order and never touch a blade. The watch post that faces the road. The schedule of arrivals. | Wall-top walk, projector towers (built) |
 | 7 | **No one is coming,** and the reason the Veil is still down. | The archive under the main spire | The record of the road since it went quiet: nothing. The inheritance clause. The Veil's own record (section 1.12). | Main reactor (asset built) |
-| 8 | **It knows.** It sealed that record away from itself. What it protects is the waiting. | The main spire crown, during an eclipse | The Lamplighter speaks, in borrowed words, as the Lamp lights around you. | Main spire, eclipse ignition |
+| 8 | **It knows.** It sealed that record away from itself. What it protects is the waiting. | The main spire crown, during an eclipse | The Lamplighter speaks at length, in the builders' signs, as the Lamp lights around you. How much of it the player can read is what they have earned (section 1.13). | Main spire, eclipse ignition |
 
 Order is fixed for 1 to 4, which are the onboarding. Between 4 and 5 comes the end of Act 1 (section 5.2): the player sees the ring answer the ship and then shut the sky, and understands neither until discoveries 6 and 7. Discoveries 5 and 6 can come in either order. Discovery 7 requires 5 and 6, and 8 requires 7.
 
@@ -194,7 +202,7 @@ Five. Four are chosen by what the player does at the crown with what they know, 
 - **Counted.** Reachable with high Standing. The player shows the Lamplighter the record, and it accepts the clause: the house passes to the life of the world it was stocked from, on the house's terms and in the house's numbers. The field opens. The Veil stays down, and now it is down for the ones who actually came. The player returns to the ship carrying an invitation with conditions its charter was never written to accept.
 - **The quiet door.** The player leaves the archive sealed and the vigil intact, and mends the Veil (decided 2026-11-21: the player can). The house goes dark to the outside. The Lamplighter opens the sky once, and in a dozen years Earth's instruments lose the light. It goes back to waiting the way its builders meant it to: unseen. This is a hard mercy, because the player puts out a signal fire it could not bring itself to put out, and it lets them. What the player tells the ship afterwards, the truth or "it's dead, there's nothing here", is the last choice.
 - **The keys.** The blight ending. The player takes the main spire and cuts the Lamplighter out of its own house. The Fever stops. So does everything else, slowly. The Veil stays down because no one is left to care. The ship gets its prize and the player watches the wall lights begin to go out.
-- **The breach.** Decided 2026-11-21: a player who has been struck from the count can still get home, by force. They bring down the field's projectors along a stretch of the wall top and leave through the gap, because nothing is left there to hold the sky shut. The air of the garden pours out behind them for as long as the gap stands. They get home. It is the bleakest ending the game has, and any player can choose it.
+- **The breach.** Decided 2026-11-21: a player who has been struck from the count can still get home, by force. They bring down the field's projectors along a stretch of the wall top and leave through the gap, because nothing is left there to hold the sky shut, or to feel a craft come down for them. The air of the garden pours out behind them for as long as the gap stands. They get home. It is the bleakest ending the game has, and any player can choose it.
 - **The keeping.** The player stays, as the first resident the house has ever had, and takes up part of the work. This is also the frame for play after the story: the endless game is maintenance. Bring back the six dead engines. Relight the dead emitters. Bring the Lamp to full brightness. Whether to raise the Veil becomes a question the two residents settle between them.
 
 ### 1.10 Alternatives considered for the core truth
@@ -240,9 +248,69 @@ Decided by the user on 2026-11-21:
 | **Gameplay hook** | The Welcome (below); the quiet door as a hard mercy | The strongest reason for the ring to want a Guest | The most systemic: the Veil's state follows the number of live spires |
 | **Weakness** | It stretches the word "failed" furthest: the failure is real, the staying down is chosen | It needs a builders' lock, which is one more piece of invented law | The least mysterious. A player can guess it at the wall top. |
 
-**Decided (user, 2026-11-21): A, with C as the false floor.** When the player first learns that it knows (belief 2), the ship's analysts offer the sensible explanation: a power shortage, the Lamp or the Veil. That is reason C, and it is nearly right, because shortage is what first brought the Veil down. The archive then shows that the repair has been affordable for most of a century. This gives the mystery a real second turn. It ties the Veil to the vigil (section 1.5, layer 3), so the story has one secret and not two. And it makes the end of Act 1 the strongest beat in the plan.
+**Decided (user, 2026-11-21): A, with C as the false floor.** When the player first learns that it knows (belief 2), the ship's mission system offers the sensible explanation: a power shortage, the Lamp or the Veil. That is reason C, and it is nearly right, because shortage is what first brought the Veil down. The archive then shows that the repair has been affordable for most of a century. This gives the mystery a real second turn. It ties the Veil to the vigil (section 1.5, layer 3), so the story has one secret and not two. And it makes the end of Act 1 the strongest beat in the plan.
 
 **The Welcome.** When the ship sweeps the hub, the Lamplighter takes it for the answer it has waited for. For a few minutes the ring does things the player has never seen: the sites in the ward light and stand open, and the pulse runs out of its time. Then it resolves the caller. It is not the Expected. It is the young world the garden was cut from, the one world the house was hidden from. It shuts the sky. The player has watched a welcome that was meant for someone else, and will not understand it until the archive. It reuses site lights, door states and the grid pulse, and needs no new system.
+
+### 1.13 The builders' language
+
+Decided by the user on 2026-11-21: the Lamplighter speaks the builders' language, untranslated, and the player decodes it over time.
+
+**What the language is.** It is made of signs, and each sign exists in three forms: a tone, a pattern of light, and a written mark. The ring's signals have been this language all along. "Seen", "stop" and "allowed" (section 2.6) are its first three words, and the player learns them in the first hours without knowing they are learning a language.
+
+**Where it is met.**
+- **On the ring's machines:** tones through the floor, light in the inlays, marks at doors and thresholds.
+- **In the settlements** (section 1.14), where marks are thickest: on doors, on storage, on tools, along the ways between houses.
+- **From the Lamplighter,** once it addresses the player: long sequences of tone and light, at the Welcome, at each change of class, and at the crown.
+
+**How understanding grows.**
+- **Each sign is met in several places where its meaning can be worked out.** A closed door shows the mark for "closed" and sounds its tone. A count of animals under a shield is followed by a number.
+- **The suit assistant keeps a lexicon,** as it keeps patterns (section 2.6). For each sign it lists where the sign has been met. When the contexts agree it offers a gloss, labelled with its confidence. A gloss can be wrong, and it is revised when a new context contradicts it.
+- **Everything the ring says is kept.** Every utterance is logged as its signs. As the lexicon fills, old utterances become readable. The Welcome at the end of Act 1 is recorded as a line of unknown marks, and a player who goes back to it late in the game can read most of it. That return is one of the story's strongest moments, and nothing has to be staged for it.
+- **On screen** an utterance is shown as its marks, with the glosses the player has so far written underneath and the rest left as marks.
+
+**How much there is.** About fifty signs in the first version, in a few families: counting; states (open, closed, counted, struck); the house (door, lamp, garden, road, veil); relations (wait, come, stop, yours, ours); time (pulse, day, shadow).
+
+**The names of the rungs are glosses.** Stray, Guest, Counted, Blight and Struck are the lexicon's renderings of the ring's own signs. Until the player has them, the assistant describes the ring's treatment in its own words (section 2.12).
+
+**Is it ever complete?** Proposed: no (question 5 in section 9.9). The endings can be followed with about two thirds of the lexicon. A few signs are never glossed: the builders' name for themselves, the word for what the Lamplighter is to them, and one sign in its last sentence.
+
+**The suit assistant's part.** It records, counts and offers glosses. It never claims a translation is certain, and it never speaks for the ring. When the Lamplighter uses the suit's own speaker, the assistant says "This is not me. Relaying." and then plays the tones.
+
+**Cost.** A tonal sign set and its sound design, a set of marks, a lexicon screen, and the authored placement that gives every sign enough readable contexts. It is content more than code, and it needs no language model.
+
+### 1.14 The settlements
+
+Decided by the user on 2026-11-21: the builders' trace is abandoned settlements, real places where they lived or were meant to live. This replaces the earlier idea of a single room at the main spire.
+
+**Two kinds, and the difference between them is the story.**
+
+| | The works town | The made-ready settlements |
+|---|---|---|
+| **How many** | One, near the main spire | About a hundred: one to each climate cell |
+| **Who lived there** | The ones who built the ring, for the generations it took | No one, ever |
+| **Its state** | Worn. Steps hollowed by use. Things mended, altered, outgrown. Left in good order, the way people leave a place they do not expect to see again. | Perfect. Kept by menders for thirty thousand years. Tables laid. Water running. A lamp lit indoors at dusk. |
+| **What it tells the player** | They were people. They lived here, and they left. | The ones this was made for never came. |
+
+This is the answer to whether the owners lived here once or never arrived: both. The makers lived here while they built, and went on. The people the house was made for never came. Proposed; question 4 in section 9.9.
+
+**What a made-ready settlement is like.**
+- **Small.** Twenty to sixty dwellings, a few hundred metres across. A village, set on good land near water.
+- **Built to their measure.** Doors, steps, seats and handholds fit a body that is not ours: taller, with a longer reach. The player is a child in these rooms. Nothing shows the builders themselves.
+- **Hidden, like everything they made.** Its light stays indoors. From outside, and from across the ring, a settlement is dark. This also keeps to the vastness plan's ruling against lights on the far arch.
+- **Kept, not ruined.** Menders work here every day. Seeing them lay a table that no one will sit at is the plainest picture of the vigil the game has.
+- **Safe.** Like every structure of the ring it stands through a megastorm.
+- **Its fields are a lesson that is never given.** Each settlement has terraces, channels and plots laid out and left fallow. They show how the builders meant this ground to be farmed, and a player who farms them as they are laid farms well (section 3.13).
+- **Its school is the key to the language.** One building in each has a wall where the signs are set out in order, for children who never came. It is the richest single source for the lexicon (section 1.13).
+
+**How the ring treats a player there.** A settlement is a threshold like any other.
+- To Fauna its doors are closed, and animals wander its lanes.
+- **To a Guest, one house is opened.** Being housed is what Guest means, and that dwelling becomes the abide path's home.
+- A player on the blight path can break in and live there. It is harm, and the menders will keep trying to put the house right around them.
+
+**At the Welcome** (section 1.12) every settlement on the ring lights and opens for a few minutes. The player who is standing in one sees what the house was always meant to look like.
+
+**Cost.** This is new place-making on a large scale: a modular kit of dwellings at the builders' measure with interiors, the works town as a one-off, placement by registry with its terrain shaping, streaming, collision and site rules. It is XL content and the largest single addition of this round. A first version needs one kit and one settlement near the landing.
 
 ## 2. The ring AI as a system
 
@@ -260,7 +328,7 @@ Decided by the user on 2026-11-21:
 |---|---|---|---|---|
 | **The Count** | The grid pulse, every 300 s on the saved weather clock, passing overhead in about 2 s with a 10 s wake | Energy in use while the pulse passes: powered tools, thrust, engines, radio, lamps, heaters, a base generator | To the ward, and to about a kilometre near a spire | Pulse and clock built (`EmitterGridPulseClock.ArrivalTime`); the census is new |
 | **The floor** | Structure-borne vibration through the ring floor at 5 to 6 km/s | Digging, explosions, vehicles on the ground, heavy impacts. Continuous, not tied to the pulse. | Coarse far from a spire, fine near one | New; the megastorm tremor lore is the precedent |
-| **The field** | The containment field registers every body that crosses it | Landers, supply drops, aircraft above the wall top, anything leaving | Exact | Built as a visual ripple (`BodyContact`); the bookkeeping is new |
+| **The field** | The containment field registers every body that crosses it | Everything that crosses. A small cold pod is logged like falling debris. A powered craft forcing its way through summons the reflex (section 2.14). | Exact | Built as a visual ripple (`BodyContact`); the bookkeeping is new |
 | **Thresholds** | Its buildings sense their own doors, lifts and rooms | Anyone inside a spire, reactor, Wall Engine or tower | Exact, continuous | New (site gameplay kit, section 7.3) |
 | **Lines** | Direct contact with its power, transit or data | Tapping a socket, riding the Deep Line, opening a terminal | Exact, and two-way: this is how it reaches the suit | New |
 
@@ -327,15 +395,15 @@ Initial values, all to be tuned. They belong in a debug panel; only the few a pl
 
 | Class | Standing | How the ring sees you | What it does | What moves you out |
 |---|---|---|---|---|
-| **Uncounted** | unset | Nothing. A field ripple it logged as debris. | Nothing | The first Count that catches a signature, or the first threshold |
-| **Fauna** | unset | A warm body. Wildlife. | Nothing. Doors do not open, because they do not open for deer. | Tool use seen repeatedly, or one loud act |
+| **Uncounted** | unset | Nothing. Its books say the craft that came through the roof was swept away. | Nothing | The first Count that catches a signature, or the first threshold |
+| **Fauna** | unset | A warm body, first counted among the animals under a spire's shield. Wildlife. | Nothing. Doors do not open, because they do not open for deer. | Tool use seen repeatedly, or one loud act |
 | **Anomaly** | around 0 | An animal that uses energy. Worth a look. | It looks. A watcher arrives and follows. The Count lingers. It begins to mark boundaries and observe what you do about them. | Your answer to its signals |
 | **Stray** | +25 and up | A harmless resident | Boundary signals become guidance. Some doors stand open. Sockets you have used stay live. Watchers stop following. | More Regard, or harm |
 | **Guest** | +60 and up | Someone the house can serve | Site doors open. The Deep Line carries you. Its buildings shelter you from a megastorm. It begins to communicate. | Story (Counted, in Act 3), or harm |
 | **Trespasser** | -25 and down | A pest in the works | Lockouts, power cut to anything you used, transit refused, wardens that block and drain, storms steered over you, the uplink jammed | Regard, or absence |
 | **Blight** | -60 and down | Damage that spreads | Lethal response: purgers, called lightning, sealed and vented rooms, no supply drops in your ward, your caches found and destroyed, the suit assistant attacked | Sustained absence over several ring days, or a major act of restitution |
 | **The last count** | -90 and down | A decision it is about to make | It stops and waits. For three ring days it holds its fire and counts the expedition separately at every pulse (section 2.12). | Standing down for the three days, which lifts Standing back into Blight. Or one more serious harm, which ends in the row below. |
-| **Struck** (working name, section 2.13) | Not a level of Standing: the end of it | Something the house has finished judging | Everything in the Blight row, everywhere, for good. No door opens again. A purge begins, and comes round for as long as they live (section 2.14). | Nothing. This is the one state with no way back (decided 2026-11-21), and it cannot be reached by accident. |
+| **Struck** (working name, section 2.13) | Not a level of Standing: the end of it | Something the house has finished judging | Everything in the Blight row, everywhere, for good. No door opens again. A purge begins, and another is sent for as long as they live (section 2.14). | Nothing. This is the one state with no way back (decided 2026-11-21), and it cannot be reached by accident. |
 
 **On the megastorm.** It is not a rung of this ladder, and it is not weather. Section 2.14 sets out when it happens, how Standing changes what it does to a player, and what it costs the ring.
 
@@ -357,9 +425,9 @@ A seventh, hidden until Act 3: **do not look at what it has not looked at.** The
 Mending is not a rule but the remedy: anything broken and then repaired is forgiven at a discount.
 
 **How the player learns them.** Nothing is taught by tutorial text. What is explained comes from the assistant's voice and the suit's instruments (the standing rule at the top of this document).
-1. **The ring marks its boundaries** with a small, consistent vocabulary of signals in the media it has: light on its structures, a tone through the floor, a door that closes as you approach. Roughly: "seen", "stop" and "allowed". No legend explains them.
+1. **The ring marks its boundaries** with a small, consistent vocabulary of signals in the media it has: light on its structures, a tone through the floor, a door that closes as you approach. Roughly: "seen", "stop" and "allowed". No legend explains them. They are the first words of the builders' language (section 1.13).
 2. **The suit assistant keeps a field log, and points out patterns in it** (explained; user, 2026-11-21). The log records what happened, when and where. When the same thing has followed the same act three times, the assistant says so once, as a count and not as a rule: "Door sealed after the cutter powered up. Third time of three." The pattern then sits on its own page of the log with a running tally. It never names a rule and never advises. In co-op the log is shared.
-3. **The ship offers theories, and is often wrong.** It has the long view from orbit and a human habit of explaining. It is right that the wall lights flicker when the player digs. It is wrong about the Veil (section 1.12). The ship is a character with opinions, not a tutorial.
+3. **The ship's recordings offer theories, and are often wrong.** They were made a century ago by people who had seen only a light in a telescope. They are wrong about what the ring is, and later the mission system's analysis is wrong about the Veil (section 1.12). The ship is a dead plan with opinions, not a tutorial.
 4. **Every warning is a test.** Obeying a boundary signal is the earliest and most repeatable source of Regard, because it tells the ring that the animal responds to signals. This is also how a hostile player stands down.
 
 ### 2.7 How it uses each pushback channel
@@ -417,7 +485,7 @@ It is a table of about a dozen rows, not machine learning, and every row is a pi
 - **Standing is shared.** One expedition has one reputation. A player who goes loud spends it for everyone. Among friends this is a feature, and it is how the two play styles collide inside one team.
 - **Isolation is a co-op weapon.** At Trespasser the ring degrades the team's shared markers and voice link near live spires. At Blight it separates players with doors and weather. Each suit assistant belongs to one player, so the ring can make two assistants disagree.
 - **Responses scale gently:** more watchers per ward with more players, never more than the ward's stock.
-- **Solo and co-op use the same rules.** A solo player gets the ship's analyst as the second pair of eyes that a team gets from each other.
+- **Solo and co-op use the same rules.** A solo player gets the ship's instruments in orbit as the second pair of eyes that a team gets from each other.
 - **The bottom of the ladder in co-op** falls on the player who earns it, not on the team by default. The rules are in section 2.12.
 
 ### 2.12 Reputation: what the ring values
@@ -568,7 +636,7 @@ If the three days pass without one, the last count ends, Standing is set to -80 
 | Below -75 | Nothing new. Staying away no longer changes anything. | "Time away has stopped improving its behaviour. Only repair has, in what I have recorded." |
 | The last count (-90) | It stops. The purgers withdraw. Every site in the district shows steady white. At each pass the pulse holds overhead for some seconds, which it never does otherwise. The floor carries one long tone at the start. | The first of the two lines the user asked for: "Its behaviour has changed in a way I have not recorded before. It has stopped attacking, and it is counting us separately at every pulse. My reading, with high confidence: further serious harm now will not be forgiven." |
 | As the player begins a serious harm during the last count | Nothing. It waits. | The second line: "If you do this, I do not expect it to be undone." |
-| Struck | If it has words by then, it uses them: "You are struck from the count." Lights go out at every site as the player approaches, from then on. | It reports what it saw and heard, and that its estimate no longer changes with anything the player does. |
+| Struck | It says so in the builders' signs, which by now the player can read: "You are struck from the count." Lights go out at every site as the player approaches, from then on. | It reports what it saw and heard, and that its estimate no longer changes with anything the player does. |
 
 The silence is the design. A player in the last count is not being chased, so the choice they make there is one they can recognise as a choice. Both spoken lines are authored and critical, so they are never reworded and never skipped. The assistant stays inside its honesty rule (section 6): it gives its reading and its confidence, not the ring's intent.
 
@@ -576,7 +644,7 @@ The silence is the design. A player in the last count is not being chased, so th
 - Reputation stops. Nothing the player does, good or bad, is weighed again.
 - The lethal response of the Blight row applies in every ward.
 - No door, socket, transit or shelter is ever offered. The ring's buildings do not open as the megastorm comes.
-- A purge begins: the megastorm forms and comes for them, and comes round again for as long as they live (section 2.14).
+- A purge begins: the megastorm forms and comes for them, and another is sent for as long as they live (section 2.14).
 - The Lamplighter never speaks to that player. The Counted, quiet door and keeping endings are closed to them. Two endings remain: the keys, and the breach, which gets them home by force (section 1.9; decided 2026-11-21).
 - It is still a whole game: the war of dark wards described in section 4, with no way to end it but winning.
 
@@ -658,77 +726,132 @@ Adopted by the user on 2026-11-21. The names come from the ring's own three voca
 | Second bad rung, and the word for the destructive play style | **Blight** | The garden: a sickness that spreads. "It is treating us as a blight." | "Infection" (retired), and the shorthand noted in the names table of section 0 |
 | Bottom | **Struck** | The census: "struck from the count" | Purge, as a rung |
 
-**The two lines that frame the ladder** are a pair, spoken by the ring if it has words by then: "You are counted." and "You are struck from the count."
+**The two lines that frame the ladder** are a pair, given by the ring in the builders' signs: "You are counted." and "You are struck from the count."
 
 The alternatives that were considered are in the history of this file (commit 76c9ed0). The megastorm as a purge keeps its working name, the Fever. It is not a rung (section 2.14).
 
-### 2.14 The megastorm: a purge or a misfire
+### 2.14 The megastorm: a reflex, a purge or a misfire
 
-Decided by the user on 2026-11-21: "Since the megastorm is reserved for a purge, or a glitch, destruction will be realistic." This replaces two earlier positions: the megastorm design's premise of a threat that is ever-present once triggered, and this plan's Fever that ran from the end of Act 2 to an ending.
+Decided by the user on 2026-11-21, in two answers.
+- "Since the megastorm is reserved for a purge, or a glitch, destruction will be realistic."
+- "A megastorm only spans a portion of the ring always intersecting the reason why the storm was summoned. We can use the ship the player lands on as one reason, but the player needs to find a way to escape it for the first time."
 
-**It is never weather.** Ordinary storms are the ring's weather. A megastorm happens for one of two reasons only.
+This replaces the megastorm design's premise of a threat that is ever-present once triggered and laps the ring for ever.
 
-| | A purge (the Fever) | A misfire |
-|---|---|---|
-| **What it is** | The ring's deliberate last resort | The same machinery firing with no order given |
-| **Cause** | A player struck from the count. In the story, the ship's forced lander (question 1 in section 9.8). | Ageing Wall Engines |
-| **How far it goes** | From where it forms until it has passed over its cause. If the cause survives, it keeps coming round. | A few hundred to about 3,000 km, until the Lamplighter can stand down the engines ahead of it |
-| **How often** | Once in the story at most. Without end for the Struck. | Rare: none to two in a long campaign, on the ring as found |
-| **Can the player cause one?** | Yes, by being struck | Yes: stripping or sabotaging Wall Engines raises the odds |
-| **Can the player prevent or stop one?** | Not their own. The story's purge ends when its cause is gone. | Yes: mended and tended engines misfire less, and a misfire can be stopped by hand |
+**Every megastorm is a bounded sweep.** It forms some hundreds of kilometres from its cause, crosses the cause, and stands down. It spans the ring from wall to wall and a portion of its length. It is never weather, and it never circles the ring.
 
-**How a megastorm is made (new lore).** The Wall Engines make it, in relay. Each pair of engines, one on each wall, raises the wall of cloud across the ring's width and hands it on to the next pair. A purge is every pair doing this in order, on the Lamplighter's instruction. This fits what is built: the wall spans the ring from wall to wall and climbs the wall faces, and the walls are where the engines are.
+**Three things summon one.**
 
-**What a misfire is.** The engines are tens of thousands of years old, and six are already dead. Now and then a worn pair fires its part of the sequence with no order given. Its neighbours were built to catch the wall and pass it on, and they do. The Lamplighter stops it the only way it can, by standing down the engines ahead, and that takes time and engines that still obey. A misfire is the ring's decline made visible. The Lamplighter can no more prevent one than a person can prevent a seizure.
-- **How rare.** Each engine pair has a seeded chance, so misfires are fixed by the world's seed and the state of its machines, and are the same for every player in a world. Proposed for the ring as found: none in the first fifteen hours of play, and none to two in a long campaign.
-- **Where.** Anywhere on the ring. Most are seen from far off, as a dark bar on the arch and afterwards as a scar. A misfire that reaches the player is the exception.
+| | The reflex | A purge (the Fever) | A misfire |
+|---|---|---|---|
+| **What it is** | The house's automatic answer to a powered craft forcing its way through the field. No judgement is involved. | The Lamplighter's deliberate last resort | The same machinery firing with no order given |
+| **The cause it crosses** | The place the craft came down | The last place a struck player was counted | The engine pair that failed |
+| **How often** | At the landing. Again for any powered craft that forces the field, so once more if the ship lands its survey machinery (section 5.2). | For the Struck only: again and again, as often as the strained engines allow. Proposed: no sooner than about eight hours of play apart. | Rare: none to two in a long campaign, on the ring as found |
+| **Can the player cause one?** | Only by calling a craft down | Yes, by being struck | Yes: stripping or sabotaging Wall Engines raises the odds |
+| **Can the player prevent or stop one?** | No | No | Yes: mended engines misfire less, and a misfire can be stopped by hand |
+
+**Why a reflex on first contact does not break "a purge is earned".**
+- The reflex is older and simpler than the Lamplighter's judgement. It answers an event, a powered craft through the roof, and not a person. It is the house's skin flinching.
+- The purge is the Lamplighter's decision about someone it has judged. A player has to earn it, through the whole ladder and the last count (section 2.12).
+- **The reflex is what makes the Lamplighter indifferent at the start.** When the wall has passed, the house's books say the intrusion was dealt with. Nothing is looking for a survivor, because by its own records there is nothing to survive. The player begins the game already written off.
+- **It explains the rest of the mission's troubles.** Supply must come as small, cold, unpowered pods, which the field logs like falling debris. No second lander can come down and no craft can come up for the team without summoning another wall. Getting home needs the sky opened.
+
+**How a megastorm is made (new lore).** The Wall Engines make it, in relay. Each pair of engines, one on each wall, raises the wall of cloud across the ring's width and hands it on to the next pair. This fits what is built: the wall spans the ring from wall to wall and climbs the wall faces, and the walls are where the engines are.
+
+**What a misfire is.** The engines are tens of thousands of years old, and six are already dead. Now and then a worn pair fires its part of the sequence with no order given. Its neighbours were built to catch the wall and pass it on, and they do, until the Lamplighter can stand down the engines ahead. A misfire is the ring's decline made visible. The Lamplighter can no more prevent one than a person can prevent a seizure.
+- **How rare.** Each engine pair has a seeded chance, so misfires are fixed by the world's seed and the state of its machines, and are the same for every player in a world. Proposed: none in the first fifteen hours of play, and none to two in a long campaign.
+- **How far.** A few hundred to about 3,000 km.
+- **Where.** Anywhere on the ring. Most are seen from far off, as a dark bar on the arch and afterwards as a scar.
 - **The player can raise the odds.** Every Wall Engine stripped or sabotaged misfires more readily. A misfire the expedition caused is charged to it.
 - **The player can lower them.** Every engine mended or tended misfires less. This is part of the keeping.
-- **The player can stop one.** The wall moves at 350 m/s and the Deep Line is faster. A player can ride ahead of the wall to a station it has not reached and stand its engines down by hand. It is the largest single act of regard in the game. It needs the Deep Line, the knowledge of how, and nerve.
+- **The player can stop one.** The wall moves at 350 m/s and the Deep Line is faster. A player can ride ahead of the wall to a station it has not reached and stand its engines down by hand. It is the largest single act of regard in the game.
 
 **A purge.**
-- **It forms far off and comes.** The megastorm design forms the wall 600 to 2,000 km from its target, and the floor hums from 105 minutes out. That warning is unchanged.
 - **It cannot be aimed.** It is a broom and not a blade. It levels everything between where it forms and its cause.
-- **It ends when its cause is gone.** When the wall has passed over what it was sent for, the engines ahead stand down and it fades.
-- **For the Struck it does not end.** If they are still there at the next Count, it keeps coming round, a lap every 25 hours of play, until they are dead, gone through the breach, or holding the keys. For them, and only for them, the megastorm design's "ever-present threat" is still true.
+- **It stands down once it has crossed its cause.** If the struck player is counted again afterwards, another is sent when the engines have recovered. For the Struck, and only for them, the megastorm is the ever-present threat the megastorm design first described.
 
-**What Standing changes when a wall comes,** whichever kind it is.
-- **A Guest** finds the ring's own buildings open as the wall approaches. The megastorm design already states that authored structures are never flattened.
-- **A Blight or a Struck player** finds them sealed, and must dig, build to a rating, or outrun it.
-- **Inside the wall is the one place on the ring where the Count sees nothing.** A player who can survive in there for the 71 seconds of the wall and the long rain behind it can do anything.
+**When a wall comes, whichever kind it is.**
+- **Every living spire in its path raises a shield** about a minute before the wall arrives (section 2.15).
+- **A Guest** also finds the ring's own buildings open. The megastorm design already states that authored structures are never flattened.
+- **Anyone far from a spire** digs, builds to a rating, or finds deep shelter in the land.
+- **Inside the wall is the one place on the ring where the Count sees nothing.**
 
-**Why it is a fever and not a weapon.** A purge levels the garden the Lamplighter exists to keep. It strains the engines, which makes misfires likelier afterwards, and it dims the Lamp. The Lamplighter resorts to it the way a body resorts to a temperature it cannot sustain. This is what gives the blight path its moral weight.
+**Why a purge is a fever and not a weapon.** It levels the garden the Lamplighter exists to keep. It strains the engines, which makes misfires likelier afterwards, and it dims the Lamp. The Lamplighter resorts to it the way a body resorts to a temperature it cannot sustain.
 
 **Destruction is realistic** (the user's decision).
-- **The numbers already decided stand:** 60 kPa in the open and 0.6 of that in ordinary lee. At those pressures forest goes down almost completely. Trees stay standing only in deep shelter: narrow valleys, the lee of cliffs, and beside the ring's own structures.
+- **The numbers already decided stand:** 60 kPa in the open and 0.6 of that in ordinary lee. At those pressures forest goes down almost completely. Trees stay standing only in deep shelter and under a spire's shield.
 - **What a sweep leaves:** windthrown forest, soil stripped from slopes, brown rivers, and every unrated building and unsheltered farm flattened.
-- **It comes back at the garden's speed** (section 3.13): grass within a ring day, scrub in about eight, a young wood in about forty. Mature forest does not return inside a campaign, and soil lost from a slope does not return at all.
+- **It comes back at the garden's speed** (section 3.13): grass within a ring day, scrub in about eight, a young wood in about forty. Mature forest does not return inside a campaign.
 - **Fallen timber is dead, and dead things are free** (rule 3). A sweep is also the largest windfall of salvage in the game.
 - **The scar shows on the arch** for the rest of the game.
 
-**What that means for the late game.**
+**What that means for the game.**
 
-| What happened | What the ring looks like afterwards |
+| What happened | What it leaves |
 |---|---|
-| A misfire | A levelled strip up to about 3,000 km long, a tenth of the ring, somewhere on the arch |
-| The story's purge, if it stays in (question 1 in section 9.8) | A levelled country one to two thousand kilometres long between where the wall formed and the ship's lander. The player's Act 2 ground is in it. |
-| A struck expedition | Every exposed part of the ring levelled within one lap, and kept as scrub by each lap after. The blight ending is played in a wasteland of the player's own making. |
+| The reflex at the landing | The player's first country is levelled for hundreds of kilometres upwind of the lander. How far it runs past the lander is question 1 in section 9.9. Every living spire in it stands in a round island of spared forest. |
+| The reflex at the ship's survey lander, late in Act 2 | A second scar, somewhere the player has come to know, and this time they see it coming |
+| A misfire | A levelled strip up to about 3,000 km long, somewhere on the arch |
+| A struck expedition | A new scar wherever they are found, sweep after sweep. The blight ending is played in country the player has had levelled around them. |
 
-- **Regrowing a scar is credited work** (section 2.12), and it is the first great task of the keeping.
-- **In the garden model** (section 3.13) a megastorm stays a ring term. The saved record of each sweep, with how exposed a place is, gives the damage and the recovery at any spot with nothing stored for each cell. Each sweep carries its cause: the ring's own for a misfire, the ship's for the story's purge.
-- **One new thing to make:** forest that looks windthrown. Fallen trunks are a scatter class the project does not have.
+- **Regrowing a scar is credited work** (section 2.12). The first scar is the reflex's doing and is not charged to the player, so mending it is the earliest large source of regard in the game.
+- **In the garden model** (section 3.13) a megastorm stays a ring term: the saved record of each sweep, with how exposed a place is, gives the damage and the recovery anywhere with nothing stored for each cell.
+- **One new thing to make:** forest that looks windthrown. Fallen trunks are a scatter class the project does not have. The opening needs it.
 
 **What is built today, and what changes.** In the current game the megastorm has no cause at all. Nothing in the weather creates one; it exists only when the grave-menu Spawn button or the trigger call starts it. That stays true.
 
 | Built (megastorm design and handoff) | What changes |
 |---|---|
-| One megastorm at a time, started by a trigger call that is idempotent for each trigger id, and saved with the world | The director makes the call, with one trigger id for each purge or misfire |
-| After forming it laps for ever. A Stop call fades it out, added "for story flexibility". | Every megastorm now ends. Stop is called when a purge's cause is gone or a misfire is damped. Lapping for ever is left only for a struck player. |
+| One megastorm at a time, started by a trigger call that is idempotent for each trigger id, and saved with the world | The director makes the call, with one trigger id for each reflex, purge or misfire |
+| After forming it laps for ever. A Stop call fades it out, added "for story flexibility". | No megastorm laps any more. Stop is called once the wall has crossed its cause. How far past the cause it runs is a new value. |
+| It forms over 30 minutes and travels about 630 km while it forms | Unchanged. That half hour is the length of the opening (section 5.4). |
 | No record of past megastorms. The design notes that "a list later is a schema bump". | A saved list of past sweeps: where and when each started and stopped. The garden needs it. This is that schema bump. |
-| Started in play only from the grave-menu Spawn and Stop buttons | Those stay as debug tools. Misfires come from a schedule fixed by the seed and the state of the machines. |
-| Hazards are values and events only, with no damage, by the user's decision of 2026-10-29 | Damage to players, to structures by the ratings already decided, to farms and to the garden |
-| The suit lines and the "Structural resonance" entry | Unchanged |
-| Its lore hooks fix no canon | The relay of Wall Engines is new lore. The design doc's opening premise, "an ever-present threat once it is triggered", needs a dated note that the user changed it on 2026-11-21. This plan does not edit that doc. |
+| Started in play only from the grave-menu Spawn and Stop buttons | Those stay as debug tools |
+| Hazards are values and events only, with no damage, by the user's decision of 2026-10-29 | Damage to players, to structures by the ratings already decided, to farms and to the garden. A spire's shield counts as full shelter. |
+| The suit lines for the approach, including "Find enclosed shelter" a minute out | Unchanged. They already fit the opening. |
+| Its lore hooks fix no canon | The relay of Wall Engines, the reflex and the misfire are new lore. A dated note has been added to the top of the megastorm design. |
+
+### 2.15 Emitter shields
+
+Decided by the user on 2026-11-21: "Emitters generate a shield around them protecting the structure and anything within them." They are the ring protecting its own machines, and they are the shelter that saves the player in the first hour.
+
+**What a shield is.** Each living spire can raise a field around itself, a small cousin of the containment field over the whole ring.
+- **Its size.** About 450 m across the ground from the spire's centre, which takes in the site's pad and apron, rising to enclose the 1.8 km spire. The main spire's is larger.
+- **What it stops:** overpressure, wind, rain and lightning.
+- **What it lets through:** bodies, in both directions, with a ripple, exactly as the great field does. A person can run into it after it has risen.
+- **Inside it is quiet.** The storm is seen and barely heard.
+
+**When it rises.**
+- **About a minute before a megastorm's wall arrives,** for every megastorm, whatever summoned it. It stays up through the wall and the wake behind it, a little over four minutes, and falls as the long rain begins.
+- **Not for ordinary weather.** A spire stands in an ordinary storm as it always has.
+- **A dead spire raises nothing.** A dark ward has no refuge. Sabotaging a spire removes one from the map, and relighting it gives one back. The map of living spires is the map of shelters.
+
+**What it means for the garden.**
+- **Everything inside is spared.** After a sweep, each living spire stands in a round island of forest in a levelled country. These islands are the landmarks of a scar, and they are where its regrowth starts from: in the garden model a spared cell seeds the ones around it.
+- **The animals know.** The garden's animals have lived with misfires for thousands of generations. When the floor begins to hum they go quiet, and then they move, all in one direction. A player who follows them finds the shield. Nothing has to be explained.
+- **Under the shield, everything is counted together.** The site's own senses register what is sheltering there. This is where the player is first counted, with the deer, and it is why the ring first takes them for one.
+
+**The reputation angle.**
+- **Sheltering costs nothing and earns nothing.** Animals do it.
+- **A site is still a threshold.** The ring knows exactly who is standing on its ground. Its doors are a separate matter and follow the ordinary rules.
+- **Proposed, as question 2 in section 9.9:** a shield is a sanctuary, where harm done to anything sheltering is a capital harm; and it rises for everyone except a player who has been struck from the count.
+
+**Where a player lives.** A camp within a sprint of a living spire's shield is safe from every megastorm and is under the ring's eye every day. A camp far from one is private, and must be dug in and rated. Every camp is a choice between the two.
+
+**Later in the game.**
+- **A Guest can ask.** A spire raises its shield for a guest who gives the sign for it, as shelter from any weather.
+- **On the blight path** a stolen core forces a spire's shield up for as long as its power lasts, and the ring sees the draw at once.
+- **A camp shield.** Salvaged from a dead spire and adapted, a shield node gives a camp-sized shelter that is not a hole in the ground. It is late, rare and hungry for power.
+- **Shields that move** are not in the first version.
+
+**How it looks, and what can be reused.** The containment field's work does most of it.
+- **The surface:** the field's glass shading with its clear seams and faint cyan energy along them (`materials/ring_containment_field_core.gdshaderinc`).
+- **Ripples:** the field's pooled ripple patches, for bodies crossing and for rain and debris striking.
+- **Lightning on it:** the field-strike crawl and glow, built for megastorm lightning touching the great field. A megastorm's ground lightning breaking over the dome is the opening's central image.
+- **Crossing it:** the existing body-contact ripple, the membrane sound, and the muffling of the outside that the vacuum side of the field already has.
+- **The spire itself:** the grid spec's lightning crawl along the beams.
+- **What is new:** the dome's geometry, because the field's code describes one surface running the length of the ring; the way it rises out of the ground; and its place in the megastorm's shelter queries as full cover.
+- **The risk:** the dome is seen from inside during the heaviest scene in the game, with refraction over the whole view. It needs a budget on the smaller machine before anything else about the opening is fixed.
 
 ## 3. Core loops at three timescales
 
@@ -741,7 +864,7 @@ The pacing rests on three clocks. All three already run in the engine, are deter
 | **The pulse** | 5 minutes | The rhythm of the moment: when to be loud, when to be still | Built (visual and clock) |
 | **The day** | 75 minutes, a little over half an hour of light | The rhythm of an expedition: light, temperature, solar charging, and nights when the pulse can be watched | Built |
 | **The eclipse** | 75 minutes of totality every 7.83 hours; the first comes about 3.3 hours into a new world | The session event. The ring does not count. It is pitch dark before ignition and after the collapse. The spires are sacred. | Built |
-| **The megastorm** (an event, not a clock) | Only as a purge or a misfire. When one comes, the floor hums from 105 minutes out, the wall lasts 71 seconds and the rain behind it 16 minutes. | The exception: shelter, survive, and afterwards live in a levelled country | Built without damage |
+| **The megastorm** (an event, not a clock) | Only as a reflex, a purge or a misfire, and always a bounded sweep. When one comes, the floor hums from 105 minutes out, the wall lasts 71 seconds and the rain behind it 16 minutes. | The exception: shelter, survive, and afterwards live in a levelled country | Built without damage |
 
 If play tests want eclipses more often, the celestial time scale is an existing setting. That is tuning, not design.
 
@@ -785,7 +908,7 @@ This has a consequence worth designing around. Being an animal is exactly what t
 
 | Meter | Timescale | Drains with | Restored by | Where it earns its place |
 |---|---|---|---|---|
-| **Suit power** | Hours on baseline, minutes under load | Everything the suit does | The lander, solar film by day, salvaged cells, ring sockets | Everywhere. It is the master resource and it is also the player's signature. |
+| **Suit power** | Hours on baseline, minutes under load | Everything the suit does | The wreck's power unit, solar film by day, salvaged cells, ring sockets | Everywhere. It is the master resource and it is also the player's signature. |
 | **Air** | Minutes, only where it applies | Sealed-suit time | Breathable air, tanks | Only where the air is not: underwater, above about 6 km on mountains and the walls, beyond the field, sealed or vented rooms, the megastorm's vacuum wake. Never a constant drain. |
 | **Suit integrity** | Events | Falls, megastorm rain, constructs | Patches, the fabricator | It turns a tear into a problem wherever air or cold matters. |
 | **Body temperature** | Tens of minutes | Cold, wet, wind, altitude, night; or heat in a drought | Suit heating (costs power), fire, shelter, dry gear | The wet world, weather and altitude systems all feed it. It is the meter that makes weather matter before weather is dangerous. |
@@ -795,7 +918,7 @@ This has a consequence worth designing around. Being an animal is exactly what t
 
 Left out on purpose: sleep (a 75-minute day makes it absurd; rest exists only for healing and saving), and sanity, radiation and hygiene.
 
-**The sealed start.** The expedition lands with helmets sealed, on tank air, under biosafety rules. The first objective is to sample the air. When the assistant clears it and the helmet opens, the muffled world becomes the real one in a single cut. It teaches the air meter, costs one audio filter, and gives the first hour a moment.
+**The sealed start.** The expedition lands with helmets sealed, on tank air, under biosafety rules, and the first task is to sample the air. The storm arrives before the result does. The assistant clears the air while the player is sheltering under the spire's shield, and the helmet comes off there, in the quiet, among the animals. The muffled world becomes the real one in a single cut. It teaches the air meter and costs one audio filter (section 5.4).
 
 All rates here are starting points. They follow the project's rule of realism by default: a person in wet clothes at altitude should be in trouble on roughly the timescale a person would be.
 
@@ -823,24 +946,25 @@ Four sources, each with a different cost:
 
 | Source | Gives | Costs |
 |---|---|---|
-| **The ship** | Human equipment, rations, feedstock | Every drop crosses the field and is felt. After the Closing there are none. |
+| **The ship** | Human equipment, rations, feedstock | Small, cold, unpowered pods only, because a powered craft summons a megastorm (section 2.14). The field feels every one. After the Closing there are none. |
 | **The garden** | Wood, fibre, stone, water, food | Rule 1: within a ward's tolerance it is free; beyond it, it is harm. |
 | **The dead ring** | Cells, alloys, optics, cores: the things that cannot be made | Rule 3: free to take. But dead things lie in parked storms, droughts and dark wards. |
 | **The live ring** | The same, better and nearer | Theft. Fast progress, lasting harm. |
 
-- **Fabrication happens at a foothold.** The lander carries a fabricator that turns feedstock and salvage into human equipment. It is loud to the Count while it runs.
+- **Fabrication happens at a foothold.** The lander carried a fabricator, and recovering it from the wreck is the first real goal of the game. It turns feedstock and salvage into human equipment, and it is loud to the Count while it runs.
 - **The field kit does repairs and consumables only.**
 - **Ring technology cannot be fabricated.** It can be salvaged and adapted into hybrid gear. That keeps the best equipment tied to places, not to a recipe list.
 - **Keep the recipe list short:** about thirty in the first full version. This is a game about where things come from, not about crafting trees.
 
 ### 3.8 The foothold, the camps and the ship
 
-- **The foothold is on the ground.** The lander is the first home: power, fabricator, storage, save point, antenna. It is also the loudest thing the player owns.
-- **Where to land is the first decision.** Offer three candidate sites with different terrain and different distances from a spire. It gives replays and co-op groups a real choice on day one.
+- **The foothold is on the ground, and it begins as a wreck.** The first megastorm takes the lander (section 5.4). What survives is strewn downwind through a levelled forest: the power unit, the fabricator, the antenna, the weapons locker, and a section of hull sound enough to live in. Finding them is the player's first salvage, and the first camp is built from them. Proposed; question 3 in section 9.9.
+- **Where to land is the first decision.** Offer three candidate spires in different country. Each landing is beside a spire and outside its shield. It gives replays and co-op groups a real choice on day one.
 - **Camps, not a fortress.** A megastorm flattens anything unrated in its path, and the megastorm design already gives ratings for materials. The right shape for player building is therefore several small, dug-in, rated shelters and caches, with maintenance as the cost. The user's megastorm notes ask for exactly this: infrastructure that fails "if not well maintained".
+- **Near a spire, or not.** A camp within a sprint of a living spire's shield is safe from every megastorm and watched every day. A camp far from one is private and must be dug in (section 2.15).
 - **The pulse governor.** A mid-game foothold upgrade that shuts the camp down for each pulse automatically. A good example of progression that removes a chore the player has already mastered.
 - **Shelter makes a triangle.** Dig (rule 2 and the floor sense), build to a rating (materials and upkeep), or use the ring's own buildings (Standing, or a break-in). Each play style has an answer and none is free.
-- **The ship is a voice and a lifeline, not a level.** No ship interior is needed. After the Closing it can be reached only with real power: from the lander's antenna, from high ground or from a dark ward. Talking to home is loud.
+- **The ship is a voice and a lifeline, not a level.** No ship interior is needed. After the Closing it can be reached only with real power: from the recovered antenna, from high ground or from a dark ward. Talking to home is loud.
 
 ### 3.9 Progression
 
@@ -888,7 +1012,7 @@ Reworked after the user's answer of 2026-11-21: firearms are in, slightly futuri
 | Weapon | What it is | Fed by | Comes from |
 |---|---|---|---|
 | Sidearm | A caseless pistol | Rounds | Carried from the landing |
-| Carbine | A caseless rifle with a smart optic | Rounds | The lander's locker; an early goal |
+| Carbine | A caseless rifle with a smart optic | Rounds | The weapons locker, somewhere in the wreck; an early goal |
 | Coil rifle | An electromagnetic marksman's rifle | Fabricated slugs, plus suit power for every shot | The fabricator, mid-game |
 | Disruptor | A short-range discharge that stuns a construct | Suit power | The fabricator, mid-game |
 | Charges | Survey explosives | Themselves | The ship; later the fabricator |
@@ -1158,6 +1282,47 @@ Together this is about two XL systems. It is now the largest new system in the p
 7. **Art.** Crops at every stage in two families, convincing bare and worked ground, silted water, scrub and young woodland that the tree packs may not cover.
 8. **Tuning at speed.** At a season a ring day, a mistake in a rate shows in minutes. That helps testing and punishes players, so the first rates should forgive.
 
+### 3.14 The work of an ordinary session
+
+Decided by the user on 2026-11-21: the ship's survey requests, and the ring's needs, seen and never asked. There is no quest log.
+
+**The ship's list.** The mission plan is a list of survey items written a century ago. The mission system reads each one out when the schedule reaches it: "Item 31. Core sample, primary structure."
+- **What it pays.** Supply pods while there are any. The long view from orbit: maps, weather, a watch for walls on the arch. And patterns for the fabricator, which the plan releases as its items are completed.
+- **What it costs.** The early items are harmless: samples, measurements, a place mapped. The later ones were written by people who thought the ring might be dead: cores, charges, a marker for settlement. The list pulls steadily towards the blight path, and it cannot be argued with.
+- **How it appears.** As radio, and afterwards as entries in the field log like anything else the player has heard. There is no list of objectives and no marker in the world.
+
+**The ring's needs.** The ring asks for nothing. What it needs is there to be noticed.
+- A mender standing for days at a span it cannot cross.
+- A channel silted where a slope came down.
+- A stand of trees dying at the edge of a drought.
+- A spire whose light has gone out along one side.
+- A table in a settlement that has not been laid since the last storm.
+- The scar of a sweep, waiting for seed.
+
+The assistant logs what is out of the ordinary ("A construct has been stationary here for two ring days") and draws no conclusion. Doing one of these is how Standing is built, and each is an expedition in itself.
+
+**Why two.** They pull opposite ways, and one of them speaks and the other never does. That is the story's argument turned into what the player does on an ordinary evening.
+
+**The shape of a session.** Wake at a camp. Hear what the plan wants next. Look at the arch and the weather. Choose a direction that serves one master or the other, or neither. Go out, do it, live with what it stirred up, and come home with something the camp did not have that morning.
+
+### 3.15 What lives in the garden
+
+Decided by the user on 2026-11-21: small animals first, built so that larger ones can come later.
+
+**The first version.**
+- **Birds, fish, insects,** small mammals, and one grazer about the size of a deer.
+- **What they are for:**
+  - **The census.** Rule 1 and the animal rows of section 2.12 have something to count.
+  - **Food,** inside a ward's tolerance.
+  - **Tells.** They go quiet before a wall. They run for a spire's shield. They scatter from a construct. A player who watches animals is told most of what the suit could tell them.
+  - **The farm.** Pollinators and pests are the same animals, seen close.
+  - **Life.** A garden with nothing moving in it is a model.
+- **How they exist.** As population figures for each species in each garden cell (section 3.13), with visible animals drawn from those figures near players. Nothing is simulated as an individual across the ring.
+
+**Built so the large can arrive.** The species table, the figures and the behaviours are sized for more. The cuttings are thirty thousand years old, so the great animals Earth has lost belong here (section 1.6). They are kept for remote country and a later release.
+
+**Cost.** L to XL even for the small set: models, animation, behaviour and sound for each kind. The opening needs the grazer and the birds, at least as shapes that run.
+
 ## 4. The two play styles, side by side
 
 | | **Abide** | **Blight** |
@@ -1208,14 +1373,14 @@ Together this is about two XL systems. It is now the largest new system in the p
 
 ### 5.2 The three acts
 
-**Act 1: Fauna.** Landing, the sealed start, the first night, the first eclipse seen from the ground. The first spire and the first time the ring looks back. The field log begins to fill. Discoveries 1 to 4.
-- *It ends with the Welcome and the Closing.* The ship, impatient, sweeps the hub with radar. The Lamplighter has known for a century that the house can be seen and has had no way to see who was looking. The sweep is the first thing from outside to touch it. It answers first with a welcome (section 1.12): for a few minutes the sites in the ward light and stand open and the pulse runs out of its time. Then it sees who called, and turns the field solid to craft. No more drops, no ascent, and the uplink needs real power. The player sees the ring greet something and then shut the sky, and understands neither until Act 3. The beat is caused by the ship, so it is fair to every play style, and it uses a policy value the field already has.
+**Act 1: Fauna.** A night landing beside a spire. The landing summons the reflex, and the first half hour is the approach of a wall of storm and the run for the spire's shield (section 5.4). Dawn in a levelled country. The lander's wreck, and a first camp built from it. The first eclipse seen from the ground. The first time the ring looks back, some days later, at an animal using tools. A settlement glimpsed across the scar, dark and whole. The field log begins to fill. Discoveries 1 to 4.
+- *It ends with the Welcome and the Closing.* The ship's mission system reaches the next item in a plan written a century ago, and sweeps the hub with radar. The Lamplighter has known for a century that the house can be seen and has had no way to see who was looking. The sweep is the first thing from outside to touch it. It answers first with a welcome (section 1.12): for a few minutes the sites in the ward light and stand open and the pulse runs out of its time. Then it sees who called, and turns the field solid to craft. No more drops, no ascent, and the uplink needs real power. The player sees the ring greet something and then shut the sky, and understands neither until Act 3. The beat is caused by the ship, so it is fair to every play style, and it uses a policy value the field already has.
 
 **Act 2: The long way round.** Home is now on the far side of a door only the ring can open, so the player must go and find out what the ring is. That means the first reactor descent, the first ride on the Deep Line, and a journey of thousands of kilometres to a dead Wall Engine and the wall top above it. Discoveries 5 and 6. The repair-or-strip choice at the engine is the first one the whole ring can see: a storm that has stood for centuries either clears over the following hours, or the player leaves with the best salvage in the game.
 - The distances are forced by an existing decision: offline engines are at least ten stations apart and never near the main spire. So the spine is ring-scale by construction, and the Deep Line is on it.
-- *It ends with a purge.* The ship reveals the second objective in its charter, to judge the ring for settlement, and acts on it: an automated survey lander is driven through the closed field by force and starts drilling. The ring answers with its last resort. A megastorm forms a thousand kilometres or more away and comes for the lander, and for everything between. When the wall has passed over its cause, it stands down. What it leaves is a levelled country that can be seen on the arch for the rest of the game. Whether every story should contain this purge is question 1 in section 9.8. If a player has already been struck from the count, a purge is already theirs.
+- *It ends with a second wall.* The mission system reaches the item that judges the ring for settlement, and lands the survey machinery to do it: a powered craft, driven through the closed field. The player has seen what that summons. The reflex answers, a wall forms on the arch, and this time the player knows where the shields are and has a little over half an hour to use what they have learned. The survey lander is swept away. The country it landed in, which by now the player knows well, is levelled.
 
-**Act 3: The Lamp.** The purge has passed and left its scar across the arch, and the ship is preparing to try again, which would bring another. The player makes for the main spire, by whichever of the three keys they hold. Down to the archive in the main reactor: discovery 7. Up four kilometres to the crown, timed so the player is there as an eclipse begins: discovery 8 and the endings, with 595 beams converging overhead.
+**Act 3: The Lamp.** The wall has passed and left a second scar across the arch, and the plan has more items on it. The player makes for the main spire, by whichever of the three keys they hold. Down to the archive in the main reactor: discovery 7. Up four kilometres to the crown, timed so the player is there as an eclipse begins: discovery 8 and the endings, with 595 beams converging overhead.
 
 **After.** The keeping (section 1.9) is the open-ended game.
 
@@ -1226,6 +1391,38 @@ Together this is about two XL systems. It is now the largest new system in the p
 | **Expeditions from orbit** (drop, objective, extract, repeat) | Session-shaped; easy co-op; no base upkeep | It makes crossing the field routine, when the lore says every crossing is felt. It removes isolation, so the Closing means nothing. It spends a continuous, seamless world on a mission menu. | The expedition as the unit of a session, from a foothold on the ground |
 | **Pure sandbox** | Cheapest in content. The Count, Standing and repair all work as sandbox systems. | "Understand the ring" needs an authored truth. An escalating AI with no beats has no arc, only a difficulty curve. | The keeping as post-story play; spine sites that are systemic, not scripted |
 | **Linear levels** | Tightest pacing | It throws away the project's main asset, which is the place | Nothing |
+
+### 5.4 The first hour
+
+Decided by the user on 2026-11-21: a night landing, sealed and silent, beside a ground emitter; the lander outside its protection; a megastorm summoned by the landing; and the emitter's shield, raised about a minute before the wall arrives, as the only way to live.
+
+The megastorm forms over about thirty minutes and travels some 630 km while it does. That is the length of the opening. Times are before the wall arrives.
+
+| When | What the player sees and does | What is happening |
+|---|---|---|
+| 35 minutes | Night. The lander comes down through the field under power and lands in a clearing about a kilometre from a spire. | The field feels a powered craft. The reflex begins. Six hundred kilometres away a wall starts to form. |
+| 33 minutes | The hatch. A sealed helmet and a muffled world. Forest, the arch overhead, the spire a black shape against it. A line of light crosses the sky. The first task: sample the air. | The pulse. Nothing is looking for the player. |
+| 25 minutes | The ground begins to hum. Far off along the arch, something flickers. | The megastorm's approach, as built. The assistant's existing line reports resonance in the floor and a bearing. |
+| 13 minutes | The forest goes quiet. Then it moves. Animals pass the lander in the dark, all going the same way: towards the spire. | The assistant's existing line: the animals have gone silent, and a time to arrival. |
+| 3 minutes | The wall's face fills the sky, lit from inside. The stars go out. The air is dead still. | The megastorm's calm before the gust front, as built. |
+| 1 minute | Around the spire a wall of faint glass climbs out of the ground. | The shield rises. The assistant's existing critical line: this position is exposed; find enclosed shelter. |
+| 45 seconds | The gust front. The player runs, and goes through the glass with a soft thump. The roar drops to almost nothing. | The shield passes a body, as the great field does. |
+| The wall | Seventy seconds seen through honeycomb glass, in flashes. Lightning breaks over the dome. The forest outside goes down. Somewhere out there, so does the lander. | The megastorm's wall, with real damage. |
+| The wake | The player stands among deer and birds on the spire's apron. The air test comes back clean. The helmet comes off. | The pulse passes. The site counts everything sheltering under its shield, and the player is counted with them. |
+| After | The shield falls. Rain. Then grey light on a country with no trees standing but the ones around the spire. The wreck is somewhere downwind. | The house's books say the intrusion was swept away. |
+
+**What it teaches without a word.** That the ring protects its own. That its animals know its ways. That its fields let a body through. That the mission's equipment will not last here. And that the player is alive because they were mistaken for something that belongs.
+
+**What it needs to be fair.**
+- The lander sits about 550 m outside the shield's edge. A sprint covers that in about eighty seconds, so a player who is still at the hatch when the shield rises does not make it. The animals at thirteen minutes and the hum from twenty-five are the real warning.
+- The only way to fail is not to reach the shield, and a failure restarts at the hatch.
+- In co-op the whole team is in the lander and runs together.
+
+**The ship's part.** No one is awake to react. The mission system logs the lander as lost and plays the recording that was made for that case, by someone a century dead. Then it turns to the next item in the plan, and begins sending small cold pods.
+
+**The first eclipse** still falls inside the first session, an hour or two after the storm, over the levelled country.
+
+**What it depends on.** Megastorm damage, the emitter shield (section 2.15), windthrown forest, at least a stand-in for the animals, and a wreck to find. It is the game's first half hour and one of the last things that can be built (milestone GS).
 
 ## 6. The suit assistant
 
@@ -1252,6 +1449,7 @@ Suggested replacement wording for the rule, for the user to approve: "The assist
 - **The estimate and the district reading** (explained; user, 2026-11-21): sections 2.12 and 2.2.
 - **Soil and water tests** (explained; user, 2026-11-21): section 3.13.
 - **The field log** (section 2.6): what happened, when and where, with a page of the patterns it has counted. It is its most important screen.
+- **The lexicon** (section 1.13): every sign of the builders' language that has been met, where it was met, and the gloss the assistant offers with its confidence. Old utterances are re-read here as the lexicon fills.
 - **Analysis.** The leaf. The air. Salvage.
 - **Vitals and warnings**, with critical lines always authored and never rewritten, as the megastorm design already requires.
 - **The database**, unlocked by first observation, as "Structural resonance" already is. Entries may draw conclusions (explained; user, 2026-11-21). They are written as the expedition's own working notes: what was observed, then a conclusion marked as the current reading. A conclusion can be wrong, and it is revised when the evidence changes. The Veil's entry begins as "a malfunction" and is corrected twice (section 1.12).
@@ -1272,13 +1470,13 @@ The user wants the ring to interfere with the suit AI. Done carelessly, that tea
 - The assistant catches intrusions after the fact and says so plainly: "A line was spoken in my voice forty seconds ago. I did not generate it."
 - Edited records show as gaps it cannot account for, not as changed text.
 
-**The turn in Act 3.** The same channel becomes the way the Lamplighter finally speaks. The assistant marks it: "This is not me. Relaying." The player has spent the whole game learning to tell the two voices apart, and that skill is what makes the conversation at the crown trustworthy.
+**The turn in Act 3.** The same channel becomes one of the ways the Lamplighter addresses the player. The assistant marks it: "This is not me. Relaying." Then it plays the tones, and shows the marks with whatever glosses the lexicon has. The player has spent the whole game learning to tell the two voices apart and to read the second one, and both skills are what make the scene at the crown theirs.
 
 ### 6.5 Practical notes
 
 - **Authored lines are the baseline.** The local language-model question-and-answer panel that exists as a debug prototype could become a feature (asking the suit a question in your own words), but nothing in this plan depends on it, and it has a memory and performance cost on the smaller machine. If it ships, record edits map naturally onto its per-world conversation store.
 - **In co-op each player has their own assistant.** That is what lets the ring make two of them disagree.
-- **The ship's voice** is the second human-language voice and needs the same pipeline decision as the assistant's: prerendered authored lines first.
+- **The ship has two voices** and neither is alive: a flat mission system that reads out the plan, and recordings of the people who wrote it. Both are authored and prerendered.
 
 ## 7. How the existing tech maps to gameplay
 
@@ -1345,6 +1543,11 @@ Sizes are in the repo's work orders: S is 1 to 3, M is 4 to 8, L is 9 to 20, and
 | Site kit: doors, sockets, terminals, lifts, power state | L, then M per kind of site | The spire facility first. Interiors are the real content cost. |
 | Directed weather | M | Storms the director can place, steer and save. Must stay a pure function of seed, time and saved events (7.5). |
 | Megastorm damage and shelter ratings | M | The queries and interfaces exist. Also megastorms that end by themselves, a misfire schedule and a saved record of past sweeps (section 2.14). |
+| Emitter shields | M to L | Section 2.15. Reuses the containment field's shading, ripples, strikes and crossing sound. New: the dome's geometry, its rise, and full cover in the megastorm's shelter queries. The risk is its cost from inside during a megastorm. |
+| The builders' language | L, mostly content | Section 1.13. About fifty signs in tone, light and mark; the lexicon screen; placement that gives each sign readable contexts. |
+| Settlements | XL, content | Section 1.14. A modular kit at the builders' measure with interiors, the works town, placement, streaming and site rules. The largest addition of this round. |
+| Small animals | L to XL | Section 3.15. Birds, fish, insects, small mammals and one grazer, as figures in the garden cells with visible animals near players. |
+| The opening | L | Section 5.4. A set piece assembled from the megastorm, the shield, windthrown forest, the animals and the wreck. |
 | Constructs | XL | Four kinds: art, animation, behaviour, damage both ways. The largest content risk in the plan. |
 | Weapons, tools and combat | L to XL | Firearms are in (section 3.12): ballistics, ammunition, hit reactions and damage on constructs, and first-person weapon art and animation, which the project does not have |
 | Fabrication and recipes | M | About thirty recipes |
@@ -1438,7 +1641,7 @@ Each milestone ends in something the user can play. Play tests come back as a li
 - **Goal.** The smallest loop that proves the fantasy: being ignored by something vast, then noticed by it, then learning how to live with it.
 - **The place.** One regular spire and about 5 km around it, on a current test world, with forest and water.
 - **In.**
-  - A lander as the foothold: recharge, storage, save.
+  - The lander's wrecked hull as the foothold: recharge, storage, save. The slice starts on the morning after the first storm, which is built later (milestone GS).
   - Suit power, body temperature, water, and health with falls.
   - About eight items and a simple inventory.
   - The Count: going dark, standing to be counted, the assistant's countdown, cover from canopy, rock and water.
@@ -1446,7 +1649,7 @@ Each milestone ends in something the user can play. Play tests come back as a li
   - One response on each channel: a watcher, doors and lights at the spire facility, a rain cell that may or may not be coincidence.
   - The field log with its patterns page, the district reading, and three rules to be learned: the Count, closed doors, powered tools near structures.
   - About forty assistant lines, subtitled.
-  - One job: fetch a written-off part from the spire's gallery to repair the lander's antenna and raise the ship.
+  - One job: fetch a written-off part from the spire's gallery to repair the recovered antenna and raise the ship.
 - **Out.** Co-op, weapons and combat, crafting, the underground, the megastorm, the Deep Line, the story.
 - **Playable test.** About an hour, unprompted. It passes if the player:
   1. changes what they are doing because the pulse is coming, without being told twice;
@@ -1461,7 +1664,7 @@ Each milestone ends in something the user can play. Play tests come back as a li
 
 - **Goal.** The session loop holds up over several sessions.
 - **In.** All the meters and the sealed start. The fabricator and about fifteen recipes. The first dead-ring salvage site. Camps and caches. The glide wing. Forage with ward tolerance (rules 1 and 3). The choice of landing site. Rafts, if T9i has landed.
-- **Playable test.** Over three sessions, establish a second camp at least 30 km from the lander and bring back one part that cannot be fabricated.
+- **Playable test.** Over three sessions, establish a second camp at least 30 km from the wreck camp and bring back one part that cannot be fabricated.
 - **Unblocks.** Content at scale; a game worth playing with someone else.
 - **Size.** XL. Depends on G1; benefits from T5, T6 and T9i.
 
@@ -1517,10 +1720,23 @@ Each milestone ends in something the user can play. Play tests come back as a li
 - **Unblocks.** The story, which needs every rung.
 - **Size.** XL. Depends on G3.
 
+### GS. The first storm (the opening)
+
+- **Goal.** The first half hour of the game (section 5.4): the night landing, the wall, the shield, the dawn.
+- **In.** The emitter shield. Megastorm damage to the player and the lander. Megastorms that end once they have crossed their cause. Windthrown forest. The wreck and its salvage. The animals that run for the shield, at least as stand-ins.
+- **Playable test.** From the hatch to the morning after, unprompted. It passes if:
+  1. most first-time players reach the shield without being told where to go;
+  2. those who fail understand why;
+  3. the player can say afterwards what saved them;
+  4. the scene inside the shield holds its frame budget on the smaller machine;
+  5. the wreck's main parts can be found by looking.
+- **Unblocks.** The game's real beginning. Until it exists, every earlier milestone starts on the morning after.
+- **Size.** L, on top of G4's megastorm damage. It also needs the near half of GF2's presentation (the scatter density factor) and the windthrow class, so that the country is levelled when the player walks out. That part of GF2 is best brought forward with it.
+
 ### G5. The Closing and the long way round (Acts 1 and 2)
 
 - **Goal.** The spine from landing to the purge.
-- **In.** The reactor underground and the Deep Line. Wall Engine presentation and anomaly weather. Repair or strip. The wall top. The ship's voice. The Closing. The purge and its end. The misfire schedule.
+- **In.** The reactor underground and the Deep Line. Wall Engine presentation and anomaly weather. Repair or strip. The wall top. The ship's voice. The Closing. The purge and its end. The misfire schedule. The first settlement and the lexicon.
 - **Playable test.** Play from landing to the megastorm forming on the arch.
 - **Unblocks.** Act 3.
 - **Size.** XL. Depends on G4, on the paused reactor milestone and on the Wall Engine work in the grid spec.
@@ -1528,7 +1744,7 @@ Each milestone ends in something the user can play. Play tests come back as a li
 ### G6. The Lamp (Act 3 and the endings)
 
 - **Goal.** The end of the story.
-- **In.** Main spire and main reactor gameplay. The archive. The crown during an eclipse. The Lamplighter's speech. Interference tier three. The five endings.
+- **In.** Main spire and main reactor gameplay. The archive. The crown during an eclipse. The Lamplighter's speech, in the builders' signs. The works town. Interference tier three. The five endings.
 - **Playable test.** Each ending reached from one late save.
 - **Size.** XL. Depends on G5.
 
@@ -1537,7 +1753,7 @@ Each milestone ends in something the user can play. Play tests come back as a li
 - **Goal.** The game after the story, and the larger toys.
 - **In, each on its own go.** The maintenance loop. Rover and aircraft. Animals. Block building, if the backend allows. More constructs and counters.
 
-**The order, and why.** Seams, then the slice, because the slice is the cheapest way to find out whether the Count is fun. Then the expedition loop, because co-op needs something to do. Then co-op before enemies, for the reason in 7.4. Then the ladder, then the story, because the story needs the ladder. The living garden runs beside this line in two parts. The farm (GF1) is played once the expedition loop exists. The ring-wide garden (GF2) proves its bit-identity early and is played after the ladder, because its two largest drivers, the megastorm and the state of the machines, arrive with G4 and G5.
+**The order, and why.** Seams, then the slice, because the slice is the cheapest way to find out whether the Count is fun. Then the expedition loop, because co-op needs something to do. Then co-op before enemies, for the reason in 7.4. Then the ladder, then the story, because the story needs the ladder. The opening (GS) comes after the ladder, because it needs the megastorm to do real damage. The living garden runs beside this line in two parts. The farm (GF1) is played once the expedition loop exists. The ring-wide garden (GF2) proves its bit-identity early and is played after the ladder, because its two largest drivers, the megastorm and the state of the machines, arrive with G4 and G5.
 
 ## 9. User decisions (2026-11-21) and new questions
 
@@ -1627,66 +1843,58 @@ Unchanged: light colours and the ring's signals have no legend, and the ship's e
 
 The megastorm design doc's opening premise ("an ever-present threat once it is triggered") is now out of date and needs a dated note. This plan does not edit that doc.
 
-### 9.8 Lore and loop: the questions that would shape it most
+### 9.8 Lore and loop, first round (answered 2026-11-21)
 
-The user, 2026-11-21: "I want to flesh out the lore and gameplay loop first." These are the eight places where the plan is thinnest or where one decision would change the most. Each has options and a recommendation.
+| # | Question | The user's answer | Where it lands |
+|---|---|---|---|
+| 1 | Does every story contain a megastorm? | In the user's words: "A megastorm only spans a portion of the ring always intersecting the reason why the storm was summoned. We can use the ship the player lands on as one reason, but the player needs to find a way to escape it for the first time. I'm thinking of the player landing near one of the ground emitters. Emitters generate a shield around them protecting the structure and anything within them. The ship lands outside that emitter and the player takes shelter when the emitter spawns a shield about 1 minute before the storm hits." | Section 2.14 rewritten: every megastorm is a bounded sweep that crosses its cause; the reflex, the purge and the misfire. New section 2.15, emitter shields. New section 5.4, the first hour. Sections 0, 1.2, 1.8, 2.5, 3.5, 3.7, 3.8 and 5.2 reworked. New milestone GS. |
+| 2 | How does the Lamplighter speak? | **In the builders' language, untranslated.** The player decodes it over time. | New section 1.13. Sections 1.4, 1.8, 2.6, 2.12, 2.13 and 6 updated. |
+| 3 | What trace did the builders leave? | **Abandoned settlements:** real places where they lived, or were meant to. | New section 1.14 |
+| 4 | The first hour | **Night, sealed, silent,** merged with answer 1. | Section 5.4 |
+| 5 | The work of a session | **The ship's survey requests, and the ring's needs, seen and never asked. No quest log.** | New section 3.14 |
+| 6 | What lives in the garden? | **Small animals first, built so larger ones can come later.** | New section 3.15 |
+| 7 | The centre | **Empty.** The Lamp is lit in open space, and the finale is at the main spire's crown. | As already written in sections 1.8 and 5.2; no hub structure is planned |
+| 8 | Who speaks for humanity? | **No one awake.** Orders are recordings from people long dead. | Section 1.7 rewritten; sections 2.6, 3.14 and 5.2 updated |
 
-**1. Does every story contain a megastorm?**
-The megastorm is the project's largest spectacle, and it is now reserved for a purge or a misfire.
-- **A. The ship provokes one.** At the end of Act 2 its forced lander brings a purge that ends when the lander is gone. Every player lives through one wall and carries its scar on the arch through Act 3.
-- **B. Only the Struck are purged.** Anyone else sees misfires, far off on the arch, and may never stand under a wall.
-- **C. A misfire as the showpiece.** One is certain to cross the player's country early in Act 2, as the moment they learn the ring is failing. Purges stay for the Struck.
-- **Recommendation: C.** It keeps the user's rule that a purge is something a player earns. It puts the wall in every story without making the ship the cause. And it makes "it is failing" (discovery 5) the most frightening lesson in the game instead of a quiet one. Act 2 then needs a different ending, and the ship's forced lander can simply be destroyed by the ring's ordinary means.
+### 9.9 Lore and loop, second round: follow-up questions
 
-**2. How does the Lamplighter speak, and to whom?**
-It is wordless for most of the game. The question is what happens at the end.
-- **A. In borrowed words, to the player.** It has listened to the expedition's radio. Its vocabulary is small, exact and domestic, and it counts things.
-- **B. Never in words.** Light, tone, doors and weather to the last. The endings are read, not heard.
-- **C. To the suit assistant first.** The ring has not met another mind in thirty thousand years. It addresses the suit before it addresses the person in it, and the player listens to two caretakers talk: "This is not me. Relaying."
-- **D. In the builders' language, never translated.** The player learns a couple of dozen signs across the game and understands the last scene with them.
-- **Recommendation: C, in the words of A.** It gives the suit assistant a place in the story instead of leaving it a narrator. It makes the Lamplighter's loneliness something the player witnesses and is not told. And it is the best character moment the plan has available.
+**1. How far does the first storm run past the lander?**
+A megastorm levels everything from where it forms to its cause. What lies beyond the cause decides what the player's first country is.
+- **A. It stands down at once.** The wall dies within a few kilometres of the lander. Behind the player is a levelled country to the horizon, and ahead, a short walk from the spire, the untouched garden begins.
+- **B. It runs on for a hundred kilometres or so,** as a wall of that size would. The player's first days are all in windthrown country, with standing forest only around spires and in deep shelter.
+- **C. A smaller reflex.** It forms much closer and levels only a couple of hundred kilometres. This needs the megastorm to form faster than it is built to.
+- **Recommendation: A.** The player ends the first hour standing on the edge of the scar: ruin on one side and the living garden on the other. It keeps the forests, and the cover they give from the Count, within reach from the first day. It also fits the user's rule most exactly: the sweep exists to cross its cause, and stops when it has.
 
-**3. What trace did the builders leave of themselves?**
-The plan shows no bodies, images or voices.
-- **A. Nothing but their works.** As now.
-- **B. Their measure.** Doors, steps, handholds and seats that fit a body that is not ours. One room at the main spire that was plainly made to be lived in and never was. The player infers them from the shape of the space they left.
-- **C. Their records.** Images or writing in the archive.
-- **D. One of them.** A single builder who stayed, long dead, somewhere the player can find.
-- **Recommendation: B.** It keeps them unseen and still gives them a body and a tenderness. It costs set dressing and no characters. An empty room laid for guests says more about the Lamplighter's vigil than any record could.
+**2. Who may shelter under a shield?**
+- **A. Anyone, always.** A shield is physics. Even a struck player lives through a purge by standing beside a spire.
+- **B. Anyone but the Struck.** The Lamplighter holds down the shield of any spire a struck player is standing at, and takes the damage to its own machine as the price.
+- **C. A sanctuary.** As B, and harm done to anything sheltering under a shield is a capital harm, like touching the Lamp. Predator and prey stand together there, and so must the player.
+- **Recommendation: C.** It gives the shield a law as well as a use, it makes the first scene (a player among deer) a rule the player has already kept without knowing, and it stops a purge from being trivially survivable.
 
-**4. What is the first hour?**
-- **A. Night, sealed, silent.** The lander's hatch opens on a forest at night. The helmet is sealed and the world is muffled. The pulse crosses the sky. The first task is an air sample. The world's clock is set so the first eclipse falls inside the first session, and the Lamp is the first wonder.
-- **B. A hard landing.** Gear scattered, the lander damaged, survival from the first minute.
-- **C. The long approach.** The ring from orbit and the descent through the field, played or watched, before any boots are down.
-- **Recommendation: A.** It is quiet, which the ring should be. It teaches the sealed suit, the Count and the Lamp by letting them happen. B is the genre's habit and makes the ring an enemy at once. C is the most beautiful and the most expensive, and can be added later as a short opening.
+**3. What is left of the lander?**
+- **A. Nothing.** The player starts with what they carried through the shield.
+- **B. A wreck strewn downwind.** The power unit, the fabricator, the antenna, the weapons locker and a sound section of hull are out there in the fallen forest. Finding them is the first few sessions.
+- **C. A damaged lander that still stands,** and might one day fly.
+- **Recommendation: B.** The player's first salvage is their own. It teaches searching, carrying and rule 3 on ground that is theirs to take from. And it makes the loss of the way home plain without leaving the player with nothing.
 
-**5. What is the player's work in an ordinary session?**
-The spine is hundreds of hours wide. Something has to fill a Tuesday evening.
-- **A. The surveyor's commission.** The ship asks for things by radio: a sample, a measurement, a place mapped. It pays in drops while there are drops and in standing with the ship afterwards.
-- **B. The ring's needs, seen and never asked.** A mender stalled at a broken span. A channel silted. A stand dying at a drought's edge. The player notices and chooses.
-- **C. Only the player's own needs and curiosity.** No one asks for anything.
-- **Recommendation: A and B together, with no quest log.** Two sources of work that pull opposite ways are the story's argument turned into a routine. The ship asks aloud and the ring never asks at all, which is the right difference between them.
+**4. Did anyone ever live in the settlements?**
+- **A. No one, anywhere.** Every settlement was made ready and never used.
+- **B. All of them were lived in once,** and left.
+- **C. One was lived in and the rest never were.** The works town, where the makers lived while they built, is worn and human. The hundred made-ready settlements are perfect and untouched.
+- **Recommendation: C.** The contrast is the whole story in two places: the makers were people and went on, and the ones the house was made for never came. One worn town is also far cheaper than a hundred.
 
-**6. What lives in the garden?**
-The cuttings are thirty thousand years old.
-- **A. What Earth lost.** Ice-age animals: the great grazers and what hunted them. The ring holds a living world that ours no longer has.
-- **B. The small and the quiet.** Birds, fish, insects, a deer-sized grazer. Enough for the census to mean something.
-- **C. Nothing that walks.** A garden of plants, birdsong with no birds to find. Eerie, and cheapest.
-- **Recommendation: B first, built so that A can arrive.** Start with the small animals, and keep the great ones for remote country and a later release. A herd of mammoth on the far arch through a long lens is a reveal worth holding back. It is also the largest art cost in this list.
+**5. Is the language ever fully understood?**
+- **A. Yes.** A diligent player reads everything by the end.
+- **B. Never.** A few signs stay closed: the builders' name for themselves, what the Lamplighter is to them, one sign in its last sentence.
+- **C. It depends on the path.** A Guest is taught: the Lamplighter slows down, repeats, and uses the school walls as a teacher would. A player on the blight path has only what they can read off doors and overhear.
+- **Recommendation: B and C together.** Being taught a language by something that has had no one to talk to is the best thing the abide path can offer, and a remainder that never opens keeps the builders from shrinking.
 
-**7. What is at the centre, and what is the far side of the sky?**
-The opposite side of the ring is always overhead, and the hub is where the Lamp is lit.
-- **A. The centre is empty.** Nothing is built at the hub. The Lamp is lit in open space where the beams meet. The far side is first a map the player reads and, late, a place the Deep Line reaches.
-- **B. A lamp house.** A structure at the hub, and the last scene is set inside it as the beams arrive.
-- **C. The watch is at the hub.** The post that faces the road sits at the centre, and the walls are only engines.
-- **Recommendation: A.** The centre of the house being empty is the right image for this story. It needs no new place. And it keeps the finale at the main spire's crown, which exists. The walls then hold everything else the house has: the engines inside them, and the Veil and the watch on top.
-
-**8. Who speaks for humanity?**
-- **A. One commander.** A decent person under old orders, who changes as the story goes.
-- **B. Two voices that disagree.** A commander and a scientist, and the player overhears the argument.
-- **C. No one awake.** The crew are all asleep but the surface team. The ship is run by its mission system, and its orders come as recordings made by people who have been dead for a lifetime.
-- **Recommendation: C.** It makes the ship the Lamplighter's mirror: two caretakers carrying out the wishes of people who are gone, with the only living people in the story standing between them. It explains why the ship does foolish things on schedule. It needs the fewest performances. Its cost is warmth: there is no living human to talk to but the other players, which may be exactly right, or too lonely.
+**6. Can anyone on the ship be woken?**
+- **A. Never.** The sleeping reserve is a number in a log.
+- **B. One, late, at a cost.** The player can wake a single sleeper, who then has to live with everything the player has done, and becomes the only living human voice in the game.
+- **C. Only at an ending.** In the Counted ending the reserve are the first guests. In the keys ending they wake to a dying ring.
+- **Recommendation: C.** It keeps the loneliness the user chose for the whole of play, and makes the sleepers the stake of the last decision instead of a comfort along the way.
 
 **Smaller choices that can wait:** how often eclipses come; whether the Lamp's late ignition and violent collapse are read as signs of age (section 1.2); whether the question-and-answer assistant becomes a feature; a Pleistocene animal roster; and the ship's casting.
 
-**Next step.** The user wants the lore and the loop fleshed out before any build work (2026-11-21). The next step is the answers to section 9.8. G0 (four lead design docs, the co-op-ready contract and the tower removal order) waits for them.
+**Next step.** The user wants the lore and the loop fleshed out before any build work (2026-11-21). The next step is the answers to section 9.9. G0 (four lead design docs, the co-op-ready contract and the tower removal order) waits for them.

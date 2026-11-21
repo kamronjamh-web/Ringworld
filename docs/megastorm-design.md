@@ -2,6 +2,8 @@
 
 Status: design only, nothing implemented. Branch `storm-revamp-wip` (working tree of 2026-10-29, about to merge to main). Line references are to that tree.
 
+**Lore and trigger rules changed (user, 2026-11-21).** The megastorm is no longer "an ever-present threat once it is triggered" that laps the ring for ever. It now happens only as a purge, as the ring's reflex to a powered craft forcing the field, or as a misfire of its ageing Wall Engines. Every megastorm is a bounded sweep: it spans a portion of the ring and always crosses the thing it was summoned for, then stands down. The first one is summoned by the player's lander, and emitter spires raise a shield about a minute before the wall arrives. Its destruction is realistic. See `docs/gameplay-loop-plan.md` sections 2.14, 2.15 and 5.4. What that asks of this design: megastorms that end once they have crossed their cause (the existing `Stop`), a saved record of past sweeps, real damage, and a spire's shield counting as full shelter. The body below has not been reworked for it.
+
 **Wake fog removed (2026-11-16).** The megastorm wake fog (the post-rain mist path, `RingAtmosphereModel.SetWeatherMist`, `M = WakeFog`) and the post-rain mist it rode on were removed with the whole weather mist layer (`docs/atmosphere-haze-revamp-plan.md`, MIST-2). `MegastormHazards.WakeFog` is still computed and exposed but nothing consumes it. Mentions of mist or wake fog below describe the old design.
 
 Companion design: `docs/containment-field-design.md` (the field doc). It owns the field, its cloud ceiling and the `ContainmentDisturbance` bus. Section 6.3 is the megastorm side of that contract.
