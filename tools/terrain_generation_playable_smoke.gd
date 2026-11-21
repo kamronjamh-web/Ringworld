@@ -85,7 +85,7 @@ func _run() -> void:
 	var bounded: PackedFloat64Array = surface.call("GetCanonicalPosition", player.global_position)
 	var around_offset := fposmod(bounded[0] + 2048.0 + 15707968.0, 31415936.0) - 15707968.0
 	_expect(absf(around_offset) <= 176.001 and absf(bounded[1] - 159000.0) <= 176.001, "physics constrains both patch edges")
-	var speed_slider := drawer.find_child("Movementspeed*", true, false) as HSlider
+	var speed_slider := drawer.find_child("Walkspeed*", true, false) as HSlider
 	# The mesh detail row left the menu in 5b51bc3 (NT-1 builds only the levels past the handoff).
 	_expect(speed_slider != null, "playable movement control exists")
 	_expect(drawer.find_child("Meshdetaillevels", true, false) == null, "retired mesh detail row stays out of the menu")
