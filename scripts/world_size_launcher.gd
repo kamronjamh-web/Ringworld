@@ -1815,7 +1815,6 @@ func _configure_game(game: Node, requested_radius_m: float) -> void:
 	grid.set("MaxBuildGlobalY", max_build_y)
 	grid.set("StructuralDepthMeters", structural_depth_m)
 	grid.set("StructuralWallClearanceMeters", CERTIFIED_STRUCTURAL_WALL_CLEARANCE_M)
-	var capture_max_quality := "--shorts-max-quality" in OS.get_cmdline_user_args()
 	grid.set("StreamingVisualRadiusAround", 4 if desktop_mid_high else 3)
 	grid.set("StreamingVisualRadiusAcross", 4 if desktop_mid_high else 3)
 	grid.set("StreamingVisualRadiusVertical", 3 if desktop_mid_high else 2)
@@ -1830,11 +1829,6 @@ func _configure_game(game: Node, requested_radius_m: float) -> void:
 	grid.set("ReleaseUneditedVisualChunkData", true)
 	grid.set("SoftVoxelMemoryBudgetMb", 384 if desktop_mid_high else 192)
 	grid.set("MemoryPressureVoxelWorkerLimit", 2 if desktop_mid_high else 1)
-	if capture_max_quality:
-		grid.set("MaxConcurrentVoxelMeshWorkers", 4)
-		grid.set("MemoryPressureVoxelWorkerLimit", 3)
-		grid.set("MaxVoxelMeshUploadsPerFrame", 2)
-		grid.set("MaxVoxelMeshUploadMillisecondsPerFrame", 4.0)
 	if "--precision-smoke-test" in OS.get_cmdline_user_args():
 		grid.set("EnableSeamGapDebugVisualization", true)
 		grid.set("LogSeamGapDebugStats", true)
@@ -1872,9 +1866,8 @@ func _configure_game(game: Node, requested_radius_m: float) -> void:
 	var star_light := game.get_node("StarLight")
 	# Keep detailed PSSM shadows local enough for an 8 GB RTX 4070 while
 	# leaving mountain-scale distance to the much cheaper whole-ring mask.
-	# Offline shorts get the wider 16 km bubble; certified realtime play uses
-	# 12 km, which is a sustainable 3x increase over the old cutoff.
-	var cascade_shadow_distance := 16000.0 if capture_max_quality else 12000.0
+	# Certified realtime play uses 12 km, a sustainable 3x increase over the old cutoff.
+	var cascade_shadow_distance := 12000.0
 	star_light.set("directional_shadow_max_distance", cascade_shadow_distance)
 	star_light.set("directional_shadow_split_1", 0.012)
 	star_light.set("directional_shadow_split_2", 0.06)
@@ -1892,11 +1885,11 @@ func _configure_game(game: Node, requested_radius_m: float) -> void:
 	global_lod.set("StructuralDepthMeters", structural_depth_m)
 	# The macro mask takes over before the final cascade fades and continues
 	# tracing mountain silhouettes far beyond realtime shadow-map range.
-	global_lod.set("MacroTerrainShadowStrength", 0.52 if capture_max_quality else 0.46)
-	global_lod.set("MacroTerrainShadowFadeStartMeters", 9000.0 if capture_max_quality else 6500.0)
-	global_lod.set("MacroTerrainShadowFadeEndMeters", 15000.0 if capture_max_quality else 11000.0)
-	global_lod.set("MacroTerrainShadowTraceSteps", 16 if capture_max_quality else 14)
-	global_lod.set("MacroTerrainShadowMaxTraceMeters", 160000.0 if capture_max_quality else 128000.0)
+	global_lod.set("MacroTerrainShadowStrength", 0.46)
+	global_lod.set("MacroTerrainShadowFadeStartMeters", 6500.0)
+	global_lod.set("MacroTerrainShadowFadeEndMeters", 11000.0)
+	global_lod.set("MacroTerrainShadowTraceSteps", 14)
+	global_lod.set("MacroTerrainShadowMaxTraceMeters", 128000.0)
 	var analytic_global_lod := game.get_node("AnalyticGlobalRing")
 	analytic_global_lod.set("RingWidthMeters", int(round(width_m)))
 	analytic_global_lod.set("StructuralDepthMeters", structural_depth_m)
@@ -1910,15 +1903,15 @@ func _configure_game(game: Node, requested_radius_m: float) -> void:
 	var mesh_clouds := game.get_node("RingVolumetricClouds")
 	# The historically named RingVolumetricClouds node now owns the restored
 	# merged-mesh, transition-mesh, projected-shadow, and curved-shell hierarchy.
-	mesh_clouds.set("Quality", 3 if capture_max_quality else (2 if desktop_mid_high else 1))
+	mesh_clouds.set("Quality", 2 if desktop_mid_high else 1)
 	mesh_clouds.set("Enabled", true)
-	mesh_clouds.set("ConventionalShadowRetentionRadiusMeters", 12000.0 if capture_max_quality else 10000.0)
-	mesh_clouds.set("ShadowMapResolution", 1024 if capture_max_quality else 768)
-	mesh_clouds.set("ProjectedShadowStrength", 0.62 if capture_max_quality else 0.56)
-	mesh_clouds.set("ProjectedShadowFarStrength", 0.74 if capture_max_quality else 0.68)
+	mesh_clouds.set("ConventionalShadowRetentionRadiusMeters", 10000.0)
+	mesh_clouds.set("ShadowMapResolution", 768)
+	mesh_clouds.set("ProjectedShadowStrength", 0.56)
+	mesh_clouds.set("ProjectedShadowFarStrength", 0.68)
 	mesh_clouds.set("ProjectedShadowNearStartMeters", 4500.0)
-	mesh_clouds.set("ProjectedShadowNearEndMeters", 10000.0 if capture_max_quality else 8500.0)
-	mesh_clouds.set("ProjectedShadowFarStrengthStartMeters", 12000.0 if capture_max_quality else 10000.0)
+	mesh_clouds.set("ProjectedShadowNearEndMeters", 8500.0)
+	mesh_clouds.set("ProjectedShadowFarStrengthStartMeters", 10000.0)
 	mesh_clouds.set("ProjectedShadowFarStrengthEndMeters", 30000.0)
 	var sunshine_clouds := game.get_node_or_null("SunshineCloudBridge")
 	if sunshine_clouds != null:
@@ -1943,10 +1936,10 @@ func _configure_game(game: Node, requested_radius_m: float) -> void:
 	# Sunshine texture arrives a frame late and leaves dark cloud afterimages
 	# during camera motion.
 	scaled_far_viewport.set("CloudTransmittanceMaskEnabled", false)
-	scaled_far_viewport.set("CloudMaskResolutionScale", 0.5 if capture_max_quality else (0.35 if desktop_mid_high else 0.25))
-	scaled_far_viewport.set("CloudMaskUpdatesPerSecond", 30.0 if capture_max_quality else (20.0 if desktop_mid_high else 15.0))
-	scaled_far_viewport.set("CloudMaskRaymarchSteps", 18 if capture_max_quality else (14 if desktop_mid_high else 10))
-	scaled_far_viewport.set("CloudMaskMaximumQualityLevel", 3 if capture_max_quality else (2 if desktop_mid_high else 1))
+	scaled_far_viewport.set("CloudMaskResolutionScale", 0.35 if desktop_mid_high else 0.25)
+	scaled_far_viewport.set("CloudMaskUpdatesPerSecond", 20.0 if desktop_mid_high else 15.0)
+	scaled_far_viewport.set("CloudMaskRaymarchSteps", 14 if desktop_mid_high else 10)
+	scaled_far_viewport.set("CloudMaskMaximumQualityLevel", 2 if desktop_mid_high else 1)
 	analytic_global_lod.set("BuildEnabled", not is_certified)
 	# RingCloudLayer is the main-view far cloud layer (a camera-centred patch), needed at every ring size.
 	cloud_layer.set("BuildEnabled", true)
@@ -1976,12 +1969,12 @@ func _configure_game(game: Node, requested_radius_m: float) -> void:
 	# The laptop tier previously started on High, which activates two extra
 	# proxy rings and an 8K shadow atlas. Medium is the sustainable default;
 	# High remains available from the graphics menu.
-	var selected_graphics_preset := 4 if capture_max_quality else (3 if desktop_mid_high else 1)
+	var selected_graphics_preset := 3 if desktop_mid_high else 1
 	if selected_slot_has_saved_settings:
 		# Load time L1: the save manager applies the world's saved preset during the staged load; starting on it avoids building the global terrain twice.
 		selected_graphics_preset = _saved_world_graphics_preset(selected_graphics_preset)
-	lod_coordinator.set("MaximumStagedMeshMemoryMiB", 320 if capture_max_quality else (160 if desktop_mid_high else 96))
-	lod_coordinator.set("MemoryPressureWorkerLimit", 3 if capture_max_quality else (2 if desktop_mid_high else 1))
+	lod_coordinator.set("MaximumStagedMeshMemoryMiB", 160 if desktop_mid_high else 96)
+	lod_coordinator.set("MemoryPressureWorkerLimit", 2 if desktop_mid_high else 1)
 	lod_coordinator.set("TerrainShadowCoverageMeters", cascade_shadow_distance)
 	lod_coordinator.set(
 		"DefaultPreset",

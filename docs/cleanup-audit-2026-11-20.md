@@ -8,7 +8,7 @@
   - it was unchanged since the initial commit.
 - `storm_light_gpu_test` and `compositor_temporal_stability_test` were registered in the manifest.
 - `tools/grass-render-matrix.md` was **kept**: it documents the live `--grass-render-matrix` mode of `grass_compute_benchmark`.
-- Shorts capture: only the tooling was removed (`record_shorts.ps1`, `VerticalShortCapture.tscn`, `SHORTS_CAPTURE_PLAN.md`). The runtime hooks stay, because they live in the main gameplay scene and HUD and do nothing without `--shorts-*` arguments: `RingShortsCaptureDirector` in `VoxelRingIntegrationTest.tscn`, the capture overlay in `RingPresentationHud.cs`, and `--shorts-max-quality` in `world_size_launcher.gd`.
+- Shorts capture: only the tooling was removed (`record_shorts.ps1`, `VerticalShortCapture.tscn`, `SHORTS_CAPTURE_PLAN.md`). The runtime hooks stay, because they live in the main gameplay scene and HUD and do nothing without `--shorts-*` arguments: `RingShortsCaptureDirector` in `VoxelRingIntegrationTest.tscn`, the capture overlay in `RingPresentationHud.cs`, and `--shorts-max-quality` in `world_size_launcher.gd`. Removed 2026-11-21 (user-approved): the director, HUD overlay and launcher argument are gone.
 
 Read-only audit of branch `terrain-vegetation-revamp` (HEAD f74df15 plus the uncommitted `project.godot` and `world_session.gd` edits). Nothing was deleted, moved or edited. This file is the only file the audit adds. Every row is a candidate for the user to approve.
 

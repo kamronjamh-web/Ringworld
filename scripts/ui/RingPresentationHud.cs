@@ -20,22 +20,14 @@ public partial class RingPresentationHud : CanvasLayer
     private Control? _statusCard;
     private Control? _crosshair;
     private Control? _hintCard;
-    private Control? _captureOverlay;
     private Label? _modeLabel;
     private Label? _coordinateLabel;
     private Label? _altitudeLabel;
-    private Label? _captureKicker;
-    private Label? _captureTitle;
-    private Label? _captureSubtitle;
     private double _statusElapsed;
     private double _hintElapsed;
-    private double _captureElapsed;
-    private double _capturePrerollSeconds;
     private bool _cinematic;
-    private bool _captureActive;
 
     public bool CinematicMode => _cinematic;
-    public const double CaptureIntroSeconds = 3.5;
 
     public override void _Ready()
     {
@@ -44,7 +36,6 @@ public partial class RingPresentationHud : CanvasLayer
         _grid = GetNodeOrNull<VoxelChunkGridManager>(GridManagerPath);
         BuildHud();
         HideLegacyPresentationUi();
-        ConfigureCapturePresentation();
         RefreshStatus();
     }
 
@@ -56,7 +47,7 @@ public partial class RingPresentationHud : CanvasLayer
             SetCinematicMode(!_cinematic);
             GetViewport().SetInputAsHandled();
         }
-        else if (key.Keycode == Key.F1 && _hintCard != null && !_captureActive)
+        else if (key.Keycode == Key.F1 && _hintCard != null)
         {
             _hintElapsed = 0.0;
             _hintCard.Visible = !_hintCard.Visible;
@@ -66,8 +57,7 @@ public partial class RingPresentationHud : CanvasLayer
 
     public override void _Process(double delta)
     {
-        if (_captureActive) UpdateCaptureIntro(delta);
-        if (_cinematic || _captureActive) return;
+        if (_cinematic) return;
 
         _hintElapsed += delta;
         if (_hintCard != null && _hintElapsed >= HintVisibleSeconds)
@@ -83,7 +73,6 @@ public partial class RingPresentationHud : CanvasLayer
     {
         _cinematic = enabled;
         if (_presentationRoot != null) _presentationRoot.Visible = !enabled;
-        if (enabled && _captureOverlay != null) _captureOverlay.Visible = false;
     }
 
     private void BuildHud()
@@ -148,128 +137,6 @@ public partial class RingPresentationHud : CanvasLayer
         AddCrosshairLine(-1, 3, 1, 9);
         var center = MakeRect(RingUiStyle.AccentBright, -1, -1, 1, 1, centerAnchored: true);
         _crosshair.AddChild(center);
-
-        BuildCaptureOverlay();
-    }
-
-    private void BuildCaptureOverlay()
-    {
-        if (_presentationRoot == null) return;
-        var shade = new ColorRect
-        {
-            Color = new Color(0.003f, 0.008f, 0.014f, 0.94f),
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-            Visible = false
-        };
-        _presentationRoot.AddChild(shade);
-        shade.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
-        _captureOverlay = shade;
-
-        var center = new CenterContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
-        shade.AddChild(center);
-        center.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
-        var column = new VBoxContainer
-        {
-            CustomMinimumSize = new Vector2(480, 0),
-            Alignment = BoxContainer.AlignmentMode.Center
-        };
-        column.AddThemeConstantOverride("separation", 12);
-        center.AddChild(column);
-        _captureKicker = new Label
-        {
-            Text = "RINGWORLD / FIELD NOTE 01",
-            HorizontalAlignment = HorizontalAlignment.Center
-        };
-        _captureKicker.AddThemeFontSizeOverride("font_size", 13);
-        _captureKicker.AddThemeColorOverride("font_color", RingUiStyle.Accent);
-        column.AddChild(_captureKicker);
-        _captureTitle = new Label
-        {
-            Text = "A WORLD BENT INTO A RING",
-            HorizontalAlignment = HorizontalAlignment.Center,
-            AutowrapMode = TextServer.AutowrapMode.WordSmart
-        };
-        _captureTitle.AddThemeFontSizeOverride("font_size", 38);
-        _captureTitle.AddThemeColorOverride("font_color", RingUiStyle.AccentBright);
-        column.AddChild(_captureTitle);
-        var rule = new ColorRect
-        {
-            Color = RingUiStyle.Accent,
-            CustomMinimumSize = new Vector2(120, 2),
-            SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter
-        };
-        column.AddChild(rule);
-        _captureSubtitle = new Label
-        {
-            Text = "80 KM RADIUS  •  CONTINUOUS VOXEL TERRAIN",
-            HorizontalAlignment = HorizontalAlignment.Center,
-            AutowrapMode = TextServer.AutowrapMode.WordSmart
-        };
-        _captureSubtitle.AddThemeFontSizeOverride("font_size", 14);
-        _captureSubtitle.Modulate = RingUiStyle.Muted;
-        column.AddChild(_captureSubtitle);
-    }
-
-    private void ConfigureCapturePresentation()
-    {
-        string topic = string.Empty;
-        foreach (string argument in OS.GetCmdlineUserArgs())
-        {
-            if (argument.StartsWith("--shorts-topic=", StringComparison.Ordinal))
-                topic = argument["--shorts-topic=".Length..].Trim().ToLowerInvariant();
-            else if (argument.StartsWith("--shorts-preroll=", StringComparison.Ordinal)
-                && double.TryParse(argument["--shorts-preroll=".Length..], out double preroll))
-                _capturePrerollSeconds = Math.Clamp(preroll, 0.0, 30.0);
-        }
-        if (string.IsNullOrEmpty(topic)) return;
-
-        _captureActive = true;
-        if (_brandCard != null) _brandCard.Visible = false;
-        if (_statusCard != null) _statusCard.Visible = false;
-        if (_hintCard != null) _hintCard.Visible = false;
-        if (_crosshair != null) _crosshair.Visible = false;
-        if (_captureOverlay != null) _captureOverlay.Visible = _capturePrerollSeconds <= 0.0;
-        SetCaptureCopy(topic);
-
-        if (GetNodeOrNull<CanvasLayer>("../TerrainMinimap") is { } minimap)
-            minimap.Visible = false;
-    }
-
-    private void SetCaptureCopy(string topic)
-    {
-        if (_captureKicker == null || _captureTitle == null || _captureSubtitle == null) return;
-        (_captureKicker.Text, _captureTitle.Text, _captureSubtitle.Text) = topic switch
-        {
-            "clouds" => ("HALO PLAYERS / FIELD NOTE 02", "THE SKY IS PART OF THE RING", "ULTRA CLOUDS  •  SEAMLESS STORMS  •  INNER-SURFACE WEATHER"),
-            "voxels" => ("HALO PLAYERS / FIELD NOTE 03", "THIS HALO-SCALE RING IS EDITABLE", "1 METER VOXELS  •  5,000 KM RADIUS"),
-            _ => ("HALO PLAYERS / FIELD NOTE 01", "WHAT STANDING ON A HALO RING FEELS LIKE", "5,000 KM RADIUS  •  318 KM WIDE  •  FULL-SCALE HABITAT")
-        };
-    }
-
-    private void UpdateCaptureIntro(double delta)
-    {
-        _captureElapsed += delta;
-        if (_captureOverlay == null) return;
-        double introElapsed = _captureElapsed - _capturePrerollSeconds;
-        if (introElapsed < 0.0)
-        {
-            _captureOverlay.Visible = false;
-            return;
-        }
-        if (introElapsed >= CaptureIntroSeconds)
-        {
-            _captureOverlay.Visible = false;
-            return;
-        }
-        _captureOverlay.Visible = true;
-        float alpha = introElapsed switch
-        {
-            < 0.25 => (float)(introElapsed / 0.25),
-            < 2.75 => 1.0f,
-            < CaptureIntroSeconds => (float)((CaptureIntroSeconds - introElapsed) / (CaptureIntroSeconds - 2.75)),
-            _ => 0.0f
-        };
-        _captureOverlay.Modulate = new Color(1, 1, 1, Mathf.Clamp(alpha, 0, 1));
     }
 
     private void HideLegacyPresentationUi()

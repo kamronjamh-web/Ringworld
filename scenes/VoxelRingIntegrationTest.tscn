@@ -33,7 +33,6 @@
 [ext_resource type="Script" path="res://scripts/Weather/Megastorm/RingMegastormHazardAudio.cs" id="megastorm_hazardaudio_script"]
 [ext_resource type="Script" uid="uid://duu22c4card0s" path="res://scripts/RingAmbientOcclusionController.cs" id="25"]
 [ext_resource type="Script" uid="uid://drmnaq0urpjcn" path="res://scripts/ui/RingPresentationHud.cs" id="26"]
-[ext_resource type="Script" uid="uid://d01x5wi1ycbc8" path="res://scripts/ui/RingShortsCaptureDirector.cs" id="27"]
 [ext_resource type="Resource" path="res://resources/voxel/ring_lod_ultra_video.tres" id="28"]
 [ext_resource type="Resource" path="res://resources/voxel/ring_lod_cinematic_5090.tres" id="29"]
 [ext_resource type="Script" uid="uid://vf4r34dwqcwg" path="res://scripts/Voxel/LOD/RingGraphicsQualityController.cs" id="30"]
@@ -806,9 +805,6 @@ script = ExtResource("24")
 
 [node name="PresentationHud" type="CanvasLayer" parent="." unique_id=34311840]
 script = ExtResource("26")
-
-[node name="ShortsCaptureDirector" type="Node" parent="." unique_id=1737502636]
-script = ExtResource("27")
 
 [node name="CavityLightingCaptureDirector" type="Node" parent="." unique_id=978791329]
 process_mode = 3

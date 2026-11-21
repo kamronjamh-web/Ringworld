@@ -451,8 +451,7 @@
         "tools/*.ps1",
         "scripts/RingGeneratedOutputPaths*",
         "tools/generated_output*",
-        "scripts/Tools/TestRunMouseRelease*",
-        "scripts/ui/RingShortsCapture*"
+        "scripts/Tools/TestRunMouseRelease*"
       ]
     },
     "explorer-motion": {
