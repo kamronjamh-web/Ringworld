@@ -1,5 +1,7 @@
 # Ringworld → Unreal Engine 5 (C++) Rewrite — Master Plan
 
+> **Dormant (note added 2026-11-21).** The user confirmed on 2026-11-21 that Godot stays the engine (`docs/gameplay-loop-plan.md` section 9.1, decision 6). The "Godot project: frozen" decision below is not in effect, and development has continued in Godot since this plan was written. Kept for reference only.
+
 Status: draft for review · Created 2026-10-23  
 Decisions locked by the user (2026-10-23):
 

@@ -1,6 +1,9 @@
 # Emitter Relay Grid and Climate Machines (tier-3 ring-spanning systems)
 
 Status: design spec, read-only investigation, 2026-10-16. Revised the same day after the user answered U1-U4 (Wall Engines; grid coupled only through weather; one-way pulse circuit; 6 of 200 machines offline). No project files were edited apart from this document.
+
+**Amendment, 2026-11-21 (user).** Binding decision 3 of 2026-10-16 ("Failures are fixed by the world seed", "no dynamic failure or repair") is amended: players may repair or sabotage the ring's machines. The seed still fixes the starting state, so a fresh world is unchanged; after that each machine's state is saved story state. See `docs/gameplay-loop-plan.md` section 7.5 item 9. The body of this spec has not been reworked for it.
+
 Companions:
 - [emitter-site-terrain-spec.md](emitter-site-terrain-spec.md), the "site spec".
 - [emitter-poi-streaming-spec.md](emitter-poi-streaming-spec.md), the "POI spec".
@@ -878,6 +881,7 @@ No user questions are open. The lead defaults below stand unless the user overri
 2. **Climate machines are a SEPARATE structure** from the emitters: ring-spanning tier-3 constructs that run the weather. Some are offline, which explains a local permanent storm or drought.
 3. **Failures are fixed by the world seed.**
    - Deterministic lore, with no dynamic failure or repair.
+   - **Amended by the user on 2026-11-21:** players may repair or sabotage machines. The seed fixes only the starting state (`docs/gameplay-loop-plan.md` section 7.5 item 9).
    - Offline machines produce a local anomaly through the weather system: a parked mature storm, or a drought (haze/dust, clear skies, dry grass tint).
 4. **Beams are faint by day and more visible by night**, driven by the existing sun, day and eclipse lighting state.
 5. **Refinement of decision 4: links are NOT always visible.**
